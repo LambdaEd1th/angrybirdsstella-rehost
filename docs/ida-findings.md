@@ -6348,6 +6348,16 @@ The platform's actual installed font inventory remains platform-dependent, as
 it is for UIKit, but the binary-defined ordering and duplication semantics no
 longer change on the Rust side.
 
+The released desktop host keeps that strict behavior for arbitrary missing
+font names, but the shipped scripts also force the `ios` resource profile on
+every rehost platform and consequently request the iOS-only PostScript face
+`ArialRoundedMTBold`. Purple's own Windows profile selects Arial instead.
+When that one Apple face is absent, the cross-platform host therefore resolves
+it to the platform's bold sans-serif face (Arial first on Windows) while
+retaining the requested family string in the SystemFont binding and LabelPool
+key. An installed `ArialRoundedMTBold` still wins, and every other unavailable
+font continues to raise the recovered native error.
+
 A deterministic helper regression uses interleaved families and a repeated
 PostScript name to prove family grouping, face order and duplicate retention.
 The complete workspace passes 411 tests (56 app/audio/wgpu, 19 assets, one

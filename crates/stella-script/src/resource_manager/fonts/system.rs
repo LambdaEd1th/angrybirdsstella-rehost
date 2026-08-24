@@ -9,6 +9,12 @@ use crate::{SystemFontFallbackCatalog, SystemFontRenderBinding, native_fcvtzs_f3
 
 static PLATFORM_SYSTEM_FONTS: OnceLock<PlatformSystemFonts> = OnceLock::new();
 
+/// The shipped iOS profile selects this UIKit face before querying the host
+/// operating system. Windows and Linux do not normally provide the Apple
+/// PostScript name, so the desktop rehost must resolve that one known profile
+/// face to the platform's closest bold sans-serif face.
+const IOS_MENU_SYSTEM_FONT: &str = "ArialRoundedMTBold";
+
 #[derive(Debug)]
 struct PlatformSystemFonts {
     database: Arc<fontdb::Database>,
@@ -85,6 +91,55 @@ fn native_double_to_i32(value: f64) -> i32 {
     }
 }
 
+fn named_system_font_face(database: &fontdb::Database, family: &str) -> Option<fontdb::ID> {
+    database
+        .faces()
+        .find(|face| face.post_script_name == family)
+        .map(|face| face.id)
+        .or_else(|| {
+            let families = [fontdb::Family::Name(family)];
+            database.query(&fontdb::Query {
+                families: &families,
+                ..fontdb::Query::default()
+            })
+        })
+}
+
+fn ios_menu_system_font_compatibility_face(database: &fontdb::Database) -> Option<fontdb::ID> {
+    // Arial is the corresponding family selected by Purple's Windows font
+    // profile. The remaining names cover common Linux installations before
+    // delegating to fontdb's platform-configured generic sans-serif family.
+    let families = [
+        fontdb::Family::Name("Arial"),
+        fontdb::Family::Name("Liberation Sans"),
+        fontdb::Family::Name("DejaVu Sans"),
+        fontdb::Family::Name("Noto Sans"),
+        fontdb::Family::SansSerif,
+    ];
+    database
+        .query(&fontdb::Query {
+            families: &families,
+            weight: fontdb::Weight::BOLD,
+            ..fontdb::Query::default()
+        })
+        .or_else(|| {
+            // A minimal host may only install a regular sans face. Starting
+            // remains preferable to rejecting the iOS-only PostScript name.
+            database.query(&fontdb::Query {
+                families: &families,
+                ..fontdb::Query::default()
+            })
+        })
+}
+
+fn resolve_system_font_face(database: &fontdb::Database, family: &str) -> Option<fontdb::ID> {
+    named_system_font_face(database, family).or_else(|| {
+        (family == IOS_MENU_SYSTEM_FONT)
+            .then(|| ios_menu_system_font_compatibility_face(database))
+            .flatten()
+    })
+}
+
 /// Reproduce `sub_1004471B4` / `sub_100447480` and `sub_100477DD0`.
 /// Lua exposes the four channels as A,R,G,B. Each value first narrows to f32,
 /// then FCVTZS's without an explicit clamp; the packed bytes are finally
@@ -113,18 +168,7 @@ pub(crate) fn create_system_font_state(
     style: f64,
 ) -> LuaResult<SystemFontState> {
     let fonts = platform_system_fonts();
-    let face_id = fonts
-        .database
-        .faces()
-        .find(|face| face.post_script_name == family)
-        .map(|face| face.id)
-        .or_else(|| {
-            let families = [fontdb::Family::Name(family)];
-            fonts.database.query(&fontdb::Query {
-                families: &families,
-                ..fontdb::Query::default()
-            })
-        })
+    let face_id = resolve_system_font_face(&fonts.database, family)
         .ok_or_else(|| runtime_error(format!("Font {family} is not available.")))?;
 
     let size = native_float_to_i32(size);
@@ -285,6 +329,20 @@ mod tests {
             "{error}"
         );
         assert!(!error.contains("Style Bold"), "{error}");
+    }
+
+    #[test]
+    fn ios_menu_face_has_a_portable_sans_compatibility_target() {
+        let fonts = platform_system_fonts();
+        let fallback = ios_menu_system_font_compatibility_face(&fonts.database)
+            .expect("platform font database should provide a sans-serif face");
+        assert!(fonts.database.face(fallback).is_some());
+
+        let resolved = resolve_system_font_face(&fonts.database, IOS_MENU_SYSTEM_FONT)
+            .expect("iOS menu face should resolve exactly or through compatibility");
+        if let Some(exact) = named_system_font_face(&fonts.database, IOS_MENU_SYSTEM_FONT) {
+            assert_eq!(resolved, exact, "an installed native face must win");
+        }
     }
 
     #[test]
