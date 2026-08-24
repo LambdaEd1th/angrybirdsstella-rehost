@@ -478,9 +478,13 @@ fn native_font_fcvtzs_f64(value: f64) -> i32 {
 mod system_font_bounds_tests {
     use super::*;
 
-    const OPEN_SANS: &[u8] = include_bytes!(
-        "../../../../angry birds stella v1.1.6/Payload/Purple.app/OpenSans-Regular.ttf"
-    );
+    fn open_sans() -> Option<Vec<u8>> {
+        std::fs::read(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../angry birds stella v1.1.6/Payload/Purple.app/OpenSans-Regular.ttf"),
+        )
+        .ok()
+    }
 
     fn binding() -> SystemFontRenderBinding {
         SystemFontRenderBinding {
@@ -501,17 +505,20 @@ mod system_font_bounds_tests {
         }
     }
 
-    fn open_sans_binding() -> SystemFontRenderBinding {
-        SystemFontRenderBinding {
-            font_data: Arc::from(OPEN_SANS),
+    fn open_sans_binding() -> Option<SystemFontRenderBinding> {
+        Some(SystemFontRenderBinding {
+            font_data: Arc::from(open_sans()?),
             family: "OpenSans".to_owned(),
             ..binding()
-        }
+        })
     }
 
     #[test]
     fn system_font_measurement_retains_the_glyphs_from_one_shaping_pass() {
-        let binding = open_sans_binding();
+        let Some(binding) = open_sans_binding() else {
+            eprintln!("skipping Purple.app font regression: OpenSans-Regular.ttf is unavailable");
+            return;
+        };
         let ligature = binding.native_system_font_layout("ffi").unwrap();
         assert_eq!(ligature.lines.len(), 1);
         assert!(ligature.lines[0].glyphs.len() < "ffi".chars().count());
@@ -561,9 +568,12 @@ mod system_font_bounds_tests {
             ]
         );
 
-        let binding = open_sans_binding();
+        let Some(binding) = open_sans_binding() else {
+            eprintln!("skipping Purple.app font regression: OpenSans-Regular.ttf is unavailable");
+            return;
+        };
         let layout = binding.native_system_font_layout("abc אבג 123").unwrap();
-        let face = rustybuzz::Face::from_slice(OPEN_SANS, 0).unwrap();
+        let face = rustybuzz::Face::from_slice(&binding.font_data, 0).unwrap();
         let expected = [
             face.glyph_index('a').unwrap().0,
             face.glyph_index('b').unwrap().0,
@@ -619,7 +629,10 @@ mod system_font_bounds_tests {
 
     #[test]
     fn system_font_layout_uses_cocoa_line_separators_and_coalesces_crlf() {
-        let binding = open_sans_binding();
+        let Some(binding) = open_sans_binding() else {
+            eprintln!("skipping Purple.app font regression: OpenSans-Regular.ttf is unavailable");
+            return;
+        };
         let expected_width = binding.native_string_width("WW");
         for separator in [
             "\n", "\u{000C}", "\r", "\r\n", "\u{0085}", "\u{2028}", "\u{2029}",

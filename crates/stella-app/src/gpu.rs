@@ -116,5 +116,4 @@ pub(crate) struct GpuRenderer {
 }
 
 #[cfg(test)]
-#[cfg(test)]
 mod tests;

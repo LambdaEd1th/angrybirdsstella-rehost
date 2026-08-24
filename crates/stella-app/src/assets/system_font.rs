@@ -601,9 +601,13 @@ mod tests {
 
     use super::*;
 
-    const OPEN_SANS: &[u8] = include_bytes!(
-        "../../../../angry birds stella v1.1.6/Payload/Purple.app/OpenSans-Regular.ttf"
-    );
+    fn open_sans() -> Option<Vec<u8>> {
+        std::fs::read(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../angry birds stella v1.1.6/Payload/Purple.app/OpenSans-Regular.ttf"),
+        )
+        .ok()
+    }
 
     fn binding() -> SystemFontRenderBinding {
         SystemFontRenderBinding {
@@ -626,7 +630,11 @@ mod tests {
 
     #[test]
     fn system_font_stroke_is_a_closed_centered_vector_outline() {
-        let font = FontRef::try_from_slice(OPEN_SANS).unwrap();
+        let Some(open_sans) = open_sans() else {
+            eprintln!("skipping Purple.app font regression: OpenSans-Regular.ttf is unavailable");
+            return;
+        };
+        let font = FontRef::try_from_slice(&open_sans).unwrap();
         let units_per_em = font.units_per_em().unwrap();
         let unit_scale = 40.0 / units_per_em;
         let path = glyph_outline_path(&font, font.glyph_id('M'), unit_scale, 10.0, 50.0).unwrap();

@@ -542,18 +542,27 @@ pub(super) fn native_system_font_rustybuzz_script(script: UnicodeScriptCode) -> 
 mod tests {
     use super::*;
 
-    const OPEN_SANS: &[u8] = include_bytes!(
-        "../../../../angry birds stella v1.1.6/Payload/Purple.app/OpenSans-Regular.ttf"
-    );
-    const ANGRY_BIRDS_TEXT: &[u8] = include_bytes!(
-        "../../../../angry birds stella v1.1.6/Payload/Purple.app/AngryBirdsText-Regular.ttf"
-    );
+    fn purple_font(name: &str) -> Option<Vec<u8>> {
+        std::fs::read(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../angry birds stella v1.1.6/Payload/Purple.app")
+                .join(name),
+        )
+        .ok()
+    }
 
     #[test]
     fn fallback_catalog_loads_one_shared_face_for_multiple_character_queries() {
+        let (Some(open_sans), Some(angry_birds_text)) = (
+            purple_font("OpenSans-Regular.ttf"),
+            purple_font("AngryBirdsText-Regular.ttf"),
+        ) else {
+            eprintln!("skipping Purple.app font regression: bundle fonts are unavailable");
+            return;
+        };
         let mut database = fontdb::Database::new();
-        database.load_font_data(OPEN_SANS.to_vec());
-        database.load_font_data(ANGRY_BIRDS_TEXT.to_vec());
+        database.load_font_data(open_sans);
+        database.load_font_data(angry_birds_text);
         let catalog = SystemFontFallbackCatalog::new(Arc::new(database));
 
         let first = catalog.resolve("\u{F8FF}").unwrap();
@@ -566,7 +575,14 @@ mod tests {
 
     #[test]
     fn missing_cmap_character_becomes_a_separate_fallback_face_run() {
-        let base_data = Arc::<[u8]>::from(OPEN_SANS);
+        let (Some(open_sans), Some(angry_birds_text)) = (
+            purple_font("OpenSans-Regular.ttf"),
+            purple_font("AngryBirdsText-Regular.ttf"),
+        ) else {
+            eprintln!("skipping Purple.app font regression: bundle fonts are unavailable");
+            return;
+        };
+        let base_data = Arc::<[u8]>::from(open_sans.clone());
         let base = rustybuzz::Face::from_slice(&base_data, 0).unwrap();
         let base_layout = SystemFontLayoutFace {
             family: "OpenSans".to_owned(),
@@ -575,8 +591,8 @@ mod tests {
             units_per_em: u16::try_from(base.units_per_em()).unwrap(),
         };
         let mut database = fontdb::Database::new();
-        database.load_font_data(OPEN_SANS.to_vec());
-        database.load_font_data(ANGRY_BIRDS_TEXT.to_vec());
+        database.load_font_data(open_sans);
+        database.load_font_data(angry_birds_text);
         let catalog = SystemFontFallbackCatalog::new(Arc::new(database));
 
         let runs =
