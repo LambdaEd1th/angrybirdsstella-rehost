@@ -7,24 +7,27 @@ This archive contains the native executables for one platform:
 - `stella-tool`: resource extraction, inspection and conversion utility;
 - `stella-mp3-audit`: native MP3 compatibility audit utility.
 
-## Game data is not included
+## Game data is included
 
-The original Angry Birds Stella application, executable, scripts, textures,
-audio and other proprietary resources are intentionally not redistributed.
-Supply your own legally obtained `Purple.app` and extract its encrypted data:
-
-```text
-stella-tool extract --source "/path/to/Purple.app/data" --output ./data
-```
-
-On Windows, add `.exe` to the command name. Start the desktop rehost with:
+This private release includes the locally supplied, decrypted runtime resources
+under `runtime/data`. A writable `runtime/appdata` directory is included for
+saves, settings and downloaded-asset state. Start the desktop rehost from the
+archive root:
 
 ```text
-stella-app --data ./data
+stella-app
 ```
 
-The extracted `data` directory must remain next to a writable sibling
-directory named `appdata`; the runtime creates `appdata` when needed.
+On Windows, run `stella-app.exe`. An alternative data directory can still be
+selected explicitly:
+
+```text
+stella-app --data /path/to/data
+```
+
+The bundled resources originate from a legally supplied Angry Birds Stella
+application and must not be redistributed outside the authorized private
+repository and its private releases.
 
 ## Platform notes
 

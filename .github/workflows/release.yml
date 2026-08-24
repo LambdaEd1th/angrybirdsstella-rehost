@@ -23,6 +23,9 @@ env:
   RUST_BACKTRACE: 1
   RUST_TOOLCHAIN: 1.93.0
   RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  RUNTIME_DATA_RELEASE: runtime-data-v1.1.6
+  RUNTIME_DATA_ARCHIVE: angry-birds-stella-runtime-data-v1.1.6.tar.gz
+  RUNTIME_DATA_SHA256: 1935865424eca4294666dbf37235caba95eaba0bde69624286b1b61b64e573ea
 
 jobs:
   validate:
@@ -182,12 +185,36 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Check out packaging scripts
+        uses: actions/checkout@v7
+
       - name: Download release packages
         uses: actions/download-artifact@v8
         with:
           pattern: release-*
           path: dist
           merge-multiple: true
+
+      - name: Download and verify private runtime data
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/runtime-data"
+          gh release download "$RUNTIME_DATA_RELEASE" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "$RUNTIME_DATA_ARCHIVE" \
+            --dir "$RUNNER_TEMP/runtime-data"
+          echo "$RUNTIME_DATA_SHA256  $RUNNER_TEMP/runtime-data/$RUNTIME_DATA_ARCHIVE" \
+            | sha256sum --check -
+
+      - name: Add game data to every platform package
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends zip unzip
+          bash .github/scripts/embed-runtime-data.sh \
+            dist "$RUNNER_TEMP/runtime-data/$RUNTIME_DATA_ARCHIVE"
 
       - name: Generate SHA-256 checksums
         shell: bash

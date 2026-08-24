@@ -124,8 +124,7 @@ fn font_v2_utf32_glyphs_reach_the_wgpu_quad_path() {
 
 #[test]
 fn system_text_builds_premultiplied_label_and_uses_native_stroke_anchor_geometry() {
-    let data_root =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../build/extracted/data");
+    let data_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data");
     let runtime = StellaLua::new(data_root).unwrap();
     runtime
         .execute_source(
@@ -280,8 +279,7 @@ fn system_text_builds_premultiplied_label_and_uses_native_stroke_anchor_geometry
 
 #[test]
 fn system_text_rasterizes_each_coretext_fallback_face_with_its_own_em_scale() {
-    let data_root =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../build/extracted/data");
+    let data_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data");
     let runtime = StellaLua::new(data_root).unwrap();
     if runtime
         .execute_source(
@@ -333,8 +331,7 @@ fn system_text_rasterizes_each_coretext_fallback_face_with_its_own_em_scale() {
 
 #[test]
 fn last_system_font_release_separates_same_hash_deferred_label_lifetimes() {
-    let data_root =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../build/extracted/data");
+    let data_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data");
     let runtime = StellaLua::new(data_root).unwrap();
     runtime
         .execute_source(

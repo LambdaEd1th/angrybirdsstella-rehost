@@ -130,7 +130,7 @@ mod tests {
 
     #[test]
     fn active_catalog_revision_decodes_its_texture_before_first_draw() {
-        let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../build/extracted/data");
+        let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data");
         let image_root = data_root.join("images/1024x768");
         let font_root = data_root.join("fonts/1024x768");
         if !image_root.is_dir() || !font_root.is_dir() {
@@ -166,7 +166,7 @@ mod tests {
 
     #[test]
     fn shipped_atlas_and_bitmap_font_regions_resolve_inside_their_textures() {
-        let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../build/extracted/data");
+        let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data");
         let image_root = data_root.join("images/1024x768");
         let font_root = data_root.join("fonts/1024x768");
         if !image_root.is_dir() || !font_root.is_dir() {

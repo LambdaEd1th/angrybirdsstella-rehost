@@ -5,7 +5,7 @@ use super::*;
 #[derive(Debug, Parser)]
 #[command(about = "Cross-platform Angry Birds Stella Rust rehost")]
 struct Args {
-    #[arg(long, default_value = "build/extracted/data")]
+    #[arg(long, default_value = "runtime/data")]
     data: PathBuf,
     /// Initial native drawable width published to the original Lua scripts.
     #[arg(long, default_value_t = GAME_WIDTH)]

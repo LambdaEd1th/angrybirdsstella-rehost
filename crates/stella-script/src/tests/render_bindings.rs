@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn recovered_native_sprite_helpers_emit_every_requested_layer() {
-    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../build/extracted/data");
+    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data");
     let runtime = StellaLua::new(data_root).unwrap();
     runtime
         .execute_source(
@@ -76,7 +76,7 @@ fn recovered_native_sprite_helpers_emit_every_requested_layer() {
 
 #[test]
 fn string_3d_adapter_is_strict_and_does_not_replace_x_rotation_with_z_rotation() {
-    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../build/extracted/data");
+    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data");
     let runtime = StellaLua::new(data_root).unwrap();
     runtime
         .execute_source(
@@ -218,7 +218,7 @@ fn submitted_text_keeps_constructed_font_and_texture_after_replace_and_release()
 
 #[test]
 fn submitted_system_text_retains_native_argb_stroke_metrics_and_face_after_release() {
-    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../build/extracted/data");
+    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data");
     let runtime = StellaLua::new(data_root).unwrap();
     runtime
         .execute_source(
@@ -300,7 +300,7 @@ fn submitted_system_text_retains_native_argb_stroke_metrics_and_face_after_relea
 
 #[test]
 fn box_native_uses_middle_keys_anchors_background_and_submission_order() {
-    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../build/extracted/data");
+    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data");
     let runtime = StellaLua::new(data_root).unwrap();
     runtime
         .execute_source(
@@ -383,7 +383,7 @@ fn box_native_uses_middle_keys_anchors_background_and_submission_order() {
 
 #[test]
 fn box_native_floors_each_target_rect_and_coerces_lua51_color_strings() {
-    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../build/extracted/data");
+    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data");
     let runtime = StellaLua::new(data_root).unwrap();
     runtime
         .execute_source(
@@ -430,7 +430,7 @@ fn box_native_floors_each_target_rect_and_coerces_lua51_color_strings() {
 
 #[test]
 fn box_native_uses_native_resource_lookup_culling_and_lua51_stack_rules() {
-    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../build/extracted/data");
+    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data");
     let runtime = StellaLua::new(data_root).unwrap();
     runtime
         .execute_source(
@@ -787,7 +787,7 @@ fn native_line_adapter_rounds_to_float32_before_fcvtzs_and_color_packing() {
 
 #[test]
 fn direct_sprite_helpers_match_native_lookup_fallback_and_independent_affine_matrix() {
-    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../build/extracted/data");
+    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data");
     let runtime = StellaLua::new(data_root).unwrap();
     runtime
         .execute_source(
@@ -1009,7 +1009,7 @@ fn selected_object_submission_retains_both_native_image_pointers() {
 
 #[test]
 fn ui_text_native_matches_strict_abi_localization_floor_pivot_and_live_state() {
-    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../build/extracted/data");
+    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data");
     let runtime = StellaLua::new(&data_root).unwrap();
     runtime
         .execute_source(

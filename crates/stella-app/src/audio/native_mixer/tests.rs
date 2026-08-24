@@ -257,7 +257,7 @@ fn shipped_mp3_streams_match_native_gapless_pcm() {
         ("character_stella_hit_01.mp3", 21_982, 0xdde0_711c_f0b3_76c2),
     ] {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../build/extracted/data/audio/sfx")
+            .join("../../runtime/data/audio/sfx")
             .join(name);
         let clip = decode_asset(&AudioAssetSource::File(path)).unwrap();
         assert_eq!((clip.channels, clip.bits_per_sample), (1, 16));

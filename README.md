@@ -34,7 +34,7 @@ The resource pipeline recovered from the ARM64 binary with IDA is:
 ```sh
 cargo run -p stella-tool -- extract \
   --source "angry birds stella v1.1.6/Payload/Purple.app/data" \
-  --output extracted/data
+  --output runtime/data
 ```
 
 Inspect or decode individual files:
@@ -63,18 +63,18 @@ cargo run -p stella-tool -- transcode-lua input.lua output.lua
 
 ## Run the desktop rehost
 
-With the data already extracted under `build/extracted/data`:
+With the data already extracted under `runtime/data` (the desktop app uses this
+location by default):
 
 ```sh
-cargo run --release -p stella-app -- \
-  --data build/extracted/data
+cargo run --release -p stella-app
 ```
 
 Generate a deterministic render without opening a window:
 
 ```sh
 cargo run -p stella-app -- \
-  --data build/extracted/data \
+  --data runtime/data \
   --screenshot build/stella-island-map.png \
   --screenshot-frames 60
 ```
@@ -83,7 +83,7 @@ Long-run the original script state machine without graphics:
 
 ```sh
 cargo run -p stella-script --bin stella-headless -- \
-  --data build/extracted/data --frames 3600 --dump-render
+  --data runtime/data --frames 3600 --dump-render
 ```
 
 ## CI and releases
@@ -103,11 +103,17 @@ git push origin v0.1.0
 The Release workflow can also be started manually with the same tag in the
 GitHub Actions interface. It builds the four workspace executables for all five
 targets, publishes `.tar.gz` archives for macOS/Linux and `.zip` archives for
-Windows, and attaches a shared `SHA256SUMS` file. Original game resources are
-not included; each archive contains extraction and runtime instructions in
+Windows, injects the private verified `runtime/data` payload into every archive,
+and attaches a shared `SHA256SUMS` file. Each package therefore runs without a
+separate extraction step and contains its runtime instructions in
 `RELEASE-README.md`.
 
 ## Workspace layout
+
+- `runtime/data`: canonical, locally extracted game resources; intentionally
+  ignored by Git and never uploaded by CI.
+- `runtime/appdata`: writable saves, settings and downloaded-asset state;
+  intentionally ignored by Git.
 
 - `stella-app`: resizable desktop host and `wgpu` atlas/composite renderer.
 - `stella-assets`: resource crypto, 7z, Lua, PVR v2 and KA3D/RVIO formats.

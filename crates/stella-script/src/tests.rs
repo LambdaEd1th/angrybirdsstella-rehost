@@ -224,7 +224,7 @@ impl ShippedDataSandbox {
         let data_root = root.join("data");
         fs::create_dir_all(root.join("appdata")).unwrap();
         let shipped = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../build/extracted/data")
+            .join("../../runtime/data")
             .canonicalize()
             .unwrap();
         #[cfg(unix)]

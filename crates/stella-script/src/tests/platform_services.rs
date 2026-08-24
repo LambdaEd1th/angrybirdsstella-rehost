@@ -2847,7 +2847,7 @@ fn scene_objects_retain_assigned_atlas_composite_and_null_resource_pointers() {
 
 #[test]
 fn text_group_locale_lifecycle_distinguishes_absent_unloaded_and_loaded_languages() {
-    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../build/extracted/data");
+    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data");
     let bytes = fs::read(data_root.join("localization/TEXTS_BASIC.dat")).unwrap();
     let table = stella_assets::ka3d::LocalizationTable::parse(&bytes).unwrap();
     let key = table.ids[0].clone();

@@ -49,7 +49,7 @@ fn host_draw_invokes_the_shipped_outer_callback_without_a_second_drawcalls_pass(
 
 #[test]
 fn bitmap_font_metrics_spacing_and_baseline_match_native_font_records() {
-    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../build/extracted/data");
+    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data");
     let runtime = StellaLua::new(data_root).unwrap();
     runtime
         .execute_source(
@@ -576,7 +576,7 @@ fn native_direct_mouse_wheel_honours_shift_and_control() {
 
 #[test]
 fn resource_draw_string_is_strict_and_uses_combined_anchor_and_context_matrix() {
-    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../build/extracted/data");
+    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data");
     let runtime = StellaLua::new(data_root).unwrap();
     runtime
         .execute_source(
@@ -643,7 +643,7 @@ fn resource_draw_string_is_strict_and_uses_combined_anchor_and_context_matrix() 
 
 #[test]
 fn composite_resource_tables_and_partial_entry_updates_match_native_shape() {
-    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../build/extracted/data");
+    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data");
     let runtime = StellaLua::new(data_root).unwrap();
     runtime
         .execute_source(
@@ -737,7 +737,7 @@ fn composite_resource_tables_and_partial_entry_updates_match_native_shape() {
 
 #[test]
 fn composite_resource_handwritten_stack_abi_matches_native_dispatch_order() {
-    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../build/extracted/data");
+    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data");
     let runtime = StellaLua::new(data_root).unwrap();
     runtime
         .execute_source(

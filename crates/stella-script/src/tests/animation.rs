@@ -121,7 +121,7 @@ fn animation_skin_resolves_namespaced_track_alias_before_basename() {
 
 #[test]
 fn shipped_leaves_use_inverse_skin_rotation_and_native_layer_order() {
-    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../build/extracted/data");
+    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data");
     let asset = animation_asset(&data_root, "animations/LEAVES.anim.json");
     let sheet = stella_assets::ka3d::SpriteSheet::parse(
         &fs::read(data_root.join("images/1024x768/MENU_ELEMENTS_1.dat")).unwrap(),
@@ -239,7 +239,7 @@ fn shipped_leaves_use_inverse_skin_rotation_and_native_layer_order() {
 
 #[test]
 fn shipped_leaves_follow_native_recursive_world_matrices_during_both_phases() {
-    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../build/extracted/data");
+    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data");
     let asset = animation_asset(&data_root, "animations/LEAVES.anim.json");
     let sheet = stella_assets::ka3d::SpriteSheet::parse(
         &fs::read(data_root.join("images/1024x768/MENU_ELEMENTS_1.dat")).unwrap(),
@@ -359,7 +359,7 @@ fn shipped_leaves_follow_native_recursive_world_matrices_during_both_phases() {
 
 #[test]
 fn shipped_leaves_bind_skin_at_apply_and_retain_pointer_until_the_next_apply() {
-    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../build/extracted/data");
+    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data");
     let runtime = StellaLua::new(data_root).unwrap();
     runtime
         .execute_source(
@@ -558,7 +558,7 @@ fn missing_skin_clears_selection_but_rebinds_default_only_on_next_apply() {
 
 #[test]
 fn shipped_telepod_composite_attachment_leaves_sprite_component_null() {
-    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../build/extracted/data");
+    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data");
     let runtime = StellaLua::new(data_root).unwrap();
     runtime
         .execute_source(

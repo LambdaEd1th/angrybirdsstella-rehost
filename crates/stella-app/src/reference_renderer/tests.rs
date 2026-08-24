@@ -340,7 +340,7 @@ fn composite_native_flip_multipliers_and_radian_angle_are_applied() {
 
 #[test]
 fn shipped_challenge_level_end_background_occludes_the_complete_native_framebuffer() {
-    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../build/extracted/data");
+    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data");
     let image_root = data_root.join("images/1024x768");
     let font_root = data_root.join("fonts/1024x768");
     if !image_root.is_dir() || !font_root.is_dir() {

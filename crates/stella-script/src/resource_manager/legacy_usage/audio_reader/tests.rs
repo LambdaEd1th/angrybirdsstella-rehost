@@ -18,8 +18,8 @@ fn wav_counter_uses_data_chunk_not_container_size() {
 
 #[test]
 fn shipped_lame_mp3_matches_mpg123_gapless_pcm_length() {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../build/extracted/data/audio/sfx/metal_hit_01.mp3");
+    let path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data/audio/sfx/metal_hit_01.mp3");
     // Purple's static branch drains mpg123 into a memory stream. This
     // value independently matches `mpg123 -s` for the shipped file.
     let static_info = audio_file_info(&path, false).unwrap();
@@ -52,7 +52,7 @@ fn shipped_lame_mp3_matches_mpg123_gapless_pcm_length() {
     );
 
     let tagged_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../build/extracted/data/audio/sfx/character_stella_hit_01.mp3");
+        .join("../../runtime/data/audio/sfx/character_stella_hit_01.mp3");
     let tagged_info = audio_file_info(&tagged_path, false).unwrap();
     let AudioAssetSource::PcmData { data, .. } = tagged_info.source else {
         panic!("tagged static MP3 must own decoded PCM")
@@ -75,7 +75,7 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 
 #[test]
 fn every_shipped_mp3_decodes_to_a_static_native_memory_clip() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../build/extracted/data/audio");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data/audio");
     let mut pending = vec![root];
     let mut decoded = 0;
     while let Some(directory) = pending.pop() {
@@ -163,7 +163,7 @@ fn static_wav_keeps_declared_zero_tail_after_short_input_read() {
 
 #[test]
 fn shipped_sprt_reports_its_pvr_payload_upload() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../build/extracted/data");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data");
     let textures = sprite_sheet_textures(&root, "images/1024x768/CONNECTION_SCREEN_SHEET_0.dat");
     assert_eq!(textures.len(), 1);
     assert_eq!(textures[0].uploaded_bytes, 96_350);

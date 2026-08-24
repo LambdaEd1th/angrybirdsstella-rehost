@@ -72,7 +72,7 @@ jobs:
         run: cargo test --workspace --locked --no-run
 
       # The complete local suite also checks the legally supplied Purple.app
-      # resources under build/extracted/data. Those proprietary files are not
+      # resources under runtime/data. Those proprietary files are not
       # stored in GitHub, so CI runs the portable crates and the most important
       # synthetic Lua/physics regressions instead.
       - name: Run portable crate tests

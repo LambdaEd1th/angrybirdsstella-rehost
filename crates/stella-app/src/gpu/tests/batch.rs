@@ -372,8 +372,7 @@ fn capture_sprite_copies_the_immediate_framebuffer_for_later_draws() {
 
 #[test]
 fn shipped_challenge_level_end_background_occludes_the_complete_gpu_framebuffer() {
-    let data_root =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../build/extracted/data");
+    let data_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data");
     let image_root = data_root.join("images/1024x768");
     let font_root = data_root.join("fonts/1024x768");
     if !image_root.is_dir() || !font_root.is_dir() {

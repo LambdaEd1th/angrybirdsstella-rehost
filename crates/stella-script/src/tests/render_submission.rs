@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn global_draw_compo_sprite_matches_native_legacy_part_scaling() {
-    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../build/extracted/data");
+    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data");
     let runtime = StellaLua::new(data_root).unwrap();
     runtime
         .execute_source(
@@ -62,7 +62,7 @@ fn global_draw_compo_sprite_matches_native_legacy_part_scaling() {
 
 #[test]
 fn sprite_draw_anchors_match_native_pivot_relative_offsets_and_overloads() {
-    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../build/extracted/data");
+    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data");
     let runtime = StellaLua::new(data_root).unwrap();
     runtime
         .execute_source(
@@ -115,7 +115,7 @@ fn sprite_draw_anchors_match_native_pivot_relative_offsets_and_overloads() {
 
 #[test]
 fn rotated_atlas_draw_keeps_atlas_and_render_state_pivots_independent() {
-    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../build/extracted/data");
+    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data");
     let runtime = StellaLua::new(data_root).unwrap();
     runtime
         .execute_source(
