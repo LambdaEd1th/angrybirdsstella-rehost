@@ -1,0 +1,61 @@
+//! Native physics-world subsystems recovered from Purple and its Box2D build.
+
+mod broad_phase;
+mod broad_phase_bridge;
+mod contact_lifecycle;
+mod contact_manager;
+mod contact_position_solver;
+mod contact_velocity_solver;
+mod contacts;
+mod continuous;
+mod continuous_solver;
+mod dirt;
+mod extensions;
+mod islands;
+mod joint_solver;
+mod joint_solver_distance;
+mod joint_solver_prismatic;
+mod joint_solver_revolute;
+mod joint_solver_rope;
+mod joint_solver_weld;
+mod joints;
+mod manifold;
+mod narrow_phase;
+mod native_block_registration;
+mod object_extension_registration;
+mod polygon_decomposition;
+mod position_constraints;
+mod position_integration;
+mod ray_cast;
+mod registration;
+mod scene_object;
+mod scene_object_body;
+mod scene_object_collision;
+mod scene_object_motion;
+mod sensors;
+mod shapes;
+mod solver_motion;
+mod track_joint_registration;
+mod tracks;
+mod world_control;
+
+pub(crate) use broad_phase::*;
+pub(crate) use contact_velocity_solver::{
+    ContactBodyState, ContactVelocityBodies, NativeContactVelocityCache,
+};
+pub(crate) use contacts::*;
+pub(crate) use continuous::*;
+pub(crate) use dirt::*;
+pub(crate) use extensions::install_extensions;
+pub(crate) use islands::*;
+pub(crate) use joints::*;
+pub(crate) use manifold::*;
+pub(crate) use narrow_phase::*;
+pub(crate) use polygon_decomposition::*;
+pub(crate) use position_constraints::*;
+pub(crate) use ray_cast::*;
+pub(crate) use registration::install_bindings;
+pub(crate) use scene_object::*;
+pub(crate) use sensors::*;
+pub(crate) use shapes::*;
+pub(crate) use tracks::*;

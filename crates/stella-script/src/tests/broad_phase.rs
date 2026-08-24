@@ -1,0 +1,324 @@
+use super::*;
+
+#[test]
+fn dynamic_tree_proxy_ids_follow_native_leaf_allocation_and_reuse() {
+    fn validate_tree(tree: &NativeDynamicTree, expected_leaves: usize) {
+        fn validate_node(
+            tree: &NativeDynamicTree,
+            node_id: i32,
+            expected_parent: i32,
+        ) -> (i32, NativeAabb, usize) {
+            let node = &tree.nodes[node_id as usize];
+            assert_eq!(node.parent, expected_parent);
+            assert!(node.height >= 0);
+            if node.is_leaf() {
+                assert_eq!(node.height, 0);
+                assert!(node.user_data.is_some());
+                return (0, node.aabb, 1);
+            }
+            assert!(node.user_data.is_none());
+            let (first_height, first_aabb, first_leaves) =
+                validate_node(tree, node.child1, node_id);
+            let (second_height, second_aabb, second_leaves) =
+                validate_node(tree, node.child2, node_id);
+            assert_eq!(node.height, 1 + first_height.max(second_height));
+            assert_eq!(node.aabb, native_aabb_combine(first_aabb, second_aabb));
+            assert!((first_height - second_height).abs() <= 1);
+            (node.height, node.aabb, first_leaves + second_leaves)
+        }
+
+        let (_, _, leaves) = validate_node(tree, tree.root, -1);
+        assert_eq!(leaves, expected_leaves);
+        assert_eq!(tree.node_count, expected_leaves * 2 - 1);
+        assert_eq!(
+            tree.nodes.iter().filter(|node| node.height >= 0).count(),
+            tree.node_count
+        );
+        let mut free_nodes = BTreeSet::new();
+        let mut free = tree.free_list;
+        while free != -1 {
+            assert!(free_nodes.insert(free), "cycle in native free list");
+            let node = &tree.nodes[free as usize];
+            assert_eq!(node.height, -1);
+            free = node.next;
+        }
+        assert_eq!(free_nodes.len() + tree.node_count, tree.nodes.len());
+    }
+
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createBox("a", "", -4, 0, 1, 1, 1, 0, 0, true, false, 1)
+                createBox("b", "", -2, 0, 1, 1, 1, 0, 0, true, false, 1)
+                createBox("c", "",  0, 0, 1, 1, 1, 0, 0, true, false, 1)
+                "#,
+        )
+        .unwrap();
+    {
+        let bridge = runtime.render.lock().unwrap();
+        assert_eq!(bridge.scene["a"].fixture_proxy_ids, vec![Some(0)]);
+        assert_eq!(bridge.scene["b"].fixture_proxy_ids, vec![Some(1)]);
+        assert_eq!(bridge.scene["c"].fixture_proxy_ids, vec![Some(3)]);
+        validate_tree(&bridge.dynamic_tree, 3);
+    }
+
+    runtime
+        .execute_source(
+            r#"
+                removeObject("b")
+                createBox("d", "", 2, 0, 1, 1, 1, 0, 0, true, false, 1)
+                "#,
+        )
+        .unwrap();
+    let bridge = runtime.render.lock().unwrap();
+    assert_eq!(bridge.scene["d"].fixture_proxy_ids, vec![Some(1)]);
+    validate_tree(&bridge.dynamic_tree, 3);
+    assert!(bridge.scene["d"].physics_creation_order > bridge.scene["c"].physics_creation_order);
+}
+
+#[test]
+fn dynamic_tree_grows_balances_queries_and_reuses_full_node_free_list() {
+    let mut tree = NativeDynamicTree::default();
+    let mut proxies = Vec::new();
+    for index in 0..20 {
+        let x = index as f32 * 2.0;
+        proxies.push(tree.create_proxy((x, -0.5, x + 1.0, 0.5), (format!("body_{index}"), 0)));
+    }
+    assert_eq!(tree.node_count, 39);
+    assert_eq!(tree.nodes.len(), 64);
+    assert!(tree.nodes[tree.root as usize].height <= 6);
+    let first_query = tree.query((-1.0, -1.0, 40.0, 1.0));
+    assert_eq!(first_query.len(), 20);
+    assert_eq!(
+        first_query.iter().copied().collect::<BTreeSet<_>>().len(),
+        20
+    );
+
+    for proxy_id in proxies.iter().copied().skip(1).step_by(2) {
+        tree.destroy_proxy(proxy_id);
+    }
+    assert_eq!(tree.node_count, 19);
+    let mut replacements = Vec::new();
+    for index in 0..10 {
+        let x = index as f32 * 2.0 + 0.25;
+        replacements.push(tree.create_proxy(
+            (x, -0.25, x + 0.5, 0.25),
+            (format!("replacement_{index}"), 0),
+        ));
+    }
+    assert_eq!(tree.node_count, 39);
+    assert_eq!(tree.nodes.len(), 64);
+    let second_query = tree.query((-1.0, -1.0, 40.0, 1.0));
+    assert_eq!(second_query.len(), 20);
+    assert_eq!(
+        second_query.iter().copied().collect::<BTreeSet<_>>().len(),
+        20
+    );
+    assert!(
+        replacements
+            .iter()
+            .all(|proxy_id| tree.proxy_user_data(*proxy_id).is_some())
+    );
+}
+
+#[test]
+fn fat_aabb_creates_contact_before_narrow_phase_begin_contact() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createBox("a", "", 0, 0, 1, 1, 1, 0, 0, true, false, 1)
+                createBox("b", "", 1.15, 0, 1, 1, 1, 0, 0, true, false, 1)
+                "#,
+        )
+        .unwrap();
+
+    let key = ("a".to_owned(), "b".to_owned(), 0, 0);
+    let creation_order = {
+        let mut bridge = runtime.render.lock().unwrap();
+        let events = bridge.refresh_contacts();
+        assert!(events.is_empty());
+        assert!(bridge.active_contacts.is_empty());
+        assert!(bridge.broad_phase_contacts.contains(&key));
+        bridge.contact_creation_order[&key]
+    };
+
+    let mut bridge = runtime.render.lock().unwrap();
+    bridge.scene.get_mut("b").unwrap().x = 1.0;
+    bridge.sync_native_broad_phase();
+    let events = bridge.refresh_contacts();
+    assert!(events.iter().any(|event| event.began));
+    assert_eq!(bridge.active_contacts.get(&key), Some(&false));
+    assert_eq!(
+        bridge.contact_creation_order.get(&key),
+        Some(&creation_order)
+    );
+}
+
+#[test]
+fn body_transform_synchronizes_only_its_own_fixture_proxies() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createBox("target", "", -4, 0, 1, 1, 1, 0, 0, true, false, 1)
+                createBox("unrelated", "", 4, 0, 1, 1, 1, 0, 0, true, false, 1)
+                "#,
+        )
+        .unwrap();
+
+    let mut bridge = runtime.render.lock().unwrap();
+    let target_key = ("target".to_owned(), 0);
+    let unrelated_key = ("unrelated".to_owned(), 0);
+    let old_target = bridge.fixture_tight_aabbs[&target_key];
+    let old_unrelated = bridge.fixture_tight_aabbs[&unrelated_key];
+    bridge.scene.get_mut("target").unwrap().x = -3.0;
+    bridge.scene.get_mut("unrelated").unwrap().x = 5.0;
+
+    bridge.sync_native_body_broad_phase("target");
+
+    assert_ne!(bridge.fixture_tight_aabbs[&target_key], old_target);
+    assert_eq!(bridge.fixture_tight_aabbs[&unrelated_key], old_unrelated);
+    bridge.sync_native_broad_phase();
+    assert_ne!(bridge.fixture_tight_aabbs[&unrelated_key], old_unrelated);
+}
+
+#[test]
+fn broad_phase_rejects_pairs_without_a_dynamic_body() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createBox("static", "", 0, 0, 1, 1, 0, 0, 0, true, false, 1)
+                createBox("kinematic", "", 0, 0, 1, 1, 1, 0, 0, true, false, 1)
+                setObjectParameter("kinematic", 37, 1)
+                "#,
+        )
+        .unwrap();
+
+    let mut bridge = runtime.render.lock().unwrap();
+    assert!(bridge.refresh_contacts().is_empty());
+    assert!(bridge.broad_phase_contacts.is_empty());
+    assert!(bridge.active_contacts.is_empty());
+}
+
+#[test]
+fn contact_manager_updates_native_list_head_first() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createBox("ground", "", 0, 0, 6, 1, 0, 0, 0, true, false, 1)
+                createCircle("a", "", -1.5, 0.8, 0.4, 1, 0, 0, true, false, 1)
+                createCircle("b", "",  1.5, 0.8, 0.4, 1, 0, 0, true, false, 1)
+                "#,
+        )
+        .unwrap();
+
+    let mut bridge = runtime.render.lock().unwrap();
+    let events = bridge.refresh_contacts();
+    let began = events
+        .iter()
+        .filter(|event| event.began && !event.sensor)
+        .collect::<Vec<_>>();
+    assert_eq!(began.len(), 2);
+    // UpdatePairs creates (groundProxy=0, aProxy=1) before (0, bProxy=3),
+    // and AddPair pushes each contact at the list head. Collide therefore
+    // updates b/ground before a/ground.
+    assert_eq!(
+        (began[0].first.as_str(), began[0].second.as_str()),
+        ("b", "ground")
+    );
+    assert_eq!(
+        (began[1].first.as_str(), began[1].second.as_str()),
+        ("a", "ground")
+    );
+}
+
+#[test]
+fn recovered_edge_capsule_rejects_aabb_only_endpoint_overlap() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                clearVertices()
+                addVertex(-1, 0)
+                addVertex(1, 0)
+                createLineShape("ground", "", 0, 0, 2, 0, 0, 0, 0, true, false, 1)
+                createCircle("circle", "", 1.9, 0.9, 1, 1, 0, 0, true, false, 1)
+                setVelocity("circle", -0.1, 0)
+                "#,
+        )
+        .unwrap();
+
+    let mut bridge = runtime.render.lock().unwrap();
+    let ground_aabb = bridge.scene["ground"].collision_aabb().unwrap();
+    let circle_aabb = bridge.scene["circle"].collision_aabb().unwrap();
+    assert!(ground_aabb.2 > circle_aabb.0 && ground_aabb.3 > circle_aabb.1);
+    assert!(bridge.solve_contacts().is_empty());
+}
+
+#[test]
+fn dynamic_zero_area_edge_body_uses_native_unit_mass_fallback() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                clearVertices()
+                addVertex(-1, 0)
+                addVertex(1, 0)
+                createLineShape("edge", "", 0, 0, 2, 0, 1, 0, 0, true, false, 1)
+                "#,
+        )
+        .unwrap();
+
+    let bridge = runtime.render.lock().unwrap();
+    assert!(bridge.scene["edge"].dynamic_body);
+    assert_eq!(bridge.scene["edge"].inverse_mass, 1.0);
+    assert_eq!(bridge.scene["edge"].inverse_inertia(), 0.0);
+}
+
+#[test]
+fn contact_restitution_uses_recovered_one_unit_velocity_threshold() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createCircle("mover", "", 0, 0, 1, 1, 0, 1, true, false, 1)
+                createCircle("wall", "", 1.9, 0, 1, 0, 0, 1, true, false, 1)
+                setVelocity("mover", 0.5, 0)
+                "#,
+        )
+        .unwrap();
+
+    let mut bridge = runtime.render.lock().unwrap();
+    let events = bridge.solve_contacts();
+    assert!(events.iter().any(|event| event.impulse > 0.0));
+    // sub_100863BC4 only installs restitution bias below -1.0. A slow
+    // contact therefore stops instead of bouncing back at restitution 1.
+    assert!(bridge.scene["mover"].velocity_x.abs() < 1e-9);
+}
+
+#[test]
+fn new_contact_gets_restitution_bias_before_first_warm_start() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createCircle("mover", "", 0, 0, 1, 1, 0, 1, true, false, 1)
+                createCircle("wall", "", 1.9, 0, 1, 0, 0, 1, true, false, 1)
+                setWorldGravity(0, 0)
+                setVelocity("mover", 3, 0)
+                update = function() end
+                updatePhysics = function() end
+                "#,
+        )
+        .unwrap();
+
+    runtime.update(1.0 / 30.0).unwrap();
+    let bridge = runtime.render.lock().unwrap();
+    assert!(bridge.scene["mover"].velocity_x < -2.5);
+    let pair = ("mover".to_owned(), "wall".to_owned(), 0, 0);
+    assert!(bridge.contact_velocity_bias[&pair][0] > 2.5);
+}

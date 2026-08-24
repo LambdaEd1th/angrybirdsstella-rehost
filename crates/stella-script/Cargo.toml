@@ -1,0 +1,21 @@
+[package]
+name = "stella-script"
+version.workspace = true
+edition.workspace = true
+license = "(MIT OR Apache-2.0) AND BSL-1.0"
+rust-version.workspace = true
+
+[dependencies]
+clap.workspace = true
+fontdb.workspace = true
+ttf-parser.workspace = true
+rustybuzz.workspace = true
+unicode-bidi.workspace = true
+unicode-script.workspace = true
+unicode-segmentation.workspace = true
+clipper2-rust.workspace = true
+mlua.workspace = true
+rodio.workspace = true
+serde_json.workspace = true
+stella-assets = { path = "../stella-assets" }
+thiserror.workspace = true

@@ -1,0 +1,25 @@
+/target/
+/extracted/
+/build/
+*.log
+.DS_Store
+
+# Locally supplied proprietary game bundle and archive inputs.
+/angry birds stella v1.1.6/
+/angry birds stella v1.1.6.ipa
+/angry birds stella v1.1.6.zip
+
+# Local reverse-engineering databases; portable findings live in docs/ and
+# compact exported evidence lives in .ida-mcp/.
+*.hop
+
+# Standalone Lua compiler scratch output.
+/luac.out
+
+# IDA databases and temporary unpacked database components.
+*.i64
+*.id0
+*.id1
+*.id2
+*.nam
+*.til

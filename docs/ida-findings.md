@@ -1,0 +1,10199 @@
+# IDA + Hopper findings: Purple 1.1.6 ARM64
+
+IDA input database: `Purple.i64`, image base `0x100000000`. The same ARM64
+image is open independently as `Purple` in Hopper. The native contracts added
+below were checked in both decompilers; addresses use the shared image base.
+
+## Resource loading
+
+`sub_100057E14` is the Lua-facing `GameLua::loadLuaFileFromAppDataToObject`
+implementation. Its optional arguments select the app-data file source,
+decryption and archive decompression.
+
+The relevant chain is:
+
+```text
+sub_100057E14
+  -> sub_100061E84              resource decrypt wrapper
+     -> sub_1000E3A14           returns the 32-byte resource key
+     -> util::AES::Impl         key length inferred from 32 octets
+     -> AES block routine       CBC, zero initialization vector
+     -> PKCS#7 length removal
+  -> sub_100061C10              archive decompression wrapper
+     -> KA3D stream/archive classes
+```
+
+The key constructor at `sub_1000E3A14` copies the exact 32 bytes used by
+`stella-assets::crypto::RESOURCE_KEY`. It is kept in one place in source so it
+can later be supplied externally for builds that should not contain it.
+
+`util::AES::Impl::decrypt` is at `0x1005584F0`. With pad mode `0`, it requires
+16-byte aligned input and removes the last byte count after decryption. The
+block loop at `0x10055541C` decrypts each block and XORs it with the previous
+ciphertext block; the first block is XORed with a zero buffer. This establishes
+AES-CBC with an all-zero IV.
+
+Decrypted samples start with the standard 7z signature. Archive payloads were
+validated as:
+
+- `.lua`: Lua 5.1 bytecode (`1B 4C 75 61 51`).
+- animation `.json`: UTF-8 JSON.
+- configuration `.dat`: usually an archive containing a `.json` file.
+
+## AppData Lua persistence
+
+The registration thunks and implementations were cross-checked in both
+decompilers. `saveLuaFile` (`sub_10004B394`) consumes file name, global table
+name and a persistence boolean; `savePersistentLuaFile` (`sub_10004B6D0`)
+always uses the persistent path. `loadTableFromFile` (`sub_10004B880`) parses a
+saved table and publishes it under the requested global name.
+
+The native text serializer is `sub_10052A8FC`, with scalar/table formatting in
+`sub_10052A490` and byte-string escaping in `sub_10052A020`. It emits executable
+Lua assignments, uses bare identifiers only when the name is valid and not a
+Lua keyword, uses bracketed keys inside nested tables, writes sequential
+numeric keys as array entries, and excludes `_G` and `this`. Booleans, numbers,
+strings and recursively nested tables are the supported value set. The Rust
+serializer now follows that grammar instead of writing JSON under a mismatched
+extension; its reader still accepts the earlier JSON saves for migration.
+
+For persistent mode, `sub_1000E3B38` constructs the separate 32-byte Lua-save
+key; Hopper independently shows `sub_100557F1C` dispatching to
+`util::AES::Impl::encrypt` and `sub_100557F40` dispatching to the matching
+decryptor. The same AES-256-CBC, zero-IV and PKCS#7 behavior recovered from the
+resource wrapper is now used for persistent Lua files. Loaders detect this
+container before parsing, while retaining plain-Lua and legacy-JSON fallback.
+
+`loadLevelFromAppData` (`sub_100047234`) calls the common level loader with the
+AppData selector set. `saveLevel` (`sub_10004730C`) and the corresponding load
+path append `.lua`. `fileExistsInAppData` (`sub_10005A290`) delegates only to
+the platform AppData existence check. The rehost now keeps these roots separate
+from bundle data, so bundle-only files no longer produce false AppData hits and
+save/load level tables round-trip through the same path and representation.
+The common loader reads the two force multipliers with direct
+`lua_isnumber`/`lua_tonumber` calls, so both level fields and their
+`worldAttributes` defaults accept Lua 5.1 numeric strings, including the
+hexadecimal fallback. The shared Rust publication path now preserves that
+coercion for both selectors.
+
+The registration table at `sub_10002C274` pairs `saveLuaFile` with adapter
+`sub_100084E54`, `savePersistentLuaFile` and `loadTableFromFile` with
+`sub_100089B0C`, and `saveLevel` with `sub_100089E6C`. All three adapters
+strictly consume their recovered string/boolean slots and return zero Lua
+values. These persistence APIs therefore no longer expose host-added success
+booleans; malformed argument types raise errors at the same adapter boundary.
+
+Hopper's full 204-block decompilation of `sub_10004730C` also closes the
+editor-export filter that the generic serializer alone could not reproduce.
+The exported root accepts, in native order, `trainCarts`, `theme`, the three
+camera-data tables, `physicsToWorld`, `joints`, `tracks`, `counts`,
+`doNotWaitForMovingObjects`, `themeSprites`, both force multipliers,
+`worldGravity`, `variantGroups`, `variantProbabilities`, and a rebuilt `world`;
+unlisted runtime fields are discarded. World entries whose key is not a
+string are skipped, as are the two definitions `BLOCK_SENSOR_PIG_A` and
+`BLOCK_SENSOR_PIG_B`. Every retained block writes the mandatory
+`angle/x/y/name/definition/z_order` tuple, then the recovered optional fields.
+`gravityFilterCategory = "NONE"` is deliberately omitted.
+
+The sensor-specific branch compares `sensorType` against the four literal
+values recovered at `0x100049044..0x1000491B8`: `gravitation` writes its force
+range and either radius or box dimensions/angle (plus water zero level when
+enabled), `stream` writes radius/force/nodes/vertices, `killing` writes width
+and height, and `collectible` needs no extra geometry. `sensorType`, `isWater`
+and `canBeEdited` are decision inputs rather than serialized fields. A true
+`canBeEdited` admits the eight explosion/force/sucker scalars. Finally,
+`editableAttributes` is walked as a one-based string list; named nil values
+are skipped, numbers/booleans/strings/tables are copied, and every other type
+raises Purple's literal “Attribute … can't be saved because it's of an
+unsupported type” error. The Rust `saveLevel` now builds this filtered table
+before invoking the already recovered text serializer, with a save/reload
+regression covering all four sensor routes, both excluded pig sensors,
+custom editable fields, discarded runtime fields and the unsupported-type
+exception.
+
+## Native formats
+
+Image `.dat` files use a big-endian chunk envelope beginning with either `KA3D`
+or `RVIO`. Purple validates the root length only as an upper bound, then scans
+the physical remainder block by block; known blocks consume their fields
+directly, while unknown blocks alone are skipped by declared length. `SPRT` v1
+stores a version, one texture filename and named atlas rectangles with signed
+pivots. Multiple SPRT blocks replace the sheet's current texture, and each
+constructed sprite retains the texture pointer active for its block. Two
+composite layouts occur:
+
+- `KA3D COMP` versions 1 and 2 store the sprite name and signed 16-bit x/y
+  offsets. Version 2 additionally ends each composite with a counted metadata
+  list whose records are a string and two u16 values; shipped lists are empty;
+- `RVIO COMP` stores sprite name, optional string id, signed x/y, float32 x/y
+  scale and angle, then two independent one-byte flip flags. The loader forms
+  the Entry-map key as `name#id`, converts the angle from degrees to radians
+  immediately and converts each nonzero flip byte to a `-1.0` multiplier.
+
+The parser preserves native Entry identity, block overwrite behavior and float fields rather than
+misreading the RVIO id length as a z value. `stella-tool inspect` also decodes
+`SPRT` rectangles, `COMP` part records, `FONT` headers and `TEXT` counts, which
+makes resource comparisons reproducible without manually decoding the
+big-endian payload.
+
+The binary composite loader at `sub_100461B98` reads the two flag bytes in
+order and converts them to independent `-1` scale multipliers: the first byte
+mirrors X and the second mirrors Y. All three combinations occur in the
+shipped pig, level-end and theme composites. The renderer now applies both
+multipliers. `sub_1004376D4` also composes the complete parent and child
+matrices before `sub_100467BE0` transforms the four vertices; the Rust path now
+retains the resulting affine shear instead of approximating every nested
+transform as an angle plus two scales.
+
+Texture `.pvr` files are PVR v2 (`PVR!` at offset 44). This build contains only
+OpenGL RGBA4444 (`0x10`) and RGBA8888 (`0x12`) PVR formats.
+
+Bitmap fonts use the same big-endian envelope with resource type `FONT` and
+versions 1 or 2. The header is texture name, signed leading, signed tracking
+and glyph count; v1 glyphs use a 16-bit key and v2 glyphs use a 32-bit key,
+followed by signed `(x, y, width, height, pivotY)` fields.
+The renderer now uses those atlas glyphs and native tracking/baseline metrics
+instead of substituting a host font. KA3D localization `TEXT` resources are
+read in the executable's two passes: `LDAT` first establishes locale order,
+then a reopened stream reads `LIDS` and selects the matching `TXGP` by locale
+index while skipping unknown chunks. The older non-KA3D locale-section and
+per-language forward-offset layout is supported by the same public parser.
+
+## Physics
+
+`sub_100055438` reads the Lua fields `deterministicPhysics` and
+`gameWorldScale`. Their recovered object offsets are `+400` and `+404`. The
+engine preserves a fixed-step clock and exposes world/physics coordinate
+conversion through a 20:1 adapter.
+
+`sub_10005E898` calls `sub_10086F3FC` as `b2World::Step(dt, 10, 10)`.
+IDA and Hopper agree that the island solver at `sub_10086CE84` clamps each
+step's translation to `0.16` and rotation to `1.5708`, uses linear and angular
+sleep tolerances squared of `0.0025` and `0.00121847`, and sleeps an island
+after `0.5` seconds below both thresholds. The rehost uses those exact values,
+the recovered rational damping form `clamp(1 - dt*damping, 0, 1)`, and the same
+ten velocity/ten position iteration budget. The leading island loop is now
+float32 throughout: it forms `gravityScale * gravity + invMass * force` with
+the recovered ARM fused multiply-add sequence, integrates torque through
+`invI`, and applies the two clamped damping factors before warm start. Forces
+are cleared only after every island returns. Position velocity clamps and
+their resulting translations are float32 as well. A fixed-rotation flag makes
+`invI` zero but does not suppress damping or integration of an explicitly set
+angular velocity; this otherwise surprising Box2D branch is preserved.
+
+`b2Body::SetTransform` at `sub_10086B794` and `ResetMassData` at
+`sub_10086B1F4` also establish that transform origin and centre of mass are
+independent native state. The body stores `localCenter`, `c0/c` and `a0/a` in
+its `b2Sweep`; position integration adds directly to `c`, then reconstructs
+the transform origin from `c - R*localCenter`. The rehost now persists that
+float32 sweep centre instead of deriving it again from the already-rounded
+origin after every constraint impulse. SetTransform explicitly resynchronizes
+the sweep, while position/contact/joint integration updates it directly.
+ResetMassData walks the intrusive fixture list head first (reverse creation
+order), computes every shape mass/centroid/inertia and aggregate in float32,
+stores mass and inverse mass independently, shifts inertia to the aggregate
+centre, and applies the recovered `cross(angularVelocity,
+newCenter-oldCenter)` velocity correction. This removes both compound-order
+rounding differences and reciprocal reconstruction of the body's stored mass.
+
+World-level island assembly at `sub_10086E634` is now mirrored as well. It
+clears the body/contact/joint island flags, seeds only active awake non-static
+bodies, and performs the native stack DFS through touching, enabled,
+non-sensor contacts and active physical joints. A sleeping non-static endpoint
+is woken as soon as the DFS pops it. Static endpoints are included in the
+island constraint/body arrays but terminate traversal; their island flag is
+cleared after that island is solved, allowing two independent dynamic islands
+to share one ground body. Each assembled island now runs its own complete
+velocity, integration, position-convergence and sleep sequence, so a difficult
+structure cannot force an already-converged island through extra position
+passes. The shared-static-platform and retained sleeping-chain regressions
+cover both branches.
+
+`b2World::CreateBody` at `sub_10086DF90` independently confirms that new bodies
+are inserted at the world-list head (`prev = 0`, `next = oldHead`, then
+`head = body`). Body seeds and joint edges therefore use reverse creation
+order rather than Rust map/name order. `b2BroadPhase::UpdatePairs` at
+`0x10086BDB0` sorts and deduplicates signed `(proxyIdA, proxyIdB)` pairs before
+AddPair. The rehost now reproduces the dynamic-tree leaf sequence
+`0, 1, 3, 5, ...`, LIFO leaf-id reuse after body destruction/deactivation,
+reverse fixture-list activation order, and ContactManager's list-head
+insertion. Those recovered ids determine contact edge order inside the DFS and
+Gauss-Seidel solver.
+
+The earlier leaf-id model has now been replaced by the actual dynamic tree.
+`sub_100860E30` establishes the 16-node initial free list and doubling growth;
+`sub_100860F08`/`sub_1008613B8` allocate and free the native node union;
+`sub_1008610A8` chooses insertion siblings with the float32 perimeter cost;
+and `sub_1008616E0` performs the height-difference rotations. The Rust tree
+maintains the same parent/child AABBs, heights, internal-node allocation and
+free-list order. IDA and Hopper also agree that
+`b2DynamicTree::Query<b2BroadPhase>` pushes child1 and then child2, so the LIFO
+stack visits child2 first; the rehost uses that traversal for broad-phase
+pairs and public AABB queries. Growth, balance, free-list reuse and query
+integrity are covered beyond the initial 16-node capacity.
+
+IDA and Hopper also agree on the complete proxy-movement constants and phase
+order. Fixture proxy creation (`sub_10086CA54` through `sub_10085E310` and
+`sub_10086100C`) expands each tight fixture AABB by exactly `0.1f` on every
+side. Fixture synchronization at `sub_10086CB74` unions the old and current
+tight AABBs, then `sub_1008615A0` leaves a contained proxy unbuffered; otherwise
+it removes/reinserts the leaf, applies the same `0.1f` margin and extends the
+fat AABB by `2 * displacement` in the signed direction. The broad-phase wrapper
+at `sub_10085E3E8` enters the proxy in the move buffer only for that reinsert
+case. The rehost now mirrors those float32 operations, creates the sorted
+fixture-pair contact before narrow phase reports touching, and preserves that
+creation/list order through the later `BeginContact` transition. A dedicated
+regression holds two boxes inside overlapping fat AABBs but outside narrow
+phase, then moves them into contact and verifies that the original contact
+creation order is retained.
+
+The contact-manager pass itself is now recovered rather than approximated by
+an all-object collision scan. `b2World::Step` at `sub_10086F3FC` services the
+new-fixture pair buffer and then invokes `sub_10086BAB0`; both disassemblers
+show that `Collide` walks the contact list from its head. If neither endpoint
+has the awake flag on a non-static body, it skips filter validation, fat-AABB
+testing and `Contact::Update` together, preserving the old touching bit and
+manifold verbatim. Otherwise it applies a pending filter, destroys a contact
+whose proxies no longer overlap, or updates its narrow-phase manifold and
+listener callbacks. Body `ShouldCollide` at `sub_10086B73C` additionally
+requires at least one body of dynamic type 2 and rejects a non-colliding joint.
+The Rust contact manager now follows that contact-list order, including the
+reverse order induced by AddPair's list-head insertion, rejects static/
+kinematic-only pairs and freezes sleeping contacts until an endpoint wakes.
+`Contact::Update` at `sub_10086373C` further shows that every list node copies
+its old manifold, computes the new touching bit, wakes both bodies and clears
+their sleep timers whenever that bit changes, and immediately invokes
+BeginContact or EndContact before `Collide` advances to the next node. The
+rehost now performs this traversal one contact at a time rather than preparing
+an entire event batch: Lua changes to velocity, sleep/lifetime state or joints
+are therefore visible to the next contact update in the same native walk.
+
+The physics-facing registrations in `sub_10002C274` establish these contracts:
+
+- `setVelocity` (`sub_100040FA4`) writes the Box2D body's linear velocity and
+  wakes it for a non-zero vector; `getVelocity` (`sub_1000410D8`) returns the
+  scalar magnitude, while `getLinearVelocity` (`sub_10004110C`) returns the
+  x/y pair. The exact wake test squares both float32 lanes and reduces them
+  before a strict comparison with zero, while the magnitude path rounds
+  `y*y` and then performs one `fmadd(x,x,y²)` before `fsqrt`. Consequently a
+  NaN velocity is stored without waking a sleeping body. All three getters
+  require a string name but return zero for an unknown object or an object
+  without a Box2D body because `sub_100061AE4` is a nullable lookup;
+- `setAngularVelocity` (`sub_100041064`) and `getAngularVelocity`
+  (`sub_1000410B4`) access the body's float field. Its wake test is likewise
+  the strict float32 comparison `value*value > 0`, and nullable body lookup
+  returns zero;
+- `applyImpulse` (`sub_10003F930`) consumes
+  `(name, impulseX, impulseY, pointX, pointY)` and changes linear/angular
+  velocity immediately; `applyForceNative` (`sub_10003F9CC`) accumulates force
+  and torque for the next step. Both paths measure the point lever arm from
+  the body's world center of mass—not its transform origin—and perform the
+  cross product and accumulation at float32 precision. `ApplyForce` still
+  accumulates torque while fixed rotation makes inverse inertia zero; it is
+  not allowed to drop that torque before the next step;
+- `setPhysicsEnabled` (`sub_100041ABC`) modifies an aggregate physics lock. Its
+  optional named locks are reference-counted while the unnamed lock is
+  idempotent; `unlockPhysicsLock` (`sub_100042208`) clears every outstanding
+  reference for one name, and `isPhysicsEnabled` (`sub_1000421F8`) is true when
+  the aggregate count is zero;
+- `setWorldGravity` maps to `sub_1000343A8`, and object damping, sensor,
+  activity, sleeping, gravity-scale and fixed-rotation flags map directly to
+  Box2D body/fixture state.
+
+The same registration block maps `clearParticlesNative` to
+`sub_10004C630` (clear all) and `clearParticlesWithTagNative` to
+`sub_10004C640`. The tagged entry point recognizes `INGAME_BACKGROUND`,
+`INGAME_FOREGROUND`, `MENU`, and `ALL`; the last tag dispatches to the same
+full-clear operation.
+
+`createBox` (`sub_100034740`) receives the native ordering
+`name, sprite, collisionEnabled, flag, x, y, width, height, density, friction,
+restitution, z`. The Lua adapter's observed ordering is
+`name, sprite, x, y, width, height, density, friction, restitution,
+collisionEnabled, inactive, z`. Density zero and the sentinel density 100
+create static bodies; other densities create dynamic bodies.
+
+`setPhysicsScale` is registered to `sub_10004050C` through the
+string/float/float adapter at `sub_10008897C`. After the throwing native
+lookup, it applies the ordinary visual scale and then rebuilds supported
+fixtures. Shape type 2 covers both boxes
+and arbitrary polygon fixtures: it multiplies every current fixture vertex by
+the signed new/old visual-scale ratios, stores the absolute resized native
+width/height, destroys every fixture head-first, and recreates the saved shapes
+in the same traversal order. Since `CreateFixture` inserts at the body-list
+head, a compound polygon's fixture order reverses after every rebuild. Density,
+friction and restitution are snapshotted from the live Lua object before the
+synchronous `EndContact` callbacks and applied to every replacement fixture.
+A circle remains circular and rebuilds one fixture with
+`(abs(min(scaleX,scaleY)/blocks[definition].scale)+0.0001) * radius`, taking
+`radius` and its coefficients from the live Lua object. The original sensor
+flag is restored after replacement, which wakes a previously sleeping body
+only when that flag was true. Edge/line shapes throw the native unsupported
+type error after visual scale has already changed. The rehost therefore keeps
+visual, Lua and native fixture dimensions separate instead of letting every
+`setScale` call silently resize collision geometry.
+
+`native_setDensity` is the direct Lua method at `sub_100030D1C`: it writes the
+float directly to `b2Body::m_fixtureList`, calls the Box2D mass-data reset, and
+mirrors `density` back to `objects.world`. It does not walk the remaining
+fixtures. The rehost therefore stores density per fixture and recomputes a
+compound body's signed aggregate mass, density-weighted center and inertia;
+only the current head fixture changes. A later `setPhysicsScale` rebuild again
+gives every replacement fixture the density snapshotted from Lua. The first
+shot's single-fixture `native_setDensity("Stella_1", 2)` is no longer swallowed
+by a compatibility stub, while compound bodies retain the native head-only
+distinction.
+
+The polygon staging vector lives at engine offsets `+688..+704`.
+`clearVertices` (`sub_10003F8C8`) resets its logical end pointer and
+`addVertex` (`sub_10003F8D4`) appends one exact float x/y pair. The polygon
+builder at `sub_100068310` consumes the full staged contour; contours above
+the recovered seven-vertex direct-fixture limit, or smaller contours that fail
+`sub_100870520`'s convexity check, enter its decomposition path rather than
+being replaced with a rectangle. The rehost now stores the original contour
+and every resulting convex fixture separately, uses their preserved area for
+mass and returns one table per fixture from `getObjectVertices`.
+
+Hopper's assembly for `getObjectVertices` (`sub_10005A7BC`) makes its ordering
+and coordinate behavior explicit: it starts at `b2Body::m_fixtureList` at
+`+0x70`, advances through `b2Fixture::m_next` at `+0x8`, reads the polygon
+vertex count at shape `+0x98`, and emits those vertices in stored order. Since
+fixtures are head-inserted, this is the reverse of creation order; after
+`setPhysicsScale` destroys and recreates a saved head-to-tail list, the
+Lua-visible compound order flips. Each coordinate is a float32 addition of
+the body's position at `+0x0C/+0x10` and the already-resized shape vertex. The
+routine does not apply the body's rotation. The rehost now preserves all four
+details, including signed physics scaling and native float32 rounding.
+
+The separate Lua utility `decomposePolygon` is `sub_100035FFC`. Unlike the
+fixture builder it reads its first Lua argument directly as an array of
+`{x, y}` tables and feeds the contour to `sub_10087007C`/`sub_100872360`.
+IDA and Hopper show that this is not a first-ear `n - 2` triangle API: all
+coordinates are first rounded to float32, positive-area input is reversed,
+`sub_100871D5C` validates ears, `sub_100871498` chooses the candidate with the
+largest minimum normalized edge cross product, and `sub_100871F08` merges
+adjacent triangles into convex contours of at most eight points. Its final
+cleanup removes same-direction near-collinear vertices with the recovered
+`sin(2 degrees)` threshold. `sub_1008710C0` also recognizes non-adjacent
+repeated points with per-axis distance below `0.001`, splits the self-touching
+contour at that point and recursively decomposes both loops. The Rust utility
+and actual polygon fixture builder now share that complete pipeline and
+preserve the returned contour ordering.
+
+`getRayCastedObjects` (`sub_10005464C`) reads `x1`, `y1`, `x2`, `y2` from its
+argument and returns one flat six-slot record per hit: object name, hit x/y,
+normal x/y, and segment fraction. The callback at `sub_10009366C` explicitly
+skips sensor fixtures, keeps fixtures whose Lua `collisionEnabled` flag is
+false, and emits one record for every hit fixture rather than coalescing by
+body. The original Lua helper sorts those records by fraction; the Rust bridge
+also returns them in that order. `getIntersectingObjects` remains the
+corresponding AABB/name-array query. Its callback at `sub_1000934F4` inserts
+Box2D body pointers into a set, so multiple fixture proxies are deduplicated;
+inactive bodies are absent from the broad phase, while sensors and static
+bodies remain queryable. The Rust query now walks the recovered dynamic tree,
+tests the same `0.1f`-expanded fat fixture AABBs and deduplicates by body before
+name lookup. This preserves concave gaps whose individual proxy bounds do not
+cover the query while also retaining native hits just outside the tight shape
+but inside its fat margin. Hopper's `sub_10086DF90` and block allocator at
+`sub_100862BE0` additionally show a `0xC0` body request from a 16-KiB chunk:
+fresh blocks advance by `0xC0`, while `sub_100862D2C` pushes destroyed blocks
+onto the size-class free-list head. The host now keeps that address-slot state
+separate from intrusive world-list creation order, so destroying the middle
+of three queried bodies and creating a replacement returns
+`first,replacement,last` just like the pointer-ordered native `std::set`.
+
+The native BeginContact listener at `sub_100062520` calls Lua
+`blockCollision(name1, name2, force, damaged, false, floor(secondDamage),
+pointX, pointY, normalX, normalY)`. The last four floats were previously
+documented in the wrong order. The callback is emitted only when a contact
+begins, not once per solver frame. One- and two-controllable contacts instead
+call `birdCollision` with exactly eight values (two names, force, damage,
+point x/y, normal x/y), leaving its optional ninth Lua argument nil. Sensor
+begins call `enterCollision`. The EndContact listener at `sub_1000653AC`
+calls `exitTriggerCollision` for a sensor pair and then always calls
+`exitCollision`; non-sensor pairs call only `exitCollision`. The rehost now
+publishes this same callback surface and order. Native `removeObject`
+(`sub_100089E6C`/`sub_100042260`) reaches `sub_1000674FC` and then
+`b2World::DestroyBody` at `sub_10086E02C`; DestroyBody walks attached contacts
+and invokes EndContact before releasing fixture/body storage. The rehost now
+does the same synchronously, while both `objects.world` records still exist,
+then removes the Lua record and drains all cached contact/position state. This
+eliminates the delayed `exitCollision` nil-table crash exposed by several
+valid Level 01 trajectories. The sensor-side helper `sub_10006525C` also
+removes the ending type-2/type-3 sensor pointer from the opposite object's
+overlap vector and clears its Lua `insideGravity` field only when that vector
+becomes empty. The mirrored BeginContact branch sets the field only for type 2,
+after `enterCollision`; EndContact clears it after `exitTriggerCollision` and
+before `exitCollision`. Multiple overlapping sensors now preserve that exact
+lifetime and callback order. `sub_1000653AC` also wakes both contact bodies and
+zeros their sleep timers before those callbacks; ordinary separation and
+DestroyBody-triggered exits now mirror that side effect without reintroducing
+the incorrect solver-impulse wakeups.
+
+The source boundary now follows these listener members directly. Hopper reports
+`sub_100062520` (`BeginContact`) as 8,992 bytes/247 blocks,
+`sub_1000653AC` (`EndContact`) as 212 bytes/10 blocks, the strict break-force
+helper `sub_10006510C` as 244 bytes/9 blocks, and Lua joint-descriptor erase
+`sub_10007BF50` as a separate 100-byte leaf. `physics_world/contacts.rs` is
+therefore a 177-line contact-key/impulse/payload model; synchronous event
+selection lives in `contacts/prepare.rs`, force/damage/score mutation in
+`contacts/damage.rs`, and Lua/sensor/joint cleanup dispatch in
+`contacts/dispatch.rs`. The split keeps callback execution outside the bridge
+mutex and retains the native contact-list interleaving.
+
+Circle/circle, circle/convex-fixture
+and convex-fixture/convex-fixture narrow phases use the actual transformed
+fixture geometry; decomposed concave polygons are tested fixture by fixture
+instead of colliding their AABBs. Contact point velocity includes `omega x r`,
+and normal/friction impulses update both linear velocity and angular velocity
+through shape-derived inverse inertia. Circle/polygon manifolds now follow
+Box2D's exact first-vertex, second-vertex and face-region branches, including
+the `0.002` polygon skin and surface midpoint; a generic SAT extreme vertex
+produced a visibly wrong lever arm in the Chapter 01 Level 02 hammock loop.
+`sub_100863BC4` supplies the recovered
+restitution velocity threshold of `-1.0`; `sub_1008646A4` supplies position
+slop `0.001`, Baumgarte factor `0.2`, maximum correction `0.2` and convergence
+limit `-0.003`. `sub_100863FAC` warm-starts cached normal/tangent impulses and
+`sub_1008640D0` solves tangent impulses before accumulated normal impulses.
+For two-point face contacts it executes the four-case 2x2 complementarity
+solver; `sub_100863BC4` builds that matrix and uses the recovered
+`k11² < 1000 * determinant` guard, otherwise reducing the constraint to one
+point. Polygon/polygon and edge/polygon manifolds now retain both clipped face
+points, with independent normal/tangent warm-start values, instead of
+collapsing the face to its midpoint. The complete velocity path is now
+float32: restitution bias, geometric lever arms, effective masses, mixed
+friction, cached impulses and all ten Gauss-Seidel writes round at the same
+places as the ARM single-precision instructions. The two-point solution also
+combines both normal impulses into one body-velocity write, rather than
+introducing a non-native intermediate rounding after point one.
+
+`b2PositionSolverManifold::Initialize` at `0x100864CFC` confirms that position
+constraints retain the velocity solver's local manifold witnesses rather than
+rerunning narrow phase after integration. Type 0 transforms two local circle
+centres and uses their midpoint; type 1 transforms face A's local normal/plane
+and body B's clip point; type 2 does the symmetric face-B calculation and
+negates its output normal. The rehost stores these three manifold types and
+their local points explicitly. `sub_1008646A4` calls this initializer inside
+the contact-point loop, so point two must rebuild both transforms after point
+one has translated or rotated either body. Position contacts and fixture-pair
+velocity contacts now use this sequential Gauss-Seidel state instead of one
+stale body snapshot. The island's ten-pass position loop also returns early
+only when the contact solver and every native/custom joint report convergence,
+matching the branch in `sub_10086CE84`. Its transforms, separations, effective
+masses, slop/Baumgarte clamp and position writes now remain float32 as well.
+IDA and Hopper agree that the world-manifold initializer is 548 bytes/9 basic
+blocks (complexity 3); they also isolate normal position solving at
+`sub_1008646A4` (792/12) and TOI position solving at `sub_1008649BC`
+(832/15), confirming those solvers do not belong in the local-witness module.
+The former 244-line Rust file is consequently a seven-line facade over a
+32-line model, 110-line witness constructor and 110-line world-manifold
+initializer. Both normal and TOI solvers continue consuming the same object
+without duplicating the native three-type switch.
+For coincident circle centres, Box2D normalization retains a zero normal; it
+does not fabricate an arbitrary `(1,0)` direction, so that degenerate branch
+is now explicitly covered.
+
+Polygon clipping now preserves Box2D's packed `b2ContactID` semantics:
+incident vertices carry reference-face/incident-vertex indices, side-plane
+intersections carry reference-vertex/incident-face indices, and flipped
+manifolds exchange the A/B feature bytes. Warm-start impulses are transferred
+by these IDs rather than array rank. The two-point 1000:1 condition-number
+reduction is performed before any tangent or warm-start work, as in the native
+constraint initializer.
+
+The complete island call order is also observable at `sub_10086CE84`:
+contact constraints initialize and `sub_100863FAC` applies their cached
+impulses before each joint's `InitVelocityConstraints` callback runs; the ten
+iterations then solve joints before contacts. Reversing the two warm-start
+phases made Level 02's closed hammock/contact loop accumulate energy and
+destroy its pig without a shot. Solver-internal impulses also do not call
+`SetAwake` or reset body sleep time; only external state changes and island
+wake propagation do. `InitializeVelocityConstraints` computes restitution
+bias for every persistent and newly touching contact from one common
+pre-warm island snapshot, even when its cached impulse is zero; only after all
+bias values exist does WarmStart mutate body velocities. Each later fixture
+constraint reads those live mutated velocities. The rehost now preserves all
+of these details. Level 01 completes with the retuned exact-physics shot while
+the Level 04 and Level 06 no-input checkpoints remain active. At frame 1,800
+both checkpoints have an exact score of zero, and both Level 06 pigs remain in
+the live object table.
+
+The contact-manager phase is now separate from those island iterations.
+`b2World::Step` runs `ContactManager::Collide` once before gravity/force
+integration, freezes the resulting fixture-pair manifolds, and reuses that
+constraint array for every Gauss-Seidel velocity pass. The earlier rehost
+incorrectly reran broad/narrow phase inside all ten passes, which could
+change feature IDs, emit same-step lifetime transitions and omit later
+constraints. The Rust world now refreshes Begin/EndContact once, performs the
+native touching-transition wake before each Begin/End callback, and solves one frozen
+velocity/position manifold set. A regression deliberately moves a body after
+the refresh and verifies that the current island still consumes the frozen
+manifold until the next contact-manager step.
+
+The listener itself is part of that same pre-island phase. Purple invokes
+`sub_100062520`/`sub_1000653AC` synchronously from
+`ContactManager::Collide`, before gravity integration, contact warm starting
+or any joint constraint. Damage, bounce bookkeeping, breakable-joint removal
+and `enterCollision`/`birdCollision`/`blockCollision`/exit callbacks now run
+at that point in the Rust step as well, individually interleaved with
+`Contact::Update` in contact-list-head order. A callback that calls
+`setVelocity` or removes an object therefore affects both the next contact in
+the same `Collide` walk and the current island rather than the next fixed step.
+`removeBlocks` remains after `b2World::Step`, matching
+`sub_10005E898`, so dead-block queue consumption is not pulled into the locked
+contact traversal. A dedicated sensor regression changes a body from `0.03`
+to `3` units/s inside `enterCollision` and verifies that the body advances
+exactly `0.1` unit during that same 1/30-second step. A second regression puts
+a newer sensor contact ahead of a solid contact, changes the bird velocity in
+the sensor callback, and verifies that the later solid collision force uses
+the changed velocity rather than a stale batch snapshot.
+The listener vtable at `0x100A90528` also resolves the remaining two Box2D
+slots: PreSolve is `nullsub_20` (`sub_100062510`) and PostSolve is
+`nullsub_18` (`sub_100062508`). IDA's pointers and Hopper's empty
+pseudocode agree, so Purple has no hidden per-persistent-contact or
+post-impulse game callback to reproduce beyond the Begin/End paths above.
+
+RTTI and vtable recovery identifies the five standard joint solver triples:
+Distance `0x100865270/0x1008655D0/0x1008656D4`, Prismatic
+`0x1008674D4/0x1008678E0/0x100867C68`, Revolute
+`0x100868B90/0x100868F20/0x1008692B4`, Rope
+`0x10086983C/0x100869B30/0x100869C48`, and Weld
+`0x100869F54/0x10086A214/0x10086A398` for initialization, velocity solve and
+position solve respectively. IDA and Hopper agree that Distance and Rope use
+a `0.001f` velocity-axis cutoff while their position normalization uses
+`FLT_EPSILON`; Rope additionally clears its accumulated impulse below that
+cutoff. Prismatic uses `0.001f` linear slop and a `0.002f` equal-limit test,
+rechecks live translation on every position pass, and does not clamp or wrap
+its angular error. Weld likewise keeps the unwrapped Box2D sweep-angle error.
+Body sweep integration is consequently continuous past `2π`; only the
+explicit RenderObject `setAngle` adapter normalizes its input.
+
+The retail-critical Weld and Revolute paths are now instruction-order
+float32 implementations rather than double-precision equivalents. Hopper's
+`sub_100862E14` and `sub_100862D60` are the shared `b2Mat33::Solve22` and
+`Solve33` helpers: both form their cofactors and negated determinant in the
+observed ARM order, leave the reciprocal at zero for a singular matrix, and
+therefore return a zero vector without a fabricated fallback. Revolute
+initialization scales all four cached impulses by the float32 step ratio,
+uses the exact constants at `0x100A0CA20..0x100A0CA30`, and applies the warm
+impulse after classifying lower/upper/equal limits. Its velocity solver stages
+the motor-adjusted angular velocities before forming point `Cdot`, preserves
+the one-sided accumulated-limit complementarity branch, and writes velocities
+and impulses back as float32. The position solver likewise applies the angular
+limit first, rebuilds both rotated anchor arms, and then solves the live 2x2
+point constraint. Weld uses the same recovered 3x3 cofactor path, float32
+cached accumulation and unwrapped sweep angle. Exact motor/warm-start,
+off-centre weld and coupled revolute-limit regressions cover these paths.
+
+The collision factory and retail narrow phase are now matched at their direct
+dispatch boundaries. Circle-circle uses vtable `0x100AB15D0`, evaluate
+`0x10086348C` and `sub_10085E590`; polygon-circle uses vtable
+`0x100AB16C0`, evaluate `0x10086512C` and `sub_10085E624`; polygon-polygon
+uses vtable `0x100AB1710`, evaluate `0x1008651E8` and `sub_10085F648`.
+Direct edge-circle/edge-polygon evaluate at `0x100864FB4/0x100865070`, while
+the chain wrappers at `0x100863204/0x100863350` dispatch to the same
+`sub_10085E8AC` and `sub_10085F5F8` (`sub_10085EADC`) implementations.
+`sub_100860148` is the shared two-vertex clip helper.
+
+These paths now keep the observed float32 product/FMA order and reject only on
+strict `separation > radius`, so exact skin-radius contact is retained.
+Polygon-polygon loads `0.001f/0.98f` from
+`0x100A0C7CC/0x100A0C7D0`; edge-polygon uses the `0.004f` combined skin at
+`0x100A0C7B8` and its matching `0.001f/0.98f` primary-axis bias at
+`0x100A0C7C4/0x100A0C7C8`. Circle-circle preserves the native `(1,0)` world
+axis below `FLT_EPSILON`, polygon-circle clears `b2ManifoldPoint::id.key` in
+every face/vertex branch, polygon/edge clipping preserves A/B feature swaps,
+and independent edge fixtures use the native two-sided Voronoi regions. The
+factory has no edge-edge contact registration, so crossing line fixtures no
+longer receive a fabricated Rust manifold. Boundary, reference-axis, feature
+ordering and absent edge-edge regressions cover each distinction.
+
+The source layout now mirrors those dispatch boundaries as well. Hopper sizes
+the five core leaves at 148 bytes (`sub_10085E590`), 648 bytes
+(`sub_10085E624`), 560 bytes (`sub_10085E8AC`), 2,844 bytes
+(`sub_10085EADC`) and 1,340 bytes (`sub_10085F648`); IDA independently agrees
+on both edge leaves at `0x230` and `0xB1C`. The direct edge-circle and
+edge-polygon evaluate wrappers remain separate 32-byte leaves, and both tools
+also agree on the shared 212-byte/8-block clip helper `sub_100860148`.
+
+The polygon call graph is now recovered below the collision entry as well.
+IDA and Hopper agree exactly on `b2FindMaxSeparation` `sub_10085FB84` at 496
+bytes/11 basic blocks, its `b2EdgeSeparation` leaf `sub_10085FD74` at 228/6,
+and `b2ClipSegmentToLine` `sub_100860148` at 212/8. The maximum-separation
+member does not scan all polygon faces: it transforms the centroid delta,
+chooses the first strictly greatest aligned normal, samples the preceding and
+following faces, then climbs strictly in only the better direction. The Rust
+implementation now reproduces that search and its tie ordering. A convex
+five-edge regression contains two local separation maxima and proves the
+observable distinction: a full scan selects edge 2, while Purple's search
+selects edge 4 and therefore preserves a different contact feature identity.
+The 152-line collision entry, 153-line separation/search unit and 43-line clip
+leaf now mirror those native boundaries while remaining shared with the
+edge-polygon collider.
+
+The edge-circle face-region audit additionally exposed an algebraically hidden
+rounding boundary. At `0x10085E954..0x10085E988`, Purple forms the reciprocal
+edge length, rounds `B*v`, folds `A*u` into its negation with `FNMADD`, then
+forms `Q - closest` with `FMADD` before the squared-radius comparison. The
+former Rust expression materialized `closest` first. For the focused boundary
+case this rounded distance squared to `0.0609355718` and fabricated a contact;
+the native sequence yields `0.0609355979`, strictly outside squared combined
+radius `0.0609355755`. The face branch now also reconstructs its final point
+and penetration from the b2WorldManifold plane separation instead of reusing
+the GJK-style distance magnitude.
+
+Accordingly the former 988-line aggregate remains an 18-line facade over its
+circle, polygon and shared-geometry modules, while the former 404-line mixed
+edge module is now a 7-line facade over a 147-line edge-circle leaf and a
+260-line edge-polygon leaf. Feature-ID and clipping ownership remain unchanged.
+The new fused-boundary regression raises the verified workspace total to 272;
+strict Clippy, the release build and the current
+`audit-edge-leaves-menu.png`/`audit-edge-leaves-start.png` wgpu flow captures
+pass after the split.
+
+The continuous-collision core is now recovered as well. Hopper identifies
+`sub_10086EA54` as `b2World::SolveTOI`, reached by `sub_10086F3FC` after the
+ordinary island solve when the world's continuous-physics byte is enabled.
+It builds each fixture's distance proxy through `sub_1008602D4` and calls
+`sub_100861B54`; the latter is Purple's float32 `b2TimeOfImpact`, while
+`sub_1008605D4` is its `b2Distance`/GJK query. The Rust port now keeps the
+simplex feature cache, all Points/FaceA/FaceB separation-function branches,
+sweep-angle normalization, and the observed conservative-advancement limits:
+20 outer iterations, eight separation pushes and 50 alternating
+bisection/secant root evaluations. Its target is exactly
+`max(0.001f, radiusA + radiusB - 3 * 0.001f)` with `0.00025f` tolerance.
+Consequently a radius-0.01 circle crossing a radius-0.002 edge at the
+translation-clamped 0.16-unit step advances to alpha about 0.44375 (the
+native target separation), rather than the earlier sampled first-overlap
+alpha 0.425. The world path synchronizes swept proxies, advances the earliest
+dynamic/static candidate, invokes BeginContact before the reduced solve,
+disables warm starting, performs the recovered ten velocity iterations and
+integrates the `(1-alpha)*dt` remainder. High-speed edge crossing and direct
+point-separation regressions lock both the externally visible no-tunnelling
+behavior and the native target calculation.
+
+`sub_10086D5EC` is the reduced `b2Island::SolveTOI` invoked by that world
+loop. Before its velocity constraints it calls `sub_1008649BC` up to 20
+times, using TOI Baumgarte `0.75f`, linear slop `0.001f`, maximum correction
+`0.2f`, and the `-0.0015f` convergence boundary. The rehost now preserves
+that position-before-velocity order, adds every simultaneously touching
+static contact from the selected body's contact-edge list to the same reduced
+island, and rescans the world after each remainder integration. A two-wall
+bounce regression proves that one body can produce two ordered impacts within
+one 1/30-second step; a diagonal-corner regression proves that two equal-time
+static contacts are solved together. Auxiliary contact edges are advanced one
+at a time around the Lua callback boundary, and a regression verifies that a
+first BeginContact callback can disable the next candidate before it is added
+to the same island. All recovered object constructors write
+the five `b2BodyDef` booleans as `{true, true, false, false, true}`
+(`allowSleep`, `awake`, `fixedRotation`, `bullet`, `active`), and Purple
+contains no bullet setter/string, so the shipped candidate rule is the
+implemented non-bullet dynamic/static route rather than a latent
+dynamic/dynamic bullet path.
+The per-step contact state now also mirrors `e_toiFlag`, cached absolute alpha
+and `m_toiCount`: untouched contacts retain their cached fraction across a
+rescan, contacts attached to the solved body are invalidated, the selected
+contact increments its count, and counts above eight are skipped exactly as
+at `0x10086EC60`.
+
+The same listener computes breakable-joint damage before the velocity solver
+changes either body. `b2World::Step` calls the contact manager's collide pass
+before island gravity/force integration, so a newly begun contact observes the
+velocities that entered the step rather than the gravity-updated velocities.
+IDA's `0x1000636C8..0x100063724` path and Hopper agree on
+the float32 vector formula
+`length(forceDamageMultiplier * (mTarget*vTarget - factor*mAttacker*vAttacker)) / 10`,
+where `factor` is the attacker's material-specific `damageMultiplier *
+powerupDamageMultiplier`. `velocityMultiplier` is loaded alongside these
+fields but is used later only by the non-legacy post-destruction velocity path
+at `0x100064588..0x1000645C8`. The divisor is the `10.0` stored at GameLua
+`+0x524`. `sub_10006510C` removes a breakable joint only for
+the strict comparison `collisionForce > breakForce`. The controllable-body
+path applies this force only to the target (which must be dynamic or have
+`blockCollisionEnabled`); ordinary contacts perform both asymmetric
+directions. The rehost now snapshots pre-solve mass/velocity and follows these
+same target rules instead of treating post-solve penetration error as damage.
+
+The target-destruction branch is also now preserved rather than folded into
+the collision-force calculation. With `useLegacyCollisionPath`, Purple sets
+the controllable body's velocity directly to its pre-impact velocity times
+`min((remainingStrength / (birdMass * collisionForce)) * 10 * -1.75, 1)`.
+The non-legacy path writes the pre-impact velocity times
+`min(velocityMultiplier * (collisionForce - previousStrength) /
+collisionForce, 1)` to the `std::map<string, b2Vec2>` at GameLua `+0x730`.
+IDA's `sub_10005E898` and Hopper independently show the complete lifecycle:
+after every Box2D step it calls Lua `removeBlocks`, then resolves each map key
+in the live object map, wakes the non-static body for a non-zero vector,
+assigns its linear velocity, and finally clears the entire map.
+The non-zero test is not a host-language double comparison: Hopper shows a
+packed float32 `FMUL` followed by `FADDP` over the two velocity lanes, then a
+strict comparison with zero. Thus each square rounds independently before the
+float32 addition; a smallest-subnormal velocity is still assigned but its
+squared length underflows to zero and does not wake a sleeping body. The Rust
+path and its regression now preserve that boundary without using an FMA.
+`sub_10005E860` is the common writer, also reached from DirtMechanics'
+collision bridge at `sub_100020560`. The Rust fixed step now implements the
+same callback/remove/write/apply/clear order at float32 precision.
+The same update function calls Lua `clearLuaForceFunctions` after the complete
+fixed-step loop, even when the accumulator is still below `1/30`. The rehost
+now gives an `applyForce` closure exactly that one-render-frame lifetime and
+does not suppress `updatePhysics` merely because every body was asleep before
+the closure had a chance to wake one.
+
+The second constructor boolean is persistent `controllable` state at scene
+offset `+0x140`, not merely an initial-active argument. A controllable body is
+created inactive for the sling but keeps that identity after `setActive(true)`
+so collision attribution still identifies the bird. `blockCollisionEnabled`
+is the byte at `+0x13f` and every native constructor initializes it to true;
+`+0x142` is `sensorDefinition`. Both fields now survive in the Rust scene
+model.
+The Rust island step now follows the recovered native phase order independently
+for every DFS island: velocity integration, warm-start, ten interleaved
+joint/contact velocity passes, transform integration with the
+`0.16`/`1.5708` clamps, then up to ten contact/joint position passes and
+island-local sleep accounting. Its broad phase only visits pairs
+involving an awake moving body, which matches the relevant Box2D dynamic-tree
+behavior and avoids quadratic scans of settled level art.
+
+`createLineShape` is registered through `sub_100087704` to
+`sub_1000364E0`. The common builder at `sub_100068130` does not create a
+one-sided chain: it walks every consecutive pair in the staged vertex buffer,
+calls the two-vertex `b2EdgeShape::Set` path at `sub_10085D7A0`, and attaches
+one independent two-sided edge fixture per pair. Its inlined shape definition
+contains radius `0.002` (`0x3B03126F`). The rehost now mirrors those individual
+capsule-like edge fixtures, including endpoint rejection, two-sided contacts,
+the same polygon/edge skin radius in narrow phase and AABBs, and Box2D's unit
+mass fallback for dynamic zero-area edge bodies.
+
+`createJoints` (`sub_10003CC64`) is a batch wrapper that invokes
+`createJoint` (`sub_100037374`) for every descriptor in the supplied table.
+The complete switch is now recovered rather than inferred from the first
+level: script type 1 creates a distance joint, type 2 a weld, and type 3 a
+revolute. Type 4 and a type 5 descriptor without `oneWayDestroy` create a
+prismatic joint through `sub_1008673AC`; the native prismatic defaults are
+limit enabled, lower/upper translation `0/5`, motor enabled, speed `0`, and
+maximum force `10000`. A type 5 descriptor containing the boolean
+`oneWayDestroy` field creates no Box2D joint—even when the value is false—and
+instead stores the destruction-link timer/direction metadata. Type 6 creates
+a Box2D rope joint (enum value 10), with local anchors `(-1,0)/(1,0)` and an
+optional `maxLength`. Types 7-10 dispatch through `createCustomJoint`; the
+shipped retail handlers do not all create constraints. Type 7 calls
+`createRopeFromJointDefinition`, which creates invisible rope-link bodies and
+revolute joints; only the non-play editor branch temporarily changes it to a
+type-2 weld. Type 8 appends end2 to end1's `triggerTargets`, type 9 assigns
+end2 as end1's `areaOfEffect`, and type 10 either deletes one variant or swaps
+two controllable birds. The Rust entry now releases its scene mutex before
+that Lua dispatch, mirrors dynamically created descriptors in
+`objects.joints`, and permits the type-7 rope builder to re-enter
+`createJoint` without deadlocking.
+
+IDA and Hopper also establish the useful source boundary inside this family.
+IDA measures `sub_100037374` as 21,876 bytes with 535 basic blocks and
+cyclomatic complexity 181, while its independent `sub_10003CC64` batch wrapper
+is only 144 bytes with four blocks. Hopper's less aggressive block coalescing
+reports the same single-joint entry as 18,240 bytes/243 blocks and confirms
+that the batch wrapper's sole semantic call is `sub_100037374`. The eventual
+Box2D insertion is a separate 272-byte, 15-block `b2World::CreateJoint`
+function at `sub_10086E470`. The Rust joint-construction source is therefore
+split without inventing new public entry points: `construction/lua_bridge.rs`
+owns the Lua descriptor mirror and the post-lock `createCustomJoint` callback,
+`construction/physics.rs` owns native joint-definition decoding and world
+insertion, and the seven-line `construction.rs` facade preserves the original
+ordered entry path.
+
+The `coordType` conversion is also exact. The adapter rounds with
+`floor(value + 0.5)`: 0 ignores supplied coordinates and uses body-center
+anchors; 1 subtracts each body's translation without inverse rotation; 2
+uses the supplied body-local values directly; invalid values retain the
+zeroed joint-definition defaults. Type 6 has its separately inlined rope
+variant of this switch. All shipped typed joint records use `coordType=2` on
+their physical path. Weld initialization averages the two transformed anchor
+positions, while revolute and prismatic initialization use end1's transformed
+anchor as the common world point.
+
+The rehost now contains warm-started distance, coupled 3x3 weld/revolute and
+prismatic solvers plus the one-sided rope limit, including motor clamping and
+lower/upper/equal complementarity. Every physical descriptor reads
+`collideConnected`; the native default is false, so connected fixtures are
+filtered unless a joint explicitly opts in. Metadata-only type 5 links do not
+filter contacts. IDA `sub_10086E470` and `sub_10086E27C`, independently
+confirmed in Hopper, establish the exact deferred topology behavior. Creating
+a non-colliding physical joint marks every existing contact between its two
+bodies with `b2Contact::e_filterFlag` (`0x8`) but does not wake them or destroy
+the contacts immediately. `ContactManager::Collide` tests the awake gate before
+that flag, so a contact shared by two sleeping endpoints remains dirty.
+Destroying a physical joint wakes both bodies and, when `collideConnected` was
+false, flags surviving contacts again; metadata-only links do neither. The
+Rust contact manager now preserves this flag and its same-pass callback
+visibility instead of consulting the current joint map eagerly in every
+solver pass.
+
+A one-process audit booted all 153 extracted levels: 86,450 level objects
+referenced 558 of 797 block definitions with zero missing definitions. It
+found 3,799 typed joint records: type 2 = 2,843, type 3 = 519, type 5 = 196,
+type 7 = 207, and type 8 = 34. Every type 5 record contains
+`oneWayDestroy` (25 true, 171 false), so all shipped type 5 records select the
+metadata-only branch; types 4 and 6 remain implemented for original API/editor
+compatibility although retail levels do not instantiate them. Breakable
+records comprise 328 type-2, 12 type-3 and 2 type-7 descriptors. Only five
+physical descriptors enable `collideConnected` (one type 2, four type 3).
+The type-3 audit also found 13 enabled motors, 14 enabled limits, and
+`backAndForth` true on 517 of 519 descriptors.
+
+`createTrack` builds the native table returned to Lua and the corresponding
+track constraint rather than returning a compatibility placeholder. Point
+conversion is split into `getWorldPoint` (`sub_1000550B8`) and
+`getLocalPoint` (`sub_10005521C`); both IDA and Hopper show the standard body
+rotation/translation pair and its inverse. `setRevoluteJointSpeed`
+(`sub_100044C18`) resolves the named joint, wakes both endpoint bodies and
+stores motor speed at joint offset `+0xA8` through `sub_1008696B4`.
+`checkJointLimits` and `handleJointLimits` use the same current revolute angle:
+the former reverses a motor at the reached boundary and the latter stops it,
+and both are void Lua calls. `isJointAttached` does not inspect the body's
+joint list; it resolves the named fixture and calls Box2D `TestPoint`.
+DirtMechanics' `sub_100020858` first adds the supplied local offset to the
+body's position with two float32 `fadd` instructions, then walks every fixture
+and invokes the shape's `TestPoint` virtual method. The rehost preserves that
+pre-test rounding rather than adding the two Lua numbers in double precision.
+These ABI distinctions are covered by regressions.
+
+`getCurrentTrackAngle` resolves the named object in `sub_10003D650`, reads its
+track object from body `+0x88`, and calls `sub_10085D364`. That helper expands
+the stored chain into child edges, projects the body's float32 position onto
+each edge and retains the first strictly smaller squared distance; it never
+adds an implicit closing edge. `sub_10085DAA4` then returns float32
+`atan2(edge.y2-edge.y1, edge.x2-edge.x1)`, or zero when the object has no
+track. The Rust track store now rounds input points to float32 and reproduces
+the native projection/FMA, tie order, open-chain children and atan2f result.
+
+The constraint itself is also no longer modeled as a post-step coordinate
+snap. `sub_10086DA58` selects and caches the closest child before island
+solving, derives the edge angle/basis, and warm-starts the accumulated linear
+correction only when that child is unchanged (with the native `0.9f` angular
+damping). Every one of the ten velocity iterations then calls
+`sub_10086DB8C` between ordinary joints and contacts. It removes `0.1f` of
+normal velocity, adds `0.1f` of line-distance drift correction, applies the
+full tangential correction outside either endpoint, and moves angular
+velocity `0.2f` toward the edge angle when `rotateBlock` is true or toward
+zero otherwise. Only the normal component is accumulated for the next warm
+start. Track position solving is `sub_10086DCE0`, a literal true return, so
+the native body is integrated from its corrected velocity rather than being
+teleported onto the polyline. Rust now follows that float32 island lifecycle.
+
+`objectAndTrackOverlap` is the separate `sub_10003D208`, not an AABB helper.
+It reads `points` from the second Lua table, rounds every point to float32 and
+constructs a temporary radius-`0.002f` Box2D chain. For child edges
+`0..pointCount-2`, it calls `sub_10086021C`: that routine builds distance
+proxies for only `b2Body::m_fixtureList` (the current head fixture) and the
+selected chain edge, runs radius-aware `b2Distance` with the body transform
+and an identity track transform, and accepts residual distance below
+`FLT_EPSILON`. The Rust binding now follows that exact field contract,
+fixture-list selection, signed circle radius, rotation, skin radii and convex
+core distance instead of intersecting the whole object's AABB with segment
+bounding boxes.
+
+Several small object stores are semantically separate despite their similar
+Lua signatures. `setSensorGravityMask` (`sub_1000313B4`) writes the object
+integer at `+0x104`, while `setObjectGravityCategory` (`sub_1000313D8`) writes
+`+0x124`. `setPivotOffset` (`sub_100040228`) writes floats at `+0xB4/+0xB8`;
+the object renderer at `sub_10006D5B4` divides them by object scale and uses
+them as the secondary pre-scale translation active around Lua pre/post draw
+callbacks. They are not copied into the atlas/rotation pivot pair.
+`setDecorationObjects` (`sub_10003FD6C`) follows
+`objects.world[name].definition` into
+`blocks[definition].decorations.objects`, reads `amount`, `sprite`,
+`angleIncrement` and `scale`, then installs the native decoration descriptor
+at `+0xF8` and enables it at byte `+0x141`.
+
+## Lua host globals and startup
+
+The platform initializer at `sub_10002A278` assigns the resource roots
+`data`, `images`, `fonts`, `audio`, `localization`, `levels`, `scripts`,
+`scripts_common`, `shaders`, `config`, and `ios`. `sub_100026D2C` exposes the
+corresponding `imagePath`, `fontPath`, `audioPath`, `localizationPath`,
+`levelPath`, `scriptPath`, `commonScriptPath`, and `configPath` globals before
+loading game logic. It also exposes a `res` resource object and device model
+strings.
+
+The recovered native startup callback at `sub_10005D44C` invokes Lua
+`createStartUpAssets`. Menu and subsystem initialization then continue through
+callbacks defined by `game_init.lua`, including `initializeGame`,
+`initializeGameMenus`, `initializeEventSystem`, and
+`gameSpecificInitSubsystems`.
+
+`sub_10005761C` implements `loadLuaFileToObject`. Its recovered call contract
+is `(path, parentObject, childName, loadFromBundle=true)`. For a non-empty
+`childName`, it creates or reuses the named child table, injects the `gamelua`
+reference as a real table field, evaluates the decoded chunk in that object's
+environment, and then stores the child back on the parent. The empty-child
+branch evaluates directly in the supplied parent and does not inject that
+field. The Rust host now mirrors both branches, including `rawget` visibility,
+rather than evaluating every object script in `_G`.
+
+`loadLuaFile` itself is `sub_100058960`. IDA and Hopper both show that its third
+argument does not mean "merge into `gamelua[childName]`": when true, the loaded
+environment is routed into the persistent native `blockTable` at GameLua
+offset `+1112`. With the fourth argument false, `sub_10007F33C` performs a
+direct `blockTable[childName] = environment` replacement. With both booleans
+true, `sub_100062028` accepts only string-keyed outer groups and numeric-keyed
+definition tables, writes the numeric `index` and string `group` fields onto
+the definition table itself, and publishes that same object as
+`blockTable.blocks[definition]`. The temporary group arrays are discarded.
+The numeric key is first narrowed through the native Lua-number-to-float path,
+so large integer keys exhibit float32 rounding. Before evaluating a deep pack,
+the loader also injects the existing `inheritsBlock` helper and the literal
+`IGNORE_COMPONENTS = true` into its isolated environment. This is required by
+the shipped level-goal/randomization packs: derived pigs intentionally inherit
+without copying the base `components` table.
+The rehost now preserves this raw table shape and replacement behavior instead
+of relying on recursive merges and metatable aliases.
+
+The common level implementation `sub_100065D3C` validates the loaded table's
+`filename` against the requested final path component before publishing
+`loadedObjects`. Its bundle path appends `.lua` unconditionally, so an already
+suffixed caller probes `.lua.lua` rather than being silently normalized. It
+then copies optional `gravityForceMultiplier` and
+`waterForceMultiplier` values into native float fields at `+1328/+1332`; when
+absent it reads `worldAttributes.defaultGravityForceMultiplier` and
+`defaultWaterForceMultiplier`. Both bundle and AppData level paths now update
+the Rust physics bridge at this same point with float32 precision. All 130
+Chapter01/Chapter02 level files pass the recovered filename contract, and a
+real `LevelLoad.transitionToLevel("Chapter01", 1)` run reaches the playable
+L01 scene with the expected `2.5/1.75` multipliers.
+
+The Lua adapter thunks at `sub_100083434`, `sub_100089E6C` and the two object
+loader entries return zero Lua results. Accordingly, `loadLuaFile`,
+`loadLuaFileToObject`, `loadLuaFileFromAppDataToObject`, `loadLevel`, and
+`loadLevelFromAppData` now expose the same zero-result ABI instead of returning
+a host-added success boolean; failures still propagate as Lua errors.
+
+The adjacent registration audit also corrected `importJSONToLuaTable`.
+`sub_100057450` accepts the JSON document itself plus the name of an existing
+Lua table; `sub_100009944` rejects a missing/non-table target, and
+`sub_1000E32C0`/`sub_100564BC8` populate that same table. Adapter
+`sub_100089B0C` returns zero values. This matches the shipped
+`setInstalledApps`, which creates `possibleInstalledApps` and passes the HTTP
+response text directly, rather than treating the first argument as a file path
+or expecting a returned table.
+
+`loadTextFileToString` uses the one-string/three-boolean adapter
+`sub_100083998`. Its member `sub_1000512D8` reads a plain file below the
+GameLua AppData root when the first boolean is false. When that boolean is
+true it opens the virtual resource path (including downloaded AppData assets),
+decrypts with the ordinary resource key or the alternate 32-byte key at `0x1009AEF30`
+(`0xMizJJUh7BbwmYhqxpJ038x8YGvk6aU`) when the second boolean is true, then
+optionally unwraps the 7z payload when the final boolean is true. The Rust host
+now mirrors all four strict slots and returns the resulting byte string without
+UTF-8 coercion. Its virtual-resource lookup checks the downloaded AppData
+location first and the shipped bundle fallback second. Extracted `config/*.json`
+files are already decrypted/decompressed forms of the original `.dat`
+containers, so that representation is recognized before applying AES/7z.
+
+The direct Lua C entry `native_loadTextFileToLuaTable` (`sub_100051810`) uses
+a related but distinct five-slot contract: required path and encrypted-resource boolean,
+then optional `parseJSON`, `decompress`, and `alternateKey` booleans in that
+order. Missing optional slots default to false, while an explicitly supplied
+non-boolean (including `nil`) is rejected. It reuses `sub_1000512D8` with the
+last two flags reordered. Empty input yields one `nil`; JSON mode calls
+`sub_1000E32C0`, while ordinary mode reaches `sub_10052AE8C` and
+`sub_100529004`, which compile the complete byte span through Lua 5.1's
+load-buffer path, execute it, and return its first value. The Rust host now
+preserves those two modes instead of permissively treating every file as JSON.
+The shared resource-key decryptor was also split at the same native boundary:
+the text loader accepts valid non-7z plaintext when decompression is disabled,
+whereas the archive decoder still enforces the 7z signature.
+
+The Rust source now follows this recovered ownership boundary as well.
+`game_lua/text_files.rs` contains `sub_1000512D8`, `sub_100051810`,
+`sub_100057450` and their registration bridges; `game_lua/persistence.rs`
+contains the `sub_10004B394`/`sub_10004B6D0`/`sub_10004B880` table-file paths
+and `sub_10052A020..sub_10052A8FC` serializer family. The public `lib.rs`
+coordinates registration, and its 215 regression tests now live in
+`tests.rs`. This first structural pass reduced the production facade from
+36,224 to 9,928 lines without changing any Lua global or adapter order. A later
+ownership pass completed that migration: `lib.rs` is now a 54-line public
+facade, while the aggregate constructor is a 352-line order-preserving
+coordinator over subsystem installers.
+The adjacent `game_lua/platform.rs` mirrors the small platform registration
+group. Its latest IDA audit confirms that `getDirectoryFileList` adapter
+`sub_100083004` strictly converts stack slot 1 to a string before
+`sub_10005A298` returns an empty Lua table; `checkDirectory` uses the same
+strict string conversion and the literal-false member `sub_10004BAA0`.
+`GetDate` (`sub_1000313FC`/`sub_1000886D0`) truncates `time_t` to signed int32,
+divides by 3600, then pushes a float32 rather than using an unbounded host
+integer. Those edge contracts and missing/wrong-type failures are now covered.
+
+The platform group now follows that recovered ownership structurally as well.
+`platform.rs` is a 35-line coordinator over `registration`, `time`,
+`installed_apps`, `misc`, `sharing` and `sha1` leaves. Their order follows the
+relative member publications in `sub_10002C274`: device identity, `GetDate`,
+URL dispatch, installed-app checks, epoch conversion, unlock checksum,
+filesystem/platform calls and screenshot capture. The native members remain
+separate—for example Hopper measures `sub_1000313FC` at 56 bytes,
+`sub_10005716C` at 440 bytes/14 blocks and `sub_10005966C` at 804 bytes/43
+blocks—so this is an ownership split rather than an arbitrary line-count split.
+`getTimeFromEpochSeconds` now also matches the recovered adapter: slot 1 is a
+strict string parsed like `operator>>(long)`, while slot 2 selects local time
+only when it is the Boolean value `true`; missing and non-Boolean values use
+UTC. `getUnlockRequestChecksum` reads the top three stack values (`-3`, `-2`,
+`-1`), requires a numeric selector, rounds it through float32 and hashes
+`second + salt + first`.
+
+The same ownership pass now places the recovered CMWC/MSVC-LCG pair in
+`game_lua/simple_random.rs`. The new `resource_manager/fonts.rs` follows the
+native ResourceManager boundary: installed face enumeration, system-font
+creation, intermediate float32 plus FCVTZS-style integer conversion, bitmap
+font parsing, string metrics, and `clipText` line breaking live together.
+The split was checked with all 251 workspace tests, warning-free Clippy, a
+release build, and a direct Chapter01/L01 wgpu capture.
+
+IDA's `sub_100446570` and Hopper's cross-references to the adjacent method-name
+strings independently identify the complete `game::LuaResources` registration
+object. In particular, `drawSprite`, `getSpriteBounds`, `getSpritePivot`,
+`getCompoSpriteBounds`, `getCompoSpriteData`, `getCompoSpriteEntry`, and
+`setCompoSpriteEntry` are one native ownership group. Their shared KA3D sprite
+and composite parsing, recursive bounds, Lua entry conversion, strict draw
+overload parsing, and anchor calculations now live in
+`resource_manager/geometry.rs`; the public Lua registration order remains in
+the coordinator during this migration step. The complete `res` and
+`ResourceManager` table construction has now moved as one unit into
+`resource_manager/registration.rs`, matching the `sub_100446570` constructor
+boundary rather than splitting its closures by arbitrary source length. A
+typed `RegistrationContext` keeps the constructor's captured runtimes explicit
+while preserving the original global-install position. All 251 tests,
+warning-free Clippy, the release build, and a direct Chapter01/L01 capture pass
+after this move.
+
+That constructor is now represented as an order-preserving coordinator rather
+than one 1,351-line Rust function. Its contiguous native groups are split into
+resource lifecycle, locale/font, sprite/composite query, audio setup, audio
+playback, resource-backed draw and legacy `ResourceManager` installers. The
+typed context and the original `res`/global publication points remain in
+`resource_manager/registration.rs`.
+
+Hopper cross-references for `loadFromBundle`, `loadFromAppData`,
+`setPlaybackEvent`, `getEntityWorldTransform`, and `getEntityWorldBounds` all
+land in the same registration function that IDA identifies as
+`sub_10000EC80`; the template symbol names its owner `AnimationWrapper`.
+Accordingly, the common playback/data types live in
+`animation_wrapper/model.rs`; JSON/skin parsing, timeline events, typed track
+sampling and shader-table decoding live below the focused `model/asset.rs`,
+`timeline.rs`, `tracks.rs` and `shader.rs` modules. IDA and Hopper further
+separate the two asset resolution entries (`sub_1000115A0`, 508 bytes/21 basic
+blocks, and `sub_1000118F8`, 332 bytes/11 basic blocks) from their common scene
+constructor (`sub_100010340`, 1,580 bytes/62 basic blocks). The nine-line Rust
+asset facade therefore delegates JSON/hierarchy recovery to
+`asset/loading.rs`, companion skin resolution and parsing to `asset/skins.rs`,
+and live-state installation to `asset/runtime.rs`. The adjacent
+hierarchy/affine transform, skin attachment, bounds and render-command stage
+now lives in `animation_wrapper/transform.rs`. This preserves the native
+data-to-draw dependency direction without retaining a 1,118-line aggregate
+file. The complete Lua method table is coordinated by
+`animation_wrapper/registration.rs`, with a typed context capturing the
+animation runtime, asset root, render bridge, sprite geometry and
+missing-method audit state. Resource, playback, scene/draw, query and fallback
+closures live in the adjacent `registration/` modules. The coordinator invokes
+them at the original global installation point, preserving closure ownership
+while following the complete `sub_10000EC80` constructor boundary.
+
+Both native load entries compute their companion resource with
+`filename.length() - strlen(".anim.json")` and append `.skins.json`; neither
+checks that the source filename actually ends in `.anim.json`. The Rust loader
+now reproduces that byte-count operation, including the `std::string`
+substring behavior that clamps an underflowed count for names shorter than ten
+bytes, rather than conditionally replacing the suffix. A focused regression
+covers the normal, long non-matching, and short-name cases.
+
+Hopper string xrefs recover the constructor's exact publication sequence at
+`0x10000ED94..0x10000F268`: bundle/AppData loads; `close`/`closeAll`; playback
+controls; wrapper translation/rotation/scale; `update`; `draw`; playback-event
+registration; entity queries; `setSkin`; `getActions`; `setShader`; and finally
+cache clear plus both preloads. The Rust coordinator now spells out that order
+instead of retaining its earlier development-stage ordering. It is 79 lines;
+the resource, scene, query and fallback units are 146, 148, 137 and 46 lines
+respectively. Playback is a nine-line facade over 165-line state controls,
+132-line frame advancement/event draining and a 19-line callback-registration
+unit. The callback table remains shared across playback and resource-closing
+installers, matching the native wrapper's scene-owned callback lifetime.
+
+This playback split is backed by both disassemblers rather than source length
+alone. IDA and Hopper measure the enclosing `sub_10000EC80` registration
+constructor as 1,620 bytes; IDA resolves the `start` adapter
+`sub_10001CAF0` as a separate 104-byte member, the speed setter
+`sub_100013D08` as 272 bytes, the scene-resolving seek member
+`sub_10001396C` as 300 bytes, and the queued six-argument Lua event drain
+`sub_100016FE4` as 380 bytes. Hopper reports the same entry points and sizes
+(with its seek control-flow view spanning the tiny `sub_10040E798` tail).
+Accordingly, `registration/playback/controls.rs`, `update.rs` and
+`callback.rs` express member ownership beneath the constructor-order facade;
+they do not invent new public runtime layers.
+
+The finer model split follows the concrete runtime members rather than JSON
+field names alone. Hopper reports cached-asset population `sub_1000E2660` as
+368 bytes/13 blocks, `spineEvent` decoding `sub_1000121F4` as 1,244 bytes/67
+blocks, shader-table construction `sub_10006CB08` as 2,136 bytes/60 blocks,
+and queued event draining `sub_1000141E4` as 696 bytes/39 blocks; the enclosing
+Lua registration member `sub_10000EC80` remains a separate 1,620-byte
+constructor. The former 699-line mixed model is consequently a 111-line data
+facade plus 263-line asset, 195-line timeline, 92-line track and 56-line shader
+units, while the same runtime maps keep load-to-sample-to-draw ordering intact.
+
+The first PhysicsWorld structural split follows the binary's bundled Box2D
+narrow-phase cluster. Hopper identifies the nearby exported
+`b2Simplex::ReadCache` symbol and the leaf contact routines at `0x10085D848`
+and `0x10085E590`; IDA independently reports the latter as a three-block,
+148-byte packed-float circle routine and the surrounding polygon routine as a
+larger multi-branch leaf. Circle/circle, polygon/polygon, circle/polygon,
+edge/circle, edge/polygon, contact-feature clipping, and segment-distance
+helpers are exposed through `physics_world/narrow_phase.rs`. The 18-line
+facade follows the five native algorithm leaves: `circle.rs` owns
+`sub_10085E590`/`sub_10085E624`, `edge.rs` owns
+`sub_10085E8AC`/`sub_10085EADC`, `polygon.rs` owns `sub_10085F648`, its
+`polygon/separation.rs` child owns `sub_10085FB84`/`sub_10085FD74`, and
+`polygon/clipping.rs` owns the shared `sub_100860148` clipping record and leaf.
+`geometry.rs` owns reusable float32 predicates and segment distance. World
+stepping, contact lifetime and Lua callbacks remain in
+their existing native ownership modules.
+
+The adjacent continuous-collision group now lives in
+`physics_world/continuous.rs`: simplex solve/search, the cache used by the
+exported `b2Simplex::ReadCache` neighborhood, GJK core distance, the three
+separation-function modes, and `sub_100861B54` time-of-impact advancement.
+The recovered implementation retains its twenty outer iterations, eight
+separation pushes, alternating bisection/secant roots and fifty-root cap. TOI,
+two-edge rescan and dynamic-tree regressions remained unchanged after the
+split.
+
+`physics_world/broad_phase.rs` now owns the preceding embedded
+`b2DynamicTree` boundary: float32 AABB helpers, the logical 40-byte node,
+block-style free-list growth/reuse, fat-proxy movement, stack query order,
+surface-area insertion cost, removal, refitting and balancing rotations. The
+tree/proxy, fat-AABB and immediate broad-phase-drain regressions pass without
+changing RenderBridge's world/contact orchestration.
+
+Hopper places the `createPolygon` and `decomposePolygon` strings together in
+the GameLua registration constructor at `sub_10002C274`; their shared physical
+contour implementation is now isolated as
+`physics_world/polygon_decomposition.rs`. It preserves the float32 boundary,
+clockwise ear scoring, repeated-vertex contour splitting, feature orientation,
+convex triangle merge limit and near-collinear simplification. Decomposition,
+drawable ordering and seven-vertex fixture-limit regressions all pass.
+
+The GameLua-to-PhysicsWorld interface is now separated at the same adapter
+family. Hopper resolves `createJoint`, `createJoints`, `destroyJoint`, and
+`getRayCastedObjects` references to `0x10002D0B0`, `0x10002D0D0`,
+`0x10002D2F0`, and `0x10002EA68` inside `sub_10002C274`. Their Rust method
+installation is coordinated by `physics_world/registration.rs`; the actual
+force/time, construction, joint, track, vertex-buffer and query closures now
+live in the focused `physics_world/registration/` modules.
+The immediately following SceneObject mutation/query adapters live in
+`game_lua/object_api.rs`. Both modules receive the same RenderBridge handle and
+are invoked from the same aggregate installation phase, while the facade makes
+the recovered registration and closure-capture sequence explicit. Joint,
+object, ray-cast and physics regression groups all pass after the split.
+
+The finer registration boundary is also directly visible in Hopper's string
+references. `createBox`, `createCircle`, `createPolygon`, `createLineShape`
+and `createNonPhysicsObject` are installed at `0x10002CFB0..0x10002D090`;
+`createJoint`, `createJoints` and `createTrack` follow at
+`0x10002D0B0..0x10002D0F0`; `destroyJoint`, `clearVertices` and `addVertex`
+appear at `0x10002D2F0..0x10002D370`; and the two native spatial queries are
+registered at `0x10002EA48` and `0x10002EA68`. IDA independently reports the
+containing `sub_10002C274` as 15,028 bytes with 77 basic blocks. The new
+31-line Rust facade preserves this native subsystem sequence while the largest
+implementation unit is the 343-line scene constructor rather than the former
+712-line mixed registration file. The query module still delegates to the
+separately recovered `sub_10005411C` AABB and `sub_10005464C` ray contracts.
+
+The same constructor is a 15,028-byte, 77-basic-block registration dispatcher
+in IDA. Hopper places `drawUITextNative`, `drawString3D`, `drawRect`,
+`drawTexturedRect`, `drawPolygon`, `setTheme`, `drawLine2D`,
+`drawCompoSprite`, and `drawBoxNative` at references between `0x10002CD00` and
+`0x10002E9C8` within it. Those bindings now live together in
+`game_lua/render_api.rs`; their captured RenderBridge, ResourceRuntime,
+LocaleRuntime, sprite geometry and composite-name sets are explicit in one
+registration context. Theme, draw, sprite, textured and render regression
+groups pass after extraction.
+
+Hopper identifies the later PhysicsWorld extension family independently:
+`renderGravityVisualsNative`, `decomposePolygon`, `objectAndTrackOverlap`,
+`destroyTrack`, `getCurrentTrackAngle`, `setJointParameters`, `makeRay`,
+`getObjectVertices`, `createNativeBlockExtension`, `makeLightBeam`, and
+`native_applySensorForces` all reference the same constructor span from
+`0x10002CDD0` through `0x10002F334`. Their Rust bindings now live in
+`physics_world/extensions.rs` with one shared RenderBridge capture. Track,
+joint, sensor, native-block, decomposition, ray and light-beam regressions all
+pass after the move.
+
+Theme object state is separated from theme drawing. Hopper maps
+`createThemeSprite`, `removeThemeSprite`, `modifyThemeSprite`, and
+`rotateThemeSprites` to `0x10002D1A0..0x10002D230`, while
+`createThemeAnimation` is registered later at `0x10002EB84`. The former
+530-line `game_lua/theme_objects.rs` is therefore an order-only coordinator:
+the continuous generated-adapter group now has its own 20-line order facade in
+`theme_sprite_registration.rs`, with create/remove/modify/rotate implemented
+in four adjacent leaves matching `0x10002D1A0/1D0/200/230`; the direct LuaState member lives in
+`theme_animation_registration.rs`, and their shared record layout lives in
+`theme_state.rs`. Authored layer construction and theme-specific argument
+decoding are independently owned by `theme_layer_parser.rs` and
+`theme_arguments.rs`.
+The level-file family is similarly explicit: `loadBlocksForEditing`,
+`loadLevel`, `loadLevelFromAppData`, and `saveLevel` occupy
+`0x10002DBB8..0x10002DC48`, with `onLoadLuaFileFail` at `0x10002EBB4`.
+`game_lua/level_files.rs` is now only their order coordinator. The zero-argument
+editor member, selector-zero/selector-one common loader wrappers, fixed-schema
+save member and late failure callback live in `level_editor_registration.rs`,
+`level_load_registration.rs`, `level_save_registration.rs` and
+`level_failure_registration.rs`. Theme-object, level-save, block-editor and
+AppData round-trip regressions pass after both moves.
+
+Implementation ownership now follows the same native components, not only the
+registration surface. `physics_world/joints.rs` exposes joint anchors,
+prismatic geometry, packed effective-mass matrices, the `sub_100862E14`
+Solve22 and `sub_100862D60` Solve33 float32/cofactor order, Lua descriptor
+mirroring, and the `b2World::CreateJoint` construction path through focused
+submodules. `game_lua/render_primitives.rs`
+owns the CPU-side direct-sprite, rect, line and triangle-fan command builders
+shared by the recovered draw adapters. The saved-level whitelist is isolated
+in `level_save_schema.rs`; Lua 5.1 number/string coercion, cycle rejection and
+recursive table cloning sit in `level_table_clone.rs`. The generic
+`loader_registration.rs` no longer owns `loadLevel`. Joint/solver, draw and
+level serialization regressions pass after these implementation moves.
+Particle query parsing, definition overrides, deterministic native random
+consumption, sprite selection and spawn construction now live together in
+`game_lua/particles.rs`; all six particle regressions and the Catmull aiming
+stream regression remain green.
+
+Contact ownership is now explicit in `physics_world/contacts.rs`: native
+collision-factor lookup, cached force multiplier, callback argument ordering,
+legacy/non-legacy damage, score propagation, breakable-joint collection and
+Lua descriptor compaction move together. The same module now owns collision
+enter/exit dispatch, sensor overlap accounting and `insideGravity` mirroring,
+so the complete native contact-listener lifecycle has one Rust owner.
+`physics_world/dirt.rs` owns the associated Dirt texture lookup and component
+reconstruction boundary. The 21 contact, 13 collision, damage,
+breakable-joint, bird-collision and six Dirt regressions all pass after this
+split.
+
+`game_lua/script_runtime.rs` now follows the original load chain as one unit:
+Lua 5.1 source/binary preparation, AppData decryption handoff, named-child
+environment injection, fallback metatables, definition-pack merge/indexing,
+and safe resolution across scripts, common scripts, levels, configuration and
+localization roots. Script-loader, named-object, parent-traversal, SHA-1 and
+sensor-state regressions pass after the move.
+
+The small lifecycle boundaries are split as well: `game_lua/input.rs` owns the
+native `g_key*` compact event buffers separately from the public key maps;
+`game_lua/time.rs` owns current-time table construction and seconds conversion;
+and `resource_manager/localization.rs` owns localization discovery and table
+loading. Canonical `objects.world` creation and scene-entry lookup now live in
+`game_lua/object_api.rs` beside the mutation adapters that consume them. Full
+workspace tests and warning-free Clippy pass after these ownership moves.
+
+IDA confirms that the GameLua constructor `sub_10002C274` uses an approximately
+`0x1540`-byte stack frame, matching its role as an ordering-sensitive aggregate
+registration entry rather than one feature implementation. Hopper places the
+trajectory data/update names at `0x10002CBA0..0x10002CF20` and the separate
+`native_drawSimulationTrajectory` registration at `0x10002DEE8`. The shared
+one-body predictor, world-attribute decoding and Catmull-Rom AimStream sampling
+therefore live in `game_lua/trajectory.rs`, while their registration positions
+remain unchanged in the aggregate constructor. Generated adapter coercions and
+diagnostic formatting now live in `game_lua/arguments.rs`. Theme argument/table
+decoding, layer construction and FCVTZS index behavior are split into
+`game_lua/theme_arguments.rs` and `game_lua/theme_layer_parser.rs`, next to the
+separate ThemeSprite and ThemeAnimation registration modules. The
+release L01 audit after these moves preserves background/foreground layering,
+slingshot, tutorial hand, pig and HUD placement.
+
+The adapter helper itself now reflects the same distinction visible in the
+disassembly. Generated thunks such as one-NUMBER `sub_100088D24`, BOOLEAN
+`sub_10008962C` and one-STRING `sub_100089E6C` use exact tagged-type guards;
+hand-written members using Lua 5.1 `lua_isnumber`/`lua_tonumber` may instead
+accept numeric strings. The former 224-line mixed `game_lua/arguments.rs` is
+therefore a small re-export façade over `arguments/strict.rs`, `lua51.rs`,
+`value.rs`, `table.rs` and `diagnostics.rs`. Existing callers retain one API,
+but the source no longer makes strict generated adapters look interchangeable
+with C-API coercion. All 297 tests, strict Clippy and the release build pass
+after this ownership-only move.
+
+The desktop façade follows the same ownership rule. The production
+`stella-app/main.rs` is now a 50-line module/constant/entry coordinator, while
+the software rasterizer and its pixel-level native GL compatibility tests live
+under the test-only `reference_renderer` facade. The two helpers consumed by
+`assets.rs` remain explicitly re-exported only under `cfg(test)`, so this
+layout changes neither the release binary path nor the reference-render checks.
+
+The completed structure pass keeps that aggregate ordering without keeping the
+implementation in one source file. IDA and Hopper both report
+`sub_10002C274` as 15,028 bytes with 77 basic blocks; Hopper also exposes its
+large set of generated method-registration callees. The Rust coordinator now
+calls ordered installers for bootstrap/input state, platform services, script
+loaders, time, particles, world controls, draw callbacks and trajectory APIs.
+The world-control segment is an address-annotated ordered façade rather than a
+feature-group approximation. Hopper string xrefs and IDA's
+`sub_10002C274` assembly agree on `requestExit` at `0x10002C770`, the water
+cluster at `0x10002CAE0..0x10002CB70`, notification/gravity/aiming at
+`0x10002CEC0..0x10002CF20`, the physics/origin/max-scale cluster at
+`0x10002D7F8..0x10002D8D8`, editing/world scale/mouse wheel at
+`0x10002D938..0x10002D998`, GL render state/alpha/clear at
+`0x10002DAF8..0x10002DB88`, level/game/camera/locale members at
+`0x10002E6E0..0x10002E880`, and the late orientation, parameter-table and OS
+members at `0x10002E91C`, `0x10002EB64` and `0x10002F314`. In particular the
+native water order is bird drag, object drag, color, then additional gravity;
+the Rust facade now preserves it instead of registering object drag first.
+
+Coordinate conversion and GL-context state live under
+`world_transform_registration/`; water, lifecycle, world controls and device
+queries live under `world_environment_registration/`; physics gates, camera
+limits, framebuffer clear and locale refresh live under
+`world_physics_camera_registration/`. The former 167-, 208- and 206-line
+aggregates are short façades over focused leaves, and `world_registration.rs`
+preserves the members' cross-family native relative order. All 297 workspace
+tests, strict Clippy, the release build and the 11,000-frame
+`audit-world-native-order-split.png` route pass with zero invoked fallbacks.
+The scene-object surface follows the same ownership split: visual mutations
+and their paired visibility query occupy `object_visual_registration.rs`,
+while the RenderObject/nullable-Box2D getter family occupies
+`object_query_registration.rs`. The coordinating `object_api.rs` is now 81
+lines instead of mixing those queries with Lua-table fallbacks, and the
+unrelated feature coordinator remains separate. This boundary follows the
+separate GL-context member `sub_100044E30` and named RenderObject members
+`sub_100044E60`/`sub_1000592C4`, rather than merely cutting at a line count.
+The trajectory installer follows Hopper's contiguous data/update xrefs at
+`0x10002CBA0..0x10002CF20` and retains the separately observed draw entry at
+`0x10002DEE8` in the same relative registration sequence.
+
+IDA's `sub_1000550B8` (`getWorldPoint`) and `sub_10005521C`
+(`getLocalPoint`) are direct LuaState members, not permissive Lua-table
+helpers. Both read an exact string, resolve the nullable body with
+`sub_100061AE4`, consume two exact numeric slots as float32, and then apply the
+body's `b2Transform`. The Rust query module preserves the observed
+FMUL/FNMSUB/FMADD/FADD ordering with explicit float32 `mul_add`; a missing or
+non-physics body becomes a recoverable Lua runtime error instead of attempting
+the native null dereference. This recovered boundary moved the two functions
+out of the mixed feature installer and added ABI, invalid-body, and exact
+round-trip regressions.
+
+The former 444-line object physics installer is now an order-preserving
+15-line coordinator. Its native ownership clusters are
+`object_motion_registration.rs` (velocity, force and impulse on `b2Body`),
+`object_body_registration.rs` (body/fixture coefficients, flags and contact
+invalidations), and `object_material_registration.rs` (RenderObject material,
+texture and water fields). The split follows the target data structures and
+recovered member families; it does not change global registration order.
+
+The body-registration cluster is now split one level deeper along its own
+native entry points. Its 19-line facade installs `density.rs` for the direct
+272-byte/6-block `sub_100030D1C`, `scalars.rs` for the fixture/body coefficient
+wrappers, `flags.rs` for fixed-rotation, sensor and sleep members, and
+`activity.rs` for the independent 52-byte `sub_10004DB2C` SetActive wrapper
+plus 172-byte `sub_10004F3D8` collision lifecycle. IDA and Hopper both report
+`sub_1000411F0` at 456 bytes/16 blocks and show that it always calls the
+456-byte/17-block `b2Body::ResetMassData` after changing fixed rotation. Rust
+now does the same, so a prior SetMassData inertia override is discarded even
+when fixed rotation is later disabled. The wrappers also retain the native
+nullable-body branch: non-physics RenderObjects are not allowed to acquire
+body flags, damping, activity changes, or a mirrored collisionEnabled write.
+Two regressions cover the custom-inertia reset sequence and all bodyless
+no-op paths.
+
+The adjacent 229-line object-query aggregate is likewise a 19-line ordered
+facade now. IDA/Hopper component analysis shows no internal calls among its
+ten native entries: `appearance.rs` owns `getScale` (180/6), flip (24/1), and
+the shared angle/rotation getter (24/1); `motion.rs` owns angular speed (36/4),
+speed magnitude (52/3), linear velocity (228/9), and sleeping (48/3);
+`world.rs` owns the independent 16-byte physics-lock predicate; and
+`points.rs` owns the two 264-byte/6-block direct LuaState transform members.
+The latter continue to resolve a nullable body before reading numeric slots,
+but—matching instructions at `0x100055108..128` and
+`0x10005526C..28C`—do not dereference its transform until after both numeric
+reads. A cross-error regression therefore locks the native argument-type
+error ahead of the recoverable missing-body error when both conditions occur.
+
+The former 341-line `object_feature_registration.rs` is now an 18-line ordered
+coordinator as well. IDA reports `sub_10004EF74` as
+`(GameLua*, std::string*, float, float)` and shows its throwing
+`sub_10005DAF8` lookup before the 39-case parameter switch; Hopper confirms the
+same switch plus the generated strict string/number adapters. That recovered
+owner lives in `object_parameter_registration.rs` together with the adjacent
+single-store gravity category and sensor-mask members. Pivot/decoration table
+traversal lives in `object_decoration_registration.rs`, the independently
+scanned revolute motor vector in `object_joint_registration.rs`, and object
+destruction plus flash callback installation in
+`object_lifecycle_registration.rs`.
+
+This pass also removes the fabricated `nativeParameters`, visibility, sensor
+and gravity-field Lua mirrors. Parameter 22 now calls the rehosted equivalent
+of `b2Body::SetActive`, destroying proxies and emitting synchronous contact
+exits rather than changing `b2Fixture::m_isSensor`; the shipped Lua creation
+path uses `setAsSensor` for that separate flag. Sensor modes 5 and 7 retain the
+native fixed-rotation and bullet side effects. Parameter 38 now treats its
+input as inertia about the body origin and subtracts
+`mass * dot(localCenter, localCenter)` before storing COM inertia, matching
+`b2Body::SetMassData`. Decoration amount remains the signed `FCVTZS` result,
+and pivot, decoration, motor speed and parameter scalar stores all cross their
+observed float32 boundary. Dedicated regressions cover strict arity/types,
+unknown-object failures, pivot's Lua-write-before-native-lookup order, negative
+decoration counts, endpoint wakeup, activation and off-centre mass data.
+
+Below the Lua surface, the former aggregate `RenderBridge` implementation is
+split by the Box2D execution stages visible in the disassembly: proxy/broad
+phase, contact destruction and refresh, island assembly, velocity and position
+constraints, joint solving, position integration and reduced TOI islands.
+`SceneObject` is likewise divided into state layout, fixture/mass behavior,
+sweep/body motion and collision geometry/query modules. The public facade is
+54 lines, the aggregate registration coordinator is 352 lines, and the
+ownership split passes all 263 workspace tests, warning-free strict Clippy, a
+release build and the `audit-theme-split-start.png` wgpu start-flow
+capture.
+Joint solving is split once more along Box2D's concrete constraint classes:
+island dispatch remains in `joint_solver.rs`, common cached/body impulse writes
+live in `joint_solver/impulses.rs`, and distance, prismatic, revolute, rope and
+weld equations live in independent class modules.
+The public Lua host similarly delegates fixed-step physics to
+`game_lua/host_physics.rs`, while rehost scene ownership and the live Lua
+collision-material view used by the native contact filter live in
+`game_lua/host_scene_sync.rs`.
+Its remaining facade is now split along the executable's member boundaries:
+two-stage startup is in `host_startup.rs`, `sub_10005E898` update and
+`sub_10004BAB4` draw dispatch are in `host_frame.rs`, desktop pointer-to-key
+translation is in `host_input.rs`, and bridge queries/drains are in
+`host_output.rs`.
+The large SceneObject and render adapter sources are now order-preserving
+coordinators too. Object registration is divided into transform/shape,
+physics/material, parameter/decoration/joint/lifecycle and visual/query groups.
+Render registration follows
+the Hopper string clusters for theme setup, immediate primitives, UI text,
+textured/masked draws and direct sprite/composite draws; `render_api.rs` now
+contains only the typed capture context and their original call order.
+The later PhysicsWorld extension table is split by the same adjacent string
+families: track/joint mutation and queries, scene-object/sensor extensions, and
+the native block/Dirt method table. `extensions.rs` retains the original
+sequence and the final decomposition/ray/light-beam/gravity-visual group.
+
+The physics implementation now follows the same ownership rule below the Lua
+surface. `physics_world/dirt.rs` coordinates the complete native dirt pipeline;
+its focused children own float32-to-1000x integer conversion, the recovered
+0.785000026f cut octagon, pure-Rust Clipper compatibility, short-path rejection
+and reversed quality-ranked ear cutting. `physics_world/sensors.rs` contains
+`sub_10005DE90` gravity/water
+masking, buoyancy and drag. `physics_world/ray_cast.rs` owns fixture entry-face
+tests and proxy AABBs, while `physics_world/tracks.rs` owns strict first-tie
+closest-edge projection. Joint state moved beside joint construction/solvers;
+contact callback data moved beside damage and dispatch; TOI proxies, sweeps,
+transforms and cache state moved beside GJK/continuous advancement. Particle
+state and the fixed CMWC stream now live in `game_lua/particles.rs`, and sprite
+geometry/placement plus native textured-line and rubber-band construction live
+in `resource_manager/geometry.rs`. The public script-to-wgpu command ABI is
+isolated in `render_types.rs` while retaining the original crate-root exports.
+
+The direct Lua method `native_startURLThread` (`sub_100032688`) is also no
+longer a permissive first-string scan: slot 1 is a strict URL string, slot 2 a
+strict Lua function retained as the asynchronous callback, and slot 3 is type
+checked as boolean only when the total argument count is exactly three. With
+four or more arguments the native flag is forced false and slot 3 is not
+examined. It returns zero Lua values; the offline host retains the callback and
+request metadata without attempting to resurrect the discontinued service.
+
+The main constructor builds `commonScriptPath + "/gamelogic.lua"`. That shared
+chunk itself loads `scriptPath + "/game.lua"`, so the Rust `StellaLua::boot`
+path evaluates the common chunk once and lets it perform the game-specific
+load in the same `gamelua` environment. The constructor also installs the
+persistent `settings`, `highscores`, and `bi_data` tables before this point.
+
+The same constructor, at `0x100027114..0x100027160`, loads
+`scriptPath + "/starLimits.lua"` into an object named `starTable` before
+`gamelogic.lua`. `level_load.lua` writes the selected level's silver/gold score
+limits into this table during its first playable-level setup, so omitting this
+otherwise implicit native load fails only after the intro and chapter map.
+
+## Update, draw and native scene bridge
+
+`sub_10005E898` does **not** pass elapsed time to Lua. It saves the incoming
+unscaled frame delta as `v230`, multiplies it by the engine time multiplier into
+`v238`, then invokes `update(v238, v230)`: scaled delta first and raw delta
+second. Reversing the second argument with elapsed time makes
+`gameCamera.cameraAnimation` multiply its spring by about 91 seconds after the
+first shot, causing the observed alternating `+/-` scale explosion and NaNs.
+The Rust host now reproduces the scaled/raw ABI and publishes the scaled value
+as `deltaTime` and `currentTimeStep`.
+
+The same native dispatcher accumulates scaled time at engine offset `+1308`.
+For every accumulated `0.033333` seconds it calls Lua
+`updatePhysics(0.033333)` and advances the native physics world. The rehost now
+uses this 30 Hz schedule, applies gravity/force/impulse/damping integration,
+shape-derived mass and rotational inertia, the recovered motion clamps and
+sleep state machine, then writes x/y, linear velocity, angle, angular velocity
+and sleeping state back into `objects.world` before the ordinary Lua update.
+
+`sub_10004BAB4` is the native draw dispatcher. It interleaves C++ scene nodes
+with Lua `DrawCalls.draw(z)` callbacks. Registration in `sub_10002C274` maps:
+
+- `native_setZOrderRange` to `sub_10004BAA8`, which stores two 32-bit z bounds
+  at engine offsets `+1576` and `+1580`;
+- `drawGameNative` to `sub_10004BAB4`;
+- `drawBackgroundNative` to `sub_10004C4A4`.
+
+The pre/post scene callback setters store Lua functions at scene-object
+offsets `+344` and `+352`. Immediately around the native object draw,
+`sub_100528834` retrieves the original Lua object table from its registry
+reference; the dispatcher calls the callback with that table and the object
+byte at `+0x139` as a boolean. In particular, the first argument is not the
+object name string. This distinction is required by IslandMap callbacks that
+read `object.x` and `object.y` directly.
+
+The rehost mirrors native objects created by `createNonPhysicsObject`, box,
+circle, polygon and line constructors, applies position/scale/angle/alpha/
+visibility updates, filters them through the recovered z range, and emits
+renderer-neutral commands. The recovered IslandMap camera uses a 20:1
+physics-to-world conversion, top-left `(-163.6303, -100.3015)` and scale
+`5.61361`; these values are supplied by the original scripts through
+`setTopLeft` and `setWorldScale` rather than hardcoded for the level.
+
+World-object sprite scale is not just `setWorldScale`. `setObjectParameter`
+dispatches through `sub_10004EF74`: parameter 5 writes the same scalar to
+the render/object scale fields, while parameters 17 and 18 update the
+corresponding axes independently. These cases do not recreate or resize a
+Box2D fixture; only the separate `setPhysicsScale` path above does so for its
+supported shapes. Parameter 8 sets the horizontal-flip byte at `+313`. In the object draw helper
+`sub_10006D5B4`, the field at `+0x100` must equal 2 before the engine's
+`gameWorldScale` is applied. This field is not the Box2D body type: every
+constructor initializes it to -1, and parameter 21 in `sub_10004EF74` is its
+only writer. The helper then requires object byte `+0x147` to be clear; the
+circle constructor sets this byte, while box/polygon/line/non-physics
+constructors clear it. The render bridge now preserves both conditions. This
+is observable in Chapter 01 Level 01: ordinary wood blocks set parameters
+5/6/7 but not 21, so native rendering does not multiply them by
+`gameWorldScale`; its foliage uses parameter-5 scale `0.10`, and its medium pig
+uses `0.09` plus horizontal flip. The explicit sprite matrix at
+`sub_10006C838` keeps the sprite angle and places that flip only in the X
+scale; the separate callback render state uses the native negated-angle branch.
+
+The rest of `sub_10004EF74` is now represented as state rather than an opaque
+parameter map. The numeric names were recovered from the bundled
+`ObjectParameters.lua`: 1 marks a level goal; 2 changes static/dynamic type;
+6/7 store bounce multipliers; 9/11/12/15 store the flip, not-collided,
+ignore-motion and immovable-collision flags; 16 selects the native gravity
+scale table `{1.0, 0.0}`; 20/22 distinguish sensor definition from live
+fixture-sensor state; 21 and 24 store sensor type/shape; 25-29 and 35 store
+sensor force/size data; 31 stores collision time; 32 inserts the object into
+the aiming-aid collision collection; 33/34 control visibility and bubble
+state; 36 stores the collision group; 37 selects kinematic versus dynamic;
+38 replaces Box2D mass-data inertia; and 39 accepts explicit static,
+kinematic or dynamic body type. Cases 3/4/10/13/14/19/23/30 really do fall
+through the executable's default case. The Rust solver now keeps kinematic
+bodies moving while retaining zero solver inverse mass, and body-type changes
+apply Box2D's velocity/force reset and unit-mass fallback behavior. The body
+pointer guards are preserved as well: parameters 2/16/21/22/37/38/39 do not
+mutate non-physics objects, so a non-physics parameter-21 call cannot
+accidentally activate the `+0x100 == 2` render-scale branch.
+
+Parameters 6 and 7 also feed a native collision squash/stretch path rather
+than remaining passive metadata. `sub_100062520` converts collision impulse to
+`min(impulse * 0.02f, 0.1f)` and starts the animation when this exceeds its
+current amplitude. During `sub_10005E898`, elapsed time linearly decays that
+seed, parameter 6 multiplies the amplitude, and parameter 7 contributes
+`value * 5` to a phase whose other term is `amplitude * 100`. The ordered
+object index adds `index * pi/2`; opposing sine values offset X and Y fixture
+scales. Animation ends below `gameWorldScale * 0.01`. The rehost now mirrors
+this whole float32 path once per rendered frame after all fixed physics steps,
+including the executable's
+0.02/0.1/4.0/5.0/100.0 constants and its reset fields.
+`setGameParameters` also rounds `gameWorldScale` through the native float32
+table reader before storing GameLua `+0x194`; retaining a Lua double there
+would perturb both the parameter-21 scale and bounce cutoff.
+
+The adjacent object-frame pass also consumes several parameters that were
+previously only stored. `P_IGNORE_MOTION` at `+0x13c` excludes an object from
+the thresholded `hasMovingObjects` and zero-tolerance
+`hasMovingObjectsZeroTolerance` globals without disabling Box2D solving,
+sleeping or `hasAwakeObjects`. The native thresholds are linear speed squared
+`> 9.0f`, absolute angular speed `> 0.1f`, and linear speed squared `> 0.0f`;
+the zero-tolerance flag additionally excludes controllable objects. Byte
+`+0x145` caches Box2D's awake bit, retaining a just-slept object for one final
+reporting frame. Controllable objects whose `P_TIME_SINCE_COLLISION` value at
+`+0x128` is non-negative accumulate scaled frame time in float32, and the
+one-controllable bird-collision path changes a negative value to zero.
+`P_NOT_COLLIDED` at `+0x13b` is narrower than its name suggests: its only two
+reads in `sub_100062520` suppress collision squash/stretch for the respective
+side when both objects are controllable. It does not suppress ordinary
+bird/block or block/block contacts. `P_DISABLE_IMMOVABLE_COLLISIONS` at
+`+0x13d` has constructor and setter writes but no reader anywhere in the
+GameLua executable range, so retaining it as inert state is the exact Purple
+1.1.6 behavior.
+
+`setFlashAnimation` (`sub_10004F4D4`) marks the native scene object at byte
+offset `+300` and installs the animation draw callback at `+384`;
+`removeFlashAnimation` (`sub_10004F588`) clears both. The callback at
+`sub_10006794C` applies the scene object's position, rotation and scale before
+drawing the Flash animation whose tag is the object-name string at offset
+`+96`. Its translation is `(objectPosition * 20 - topLeft) * worldScale`; its
+scale uses the object's visual scale and `worldScale`, but deliberately omits
+`gameWorldScale`. Horizontal flip changes only X scale, not rotation. The
+rehost now reproduces that callback inside `drawGameNative`, so animated birds
+and effects replace the ordinary placeholder sprite instead of disappearing.
+
+The low-level render helpers were also recovered from their direct and adapter
+entries. `drawTexturedRect` (`sub_100043D6C`, adapter `sub_100085230`) takes a
+sprite name, four floats and a boolean. Its boolean is passed but unused; the
+direct path replaces the live GL state with the native default block and
+leaves it installed, then truncates destination X/Y and the two edge
+differences independently. Its final GL-context virtual at slot `+152` is
+`nullsub_298` (a single `RET`) in Purple's only concrete GLES2 context, so this
+v1.1.6 entry intentionally submits no geometry. Those side effects,
+conversions and no-op submission are now mirrored. `drawRect`
+(`sub_100043C14`, adapter `sub_100085450`) is a different nine-argument path:
+eight floats followed by a required boolean. A false boolean installs and
+retains the default GL state; normalized RGBA is multiplied by 255, converted
+with `FCVTZS` and packed by low byte; destination X/Y and width/height are also
+converted independently. `GL_Context::drawRect` (`sub_100598CC4`) then applies
+the complete live scalar matrix and state alpha to a four-vertex triangle
+strip. The bridge now preserves all of these operations instead of emitting an
+untransformed, loosely typed rectangle. `drawSelectedTexturizedObject`
+(`sub_100043990`, adapter `sub_100085634`) takes sprite, texture, x/y and x/y
+scale. It installs translation `-topLeft / argumentScale` and scale
+`worldScale * argumentScale` into the live GL state, preserves angle/pivot and
+alpha, then sends position `worldPosition * 20 / argumentScale` to the cached
+texturized-object renderer. The Rust command now keeps that divided local
+coordinate/state representation (while producing the same final screen
+position) and retains the native state side effect. `renderMaskedImageNative`
+(`sub_1000343CC`, adapter `sub_100087FC0`) takes one resource string and nine
+numbers. The first eight numbers are independently truncated coordinates; the
+ninth is a UV factor, not alpha. It resets translation, scale and rotation but
+preserves pivot/alpha/clip, and submits Purple's exact two-triangle position and
+reverse-Y UV pairing against the backing full texture. `drawString3D`
+(`sub_10003457C`, adapter `sub_100087BB4`) takes two strings and seven floats.
+Its angle is an X-axis model rotation followed by the recovered perspective
+matrix (`-1.5`, `0.001`, `2000`, `-1.33`), not an ordinary 2D Z rotation; CPU
+reference and wgpu atlas-glyph paths now share that projection.
+
+`drawUITextNative` is the direct Lua entry at `sub_100031434`. Its first three
+arguments are a strict table and parent X/Y. Parent X/Y scale is read only
+when both arguments 4 and 5 exist (a lone fourth argument is ignored), angle
+defaults to zero, and alpha defaults to an unsupplied state rather than the
+table's `alpha` field. A false/missing `visible` exits before font selection.
+The local x/y position is composed through the parent's non-uniform
+Scale * Rotation basis and the local x/y scales are multiplied by the parent
+scales; the table's own angle is not read. A missing/non-string font selects
+`FONT_BASIC_SPACE`. For `clipped=true`, the native code iterates `lines` until
+nil and invokes each inherited `line:draw(finalX, finalY, finalScaleX,
+finalScaleY, angle)` method. An explicit alpha is installed for those calls
+and then reset to exactly 1, including the error path in the rehost.
+
+IDA's exception-inclusive view reports this entry as 3,704 bytes/83 basic
+blocks (complexity 42), while Hopper keeps a 3,692-byte/79-block principal
+body. The Rust file now mirrors its internal control-flow boundary without
+inventing extra public natives: the 154-line entry retains argument decoding,
+visibility, font selection and transform composition, then dispatches to a
+63-line `ui_text_registration/clipped.rs` callback branch or a 116-line
+`ordinary.rs` bitmap-font/state branch. IDA also isolates the downstream
+bitmap-font virtual `sub_10042B338` at 1,068 bytes/61 blocks (Hopper 1,060/58),
+supporting the separation of glyph submission from the Lua-facing adapter.
+
+The ordinary text path strictly reads width, horizontal/vertical anchors,
+group and text, accepts a rotation pivot only when both pivot fields are
+numeric, and optionally floors `finalPosition / finalScale`. It leaves the
+composed scale, angle, rotation basis and pivot installed in the live render
+state. Only an explicit alpha below one temporarily replaces the prior alpha;
+that replacement is again reset to exactly 1. ResourceManager localizes the
+group/key before BitmapFont submission. The bitmap-font virtual at
+`sub_10042B338` sets per-glyph context translation and draws each AtlasSprite
+at the live scale—there is no second host-side 0.5 density factor. The Lua UI
+line objects already contain that authored 0.5 scale. CPU reference and wgpu
+now consume the same exact text affine matrix, including non-uniform
+Scale * Rotation and pivot correction.
+
+The independent `ResourceManager.drawString` adapter at `sub_100448728`
+strictly consumes group/key strings and x/y numbers. Its fifth and sixth
+arguments are not fixed horizontal/vertical slots: both pass through the same
+anchor mapper, so either position may provide a horizontal or vertical anchor
+and the defaults remain `LEFT/TOP`. The current font is mandatory and the
+group/key pair is localized before `sub_10045C1FC` submits the bitmap glyphs.
+Unlike an earlier compatibility approximation, the draw origin and every
+glyph now inherit the complete live renderer translation, pivot, non-uniform
+scale and rotation matrix without mutating that state.
+
+`clipText` is the strict `(group, key, maxWidth)` direct entry at
+`sub_10004F630` (adapter `sub_100086070`) and returns no Lua values. It first
+localizes the group/key pair and requires the current font, then walks Unicode
+codepoints using that font's glyph advances. Native break opportunities are
+line feed, space, hyphen and U+200B: a hyphen remains on the preceding line,
+whereas space and zero-width space are omitted and skipped. A candidate whose
+width is equal to the limit already wraps; an overlong first word is split at
+the first glyph that reaches or exceeds the limit. The resulting global is
+`clippedText = { widestLine = ..., lines = {...} }`. The Rust bridge now
+reproduces those boundary, separator and forced-split rules rather than the
+former single-line `character-count * 16` estimate.
+
+System-font enumeration is separate from ResourceManager font aliases.
+`getAvailableSystemFonts` dispatches to `sub_1004482D0`, whose platform body
+at `game::SystemFont::Impl::getAvailableFontNames` walks
+`UIFont.familyNames`, then every `fontNamesForFamilyName:` result, and caches
+those face/PostScript names process-wide. The rehost now performs the same
+face-name enumeration through a cross-platform system font database; creating
+a resource named `SYSTEM_FONT` no longer incorrectly makes that alias appear
+as an installed OS font.
+
+The actual system-font object is constructed by `sub_1004756AC` and
+`game::SystemFont::Impl::Impl` (`0x100477668`). The Lua size first passes
+through `float` and `FCVTZS`; `UIFont fontWithName:size:` must succeed, and any
+style other than zero throws (the native style labels are `Normal`, `Bold`,
+`Italic`, then `Unknown`). Ascender, negated descender and leading are each
+truncated to integers at construction. The tiny virtuals at `0x1004758D4`,
+`0x1004758E4`, `0x1004758F0`, `0x1004758FC` and `0x100475908` return
+ascender+descender, ascender, descender, leading and constant-zero tracking.
+Unicode width at `0x10047692C` calls `NSString sizeWithFont:` and truncates the
+result. The Rust implementation now resolves the real platform face, derives
+those integer metrics and glyph advances from its TrueType/OpenType data, and
+applies legacy kerning instead of the former `size * characterCount * 0.5`
+placeholder. `sub_10045987C` also proves that its final stack byte is a force
+replacement flag: without it, an existing alias is returned without even
+constructing the newly requested font. Both system-font creation adapters now
+preserve that lifecycle rule.
+
+The Rust font implementation now follows those three independent owners. IDA
+and Hopper place ResourceManager `clipText` at `sub_10004F630` (IDA
+1,504 bytes/92 blocks including its tail, Hopper 1,500/91), system-face
+enumeration at `sub_1004482D0` (176/4 in both), the outer SystemFont allocator
+at `sub_1004756AC` (216/4), the UIKit-backed implementation constructor at
+`0x100477668` (IDA 976/42 including exception paths, Hopper principal body
+736/8), and Unicode width at `0x10047692C` (288/13 in both).
+
+The former 316-line `resource_manager/fonts.rs` is therefore a 21-line facade
+over 76-line shipped FONT loading/bitmap metrics, 79-line native clipText
+splitting, and 156-line cross-platform SystemFont enumeration/construction/
+width modules. The public registration API is unchanged; bitmap glyph width,
+break opportunities, f32-to-FCVTZS sizing, kerning and metric regressions all
+pass after the move.
+
+`drawBoxNative` (`sub_100051BBC`) is the nine-slice reader for `topLeft`,
+`topMiddle`, `topRight`, `left`, `center`, `right`, `bottomLeft`,
+`bottomMiddle` and `bottomRight`. It resolves `HCENTER`/`RIGHT` and
+`VCENTER`/`BOTTOM` before submission, then draws in native order: top/bottom
+middle, left/right, four corners, and finally center. An optional tenth color
+table replaces the center sprite with a default-state packed-color rectangle
+over the full requested box, with the native one-pixel right/bottom reduction.
+This key and order recovery fixes the settings panel's formerly absent middle
+edges.
+`drawPolygon` is the strict table/position/RGBA entry at `sub_100043F28`; it
+constructs a mode-1 `DrawablePolygon`, rebuilds its float32 vertices through
+the native ear cutter, submits a transformed triangle list, and then closes
+the original contour with an opaque black one-pixel outline. Local and offset
+positions retain the native 20:1 scale. `drawLine2D` (`sub_10004DC44`) and
+`drawRectLines` (`sub_10004DC8C`) share the strict
+x1/y1/x2/y2/width/RGBA adapter at `sub_100084918`. Their context implementation
+(`sub_100598890`) uses a four-vertex triangle strip and computes integer width
+as the direction-squared weighted combination of live X/Y state scales before
+normalizing in screen-aspect NDC. Current state alpha is applied to both paths.
+
+`drawTexturedLine2D` is a separate native path: adapter `sub_100084A9C`
+strictly reads a resource string followed by nine floats, but direct entry
+`sub_10004DB90` and its quad builder `sub_10006DB0C` use only endpoint
+x1/y1/x2/y2 and width. The four trailing floats are an inert ABI remnant in
+v1.1.6, including the apparent alpha argument. The recovered implementation
+now matches the native one-pixel transformed-length cutoff, state
+translation/rotation/pivot/scale application, signed width, triangle-strip
+vertex order and its asymmetric non-uniform-X-scale normal calculation rather
+than approximating the call with a centered rotated sprite.
+`drawRubberband` is not the same ABI: adapter `sub_1000897A4` reads five
+floats first and the atlas name sixth. Direct entry `sub_100030EB0` bypasses
+the scalar render-state transform, constructs the four band vertices itself,
+and maps the sprite X axis across the signed width while mapping its Y axis
+along the segment. Its arithmetic is also deliberately mixed precision: input
+subtraction, `sqrt`, the `3*pi/2` addition (raw constant `0x4096CBE4`) and the
+opposite-edge sub/add sequence are float32, while `atan2`, both `sincos` calls
+and the endpoint FMAs run in double before rounding back to float. It submits
+even an exactly zero-length band as two degenerate triangles. The rehost now
+preserves that native argument and UV-axis order and carries all four
+independently rounded corners into wgpu instead of reconstructing the fourth
+corner from an affine approximation.
+
+`setRenderState` (`sub_100044CFC`) consumes translation x/y, scale x/y,
+angle, pivot x/y and alpha in that order, but its arity updates are grouped:
+two arguments update translation, four additionally update scale, five add
+angle, seven add pivot and eight add alpha. Missing groups preserve the
+previous native state; a lone third or sixth argument is not consumed.
+Hopper and IDA also show every consumed slot passing through
+`sub_10052859C` into `s` registers. Each value is now narrowed to float32, and
+the paired translation/scale/pivot reads complete before their packed stores.
+Thus a bad second value cannot half-write its pair, whereas an error in a
+later group leaves the earlier groups committed exactly as the nested native
+branches do.
+The adjacent alpha names are not aliases. Registration at `0x10002DB28`
+routes `native_setAlpha` through the strict one-number adapter
+`sub_100088D24` into `sub_100044E30`, which resolves the current GL context and
+stores one float at context `+0x40`. `setObjectAlpha` instead uses the strict
+string/number adapter `sub_1000866F8` and `sub_100044E60`, which resolves a
+named render object and stores the float at object `+0xC8`. `changeZOrder`
+shares that string/number adapter but dispatches `sub_1000592C4`: it resolves
+the object first, moves its name between the integer z-order buckets, writes
+the reflected `z_order` attribute and stores the float at object `+0xD4`.
+`sub_10005DAF8` throws `Missing object: %s` for both named-object operations.
+The Rust bindings are now distinct, strict and float32-quantized, including
+the same no-partial-write behavior on bad or missing arguments and the same
+unknown-object failure. Context alpha remains with
+`world_transform_registration.rs`; object alpha/z-order/visibility are split
+into `object_visual_registration.rs` rather than growing the mixed object
+feature installer.
+The following constructor entries at `0x10002E0F8..0x10002E13C` register
+`setVisible` and `isVisible` separately. `sub_1000859F4` strictly reads a
+string and boolean before `sub_10004CB94` writes the RenderObject byte at
+`+0x14A`; `sub_10004CBB8` returns that same byte through the one-string result
+adapter. Neither member accesses the Lua mirror, and both first call
+`sub_10005DAF8`, so an unknown name throws instead of becoming a silent no-op
+or false result. The rehost now keeps this native-only state, exact boolean ABI
+and failure contract; this also removes `isVisible` from the generic
+object-table query module and places the pair beside the other render-object
+visual members.
+The transform/query block at `0x10002D3FC..0x10002D6EC` has two different
+lookup contracts. `setPosition`, `setScale`, `getScale`, `setAngle`,
+`setRotation`, `getAngle`, `getRotation` and `isHorizontallyFlipped` ultimately
+use throwing `sub_10005DAF8`; their generated adapters strictly consume the
+complete string/float tuple. Position and scale store float32 x/y fields,
+while angle first calls `fmodf(value, PI+PI)` and adds the float32 sum only for
+a strictly negative remainder. The horizontal query reads object byte
+`+0x139`, written by ObjectParameter 8, rather than testing the sign of the Lua
+`scaleX` mirror. The velocity/sleep queries instead use nullable body lookup;
+`isSleeping` returns true when no body exists. The rehost now preserves each
+boundary, float32 result and missing-object branch. `getPosition` has no
+matching Purple string or registration and has therefore been removed instead
+of retaining a host-invented global.
+
+The setter half of that constructor block is now split at the same native
+member boundaries instead of remaining in the former 335-line mixed transform
+installer. `setPosition`, `setRotation`/`setAngle` and `setScale` are installed
+by the order-only `object_pose_registration.rs`; `setPhysicsScale`
+(`sub_10004050C`) is isolated in `object_physics_scale_registration.rs` because
+it crosses into fixture destruction/reconstruction. IDA confirms that it first
+performs the throwing native lookup, then applies ordinary visual scale, and
+only afterwards rebuilds a polygon or circle fixture. Polygon width/height are
+reflected before live density/friction/restitution reads; circle scale uses
+`abs(min(scaleX, scaleY) / definitionScale) + 0.0001f`. Thus an unknown object
+cannot partially update Lua scale, a bodyless object keeps the visual change,
+and a bad fixture coefficient fails after the observed visual/dimension writes
+but before reconstruction.
+
+The two former outliers have moved to their actual owners as well.
+`native_setDensity` (`sub_100030D1C`) consumes the Lua stack tail in
+number-then-string order, changes only the head fixture density, resets mass,
+and reflects `objects.world[name].density` last; it does not overwrite the
+object's retained creation/fixture-definition density. `native_setSprite`
+(`sub_10004C7FC`) strictly consumes two strings and updates native render state
+without fabricating a Lua `sprite` mirror. These contracts, including error
+write order and bodyless/unknown-object behavior, are locked by dedicated ABI
+regressions. The transform split passes all 263 workspace tests, warning-free
+strict Clippy, a release build, and the wgpu menu/start-flow captures
+`audit-transform-split-menu.png` and `audit-transform-split-start.png`.
+
+`drawSprite`'s adapter at
+`sub_1004483AC` defaults to `HPIVOT/VPIVOT`; the ordinary-sprite path at
+`sub_100467A00` subtracts the atlas pivot exactly once. The state pivot must
+therefore not be subtracted a second time as another atlas anchor. Direct
+inspection of `gr::gles2::GL_Context` (`sub_100598CC4`) shows that it instead
+uses the state pivot as the rotation center: it adds `(I - R) * pivot`, then
+projects with independent X/Y scales. Its scalar linear transform is thus
+`Scale * Rotation`, including under non-uniform scale. Both CPU and wgpu paths
+now use this exact order and pivot correction. The register-level paths are
+single precision as well: the context loads `s` registers, composite/direct
+sprite setup calls `sincosf`, `sub_10001E440` multiplies affine matrices with
+`fmadd`, and `sub_100467BE8` transforms each point with a fused product-sum
+followed by a separate translation addition. The render bridge therefore
+quantizes Lua doubles to float32 at the native boundary and preserves that
+FMA/add order through wgpu vertex generation; it no longer calculates an
+extra-precise f64 transform and rounds only at upload time. The test-only
+software sampler widens the already-composed float32 matrix solely while
+walking integer pixels.
+
+The deferred atlas representation must keep those two operations separate as
+well. `sub_100467A00`/`sub_100467AF0` convert `HPIVOT/VPIVOT` to the raw
+rectangle origin `(x - atlasPivotX, y - atlasPivotY)` before calling the
+context, while `sub_100598CC4` independently applies the live state pivot.
+Ordinary atlas commands now store that raw origin and override their deferred
+vertex pivot to zero. Previously the wgpu vertex builder subtracted the SPRT
+pivot again, producing an extra `(I - R) * atlasPivot`; at a quarter turn this
+moved `REWARDWHEEL_BASE` about 300 screen pixels away from its reward slots and
+separated `ICON_OFF`/coin images from their child labels. A synthetic shipped
+RewardWheel layout at `pi/2` now keeps the 452x454 base centered with all eight
+rotated slot images on the same ring.
+
+The adapter
+also accepts `TOP/VCENTER/BOTTOM/BASELINE/VPIVOT` and
+`LEFT/HCENTER/RIGHT/HPIVOT`, throws on invalid names, and its final two-float
+overload stretches ordinary atlas sprites while `sub_10045C144` ignores those
+dimensions for composite sprites. Dot versus colon form is selected solely by
+whether Lua argument 2 is numeric; the chosen sprite/x/y triplet and the two
+optional anchors are then strictly typed. A lone target-width argument is
+intentionally ignored without being type-checked, while a complete width and
+height pair is strictly numeric. Both Lua forms now preserve these contracts.
+`drawLayer` is intentionally empty: both disassemblers
+resolve its native registration to `nullsub_13`, so implementing visible
+behavior there would be less faithful than a no-op.
+
+The global GameLua `drawCompoSprite` is not the ResourceManager composite
+draw wrapper. Its five-argument adapter (`sub_100085BB4`) reaches
+`sub_10004DDA0`, which iterates only directly referenced atlas sprites. For
+each record it uses the record x/y plus the two call-site scales, ignores the
+record scale, angle, flip and visible flag, writes renderer pivot
+`(atlasPivot - recordPosition) * localScale`, then draws the destination-sized
+atlas rectangle with `HPIVOT/VPIVOT`. The rehost emits the equivalent exact
+`Scale * Rotation * LocalScale` affine command per child and preserves the
+renderer pivot side effect; nested composite references are skipped just as
+the native null AtlasSprite pointer is skipped.
+
+The containing native registration block also fixes the structural boundary
+and order of this direct-render family. At `0x10002E354..0x10002E40C`,
+`sub_10002C274` registers `drawCompoSprite` (`sub_10004DDA0`),
+`drawSpriteWithShader` (`sub_10004E070`), `drawSpriteWithoutShader`
+(`sub_10004E300`) and `isCompoSprite` (`sub_10004E3A0`) in that order, with
+four different Lua adapters. The former 211-line mixed Rust installer is now
+a 39-line order-only facade over `direct_sprite_registration/composite.rs`,
+`shader.rs`, `plain.rs` and `lookup.rs`; the atlas-only and composite-fallback
+rules no longer share one implementation body.
+
+The texture-state path at `sub_10018AFB8` fixes `GL_TEXTURE_MAG_FILTER` to
+`GL_LINEAR` (`0x2601`); IDA and Hopper produce the same four `glTexParameteri`
+calls. Its minification and wrap values are also recovered rather than
+guessed: `sub_100206CA0` maps non-mip states to `GL_LINEAR`, state 2 to
+`GL_NEAREST_MIPMAP_LINEAR` and state 3 to `GL_LINEAR_MIPMAP_LINEAR`, while
+`sub_100206CE0` maps state 2 to `GL_CLAMP_TO_EDGE` and the other states to
+`GL_REPEAT`. All 72 shipped image/font PVR v2 headers have zero mip levels, so
+their atlas state takes the complete non-mipmapped linear route. Ordinary
+atlas and mask lookup uses the recovered clamped state, while texturized fill
+uses repeat. `sub_100467760` constructs the four UV pairs from the unmodified atlas
+rectangle edges divided by the full texture dimensions; it does not inset or
+clamp individual regions. The `wgpu` renderer therefore uses full-texture
+clamped linear sampling for atlas sprites and repeated linear sampling for
+texture masks, matching fractional camera-scale sampling and padded atlas-edge
+behavior.
+
+IDA's `gr::gles2::GL_State::begin(bool)` at `0x10059ACE8` and Hopper's
+independent pseudocode agree on the render-state cache: `0x0B44` is culling,
+`0x0B71` is depth test and `0x0BE2` is blending; source/destination factors at
+state offsets `+0x18/+0x1C` are forwarded unchanged to `glBlendFunc`, followed
+by `glBlendEquation`. The bundled `2d-*.fx` files complete the state oracle.
+All 2D sprite passes disable depth, two-sided variants disable culling,
+`2d-sprite-alpha` and the colorize/silhouette/gold/diffuse variants select
+`ONE, ONE_MINUS_SRC_ALPHA`, while `2d-sprite-alpha-masked` and plain-alpha
+geometry select `SRC_ALPHA, ONE_MINUS_SRC_ALPHA`. `pp.ps` also proves that
+`ALPHA_FACTOR` multiplies the complete fragment vector. The replacement now
+encodes those exact combinations as separate `wgpu` program pipelines with no
+depth attachment and no culling, rather than applying a single CPU source-over
+rule.
+
+The program identity boundary is explicit too. IDA and Hopper agree that
+`GL_Context::{getPlainShader,getPlainAlphaShader,getSpriteAlphaShader,
+getSpriteShader}` are four independent 380-byte/19-block lazy getters at
+`0x10059B570`, `0x10059B798`, `0x10059ED78` and `0x10059EFA0`. They cache the
+fixed `2d-vertexcolor`, `2d-vertexcolor-alpha`, `2d-sprite-alpha` and
+`2d-sprite` programs in successive context slots `+0x338..+0x350`. Prepared
+Rust draws now retain `Plain`, `PlainAlpha`, `Sprite`, `SpriteAlpha` or the
+separate bundled `SpriteAlphaMasked` identity through submission. Programs
+that happen to share opaque or straight-alpha state therefore no longer
+become indistinguishable before the wgpu pass.
+
+The ordinary atlas wrapper closes the selection rule that feeds those getters.
+In `sub_10059E254` and `sub_10059E68C`, the renderer obtains the current
+`GL_State` through the context vtable slot `+0xC0`, obtains the texture's
+`img::SurfaceFormat` through its vtable slot `+0x38`, and selects
+`SpriteAlpha` exactly when `sub_1004DC4B8(format)` is true or the draw-state
+float at `+0x40` is below `1.0f`; otherwise it selects `Sprite`. The `+0x40`
+member is therefore state alpha, not a cached texture-alpha value. The compare
+is a strict float32 `<`, including its behavior for values immediately below
+or above one.
+
+IDA and Hopper independently recover `sub_1004DC4B8` as a SurfaceFormat
+identity predicate: bits in `0x039F6048`, formats `0x1A..0x1C`, and formats
+`0x1E`/`0x20` carry alpha. The indexed name table at `off_100AA5D98` supplies
+all identities from `UNKNOWN` through `ETC1_RGB_4BPP`. The PVR reader
+`sub_1004D7BC8` maps the two shipped PVR-v2 codes `0x10` and `0x12` to native
+formats 18 (`R4G4B4A4`) and 6 (`A8B8G8R8`) respectively. All 72 shipped PVRs,
+all eight shipped RGBA PNGs, and all 14 shipped WebPs therefore take the
+alpha-program branch, but the opaque branch remains required for the native
+contract and non-shipped inputs.
+
+The Rust resource boundary now mirrors that ownership instead of inspecting
+decoded RGBA pixels. `stella-assets::surface_format` owns the complete native
+enum, exact alpha predicate, PVR flag mapping and GL-upload normalization;
+`stella-assets::native_image` owns the PNG/WebP source-layout probe; and
+`TextureAsset` keeps an `RgbaImage` together with the source layout and exposes
+the normalized upload SurfaceFormat. `gpu/program.rs` owns the recovered
+program-selection member. Atlas sprites, native/explicit quads,
+bitmap glyphs and captured RGBA targets all carry that decision through their
+prepared wgpu draw. Supplying an explicit bundled pixel shader remains a
+separate route, matching `sub_10059EAA4` rather than being overwritten by the
+ordinary automatic selector.
+
+IDA and Hopper agree on the reader/converter boundary. The image-reader
+constructor `sub_1004D302C` initializes SurfaceFormat fields at `+0x458` and
+`+0x45c`; PNG reader `sub_1004D62B8` selects `L8`, `B8G8R8`, `P8`, `A8L8` or
+`A8B8G8R8`, and palette PNG additionally selects `A8R8G8B8` for its PLTE/tRNS
+entries. Row member `sub_1004D377C` passes both fields and the palette buffer to
+the common converter `sub_1004DC50C`. WebP reader `sub_1004DB17C` maps its
+feature-probe alpha flag to `B8G8R8`/`A8B8G8R8`. The GL context then reads the
+source format through `sub_1004D3D14`; helper `sub_100597FD8` normalizes
+`R8G8B8 -> B8G8R8`, `A8R8G8B8/P4/P8 -> A8B8G8R8`, and unsupported ETC1 to
+`R5G6B5` before texture construction. The program selector therefore consumes
+the GL texture's normalized format, not a palette index format or host decoder
+color type. Hopper independently gives this normalizer 256 bytes and 20 basic
+blocks and recovers the same `1 -> 2`, `3/10/11 -> 6` and conditional
+`33 -> 7` branches.
+
+The corresponding Rust structure is split along those native members:
+`native_image.rs` owns the source pixel/palette layout, `surface_format.rs`
+owns upload normalization, `assets/texture.rs` remains the cache/dispatch
+facade, and `assets/texture/pvr_reader.rs` plus `raster_reader.rs` own their
+format-specific decode paths. Five PNG color-type regressions, the native
+greater-than-eight-bit rejection, RGB/RGBA WebP probes and indexed-upload
+normalization cover the recovered boundaries.
+
+The same structural pass moves immediate mesh batching out of the shared GPU
+storage ABI and into `gpu/frame/batch.rs`. That module now owns quad-to-triangle
+expansion, scissor resolution, required-texture collection, draw indexing and
+the recovered viewport FMADD, while `gpu.rs` retains only the POD layouts and
+renderer/frame storage shared across those native-style members.
+
+Validation after this split reports 297 passing workspace tests, warning-free
+strict Clippy and a successful release build. The recovered 11,000-frame
+startup/menu/first-level/aim route reaches gameplay in
+`audit-native-image-reader-split.png` with zero invoked compatibility
+fallbacks; the prepared-texture cache resolves every required resource.
+
+Rendering first targets a fixed 1024x768 `Rgba8Unorm` GPU texture so script
+coordinates, atlas interpolation and screenshots do not depend on desktop
+window size. A separate `wgpu` pass letterboxes that texture onto the platform
+surface; headless screenshots copy the same GPU texture into a mapped buffer.
+The original does not leave viewport projection to its GLSL vertex program:
+`sub_100598CC4` rounds `2/width` and `-2/height` to float32, then applies each
+with `fmadd(coordinate, scale, +/-1)`. Prepared wgpu vertices now carry that
+CPU-computed clip position alongside their diagnostic screen position, so the
+WGSL stage only forwards it. This preserves the otherwise-observable native
+center-Y residual of exactly `-2^-25` at 1024x768 instead of simplifying it to
+zero in a backend-dependent expression.
+The WGSL sprite program implements the recovered colorize, silhouette, gold,
+diffuse-modulate and alpha-mask formulas, composite affine matrices, repeated
+fill textures and bitmap glyphs. Dirt bypasses the sprite fragment path and
+uses the recovered transient polygon meshes described below.
+
+The Rust backend now mirrors those recovered GL ownership stages in its source
+layout as well. `gpu/frame.rs` preserves the renderer-neutral immediate stream's
+single `order`/tie-breaker walk and expands sprite/capture operations;
+`gpu/frame/text.rs` owns bitmap-glyph and projected 3D-text quads, while
+`gpu/frame/geometry.rs` is the facade for shared atlas regions, GL-style
+colored rectangles, DrawablePolygon/Dirt triangles and shader uniforms;
+`gpu/renderer.rs` owns the wgpu device/surface, fixed game target, render-pass
+splits, capture copies and final letterbox; `gpu/resources.rs` owns texture
+upload, bind-layout/pipeline construction and the exact opaque,
+premultiplied-alpha and straight-alpha state mapping. `gpu.rs` retains only
+the shared vertex/frame/renderer storage ABI and its boundary regressions.
+No render formulas or submission order were changed by this structural pass.
+The live IDA MCP component audit and Hopper independently report the same
+boundaries: `GL_State::begin` at `0x10059ACE8` is 1,644 bytes/124 basic blocks,
+viewport/vertex preparation `0x100598CC4` is 820 bytes/11 blocks, capture
+`0x100458F54` is 800 bytes/37 blocks, atlas-quad construction `0x100467760`
+is 536 bytes/13 blocks, while the min-filter and wrap selectors at
+`0x100206CA0`/`0x100206CE0` are small 64/36-byte leaves. This large
+state/submit versus small resource-policy shape is the reason for the
+`frame`/`renderer`/`resources` split.
+The finer frame split follows concrete executable members. Hopper reports the
+`drawString3D` path `sub_10003457C` as a separate 452-byte member, atlas pivot
+setup `sub_100467A00` as 240 bytes/17 blocks, `DrawablePolygon::rebuild`
+`sub_1000246A8` as 744 bytes/36 blocks, and the GL colored-rectangle member
+`sub_100598CC4` as 820 bytes/11 blocks. IDA independently confirms the last
+member's 820-byte extent and shows its four float32 projection vertices before
+shader submission. Correspondingly, the former 835-line `gpu/frame.rs` was
+separated into ordering, quad, sprite, text and geometry ownership groups; the
+cross-command operation list remains shared, so captures and blend transitions
+retain native immediate-mode ordering. The remaining 284-line mixed geometry
+group is now an 11-line facade over 103-line atlas region, 111-line colored
+rectangle, 47-line DrawablePolygon/Dirt and 32-line shader-uniform leaves.
+This follows the independent `0x100467760/0x100467A00/0x100467BE8`,
+`0x1000246A8` and `0x100598CC4` paths rather than splitting any one recovered
+algorithm.
+The outer executable host is kept separate from those recovered engine stages:
+`assets.rs` owns KA3D discovery and shared sprite/affine data, `app.rs` owns the
+cross-platform window/input/fixed-step lifecycle, and `cli.rs` owns the
+deterministic screenshot interaction harness. The crate root retains the CPU
+reference rasterizer used to compare recovered formulas against wgpu. This
+prevents platform bootstrap code from being mistaken for a native Purple
+renderer owner while reducing the former 1,970-line `main.rs` aggregate.
+
+Animation skins are overlays on the `default` skin rather than complete
+replacements. The active `Normal` Stella skin, for example, supplies hair
+overrides while the default skin maps `STELLA_EYES_OPEN_` to the real atlas
+sprite `STELLA_EYES_OPEN_2`. Skin-managed Telepods slots with no active/default
+attachment are intentionally empty; their `Stella_Telepods_*` animation keys
+must not be sent to the atlas renderer as sprite names.
+
+Animation slot `zOrder` is parsed in `sub_100011008` and passed through the
+slot callback at `sub_100012180`. The shipped Chapter 1 comic data provides a
+useful ordering oracle: opaque panel backgrounds use z 14, character/details
+use z 5..13 and borders use z 1..4. Native composition is therefore descending
+z (far-to-near). Sorting ascending made the opaque background render last and
+cover every valid foreground sprite, which presented as widespread missing
+textures even though all atlas lookups succeeded. The animation bridge now
+uses the recovered descending order.
+
+`setTexture` (`sub_10004CC74`) stores the texture resource name at scene-object
+offset `+112` and its resolved texture pointer at `+128`; `setTextureScale`
+(`sub_10004CE38`) stores its scalar at `+196`. The native draw uses the base
+sprite alpha as a mask over the repeating texture. The software renderer now
+resolves single-sprite resource names to their backing PVR and implements the
+same masked, wrapped sampling rather than treating these calls as metadata.
+
+The native engine owns three deliberately separate trajectory stores. Two
+0x38-byte flight-trail records begin at GameLua `+0x558`, their active index is
+the signed i32 at `+0x588`, the raw simulation vector is at `+0x590`, and the
+prepared `AimStream` object is referenced at `+0x668`. `startNewTrajectory`
+(`sub_10004FD3C`) increments the index modulo two and assigns a completely
+default record to the new slot; it does not clear the simulation vector.
+`addToTrajectory` (`sub_10004FF14`) and `addPuffToTrajectory`
+(`sub_10004FF80`) use the same generated adapter (`sub_100089A44`): all three
+fixed Lua slots must be numbers, slot 1 is ignored, and slots 2/3 are narrowed
+to float32 before becoming a point or puff. Normal/special sprite setters write
+only the active record, whereas `setAimingAidSprite` writes the global
+AimStream. `drawGameNative` calls `sub_10006D9C0` before drawing scene objects;
+that helper renders both records in fixed slot order, uses each record's normal
+sprite for every point and its special sprite for the optional puff, and
+applies `(point - camera) * worldScale` plus local
+`gameWorldScale * worldScale` sprite scaling.
+
+`ClearSimulationTrajectory` (`sub_1000311B4`) clears only GameLua `+0x590`.
+`getSimulationTrajectoryPoints` (`sub_1000311C0`) returns nil for that vector
+when empty and otherwise a Lua array of `{x, y}` tables.
+`native_drawSimulationTrajectory` (`sub_10004C4CC`) never reads either flight
+record: it draws only the global AimStream. Its point setter
+(`sub_10000873C`) ignores fewer than four simulation samples and otherwise
+builds `[first, all samples, last]`, duplicating both endpoints. The Rust state,
+strict adapters, clearing boundaries and render passes now preserve these
+separations instead of conflating all three stores.
+
+AimStream itself is no longer drawn as one fixed-size quad per raw simulation
+sample. Its constructor (`sub_100007E1C`) initializes a 20-pixel pivot size,
+0.6-second spawn interval, speed 4, inactive flag and a packed 12-byte particle
+vector. Level initialization replaces the interval/speed with float32
+`simulationAimSpawnTime`/`simulationAimSpeed` (0.6 and 5 in the shipped table).
+`sub_10000839C` seeds `FCVTZS((controlCount-3)/(spawn*speed))` particles;
+`sub_1000084C8` advances their path parameters with float32 FMA, removes those
+past the last segment, scales them by
+`(1.2 - parameter/(controlCount-3))*gameWorldScale`, and spawns new particles
+while the unscaled frame timer is negative. Draw (`sub_100007FD4`) evaluates
+the four adjacent duplicated-endpoint controls with the recovered float32
+Catmull-Rom polynomial and recreates the divided GL context coordinates,
+10-pixel pivot, rotation, camera translation, physics scale and particle scale.
+`enableAimingAid` is a strict Lua boolean stored at GameLua `+0x528`; the
+AimStream active flag follows it only after the current draw, and a
+false-to-true edge repopulates the particle vector exactly as native does.
+
+Hopper also recovers the formerly approximated predictor at
+`sub_100032970`: it resolves only the dedicated `BirdSimulation` body,
+multiplies float32 `objects.currentTimeStep` by the retained
+`simulationTimeStepMultiplier`, then calls the custom one-body step
+`sub_10086F6AC` exactly `simulationIterations` times. That helper is not the
+ordinary Box2D island/world solver: it deliberately skips contacts and joints,
+adds the predictor world's gravity without consulting the body's
+`gravityScale`, integrates force, torque, linear/angular damping and sweep
+state in float32/FMA order, clamps translation to 0.16 and rotation to pi/2,
+then rebuilds the transform from the centre of mass and local centre. The
+caller stores the transform origin when AArch64 `SDIV`/`MSUB` produces a zero
+remainder (including only iteration zero when the sampler itself is zero),
+invokes the tiny force/torque clear at `sub_10086F624`, and clears the
+selected-simulation pointer before returning. The shipped attributes are
+multiplier 3, 50 iterations and sampler 1, not the old host-side 60 unscaled
+Euler samples.
+
+The loop also walks the insertion-only GameLua `+0x3A0` list made by Object
+Parameter 32 (`aimingAidCollideable`). It passes only each body's native
+fixture-list head (the last-created fixture) through `b2TestOverlap`, whose
+use-radii distance must be below `10*FLT_EPSILON`, then applies the recovered
+gravity/water sensor-force path before the one-body step. Positive additional
+bird gravity is likewise reproduced as a mass-scaled vertical force at the
+render transform origin rather than as a host acceleration shortcut.
+`getAimingTime` (`sub_10004B8EC`) is a separate float32 product of
+`objects.currentTimeStep` and `FCVTZS/SCVTF(simulationIterations)`; it deliberately
+does not include the trajectory multiplier and now preserves that ABI.
+
+`setCameraLimits` is a one-float adapter over `sub_1000505D0`, storing the
+camera span at engine offset `+544`. `setLevelLimits` passes four floats to
+`sub_10004FFB8`, which notifies the native camera and persists integer-truncated
+bounds. Its Lua order is `(xMin, yMin, xMax, yMax)`, while GameLua stores and
+`sub_100059CF4` returns `(xMin, xMax, yMin, yMax)` at offsets
+`+1544..+1556`. The post-physics frame pass compares every positive-mass body
+against those four values and publishes matching names as true keys in
+`g_outOfBoundariesObjects` before Lua `update`. `setPhysicsSimulationScale`
+stores its scalar
+at `+1292`; native particle viewport tests divide screen extents by this value.
+It too is an unconditional float32 store, with no host-added positivity
+filter. These formerly generic calls now have typed state in the rehost.
+`setTopLeft` stores two float32 values at GameLua `+0x514/+0x518`,
+`setWorldScale` writes the same float32 scalar to `+0x520` and the two camera
+fields `+0x4F8/+0x518`, and `setMaxWorldScale` writes the theme-system scalar
+at `+0x500`. The last entry has no native positivity check: zero and negative
+values are stored verbatim. The rehost now preserves that ABI and rounds all
+three adapters through float32 rather than retaining Lua doubles.
+
+`setStartingCameraValue` (`sub_1000505C8`) is a one-byte GameLua store and
+`clearScreen` maps directly to `sub_100044E84`. Live IDA MCP decompilation and
+Hopper agree that this 268-byte single-basic-block function first replaces the
+complete 0x9c-byte GL context with identity state, constructs the rectangle
+`(-32000,-32000)-(32000,32000)`, and submits it with the packed background
+color at GameLua `+0x238`. It does not delete earlier immediate submissions.
+The Rust bridge now emits that rectangle at the current monotonic draw order,
+without inheriting the previous scissor, and leaves the default render state
+live. This preserves a `captureSprite` performed before the clear; the former
+queue-clearing approximation silently erased that already-observable copy.
+The adjacent color ABI is now exact as well. Adapter `sub_100089A44` reads
+three Lua values as float32 before `sub_100030C60` applies `FMAX` with zero,
+`FCVTZS`, explicit 255 ceilings and packs `0xFFRRGGBB` at `+0x238`.
+`sub_100030CC4` returns bytes `+570`, `+569`, `+568` as three Lua floats, i.e.
+red, green, blue. The Rust setter now quantizes before integer conversion, so
+boundary inputs such as `0.99999999` reproduce Purple's channel value 1 rather
+than being truncated as a host double to zero. Each adapter read goes through
+`sub_10052859C`, whose `sub_1005281F8(..., 3)` guard requires the exact Lua
+NUMBER type. Missing, nil, string and boolean slots therefore fail before the
+member function is invoked and leave the packed color unchanged; the Rust ABI
+now preserves that strict transactional behavior as well.
+`refreshCurrentLocale`
+(`sub_100050948`) normalizes the selected/device locale and calls the Lua
+`setLocale` callback. `playVideo` (`sub_100051B60`) forwards its resource name
+to the platform video service; the rehost preserves that request even though
+this application bundle contains no movie asset to decode. Process-global
+`createUniqueShaders`/destroy state, `requestExit`, device orientation and
+rubber-band drawing are likewise represented by typed bindings.
+
+The water controls are simple native field stores before entering the contact
+force path: object drag at `+1340`, bird drag at `+1336`, additional simulated
+bird gravity at `+548`, RGBA water colour at `+1344..+1356`, per-object water
+flag at `+331`, and per-object water density at `+336`. Their Lua contracts and
+state are mirrored even on levels that do not instantiate a water volume.
+
+## Native theme renderer
+
+`setTheme` maps to `sub_10004D348`. It resolves `blockTable.themes[name]`,
+copies `skyColor`, destroys the previous layer arrays and rebuilds the native
+background and foreground arrays from `bgLayers` and `fgLayers` through
+`sub_10006B9A4`. `drawBackgroundNative` (`sub_10004C4A4`) and
+`drawForegroundNative` (`sub_10004EF64`) select the two arrays and share the
+renderer at `sub_10009BDB4`.
+Their Lua ABIs are intentionally asymmetric. `drawBackgroundNative` uses the
+strict one-float adapter at `sub_100088D24`; the member applies `FCVTZS`, draws
+the complete background array when the result is negative, and otherwise
+sets the loop range to exactly `[index, index + 1)`. This lets `gamescene.lua`
+interleave one background layer with other draw stages through
+`g_layerDrawIndex`. `drawForegroundNative` uses the zero-argument adapter at
+`sub_10008A07C` and always draws the complete foreground array. The rehost now
+preserves that split instead of discarding the background argument. NaN and
+overflow retain ARM64's signed integer-indefinite result (and therefore the
+negative/all-layers branch); only the native out-of-vector undefined read is
+made safely empty.
+
+The recovered layer contract includes sprite, independent `posX`/`posY` and
+x/y offset pairs, x/y scale, `zDistance`, alpha, repeat flags, `velX` and
+`velY`. `sub_10006855C` adds optional `xSpeedAdd`/`ySpeedAdd` to the two
+velocities in float32 before inserting the record. The layer parser at
+`sub_10006855C` maps `H_REPEAT` to bit `0x4`, `V_REPEAT` to `0x2`,
+`REPEAT_LEFT_ONLY` to `0x100` and `REPEAT_RIGHT_ONLY` to `0x200`.
+The same compare chain maps `OVERSTRETCH_ANCHOR_V` to `0x1`,
+`REFRESH_ANIMATION_TIMELINE` to `0x8`,
+`REFRESH_ANIMATION_COORDINATES` to `0x10`, `ANCHOR_V` to `0x20` and
+`PREVENT_STRETCH_SCALE` to `0x80`. The Rust layer record now retains this
+native mask as well as its convenient repeat booleans, so the camera transform
+can distinguish the full vertical camera-delta and orientation-anchor paths.
+The two functions have distinct ownership: `sub_10006B9A4` traverses the
+one-based definition list (and expands optional `spawnParameters`), while
+`sub_10006855C` constructs one 304-byte layer record. The Rust split now
+mirrors that boundary with the list facade in `theme_layer_parser.rs` and the
+record constructor in `theme_layer_parser/layer.rs`.
+
+The remaining camera fields are mapped by record offset rather than their
+nearby Lua parse order. `xMult` is native layer `+0x50`; with internal flag bit
+`0x40` clear, `sub_10009CEB0` applies
+`(zDistance + xMult) * cameraDeltaX`, while bit `0x40` selects the full delta.
+Neither the `sub_10006855C` flag chain nor any ThemeManager writer sets that
+internal bit in 1.1.6. `relativeX` and `relativeY` are instead the final floats
+at `+0x120/+0x124`, initialized to the exact `FLT_MAX` bits `0x7F7FFFFF`.
+IDA's complete displacement scan and Hopper's independent assembly agree that
+ThemeManager reads only `relativeY`. On each draw, `sub_10009AA4C` replaces
+layer `+0x40` with the fused-float32 result
+`(relativeY * screenHeight - screenHeight/2) /
+(originalCameras[2].sx / referenceCamera.sx)`. The Rust record retains the
+unused `relativeX` ABI slot, parses `xMult`, and executes the live `relativeY`
+overwrite without treating its missing sentinel as a coordinate.
+
+The constructor stack frame and `sub_100079830` copy member resolve the other
+early scalar slots exactly: `parallaxSpeed +0x18` (default `1.0f`),
+`zDistance +0x1C` (default `0.0f`), `scaleSpeed +0x44` (default `1.0f`),
+`angleMult +0x4C` (default `0.0f`), and `yMult +0x54` (default `1.0f`). IDA's
+complete scan of every member touching the layer vectors at GameLua
+`+0x268/+0x280`, together with Hopper's independent constructor and update
+assembly, finds no post-construction read of `parallaxSpeed`, `scaleSpeed`,
+`angleMult`, or `yMult` in Purple 1.1.6. They are copied record ABI, not hidden
+motion inputs: `sub_10009B8B4` still integrates only
+`velX/velY * delta * (1-zDistance)`, and `sub_10009CEB0` uses only `xMult`.
+The Rust record now retains all six float32 slots and their native defaults;
+this audit also corrects the former host-only `zDistance=1` default to the
+constructor's zero default.
+
+The same constructor stores the active drawing values as float32 as well:
+numeric `offsetY`, `scale`, `scaleX`, `scaleY`, `animationSpeed`, `alpha`,
+`minAlpha` and `maxAlpha` all narrow before the 304-byte record is inserted.
+The two axis scales independently fall back to the uniform `scale`; an
+authored `scaleX` does not become the missing `scaleY`. The rehost now keeps
+that narrowing and fallback split instead of retaining Lua doubles and
+chaining the Y fallback through X.
+
+The four preceding sentinel fields are `worldX`, `worldY`, `worldW` and
+`worldH` at layer `+0x104..+0x110`. `sub_10009A894` expands the current
+camera rectangle with `left/right/top/bottomLimitWorld`; X/Y select a
+normalized point inside that rectangle and subtract the cached theme reference
+point, while W/H add a centered random displacement. The latter consume
+`sub_10057B42C` in W-then-H order for every layer before `relativeY` can
+overwrite Y. The Rust draw entry now runs this update across the complete
+background or foreground array even when the caller selects one background
+layer, matching `sub_10009AA4C`'s placement outside the selected draw range.
+
+The record constructor asks the resource manager independently for the
+sprite's left, right, top and bottom through `sub_10045CD14`,
+`sub_10045CD60`, `sub_10045CDAC` and `sub_10045CDF8`. All four return zero when
+`sub_10045BDDC` cannot resolve the resource. Therefore an absent sprite has a
+zero rectangle in Purple; it does not acquire a generic 256-by-256 tile. The
+rehost now preserves that result, preventing a missing theme asset from
+turning into synthetic repeated columns or wrap distances.
+The main renderer submits the reference tile, then calls `sub_10009C4C4`,
+which walks right-hand columns followed by left-hand columns and invokes
+`sub_10009CA0C` for the vertical copies of every repeated column. Only after
+that helper returns does the caller invoke `sub_10009CA0C` for the reference
+column's copies above and below. The one-sided flags suppress their opposite
+horizontal traversal. The rehost retains this exact non-rectangular painter
+order rather than sorting a tile grid or completing the reference column
+first. The base/reference resource is not unconditional: `sub_10009BDB4` converts its
+scaled bounds to doubles and submits only when all four inclusive viewport
+intersection tests pass. It still invokes the repeat helpers after an
+off-screen reference is rejected, allowing later rows or columns to become
+visible. Both helpers retain their coordinates in float32 world space,
+advance them with `FADD`/`FSUB`, and call `sub_100067A04` separately for each
+candidate; their loop limits compare a float32 center plus or minus a
+double-precision half tile against the four screen-to-world bounds cached at
+manager `+0x90/+0x94/+0xA0/+0xA4`. Final viewport culling likewise uses the
+projected center plus or minus a symmetric half width/height, not the atlas
+pivot-relative rectangle. The wgpu command builder now follows the same
+coordinate domain, rounding points, painter order and center-bound culling
+instead of accumulating screen-space doubles or dropping asymmetric-pivot
+tiles. The scale expression in
+`sub_10009BDB4` combines current camera `sx`, corrected end-camera `sx`, and
+the theme reference-camera `sx` by `zDistance`; its literal sequence is
+`(current/end) * ((end/reference) * (1-z)) + (end/reference) * z`.
+Using raw camera `sx` or the engine's unrelated 20-pixels-per-world-unit value
+is observably wrong. The rehost now implements both ordered
+passes, horizontal tiling, symbolic top/bottom anchoring, sky colour and the
+two layer-offset entry points.
+
+The `sprite` field is polymorphic. `sub_10006855C` accepts either one string or
+a one-based string array, copying every array entry into the layer's frame
+vector and using its first entry immediately. This is not optional metadata:
+the shipped `theme_hometree_bottom`, beach-selection and bottom-gate themes
+use six-frame `THEME_HOMETREE_BOTTOM_W1..W6` arrays in layers that the old
+string-only rehost discarded entirely. Numeric `scale` supplies the fallback
+for both `scaleX` and `scaleY`. In the update at `sub_10009B8B4`, positive
+`animationSpeed` is the float32 frame period. The timer adds one delta and can
+advance at most one frame per call; the same normalized timer forms a
+`maxAlpha -> minAlpha -> maxAlpha` triangle. Layer offset accumulation is
+also float32 and multiplies each delta by `(1 - zDistance)`. The Rust theme
+layer now retains all frames and their geometry, the exact one-step timer,
+alpha endpoints, scalar scale fallback and parallax-weighted velocity, which
+restores the previously absent animated water layers.
+
+The same update does more than accumulate velocity. Once a moving reference
+tile is wholly beyond a camera edge and its signed velocity points farther
+out, `sub_10009B8B4` shifts its offset in the opposite direction. The shift is
+one tile span multiplied by `trunc(viewportSpan / scaledTileSpan) + 1`; the
+final `+1` is formed by an `FMADD`, and horizontal and vertical tests use the
+scaled half-size independently. The rehost now performs the same float32
+wrap for all four velocity directions. On the deterministic level-two audit
+this moves the scrolling water reference tiles back into the viewport and
+reduces the final native-equivalent stream from 1,683 to 1,676 sprite
+submissions without changing coverage or introducing a seam.
+
+`sub_10006B9A4` gives `spawnParameters` a separate layer-list meaning before
+the 304-byte constructor runs. It converts `amount` with `FCVTZS`, emits that
+many records sharing the one-based source-definition index at `+0x88`, and
+consumes the process-global CMWC in `velX`, `velY`, screen-X, screen-Y order
+for every copy. Speed variance is multiplied in double precision and narrowed
+before its float32 addition; screen coordinates use double `FMADD` around the
+authored area centre. `worldX/Y/W/H` retain `FLT_MAX` as the missing sentinel.
+An authored `spawnParameters` table with non-positive amount emits no layer;
+it does not fall back to one ordinary record. This expansion now lives in the
+separate Rust `theme_layer_parser/spawn.rs` boundary.
+
+The record constructor also owns a float32 duration vector at `+0xD0` in
+addition to scalar `animationSpeed` at `+0xFC`. Scalar `animationTimeline`
+entries are copied directly; two-element tables sample
+`base + cmwc() * variance`, consuming CMWC even for zero variance. The update
+selects the current frame's vector duration and falls back to the scalar only
+when the frame index is outside the vector. On an animation wrap,
+`sub_100099C24` implements flag `0x8` with its literal one-based destination
+index: element zero stays unchanged, sampled source entry N is written to
+destination N, and the final one-past-end sample is consumed but has no later
+visible vector effect. Flag `0x10` resamples screen X/Y, restores the four
+world sentinels/coordinates, and immediately invokes `sub_10009A894`, so
+world W/H consume two further samples before the later draw refresh. The
+rehost preserves that indexing quirk and complete shared-random order.
+
+Direct inspection of the loaded original `blockTable.themes` confirms that
+this 1.1.6 bundle has neither `animationTimeline` nor `spawnParameters` on any
+background or foreground layer; every authored `elements` array is empty as
+well. These branches are dormant for shipped content, but are now implemented
+as engine contracts instead of being inferred from unrelated screenshots.
+
+Hopper resolves `setThemeOffsetY` through the strict string/float adapter at
+`sub_1000866F8`; its ABI is `(themeName, offset)`, not a lone global offset.
+The member at `sub_10003E308` walks every live background layer and fetches
+that index's authored `offsetY` from `blockTable.themes[themeName].bgLayers`.
+For a layer with an empty `ThemeSpriteData` vector it stores
+`float32(gameWorldScale * offset / 768 + authoredOffsetY)`; a layer containing
+at least one dynamic theme sprite instead stores
+`float32(offset + authoredOffsetY)`. These are destructive per-layer writes,
+so applying one renderer-wide translation both double-counts the authored
+offset and misses the vector-dependent scale branch. The foreground member at
+`sub_10003E59C` has the strict `(themeName, oneBasedLayer, offset)` ABI,
+converts the index with `FCVTZS` and writes the float32 offset directly into
+that live foreground layer. The rehost now follows those writes and keeps its
+only out-of-range concession memory-safe.
+
+The constructor's dispersed registration sites establish the exact relative
+order of this family: `setThemeSprite` at `0x10002D24C`, the two offset
+members at `0x10002D27C/0x10002D2AC`, `drawBackgroundNative` at
+`0x10002DE14`, `setTheme` at `0x10002E204`, and `drawForegroundNative` at
+`0x10002E4A4`. The former 195-line mixed Rust installer is now a 23-line
+order-only facade over `theme_render_registration/sprite.rs`, `offsets.rs`,
+`passes.rs` and `selection.rs`, retaining that order while keeping each native
+member and ABI in its own leaf.
+
+`native_refreshThemeSystem` reaches `sub_1000985DC`, which rebuilds
+camera-derived layout caches from `castleCameraData`, `originalCameras` and
+the current theme. Symbolic foreground offsets are not direct screen-edge
+anchors. For each `offsetY = "top"/"bottom"` layer, `sub_1000985DC` first
+zeros native layer+0x40 and calls `sub_100099828`. That helper walks the
+one-based `gameCamera.resolutionCorrectedCameras` list, reads `sx`, `px`,
+`py`, `left` and `top`, runs the zero-offset layer through
+`sub_10009CEB0`, and records the float32 pair
+`sx * (projected - cameraEdge)`. The top branch selects the maximum vertical
+value and stores `-maximum/(endScale/referenceScale) -
+trunc(height/2)*scaleY`; the bottom branch selects the minimum and stores
+`(screenHeight-minimum)/(endScale/referenceScale) +
+trunc(height/2)*scaleY`. The integer half-height conversion happens before
+`SCVTF`, which is observable for odd sprites.
+
+The rehost now preserves the authored Lua token separately from that refreshed
+native float, consumes the float through the ordinary camera-relative draw
+formula, and integrates later vertical velocity into the same native-offset
+coordinate space. The implementation mirrors the disassembly split in
+`device/theme_refresh.rs` and its `foreground_offsets.rs` helper rather than
+leaving this cache as an approximate draw-time edge calculation. A real L50
+resource probe produced the native-contract values `-1491.551270` for its top
+layer and `879.547119` for its bottom layer from two corrected cameras.
+Conversely, `native_resetThemeSystem` is not a layer
+destructor: `sub_1000984C0` only clears the initialized byte at `+0x30` and two
+derived floats at `+0x54/+0x58`. The rehost now preserves background layers,
+foreground layers, theme sprites and authored offsets across reset; clearing
+those collections was a direct source of otherwise unexplained missing
+textures.
+This preservation does not apply to `setTheme`: each `ThemeSpriteData` vector
+is embedded at layer `+0x70`, so destroying and replacing the background and
+foreground arrays also destroys every dynamic sprite owned by the old theme.
+The flattened Rust container is now cleared at that exact ownership boundary,
+preventing stale sprites from a prior menu or level theme from appearing in a
+same-numbered layer of the next theme.
+The separate `recoverRenderObjects` entry traverses scene objects and reacquires
+OpenGL sprite/texture/sheet pointers in `sub_100059DB0`. Renderer-neutral Rust
+commands retain resource names instead of raw graphics pointers and wgpu
+resolves them through the live atlas cache at submission, so the equivalent
+recovery has no mutable script-side state while retaining the native
+zero-result ABI.
+
+Theme sprites are not top-level layer replacements. IDA and Hopper agree on a
+136-byte `ThemeSpriteData` stored in a vector owned by each layer.
+`sub_100073A58` is the exact vector `push_back` path: it appends even when an
+earlier record has the same name. Modify, replace and remove linearly scan and
+act on the first match, while updates retain insertion order.
+The rehost therefore uses an ordered duplicate-preserving container rather
+than its former `BTreeMap`, which both sorted overlapping sprites by name and
+silently overwrote duplicates. The exact
+Lua wrapper is
+`name, sprite, x, y, scaleX, scaleY, angle, layer, scaleSpeed, horFlip, velX,
+velY`; `modifyThemeSprite` consumes
+`name, x, y, scaleX, scaleY, angle, layer`, while remove and replacement are
+also scoped by the combined zero-based background/foreground layer index.
+Hopper's adapters at `sub_100086928`, `sub_100086454` and `sub_1000860D8`
+show that these are fixed, strict slots rather than optional
+arguments: strings, numbers and the `horFlip` boolean are type checked before
+the GameLua member is entered. Every number is returned in `s0`, so the host
+now rounds it to float32 at the Lua boundary. Layer selection first uses
+`FCVTZS`; the member converts the selected non-negative offset with `FCVTZU`,
+which makes negative and non-finite values address layer zero instead of
+silently rejecting the call.
+The frame dispatcher exposes a three-call native theme chain rather than one
+mixed update. At `0x10005ED04` and `0x10005ED1C` it selects ThemeManager
+background and foreground modes and calls `sub_10009B8B4`; at `0x10005ED28`
+it then calls GameLua member `sub_1000607E8`. The former integrates
+layer+0x2c/+0x30 into drawable offsets +0x3c/+0x40 using `(1-zDistance)`.
+The latter integrates the same velocities without that factor into the
+distinct `posX`/`posY` pair at +0x34/+0x38 before walking the nested sprite
+vectors. The Rust state and frame code now keep both pairs instead of
+conflating them. IDA's binary-wide reference scan further identifies the
+preceding GameLua+0x6A8 load as the reference-counted `setPhysicsEnabled`
+lock total: `sub_100041ABC` increments/decrements that exact field. Therefore
+the dispatcher skips the complete three-call theme chain while any physics
+lock is active; the host now retains that gate as well.
+
+`sub_1000607E8` also advances sprite velocity and positive scale, performs the
+foreground wrap relative to the original position and advances background
+animation frames. All of those writes are float32 `FMADD`/`FMUL` operations.
+The foreground reset tests strictly positive velocity; zero uses the same
+positive-offset branch as a negative velocity. `rotateThemeSprites`
+also takes a strict float32 delta, performs one `FMADD`, calls `fmodf`, and
+normalizes negative results with the native two-pi bits `0x40C90FDB`. The
+rehost mirrors that arithmetic and storage/update order. A binary-wide scan of
+every `0x88` record-stride traversal finds only construction, mutation,
+recovery, update, copy and destruction paths. The fixed theme draw at
+`sub_10009BDB4` renders the layer resource at `+0xf0` and separate authored
+element containers at `+0xc0/+0xc8`; it never reads the `ThemeSpriteData`
+vector at `+0x70/+0x78`. Purple 1.1.6 therefore retains and updates these
+dynamic records but does not submit them to OpenGL. The wgpu rehost preserves
+that otherwise surprising vestigial behavior instead of visibly drawing the
+records.
+
+The older direct `createThemeAnimation` member at `sub_100055650` has a
+different wrapper shape: it tests only the Lua stack top for a table and
+returns zero values when that final argument is not a table. Its optional
+numeric fields first use `sub_1005280FC` (`lua_isnumber`) and are read through
+`sub_10052A014` (`lua_tonumber`) as float32, so numeric strings are accepted;
+this includes the otherwise easy-to-miss `startAnimTimer` slot at
+`ThemeSpriteData+0x20`.
+`animDelay` initializes both the frame delay and current timer, after which
+`startingDelay` optionally overwrites only the current timer. Animation
+strings are consumed from indices 1 upward. The predicate at
+`sub_10052811C` accepts Lua tags NUMBER and STRING before `lua_tolstring`, so a
+numeric frame is converted and scanning continues; the first missing,
+boolean, table or other tag terminates the sequence. The shared direct-Lua
+coercion boundary now preserves these distinctions instead of finding an
+arbitrary table argument, retaining f64 table values, rejecting numeric
+strings/frames, or filtering past malformed frame entries. The split passes
+all 263 workspace tests, warning-free strict Clippy, a release build and the
+`audit-theme-split-menu.png`/`audit-theme-split-start.png` wgpu captures.
+
+The following level-file ownership pass was cross-checked against Hopper's
+procedure extents as well as the IDA constructor references. The editor member
+at `sub_100044F90` is a 4,728-byte implementation, the two selector wrappers
+at `sub_10004715C`/`sub_100047234` are separate 132-byte members, the fixed
+save member at `sub_10004730C` is 13,308 bytes in Hopper, and the late failure
+forwarder at `sub_100056950` is only 20 bytes. The Rust layout now reflects
+those boundaries: `level_files.rs` is a 19-line order coordinator, generic
+loading is a 54-line installer, and the largest level-specific module is the
+223-line recovered save schema. All 263 workspace tests, warning-free strict
+Clippy and the release build pass; `audit-level-split-menu.png` and
+`audit-level-split-start.png` verify the wgpu menu/start flow after the move.
+
+IDA measures the native update member `sub_10005E898` at 7,756 bytes with 354
+basic blocks and recovers its scaled/unscaled delta path alongside the native
+settings, audio and touch state. Hopper independently reports a 6,476-byte,
+237-block extent for the same entry and keeps the 2,388-byte draw dispatcher
+`sub_10004BAB4` separate. Startup is likewise not part of either member:
+Hopper places the platform construction path at `sub_100026D2C`, locale setup
+at `sub_100050948`, and the final startup callback at the one-block
+`sub_10005D44C`. The former 528-line `host.rs` now follows those boundaries:
+its core facade is 65 lines, startup 122, frame/draw 176, input 70 and output
+draining 119. Existing double-delta, input-edge, scene-lifetime, mixed-draw and
+startup-loader regressions cover the move. All 263 workspace tests,
+warning-free strict Clippy and the release build pass; the
+`audit-host-split-menu.png`/`audit-host-split-start.png` captures verify the
+wgpu menu-to-start path through the separated host members.
+
+The follow-up physics-host split deliberately keeps the complete 1/30-second
+step body together because IDA places its `updatePhysics`, contact refresh,
+island solve, TOI, `removeBlocks`, collision-velocity application and
+`clearLuaForceFunctions` order inside `sub_10005E898`. Only the host-side
+Lua/native ownership boundary moved to `host_scene_sync.rs`: direct Lua world
+deletion expires scene/joint/track/contact/draw-callback mirrors, and the
+contact filter refresh reads live `material`/`collisionMaterials` tables before
+each native step. `host_physics.rs` is now a 342-line fixed-step coordinator
+and `host_scene_sync.rs` is a 105-line ownership adapter. All 263 workspace
+tests, strict Clippy and the release build remain green; the
+`audit-host-physics-split-menu.png`/`audit-host-physics-split-start.png` wgpu
+captures verify the resulting menu/start flow.
+
+## Native rays, light beams and dirt extension
+
+`makeRay` (`sub_10004CE5C`) does not take two endpoints. It installs a
+`DrawablePolygon` callback on the named physics body and the four numeric
+arguments are RGBA. The rehost replaces that body's sprite draw with a filled
+software-rasterized fixture polygon. `makeLightBeam` (`sub_10005AD4C`) returns
+an object exposing `plotPath` and `dispose`; `sub_10008B194` walks ten physics
+units per segment, stops at the nearest fixture or level limit, and writes the
+point array plus target object table back into the query table. Both object shape and
+path behavior are now represented directly.
+
+The extension implementation now mirrors those member boundaries too. The
+228-line mixed source is a 28-line ordered facade over `polygon.rs` for
+`sub_100035FFC` (1,016 bytes/16 blocks), `ray.rs` for `sub_10004CE5C`
+(684/40), `light_beam.rs` for the 96-byte/single-block constructor plus
+`sub_10008B194` (1,260/30), and `gravity_visuals.rs` for the separate debug
+draw binding.
+
+Direct Hopper assembly of `sub_10008B194` also corrected three observable
+LightBeam details. `startAngle`, `startPoint`, its ten-unit direction and every
+accumulated path point remain float32; a large-coordinate regression now
+distinguishes the native endpoint from f64 integration. On a hit, `target` is
+the canonical Lua object table associated with the fixture—not its name
+string. Finally, the return is a change flag: first hit returns true, a repeated
+hit on the same object returns false, hit-to-nil returns true, and nil-to-nil
+returns false. This follows the old-target nil test and Lua equality helper at
+`0x10008B564..63C`, rather than approximating the result as “ray hit”.
+
+`createNativeBlockExtension` (`sub_10005A9F0`) constructs the DirtMechanics
+object at `sub_10001F98C` and exposes `onCollision`, `checkCollisions`,
+`isJointAttached`, and `render`. The constructor reads
+`blocks[definition].components.dirt.bgTexture/fgTexture`, keeps an unchanged
+background polygon and creates the initial foreground polygon from the body's
+fixture path. `sub_1000208D4` draws the background first and then every current
+foreground polygon. The placeholder block sprite (normally `RED_CROSS`) is not
+part of this draw path. The constructor's call to `sub_100021B58` is a direct
+`vector<float2>` copy: the initial background and foreground retain every
+float32 coordinate unchanged. The 0.001 Clipper grid is first applied inside
+`sub_100020D70`, so even a non-intersecting first cut quantizes only the
+foreground while the background keeps the original source contour.
+
+The original bytecode calls the factory with the fixed layout
+`createNativeBlockExtension("dirt", block.name)`. `sub_10005A9F0` applies the
+exact-string checker independently to slots 1 and 2 and looks up the first
+string in the registered native-extension map; an unknown tag produces no Lua
+result. The Rust bridge now preserves both strict slots and the registered-tag
+failure instead of scanning for whichever string happens to occur last. The
+four returned functions are already bound to the native instance and Dirt.lua
+uses dot calls. Consequently `onCollision` and `isJointAttached` read their
+first numeric value directly from stack slot 1; passing an explicit colon-call
+table is, as in Purple, a type error rather than an accepted hidden `self`.
+
+The collision adapter strictly reads fixed stack slots containing five floats,
+a collider string and two post-collision velocity floats; missing/wrong types
+throw instead of shifting later numeric values left. `sub_100020560` first
+resolves the collider in the live RenderObject map and, when found, forwards
+the final two float32 values to the shared `sub_10005E860` delayed-velocity
+map. The first five values are independently narrowed into the 20-byte
+`DirtMechanics::Collision` record whether or not the named collider still
+exists. `sub_100020D70` subtracts the body's
+float32 position from the queued point with two `fsub` instructions, then
+builds an eight-point contour. Its loop converts the index to double,
+multiplies by the exact double representation of the literal
+`0.785000026f`, narrows for `sincosf`, and uses two float32 `fmadd`
+instructions for the final point. Every coordinate is converted to an integer
+Clipper point at 1,000 units per physics unit. Purple processes each
+existing foreground contour in its own Clipper instance with non-zero subject
+and clip fill rules. It executes to a `PolyTree`, scans the tree with
+`GetFirst`/`GetNext`, and, only when an odd-depth hole is present, adds a
+one-integer-unit vertical slit from -100000 to +100000 through the cut center
+to the same instance and executes again. `PolyTreeToPaths` preserves the
+algorithm-selected contour and path order. Every returned path is then cleaned
+in place by `CleanPolygon(path, 20.0)`. Purple converts each `int64` coordinate
+back with `scvtf` into float32 and multiplies by `0.001f`; it does not perform a
+double-precision decimal division. The non-closing edge-length accumulator,
+FMA squared distance, square root and one-unit rejection threshold are also
+float32. Paths below that threshold are discarded; there is no separate
+three-vertex host guard, so a cleaned two-point path at least one unit long is
+retained even though its later ear-cutter produces no triangles.
+`sub_100020914` then rebuilds the foreground drawables.
+
+The shipped `BlockComponents/Dirt.lua` bytecode and the complete callee body
+close a previously ambiguous physics boundary. Its
+`onUpdateBlockPhysicsStep` calls `native_extension:checkCollisions()` and,
+when at least one cut was processed, tests cached joint endpoints with
+`isJointAttached` before optionally calling `destroyJoint`. The outer
+`sub_100020768` does not mutate Box2D directly, but its cut callee does:
+`sub_100020D70` snapshots `b2Body::m_fixtureList`, saves each fixture's
+`m_next`, and calls `sub_10086B548` (`b2Body::DestroyFixture`) head first
+before clipping. `DestroyFixture` unlinks that one fixture, destroys only its
+attached contacts in contact-edge-list order (including synchronous
+`EndContact`), then destroys its proxy, decrements the fixture count and calls
+`ResetMassData`; this entire sequence repeats per old fixture rather than as a
+body-wide batch. After cleaning and triangulating
+the surviving contours, it initializes one `b2PolygonShape` from every
+ear-cutter triangle and calls `sub_10086B454` (`b2Body::CreateFixture`) in
+triangle order. `CreateFixture` creates an active body's proxy before
+head-inserting the new fixture and calls `ResetMassData` after each append
+whose retained density is positive. The constructor `sub_10001F98C` initializes the retained
+`b2FixtureDef` from
+`blockTable.materials[objects.world[name].material]`, narrowing density,
+friction and restitution to float32 once; the cut path changes only the shape
+pointer, so later material-table edits and fixture setters do not affect the
+replacement triangles, whose fixture definition also restores `sensor=false`.
+Contacts are therefore ended synchronously, mass data is
+recomputed, new broad-phase proxies are buffered, and contacts, position
+constraints, TOI sweeps, ray casts and `isJointAttached` all observe the cut
+geometry. The rehost now follows that full fixture lifecycle instead of either
+keeping the old fixture solid or applying an analytic octagon filter outside
+Box2D.
+
+The clipping half of that lifecycle is now pure Rust. `clipper2-rust` supplies
+the safe i64/non-zero PolyTree boolean engine; the compatibility layer rebuilds
+the full subject plus original-cut plus one-unit slit input for the second
+execution because that port cleans scanline state after each execute. Purple's
+Clipper 6.2.1 left-slit output-record start is restored generically, and
+`dirt/clipper/clean.rs` is an index-based intrusive-ring translation of its
+`OutPt` `CleanPolygon(path, 20)` traversal. Purple 1.1.6 was built on 6 May
+2015, before Clipper 6.4's July 2015 release, and Hopper's recovered
+Clipper/tree/clean function structure matches 6.2.1. Exact regressions lock the
+integer intersection rounding, clean distance, algorithm-selected starting
+vertex and multi-path order without a C++ build script or unsafe FFI. The
+octagon and conditional slit rebuild the foreground paths, and both layers are
+triangulated into `wgpu` draw streams.
+`DrawablePolygon::rebuild` at
+`sub_1000246A8` additionally proves that Purple copies the contour into
+float32 X/Y arrays, reverses it unconditionally with `sub_100872308`, and then
+calls the already recovered quality-ranked ear cutter `sub_100871498`. The
+renderer uses that same route, including the
+native interior diagonal and triangle vertex order. The exact same triangles
+are now installed as the replacement physics fixtures. DrawablePolygon's local
+physics coordinates are passed unchanged as repeated texture UVs while
+positions are scaled by 20. The bundled `2d-sprite` state has blending
+disabled, so the two passes use the opaque replacement pipeline; a hole
+therefore reveals the background dirt texture instead of transparency.
+Binding is idempotently retried from the dirt callbacks because one shipped Lua loader publishes an
+object's `definition` after constructing its components.
+
+## Editor definition loader
+
+`loadBlocksForEditing` is the large member at `sub_100044F90`, not an empty
+platform hook. It creates `blockEditorTable` and loads fourteen named modules
+below `scriptPath`, from `blocks_levelgoals` through `groups`, into separate
+child environments. The Rust binding now follows that recovered order and
+module naming. The shared loader also accepts ordinary Lua source in addition
+to transcoding Purple's 32-bit-number Lua 5.1 bytecode, matching the native
+loader used for editor/AppData files.
+
+## Native particles and audio handles
+
+The four particle passes map to distinct native modes. The consecutive raw
+constants at `0x1009AF128` are `1, 2, 3, 4`:
+`native_drawForegroundParticles` uses mode 1,
+`native_drawBackgroundParticles` mode 2, `drawMenuParticlesNative` mode 3,
+and `native_drawNotificationParticles` mode 4. Only the first two entry points
+check GameLua's in-game-particle enable byte; menu and notification rendering
+remains active while in-game particles are disabled.
+`clearParticlesNative` recognizes `INGAME_BACKGROUND`, `INGAME_FOREGROUND`,
+`MENU`, and `ALL`. The constructor chain at `sub_10008E160` and
+`sub_10008E524` reads emitter geometry, randomized sprite/velocity/gravity,
+angular velocity, lifetime, start/end scale and the time-multiplier flag. Its
+field conversions are intentionally asymmetric: definition emitter and sprite
+angles are multiplied by the float32 `pi/180` constant at `0x1009AF120`, while
+per-call angle overrides are already native radians and angular velocity is
+never degree-converted. `useAngleFromSpawner` adds the caller angle to both the
+velocity direction and the sprite orientation. The randomized emitter extent
+is `(w + areaW) * emitAreaScaleX` and `(h + areaH) * emitAreaScaleY`; an explicit
+zero request amount falls back to the definition amount. `ignoreLimits` falls
+back through the definition's `reference` metadata table, and absent
+`ignoreDeltaTimeMultiplier` defaults true only for menu/notification modes 3
+and 4. It halves a requested burst above the soft threshold of 61 and trims the
+hard population boundary to 1000 unless limits are explicitly ignored; the
+same `ignoreLimits` byte bypasses both checks. The rehost
+now updates and renders those modes deterministically, including launch
+feathers, smoke and waterfall mist. The shared random source at
+`sub_10057B42C` is also recovered: four fixed xorshift seed words fill a
+4096-word table, followed by the `a=18782`, `c=362436` complementary
+multiply-with-carry sequence and exact `u32/2^32` conversion. Particle
+construction consumes eight float32 random samples in native field order and
+only consumes the ninth sprite-selection sample for non-animated definitions.
+When `animation` is exactly `lifeTime`, the first sprite is installed without
+that random draw and `sub_100091834` advances to
+`ceil((elapsed/lifetime)*spriteCount)-1` with the native one-based clamp.
+Gravity, velocity, transform, angle, lifetime expiry and current scale are now
+retained and updated as packed float32 particle state rather than host doubles.
+The two branches of `sub_100091834` are preserved as well: disabling in-game
+particles freezes modes 1/2 in place while modes 3/4 continue to age, and the
+velocity displacement is rounded as float32 before the viewport-scale FMA.
+Infinite-lifetime particles use strict framebuffer-edge tests and wrap to the
+opposite 1024x768 logical edge after integration.
+
+IDA's immediates and Hopper's `MOV/MOVK` pairs give the seed words as
+`075BCD15`, `159A55E5`, `1F123BB5` and `05491333`. They are numeric ARM words,
+not byte arrays. The earlier Rust port had byte-reversed every seed and thus
+produced a different stream despite implementing the later CMWC recurrence
+correctly. The shared theme/particle source now starts with the literal words;
+its first ten generated `u32` values are locked by a regression.
+
+`playAudioReturnUniqueHandle` (`sub_10005902C`) consumes clip name, volume,
+loop flag and optional channel/group and returns a monotonically unique handle.
+`setAudioClipVolume` (`sub_10005920C`) and `stopAudioWithHandle`
+(`sub_100059288`) address that handle; the channel-limit adapter is also
+mirrored. The Rust bridge now preserves this lifetime and control ABI, so Lua
+receives real handles instead of nil. Audio-device output and compressed-stream
+playback remain separate host integration work.
+
+IDA and Hopper now also agree on the ownership split behind those bindings.
+`game::LuaResources::LuaResources` (`sub_100446570`) publishes `playAudio`,
+`stopAudio`, `stopAllAudio`, `isAudioPlaying`, `setMasterVolume`,
+`setTrackVolume` and `getTrackVolume` through the member cluster at
+`sub_100448A94`..`sub_10044AAD0`. The distinct `GameLua` constructor
+`sub_10002C274` publishes `setChannelCountLimit`,
+`playAudioReturnUniqueHandle`, `setAudioClipVolume` and
+`stopAudioWithHandle` through `sub_100058FFC`..`sub_100059288`. The Rust source
+therefore uses a 29-line ordered facade with separate `playback`, `volume` and
+`playback` and `volume` leaves instead of one mixed 280-line installer; the
+four `GameLua` globals now live under `game_lua/audio_registration.rs`, their
+actual constructor owner.
+
+The underlying AudioManager layout is recovered as eight float32 track
+volumes initialized to 1, eight signed 32-bit channel limits initialized to
+-1, and a 32-bit wrapping unique-handle counter initialized to zero.
+`sub_100572208` rejects playback when the unsigned active count reaches the
+selected channel limit and otherwise increments that counter after assigning
+the handle. Track volume alone clamps to [0, 1]; master volume and individual
+clip volume retain the supplied float32 value. Resource `playAudio` defaults
+only absent optional slots, while `playAudioReturnUniqueHandle` also treats
+explicit nil as absent. The generated number, boolean and integer adapters are
+strict; the stock Lua 5.1 compatibility boundary represents Purple's tagged
+integer handles only as finite integral numbers. All 274 workspace tests pass
+with these structure and ABI corrections.
+
+The same dual-disassembler pass exposed an ordering error hidden by the old
+module-granular installer. `sub_100446570` publishes methods in this exact
+sequence: common resource creation at `0x1004465DC..0x10044669C`, audio
+creation and capture, common releases at `0x10044678C..0x100446830`, locale
+selection, font selection/enumeration, draw, clip/string/audio playback,
+geometry queries, font metrics, locale query, audio controls/volumes, and
+finally `openURL`. Rust now exposes phase-level install functions and its
+147-line coordinator follows that sequence instead of installing all release
+members before all audio creation members.
+
+IDA/Hopper agree on the underlying lifecycle adapters: system-font creation
+is `sub_1004471B4` at 516 bytes/17 blocks and stroked creation is
+`sub_100447480` at 668/14; sprite/composite/font/text releases are independent
+thin members at `sub_100447FDC`, `sub_1004481AC`, `sub_1004481B4` and
+`sub_1004481BC`, while `releaseAudio` is `sub_1004481C4` at 152 bytes in IDA.
+Accordingly the former 265-line lifecycle installer is a 23-line facade over a
+187-line creation leaf and 91-line release leaf. The recovered adapters also
+retain their asymmetric optional-slot behavior: creation members probe
+optional booleans/numbers and leave wrong types at defaults, whereas an
+explicit second slot to `releaseSpriteSheet` is strictly boolean.
+
+The next source split follows the individual draw/query members rather than
+the constructor's broad feature labels. Hopper measures `drawSprite`
+`sub_1004483AC` at 696 bytes/23 blocks, its `drawCompoSprite` forwarder
+`sub_100448710` at 24/1, and `drawString` `sub_100448728` at 384/14.
+Sprite bounds and pivot are independent 232-byte/9-block members at
+`sub_100448EB4` and `sub_100448FF8`; composite bounds begins at
+`sub_10044913C` (476/18), with the data/entry methods following it. Therefore
+`query_registration.rs` is now an 18-line facade over `geometry`, `clip_rect`
+and `font` leaves, while `draw_registration.rs` is a 20-line facade over
+`sprite`, `text` and `capture` leaves. The constructor phase API and immediate
+draw submission order are unchanged.
+
+## Resource lifetime, composite order and sprite shaders
+
+The resource-manager constructor at `sub_100093904` registers sprite-sheet
+creation/release through `sub_10009470C`/`sub_100094800`. Audio bundle and
+AppData creation (`sub_100093C10`/`sub_10009410C`) key their native lifetime
+map by the second string argument, while release and play are zero-result Lua
+methods. Both creators strictly read path/name strings; argument 3 defaults to
+true only when absent and, when present, is a strict boolean. The play member
+at `sub_100093B00` likewise strictly reads its name even though it returns no
+values. The Rust methods now preserve these error paths instead of silently
+accepting incomplete calls. The boot path also calls bitmap/system-font, text-group,
+composite-set, audio-output and locale lifecycle methods on `res`. These calls
+now update typed Rust resource state and preserve their zero-Lua-result ABI;
+`loadLocale` parses the requested group/locale and `useLocale` selects only an
+already loaded locale.
+
+`sub_1004370A4` shows that a composite part record contains name, sprite,
+position, scale, flip multipliers, angle and enabled state, but no runtime z
+field. `sub_1004376D4` visits the records in stored order and composes their
+full affine matrices. The five overlapping `ISLAND_TAIVAS` sky records are
+therefore not eligible for a synthetic z sort; the fine vertical joins also
+appear in the native 1.1.6 output and are retained rather than hidden with an
+invented overlap rule.
+
+The same composite entry APIs expose zero-based raw part coordinates and
+mutable name, x/y, scale, angle, flip and visible fields. Native bounds are
+recomputed from the transformed child rectangles while those raw coordinates
+remain unchanged. Runtime updates now reach both Lua bounds queries and the
+wgpu draw catalog. Sprite, text and plain-geometry calls also share one
+monotonic immediate-submission sequence; preparing them as separate batches
+incorrectly changed occlusion. `setClipRect` truncates its inputs to integer
+edges, and each submission captures the current rectangle as a clamped wgpu
+scissor rather than applying one frame-global clip.
+
+`captureSprite` is registered through `sub_100446570`, adapted by
+`sub_100447FD4` and implemented at `sub_100458F54`. It captures the current
+render target at the exact call point, creates a full-target sprite when the
+name is new, and updates the captured texture when it already exists. It is no
+longer a void compatibility stub: the wgpu command stream splits render passes
+around captures, copies the 1024x768 target into a named GPU texture and makes
+that sprite available to later commands in the same frame and later frames.
+
+IDA `sub_10000FC30` and Hopper independently establish the
+`AnimationWrapperNative.setShader(tag, optionalTable)` contract. Exactly two
+Lua arguments with a table cause `sub_10006CB08` to construct the shader;
+omitting the table or passing nil clears it, unknown scene tags are ignored
+after a native warning, and the wrapper returns zero Lua values.
+`sub_100013F44` clones the submitted shader into the per-tag wrapper map and
+the underlying animation scene. `sub_10006CB08` is shared with the ordinary
+`drawSpriteWithShader` path in `sub_10006C838`: the name cache owns one mutable
+shader, each call changes only the submitted parameters, and callers receive a
+snapshot, so omitted parameters inherit the cached value. `params` is a
+strictly required table. `float` values are converted to native float32 and
+default to zero when absent or non-numeric. Each component of a `vector` is
+also float32, but absent/non-numeric components independently default to one.
+This matters for the shipped LEAVES transition, whose two `DIFFUSEC` values
+contain only RGB triples; native code supplies alpha 1 rather than rejecting
+or zeroing the tint. The rehost now reproduces that shared-cache and clone
+boundary and applies each scene snapshot to every animation slot. The
+software renderer executes the formulas bundled in
+`pixelShaders/pp.ps` for colorize, silhouette, gold and diffuse modulation,
+including `DIFFUSEC`, `LIGHTNESS`, `SATURATION`, `HIGHLIGHT` and shader alpha.
+
+## Animation entity matrices and sprite bounds
+
+IDA and Hopper agree on the complete entity-query family registered by
+`sub_10000EC80`. Local position (`sub_100015AB8` -> `sub_100014D84`) reads the
+entity's own matrix translation, while local scale (`sub_100015E38` ->
+`sub_100015000`) returns the magnitudes of its two basis columns. Their missing
+defaults are `(0,0)` and `(1,1)`. World position/scale
+(`sub_100015C78`/`sub_100015FF8`) first multiply the entity matrix by the
+inverse animation-scene matrix, so “world” here means scene-relative and does
+not include `AnimationWrapperNative.setTranslation`, `setScale` or
+`setRotation` on the wrapper scene.
+
+`getEntityWorldTransform` at `sub_10000F46C` returns no Lua values when scene
+or entity lookup fails. A valid entity returns scene-relative x/y, exact basis
+magnitudes, and `atan2(m10,m00)`. If and only if the entity owns a
+SpriteComponent, it appends a sixth boolean stating whether that component's
+current sprite pointer is non-null. The Rust runtime now composes the full 2D
+affine hierarchy for these queries instead of conflating local and world
+values or leaking the wrapper transform into both.
+
+`getEntityWorldBounds` (`sub_1000161B8` -> `sub_1000152BC`) returns four
+numbers in `left, top, right, bottom` order. Missing scenes, entities, sprite
+components or current sprites produce four zeroes. Native code centers the
+rectangle on the scene-relative entity translation and multiplies half the
+current sprite width/height by the two matrix-column magnitudes; it
+intentionally does not calculate a rotated four-corner AABB. The rehost now
+uses the active skin attachment and atlas geometry to reproduce that contract.
+This includes the attachment's translation, scale and rotation already applied
+by `SpriteComponentCustom`; omitting it collapsed the four comic-border bounds
+onto their parent nodes and clipped almost every panel away. Attachment aliases
+are looked up in the skin before basename canonicalization. That ordering is
+observable in the second-chapter finale, whose animation tracks use names such
+as `borders_chapter_2_end/CHAPTER2_PAGE1_PANEL1_DOWN` while the resolved sprite
+component is named only `CHAPTER2_PAGE1_PANEL1_DOWN`.
+
+The draw path now preserves the same matrix precision as the query path. IDA
+and Hopper both show `sub_10001E440` multiplying every linear basis and
+translation component directly; the routine does not decompose parent and
+child matrices back into angle plus scale. Animation rendering therefore now
+composes wrapper transform, entity hierarchy and skin attachment as complete
+affine matrices and passes all four linear components to the software
+renderer. Signed scale and angle remain available as compatibility metadata,
+but no longer determine vertex geometry, so nested non-uniform scale,
+rotation, mirror and the resulting shear are retained exactly.
+
+The same registration audit also fixes the animation lifetime ABI. Bundle and
+AppData loads use the void two-string adapter `sub_10001D43C`; `start` and
+`setSkin` are void as well, and both preload methods use the void one-string
+adapter `sub_10001D22C`. `sub_1000163A4`/`sub_100016484` populate the separate
+bundle and AppData JSON maps through `sub_1000E2660`, and later loads reuse
+those parsed assets. `clearCache` (`sub_10000FD98` -> `sub_1000E251C`) erases
+only those two maps: it does not close loaded scenes, discard transforms or
+stop playback. `stop` (`sub_100013720`) consumes both tag and action, with an
+empty action meaning stop all actions in that scene. Speed and seek values are
+stored verbatim by `sub_100013D08` and `sub_10040E798`; their shared
+`sub_10001C8C0` adapter requires a string in slot 1 and a number in slot 2,
+then narrows the number to float32 before either store. It does not scan later
+arguments for a usable value. Paused playback is not reported as playing.
+These distinctions are now represented by typed bundle and AppData caches
+rather than boolean-returning placeholder methods. The playback registration
+itself is now a nine-line facade over native-aligned `controls`, `update` and
+`callback` leaves.
+
+All 63 non-transform animation tracks in the extracted 1.1.6 content are the
+single native `spineEvent` type. The entity callback at `sub_1000121F4` ignores
+empty values and parses every non-empty payload as
+`name:integer:float:string`, truncating the final string at a further colon.
+`sub_1000171B4` queues the typed event, and `sub_100016FE4` proves the exact
+Lua callback order is `(tag, action, name, integer, float, string)`. Playback
+completion uses that same six-value ABI with zero/empty payload fields. The
+runtime now preserves these tracks, fires every keyframe crossed by forward,
+reverse or wrapped playback, and drains them after the scene update like
+`sub_1000141E4`; events such as `particles`, `cameraShake`, `playAudio`,
+`instantIn` and `fadeOut` are no longer silently discarded.
+
+## Platform compatibility contracts
+
+`setGameParameters` is the direct table reader at `sub_100055438`; this build
+only consumes optional `deterministicPhysics` and `gameWorldScale` fields.
+`native_getOSName` constructs the exact string `iOS`. The bundle-to-AppData
+copy at `sub_10005A2B4` reads the complete source resource and overwrites the
+destination; the rehost performs the same copy, mapping already-extracted
+configuration JSON back to the `.dat` destination names expected by the
+original scripts. Notification callback storage, renderer game-on state,
+smooth zoom, mouse-wheel scale, editing and accelerometer enable state also
+have typed bindings instead of generic nil-returning stubs.
+
+The generated-adapter audit now preserves their input ABI rather than merely
+their stored values. `enableSmoothZooming`, `setEditing` and
+`setAccelerometerActive` all use `sub_10008962C`, which reads slot one through
+the exact BOOLEAN guard `sub_1005281BC`/`sub_1005281F8(..., 1)`.
+`setWorldScale` and `resetMouseWheelScale` use `sub_100088D24`, whose
+`sub_10052859C` path requires NUMBER and narrows to float32 before invoking
+`sub_10004396C`/`sub_100043980`. Missing or wrong-type calls now fail before
+state mutation, and valid near-boundary doubles reproduce the native float32
+value.
+
+The same constructor audit now covers the adjacent world/environment family.
+`setGameOn`, `setStartingCameraValue` and `enableAimingAid` bind the BOOLEAN
+adapter `sub_10008962C`. `native_setBirdWaterDrag`,
+`native_setObjectWaterDrag`, `native_setAdditionalBirdGravity`,
+`setPhysicsSimulationScale`, `setMaxWorldScale` and `setCameraLimits` bind the
+one-NUMBER float32 adapter `sub_100088D24`. `setWorldGravity` and `setTopLeft`
+bind the two-NUMBER adapter `sub_100088294`, while `native_setWaterColor` binds
+the four-NUMBER adapter `sub_100088BC0`. IDA confirms the latter calls
+`sub_10052859C` for slots one through four before invoking `sub_100031198` with
+four float registers. The Rust adapters therefore validate the complete call
+before mutation, preserve slot-one rather than last-number semantics, and
+store the exact f32-widened results.
+`setLevelLimits` is another `sub_100088BC0` registration; its four validated
+float32 corners are then truncated and reordered by `sub_10004FFB8`, so an
+incomplete call no longer invents zero-valued bounds.
+
+The layout utility is the five-argument entry at `sub_1000E0B70` rather than
+a table-field passthrough. `Align.getPositionAndScale` strictly reads a layout
+table followed by reference width/height and target width/height. `scaleH` and
+`scaleV` independently interpret `TRUE`, `UP` and `DOWN`; Purple then applies
+its internal `FIXED` mode by choosing the smaller permitted axis ratio and its
+`NORMAL` mode leaves that ratio linear. `LEFT/TOP`, `RIGHT/BOTTOM` and
+`CENTER` use the recovered reference-to-target position formulas, while an
+unknown alignment leaves the authored coordinate unchanged. Missing numeric
+fields convert to zero through the native Lua table reader. This full float32
+path now replaces the former guessed `(posx,posy,scalex,scaley)` return and is
+covered at up-, down- and center-aligned aspect ratios.
+
+The corresponding Rust service-table registration is now an order-preserving
+42-line facade instead of the previous 297-line mixed-owner file. ForceUpdate,
+Analytics, FusionGamerServices, downloadable Assets and Align live in separate
+`game_lua/platform_services/` leaves; AnimationWrapper and SimpleRandom remain
+calls to their already separate owners at the same coordinator positions.
+This reflects native ownership: both IDA and Hopper measure the ForceUpdate
+adapter `sub_100026880` as 104 bytes, the Game Center constructor
+`sub_10054C784` as 296 bytes, the backend-name literal member
+`sub_1000CA39C` as 44 bytes, sprite-sheet creation `sub_1000AC660` as 312
+bytes, the Align adapter `sub_1000E0B70` as 28 bytes and its implementation
+`sub_1000E0CB0` as 1,864 bytes/51 blocks. For `Assets::loadFiles`, IDA assigns
+776 bytes/46 blocks while Hopper assigns 632 bytes/32 blocks because IDA also
+owns the adjacent exception-cleanup tail; both identify entry
+`sub_1000AC25C` and its asynchronous request/callback body. The split records
+that genuine disassembler ownership difference instead of selecting a size
+only to make the reports appear identical.
+
+## Complete native-registration audit
+
+The full body of `sub_10002C274` was extracted from IDA and its important
+contracts were independently checked in Hopper's `Purple` document. Comparing
+every registered Lua name against the Rust host initially exposed 68 names
+that did not exist at all, even though the ordinary startup/first-level path
+did not call most of them. They are now all explicitly registered, and a test
+fails if any of those globals ceases to be a function.
+
+The audit also distinguishes intentional native emptiness from missing work.
+`createDirectory`, `linkSensor`, `goToTaskSwitcherLua`, `print`,
+`printWithTag`, and `sendTweet` map to `nullsub_12`, `nullsub_11`,
+`nullsub_14`, `nullsub_9`, `nullsub_10`, and `nullsub_15` respectively.
+`checkDirectory` (`sub_10004BAA0`) always returns false and
+`getDirectoryFileList` (`sub_10005A298`) returns an empty table in this build.
+`GetDate` (`sub_1000313FC`) returns `time(NULL) / 3600`, `getDeviceID`
+returns an empty string, and `verifyDeviceID` returns false. Reproducing these
+odd results is more faithful than inventing desktop behavior.
+
+The separately registered `uniqueDeviceId` reaches
+`pf::DeviceID::Impl::getDeviceID`: it first requests the MAC address, replaces
+the iOS `02:00:00:00:00:00` sentinel with `identifierForVendor.UUIDString`,
+and otherwise retains the literal `unavailable`. A desktop without those iOS
+identifiers now uses that recovered fallback instead of a fabricated shared
+device ID. `FusionGamerServices.getBackendName` likewise returns Purple's
+literal lowercase `gamecenter`; the offline host still reports the unavailable
+service state, while `postAchievement(string)` and `postScore(string, number)`
+now enforce their recovered adapters and return zero Lua values.
+
+Purple's native `Assets` object registers `loadFiles` (`sub_1000AC25C`) and
+`createSpriteSheet` (`sub_1000AC660`). `loadFiles` consumes every value in its
+argument table and completes asynchronously through either
+`onLoadSuccess(requestToFilenameTable)` or
+`onLoadError(failedFilenameArray, errorCode, message)`. The discontinued RCS
+service is now represented by the local AppData cache with the same callback
+shapes and zero-result ABI; unavailable remote files follow the error callback
+instead of silently disappearing. `createSpriteSheet` strictly consumes the
+name, descriptor and texture strings and installs the sheet under the supplied
+name, replacing the earlier unconditional no-op.
+
+`SimpleRandomNative` is likewise no longer backed by host-invented FNV/LCG
+substitutes. Registration at `sub_100094D34` exposes `newSeed`,
+`newSeedFromString`, `newSeedFromNumber`, `random`, `seedToString` and
+`newSeedString`. The process-global seed source at `sub_10057B534` is the
+recovered 4,096-word complementary-multiply-with-carry generator initialized
+from the four literal xorshift words. Explicit seeded sampling at
+`sub_100095260` uses Purple's `seed * 214013 + 2531011`, its single
+`UINT32_MAX` correction, the upper 16 bits and an inclusive unsigned range.
+Decimal seed strings use the native stream-extraction behavior and invalid
+strings return zero Lua values. This restores deterministic particle and
+variant sequences as well as the missing `seedToString` entry.
+
+The remaining object/physics entries now have concrete state and behavior:
+
+- `native_resizeRadius` (`sub_100059488`) writes the native radius, destroys
+  the head fixture and recreates a non-sensor circle from the supplied radius,
+  density, friction and restitution. It does not take an absolute value,
+  compose with an earlier physics-scale factor, restore the sensor flag, wake
+  a sleeping body directly, or mirror those values into Lua. A touching old
+  fixture nevertheless reaches Purple's EndContact listener, whose stores at
+  `0x1000653DC..0x100065410` wake both bodies and clear their sleep timers
+  before the synchronous callbacks run against the old Lua record. The
+  replacement contact can therefore enter on the following Collide pass;
+- bytes `+319`, `+333`, `+332`, `+301`, `+302/+303` and floats `+296`,
+  `+268/+272`, `+304/+308` are represented by block-collision, ignore-score,
+  keep-orientation, record-velocity, the two independent reverse-gravity
+  modes, collision-time, sensor-force and reverse-gravity multiplier state;
+- `setSpriteRotation` (`sub_10003FC88`) normalizes the visual angle to one
+  turn without replacing the body's physical angle, while `multiplyVelocity`
+  (`sub_100041A44`) scales both linear components and wakes a moving body;
+- `getObjectVertices` (`sub_10005A7BC`) returns one array per fixture in native
+  body-list order and one `{x,y}` table per already-scaled float32 vertex;
+  `destroyTrack`, `getCurrentTrackAngle`, and `objectAndTrackOverlap` use the
+  recovered track state;
+- `setJointParameters` follows the IDA/Hopper table fields `name`, `motor`,
+  `motorSpeed`, `maxTorque`, `limit`, `lowerLimit`, `upperLimit`, `frequency`,
+  `dampingRatio`, and `length`; object-joint removal and limit checks use the
+  same joint collection;
+- `native_applySensorForces(sensor, object)` now follows `sub_10005DE90` and
+  `sub_10005E404` at native float32 precision. It checks the signed gravity
+  mask/category expression, requires the dedicated `+0x143` active-sensor
+  byte, distinguishes circular and directional rectangular falloff, points
+  gravity toward the sensor, multiplies by `bodyMass * 0.1`, and preserves the
+  controllable collision timer plus both reverse-gravity branches. Water
+  sensors use density-difference buoyancy, edge attenuation, force-point
+  torque, the vertical velocity cutoff and the independently selected bird or
+  object velocity drag;
+- IDA and Hopper independently confirm that this is a real caller/callee
+  boundary rather than one large source routine: `sub_10005DE90` is 1,396
+  bytes with 64 blocks (IDA complexity 41), calls the 1,116-byte/41-block
+  `sub_10005E404`, and Hopper finds no other caller of that water member. The
+  Rust source therefore uses an eight-line `sensors.rs` facade over
+  `sensors/force_dispatch.rs` and `sensors/water.rs`, retaining the same
+  direction of dependency;
+- constructor defaults recovered at `sub_10002C274` and the RenderObjectData
+  creators are also preserved: gravity-force multiplier `4.0f`, water-force
+  multiplier `2.0f`, bird-water drag `0.4f`, object-water drag `1.0f`, sensor
+  mask/category `-1`, collision time `-1.0f`, and block collision enabled;
+- the direct body-flag wrappers are now separated from Lua-table setters.
+  `setSleeping` (`sub_10004DAD4`) clears awake state, velocities, force, torque
+  and sleep time when passed true, but an already-awake false call is a total
+  no-op. `setAsSensor` (`sub_100041824`/`sub_10086CD38`) changes every fixture
+  and wakes the body only when the sensor byte changes. `setFixedRotation`
+  (`sub_1000411F0`) toggles the body flag and runs ResetMassData. None of these
+  three wrappers immediately rewrites the similarly named `objects.world`
+  field; ordinary fixed-step state write-back later publishes sleeping and
+  velocities. The adjacent scalar wrappers are native-only as well:
+  `setLinearDamping`, `setAngularDamping` and `setGravityScale` write the body,
+  while `setRestitution`/`setFriction` write only `m_fixtureList`, the most
+  recently attached fixture. Multi-fixture bodies now retain per-fixture
+  values and the contact solver combines the exact fixture pair instead of an
+  object-wide approximation. `setVelocity`, `setAngularVelocity` and
+  `multiplyVelocity` likewise write native float32 body state only, ignore
+  static bodies, and wake only for a non-zero resulting value; Lua velocity
+  fields wait for the fixed-step write-back. In contrast `setPosition` and
+  `setAngle` mirror their Lua fields and call `b2Body::SetTransform` at
+  `sub_10086B794`, which synchronizes proxies and immediately runs
+  `b2BroadPhase::UpdatePairs` without waking the body;
+- the adjacent late object-extension bindings now preserve three additional
+  directly observable native details. `native_setTimeSinceCollision` resolves
+  to the 36-byte `sub_10005959C`, narrows its generated numeric argument to
+  float32 and writes only `RenderObjectData+0x128`; it does not alter the
+  similarly named Lua table field. `setRevertGravityWithMultiplier` resolves
+  to the 64-byte `sub_10005962C`, requires string/boolean/number/number slots,
+  stores the negated float at `+0x130` plus the float limit at `+0x134`, and
+  creates no Lua mirror fields. `setSpriteRotation` (`sub_10003FC88`, 192
+  bytes/3 blocks) receives float32, runs `fmodf` against a float32 two-pi and
+  only then writes native and Lua sprite angles. The former 260-line mixed
+  registration file is now a small order facade over focused
+  `object_state.rs`, `radius.rs` and `runtime.rs` owners; the publication order
+  visible at `0x10002C900..0x10002F334` remains unchanged;
+- the contact filter at `sub_100065488` treats equal positive
+  `P_COLLISION_GROUP` values as an exclusion, then applies sensor-type and
+  controllable-object exclusions. When block collision is disabled, it reads
+  the live `objects.world[name].collisionMaterials` list and the opposite
+  object's material before allowing the fixture pair. This game-side filter is
+  evaluated when a fixture-pair contact is created and whenever native
+  `e_filterFlag` is consumed. Changing material/group fields alone does not
+  retroactively refilter an existing contact, so a separated contact retained
+  by its fat AABB may touch again under the old decision unless a joint or
+  fixture operation marks it dirty. `setCollisionEnabled`
+  (`sub_10004F3D8`) is deliberately different: both disassemblers show calls
+  to `b2Body::SetActive(false)` and then `SetActive(true)` before the byte is
+  stored. The first call removes proxies and synchronously destroys contacts;
+  the second creates and buffers fresh proxies. It preserves velocity, force,
+  torque and awake state. EndContact therefore observes the old Lua/native
+  flag, while the next broad-phase AddPair observes the new value.
+
+Theme-sprite creation/modification/removal/rotation, theme reset, render
+disable/query, level-limit query, menu particle scale, gravity debug visuals,
+light beam/ray commands, notification lifetime, URL/screenshot requests, and
+AppData load/save calls likewise no longer fall through the missing-global
+metatable. They use the recovered executable-Lua table grammar, isolated-table
+execution and traversal-safe AppData paths. Legacy JSON output from earlier
+rehost builds remains readable, and persistent files use the recovered native
+AES container. The `addNotificationAfter` adapter also preserves its strict
+`(string, number, string)` contract, returns the platform boolean, and keyed
+removal/cancel-all match the direct native entries.
+
+## Verified runtime checkpoint
+
+The unmodified game scripts complete startup, IslandMap, Chapter01 and the
+entire first-run intro comic. The corrected deterministic sequence loads
+`levels/Chapter01/Chapter01_L01`, initializes `starTable`, switches to
+`theme_hometree_bg` and emits `EID_LEVEL_LOADING_FINISHED`. A sling drag at
+frame 9,200 reaches `Slingshot.lua`'s recovered `applyImpulse` path, emits
+`EID_BIRD_SHOT`, and by frame 9,260 the mirrored `Stella_1` body has moved with
+finite non-zero x/y velocity. Camera scale remains finite and converges instead
+of entering the former NaN/blue-screen path. The draw stream contains the
+playable level, tutorial/trajectory elements and native theme passes, with no
+stale Chapter01 objects. Direct Lua removal from `objects.world` is treated as
+the native scene lifetime boundary during transitions.
+
+At the post-shot checkpoint the bird contacts the pink boot and wood triangle,
+the normal impulse propagates through the nearby wood bodies, and later
+contacts include `pig_medium_2`; the structure visibly deforms instead of the
+bird passing through it. The level's 13 non-empty joint descriptors are also
+created, including skateboard revolutes, hammock constraints, fruit welds and
+the breakable pig/pillow weld.
+
+The trace exposed two native parameter/state errors behind the earlier L01
+result. Collision damage had been reading a fabricated top-level
+`forceDamageMultiplier` and defaulting to `1`, while Purple reads
+`worldAttributes.forceDamageMultiplier` (`2250` in the bundled definition).
+After correcting that lookup, the shot initially damaged `pig_medium_2` from
+60 to 27, exposing a second error: Rust's non-native `motion_started` gate left
+every newly created structure body frozen until an explicit force arrived.
+IDA `sub_100034740` and `sub_100034FB0`, independently confirmed in Hopper,
+construct `b2BodyDef` with `allowSleep=true`, `awake=true`, `active=true` and
+`gravityScale=1`; only the controllable-body branch subsequently calls
+`sub_10086B88C(body, false)`. The L01 creation trace also shows no sleeping or
+velocity setter for the target structure. Dynamic bodies now enter gravity,
+contact and sleep solving on their first world step. With those corrections
+plus native per-island solving and intrusive-list creation order, the current
+exact-solver regression enters the episode at frame 4,600 and drags from
+`(300, 450)` to `(152, 500)` at frame 9,200. It produces the intended chain
+collapse, removes `pig_medium_2`, clears `levelGoals`, enters the ended state,
+and renders the three-star `LEVEL 1 COMPLETED` screen. After the contact
+solver, persistent `b2Sweep` centre, ResetMassData, the retail Weld/Revolute
+joint paths and the retail narrow-phase manifold routes were all converted to
+their recovered float32 state model. Completing the GJK/TOI and reduced-island
+route moved the deterministic settling boundary: frame 12,000 is now still
+inside score-panel animation, while frame 14,000 renders the stable three-star
+screen at UI score 18,020. The documented input was repeated after the exact
+Dirt fixture-rebuild path was restored; both independent 14,000-frame wgpu
+captures produced SHA-256
+`f9f32eb1898e93fe130920f5218b1ac82ff6fe5d790a6a71e869f1e4a0610d0c`.
+This number remains a regression checkpoint rather
+than an asserted original-iOS score oracle; it moved because the old discrete
+path allowed impacts that Purple resolves at an earlier sweep fraction. The
+independently loaded frame-1,800
+L04/L06 checkpoints remain active at exact score zero; L06 retains both
+`pig_medium_1` and `pig_medium_right_1`, eliminating the false no-input
+roll-off caused by the old global solver pass.
+
+The same `sub_100062520` comparison also established that an object's
+`damageFactors` field must be a string. Purple resolves it through
+`blockTable.damageFactors[name]`, then reads the target-material entries in
+`damageMultiplier` and `velocityMultiplier`; an inline table is ignored.
+The Rust path now follows that indirection and preserves the direct numeric
+`powerupDamageMultiplier`. Box2D `ResetMassData` at `sub_10086B1F4` also
+confirmed that only non-zero signed fixture densities contribute to aggregate
+mass, and a dynamic body with non-positive aggregate mass receives the native
+unit-mass/unit-inverse-mass fallback. Object creation, density changes, circle
+resizing and body-type changes now share that behavior.
+
+The L02 checkpoint now launches its first two infinite Stella birds, renders
+the complete `TAP AND HOLD` tutorial/darkening/reticle sequence and executes
+the parkour jump. IDA/Hopper comparison of the ray callback exposed and fixed
+an important route difference: sensor fixtures had been allowed to intercept
+the Rust aim ray and concave bodies had been collapsed to one hit. With the
+native sensor exclusion and per-fixture records restored, the tutorial jump
+passes the hidden sensor layer and throws the hammock pig along the recovered
+path. A 15,800-frame trace invokes no remaining generic native no-op.
+
+The non-linear content audit now also traverses all 65 Chapter01 and all 65
+Chapter02 entry points, the genuine island-event unlock path into BirdRun, and
+all six shipped `cutscenes` entries. The comic paths are driven through
+`LevelLoad.transitionToLevel` and `startComic`, not by constructing a HUD
+fallback. Every comic reaches its next page or destination menu during a
+3,600-frame run without a Lua error; early, middle and late captures contain
+the expected sequential panel animation rather than a static replacement.
+The pig-pin/lock image visible over the pages is the real `CutsceneSkip` child
+of `notificationsFrame`, not a stale IslandMap render object. The first six
+playable minigame definitions other than `stella_glider` also start through
+their original game-mode path. `stella_glider` itself contains a latent data
+error in the shipped bytecode: its `sounds` table omits the `minIdleDelay` and
+`maxIdleDelay` fields that the unmodified `BirdAnimation.apply` immediately
+subtracts. The rehost deliberately records this rather than inventing a
+native default that is absent from both the executable scripts and definition.
+
+The current post-solver route remains reproducible without directly mutating
+Lua state. Its exact 1024-by-768 logical input stream is: click `(165,245)` at
+frame 700; drag `(300,450)` to `(152,500)` over 30 frames at 9,200; click
+`(900,500)` at 9,245; click the stable next-level button `(650,705)` at
+14,050; drag `(260,400)` to `(110,480)` over 30 frames at 15,600; then hold
+`(570,620)` for 90 frames from 16,020. At frame 16,500 the
+darkening/reticle sequence has cleared and the ability path has advanced. A
+combined wgpu resource and native-noop audit of that route reports no missing
+sprite, font, texture, non-finite command or generic compatibility call.
+Repeating the route after the strict float32 theme-sprite conversion produced
+`b2b1bab3b919f4e4603b220ee5510936d28c6df5395adb49ac45a9cca6b7fe26`
+for the frame-16,500 wgpu capture; the established L01 frame-14,000 capture
+remained byte-identical at
+`f9f32eb1898e93fe130920f5218b1ac82ff6fe5d790a6a71e869f1e4a0610d0c`.
+
+The current release checkpoints reach this same post-shot state without
+invoking any generic native compatibility stub on the exercised path. A
+separate deterministic 7,000-frame first-run check traverses startup and
+reaches the interactive IslandMap. The 9,300-frame click/drag
+checkpoint then traverses the complete intro comic, enters `Chapter01_L01` and
+launches Stella. Render tracing on those routes reports no missing sprite,
+texture or font; after the recovered descending animation z-order is applied,
+Stella, the house, backpack, dust and panel borders are all visible over the
+comic background.
+Hopper's complete `sub_10002C274` registration assembly was also parsed as a
+set rather than sampled by route. It contains 243 Lua-callable names before
+the global data-field registrations begin; every one has an explicit binding
+in `stella-script`, and every name in the former compatibility-noop list is
+now replaced before the fallback loop runs. Startup frame 700, the settings
+popup and the play-button transition were repeated after the namespaced-skin
+fix with no missing sprite, texture, font, Lua exception or generic native
+noop.
+The remaining small platform branches are checked against their direct native
+entries as well: the registration object is initialized to bytes `{0, 1}` and
+therefore returns `(true, false)` in the native push order, while
+`ForceUpdate.native_checkForcedUpdate` has a zero-result Lua ABI and stays
+inactive when the discontinued cloud configuration is unavailable. The
+Game Center object likewise initializes its availability byte to true and only
+clears it after GameKit error 16, so the offline host reports the original
+"supported but unauthenticated" state instead of conflating the two queries.
+The installed-app bridge is also no longer represented as a boolean stub:
+its offline entry validates the recovered `ttl/gameCount/game_n` JSON shape,
+preserves the `setInstalledAppsOffline(commaSeparatedNames)` callback and
+zero-result ABI, and yields an empty list because iOS URL schemes do not exist
+on the desktop host. The discontinued online request keeps its strict string,
+asynchronous zero-result contract; the separate Twitter query remains the
+literal false returned by `sub_10005128C`.
+The complete workspace now has 251 passing tests, including the 68-entry
+registration guard and behavior checks for sensor force, fixture resizing,
+joint parameters, object vertices, sprite rotation, render disabling and
+full-atlas linear texture sampling plus composite axis flags/affine transforms.
+The added animation regressions lock both selected-skin attachment transforms
+inside entity bounds and exact namespaced attachment-alias lookup. Loader
+regressions additionally lock native `blockTable` routing/replacement,
+float32 definition `index/group` metadata, `IGNORE_COMPONENTS` inheritance,
+raw named-child `gamelua`, zero-result loader adapters, unconditional bundle
+suffixing, filename validation, JSON-in-place import, the four-slot string and
+five-slot table text-file decrypt/decompress contracts, Lua-vs-JSON parsing,
+and level force-multiplier fallback. The same workspace passes
+`cargo clippy --workspace --all-targets -- -D warnings` and a release build of
+every crate after the six-cutscene and IDA/Hopper loader audits.
+Physics coverage now also includes synchronous pre-island Lua velocity
+mutation, retained-contact wake propagation, common-minimum island sleep and
+shared-static-body island separation/creation order, dynamic-tree leaf-id
+allocation/reuse plus growth/balance/query integrity, pre-touch fat-AABB contact creation, dynamic-body pair
+eligibility, contact-list-head callback order and callback mutation visibility
+between consecutive contact updates in one `Collide` traversal. The active
+state regression locks synchronous contact-list-head EndContact order,
+motion/force preservation, `setActive`'s intentionally unmirrored Lua field,
+and `setCollisionEnabled`'s deactivate/reactivate lifecycle with old-value End
+callbacks followed by new-value AddPair filtering. Joint lifecycle coverage
+additionally locks deferred `0x8` filtering,
+the sleeping-contact delay, CreateJoint's no-wake behavior, DestroyJoint's
+two-body wake, and clearing the dirty flag only after an awake recheck. Direct
+body-flag tests also cover sleep clearing/no-op branches, sensor-change-only
+wake behavior, fixed rotation, native-only damping/gravity writes,
+head-fixture-only friction/restitution, and intentionally delayed Lua
+mirroring. Transform coverage additionally verifies immediate pair creation
+from SetTransform and preservation of sleeping endpoints. Fixture-resize
+coverage now also locks signed polygon mirroring, independent native
+width/height/radius storage, live-Lua coefficient/radius snapshots,
+synchronous old-fixture EndContact timing, sensor restoration wake behavior,
+compound fixture-list reversal, replacement AddPair creation, and the
+post-visual-scale edge-shape error branch. Density/radius lifecycle coverage
+additionally verifies head-fixture-only density writes, per-fixture aggregate
+mass/center recomputation, resize-time synchronous EndContact, the absence of
+Lua and sensor restoration, direct-radius replacement after prior physics
+scaling, and EndContact-listener wake before the replacement BeginContact.
+The Dirt lifecycle regression separately locks retained material coefficients,
+per-triangle mass/proxy reconstruction, synchronous contact removal, and the
+native fixture-head-before-contact-age destruction order for compound bodies.
+It also locks unquantized source-float background/foreground construction and
+the first-cut-only transition onto Clipper's 0.001 grid. The adapter regression
+locks strict fixed-slot type failures and Dirt's collider-name-gated write into
+the post-`removeBlocks` delayed velocity map, including the native float32
+square/add wake decision at the subnormal underflow boundary.
+The compound-vertex regression additionally locks reverse fixture-list
+enumeration, the order flip after fixture recreation, signed resized vertices,
+float32 position addition, and the native omission of body rotation.
+Track-overlap coverage now also locks the nested `points` ABI, shape-skin
+threshold, rejection of AABB-only diagonals and the head-fixture change after
+compound fixture recreation.
+Track-angle coverage additionally locks first-child tie handling, float32
+projection/atan2, absence of an implicit closing child and the zero fallback.
+The persistence regression also verifies native-shape Lua serialization,
+AppData-vs-bundle existence, object-loader routing, level round trips and legacy
+JSON migration. Resource lifecycle zero-result contracts, animation-shader
+copy/clear behavior, animation local/world matrix and sprite-bounds semantics,
+void lifecycle ABI, preload-cache isolation, and the bundled colorize
+pixel-program order are covered by dedicated regressions. Animation rendering
+also has a deliberately non-orthogonal parent/child matrix regression, which
+would fail if the path returned to lossy scale/angle decomposition. The render
+regressions additionally cover bitmap-font metrics, composite entry mutation,
+clip/scissor conversion, cross-command immediate order, default and explicit
+sprite anchors, destination-size stretching, and prevention of the
+double-pivot layout regression visible on the settings screen. A pixel-level
+capture regression also verifies immediate framebuffer copy and subsequent
+sprite reuse. Dedicated transform regressions now also cover grouped partial
+`setRenderState` updates, the legacy global composite helper, and rotated
+renderer pivots under non-uniform scale all the way to generated wgpu
+vertices. A render-boundary regression additionally uses an FMA-sensitive
+operand triple whose native result is exactly `2^-46` but whose separated
+multiply/add result is zero, while a large-coordinate case locks float32 input
+quantization. The textured-line regression additionally covers the strict ten-value
+adapter, ignored color tail, current-state alpha, native quad matrix and
+sub-pixel rejection. At 9,300
+deterministic frames the executable now
+reports no unresolved callable `res`, `ResourceManager` or
+`AnimationWrapperNative` method; the remaining 63 observations are optional.
+This is stronger than merely suppressing missing-function errors: every native
+entry reached by startup, menu navigation, first-level load, aiming, launch,
+contact and next-bird return now resolves to a recovered typed implementation.
+Dedicated regressions additionally lock the cached `worldAttributes` damage
+multiplier, named `blockTable.damageFactors` lookup, rejection of the former
+inline-table shortcut and Box2D's non-positive-mass fallback. Contact identity
+is now also fixture-pair based rather than body-pair based: every convex piece
+of a decomposed polygon and every edge of a line owns independent active,
+warm-start, restitution and exit state, matching Box2D's `b2Contact` lifetime
+and preventing complex bodies from silently losing `BeginContact` callbacks.
+Existing fixture contacts are retained while both bodies sleep and only emit
+their exit callbacks after actual geometric separation, filter rejection or
+body removal; this removes the former false sensor exits on settled levels.
+Off-center polygon bodies now also use Box2D sweep semantics: signed polygon
+centroids become the local center of mass, polygon inertia is shifted from the
+body origin to that center, contact and joint lever arms originate there, and
+angular integration rotates the transform origin around the translated sweep
+center without re-deriving or drifting that centre through the rounded
+transform. Global force and impulse points use that same stored world center
+when computing torque. This matters for the shipped triangular pieces whose
+origin and center are observably different. Shape mass data, compound
+fixture-head accumulation, aggregate centre/inertia, stored mass/inverse mass
+and their reciprocals now follow the native float32 path; non-positive
+aggregate mass retains the zero-center unit-mass fallback. Density/body-shape
+mass resets keep the transform origin fixed and apply Box2D's
+`cross(angularVelocity, newCenter-oldCenter)` correction to linear velocity
+when the center moves.
+
+The remaining non-identical native boundaries are backend-specific subpixel
+rasterization and sampler rounding at a few
+overlapping composite edges, the original process-address ordering of
+separately malloc-allocated Box2D block chunks (within-chunk body slots and
+LIFO reuse are now reproduced deterministically), device-specific audio
+resampling/latency, physical video-device playback and discontinued
+online/store services. Physical audio playback is implemented, but those
+remaining areas cannot be
+claimed as byte-for-byte equivalent without reproducing a specific GPU/driver,
+allocator address layout, physical devices, or restoring external services.
+
+The continuous-collision source layout now follows the smaller native Box2D
+members rather than keeping the whole cluster in one 649-line unit. Hopper
+reports Purple's `b2Distance` at `sub_1008605D4` as 1,676 bytes/61 basic
+blocks, the exported `b2Simplex::ReadCache` at `0x100860C60` as 464 bytes/16
+blocks, and `b2SeparationFunction::{Initialize,FindMinSeparation,Evaluate}` at
+`0x1008620E4`, `0x1008624A4` and `0x100862898` as 960/1,012/576 bytes. Its
+`b2TimeOfImpact` leaf at `sub_100861B54` is 1,424 bytes/28 blocks; IDA
+independently confirms that size, block count and the float32 sweep/separation
+state. The Rust facade is now 163 lines, with 116-line simplex, 134-line GJK
+distance, a six-line separation facade, a 193-line three-member separation
+object and a 110-line TOI advancement leaf. External world-solver entry points
+and all float32 iteration/order semantics remain unchanged.
+
+The `Initialize` assembly additionally loads `0x34000000` (`FLT_EPSILON`) from
+`0x100A0C82C` before normalizing each separation axis. The one-point mode
+explicitly zeroes a shorter axis; both face modes have already stored the
+perpendicular edge and leave it unchanged when `b2Vec2::Normalize` returns
+early. The previous shared Rust helper divided every non-zero vector. The
+three modes now reproduce their distinct below-epsilon behavior, with a
+focused boundary regression covering a half-epsilon point/face axis and an
+exact-epsilon normalized point axis.
+
+The contact velocity solver now mirrors the immediately adjacent Box2D member
+cluster as well. Hopper isolates `InitializeVelocityConstraints` at
+`sub_100863BC4` (1,000 bytes/21 blocks), `WarmStart` at `sub_100863FAC`
+(292/7), `SolveVelocityConstraints` at `sub_1008640D0` (1,380/22), and the
+small `StoreImpulses` leaf at `sub_100864634` (112/7). IDA independently
+reports the main solve leaf as 1,380 bytes and 22 blocks, with the packed
+float32 tangent and two-point complementarity state visible in its register
+flow. The former 601-line Rust unit is now a seven-line facade over independent
+initialization, warm-start, impulse-application, solve and StoreImpulses
+modules. Cached feature alignment, restitution-bias snapshot order, the
+1000:1 block-matrix guard, scalar fallback and two-point impulse order remain
+covered by focused regressions.
+
+The original solver also has two physically separate impulse stores. IDA and
+Hopper show `WarmStart` reading the 152-byte solver constraint array, while the
+112-byte `StoreImpulses` leaf walks that array only after every velocity
+iteration and copies each point's normal/tangent floats into the contact
+manifold at `+0x80/+0x84`. The rehost formerly updated its persistent
+`contact_impulses` map during each solve pass, collapsing this observable
+boundary. `solver_contact_impulses` now owns the per-island constraint state;
+Initialize aligns cached features into it, WarmStart reads it, every Solve
+pass mutates it, and StoreImpulses publishes it once at the native call site.
+Hopper's caller/callee graphs additionally show that `StoreImpulses` has only
+ordinary `b2Island::Solve` as a caller, while `b2Island::SolveTOI` invokes
+Initialize and SolveVelocityConstraints but neither WarmStart nor
+StoreImpulses. Reduced TOI islands therefore use zero-initialized solver-local
+impulses without publishing them into the next-step manifold cache. Dedicated
+regressions cover both the ordinary delayed-Store boundary and the TOI
+no-publish path.
+
+Contact lifecycle ownership is now split on the same binary boundaries. The
+game filter remains tied to `sub_100065488` (Hopper: 1,752 bytes/86 blocks),
+`b2Contact::Update` to `sub_10086373C` (608/31), the Collide traversal to
+`sub_10086BAB0` (372/23), and awake world-island assembly to
+`sub_10086E634` (1,024/42). IDA independently confirms Collide's 372-byte,
+23-block loop: it skips fully sleeping pairs, consumes `e_filterFlag`, checks
+the two fat AABBs, destroys a rejected node while preserving its saved next
+pointer, and otherwise invokes Contact::Update before advancing. The former
+596-line Rust unit is now a six-line facade over 60-line filtering, 241-line
+refresh/event, 242-line island/sleep and 68-line focused-solve modules. Head
+insertion traversal, callback re-entry visibility, sleeping-contact retention,
+deferred joint filtering, static island termination and common minimum sleep
+time remain covered by targeted tests.
+
+The wgpu ownership layout has been tightened without changing its recovered GL
+contract. `gpu.rs` now contains only the 109-line shared vertex/frame/renderer
+storage ABI; its blend, shader, clip, mesh, pivot, capture and Dirt regressions
+live behind the 16-line `gpu/tests.rs` facade in separate batch, program,
+sprite and geometry suites. Immediate mesh submission itself is the independent
+`gpu/frame/batch.rs` member rather than a large method block in the ABI. The
+former 642-line renderer is a
+six-line facade over a 98-line initialization coordinator, 83-line fixed-target
+and bind-layout owner, 64-line native-program family and 104-line window
+presentation constructor, plus fixed game-target draw/capture submission,
+letterbox/RGBA presentation and texture synchronization. Those stages
+modules preserve the already established binary ownership evidence:
+`sub_100598CC4` supplies float32 GL state/viewport geometry, while command
+ordering, render-pass splits and cached texture pairs remain separate from
+surface/device policy. The capture regression still forces a pass break and
+framebuffer copy before later draws; the program-identity regression exercises
+all five prepared draw classes independently.
+
+The 11,000-frame startup/menu/first-level/aim route was also rerun with the
+renderer diagnostic path enabled after this split. It reports no missing
+sprite, native/explicit quad sprite, bitmap font or prepared GPU texture and no
+non-finite command skip; the callable fallback audit remains zero. This closes
+the distinction between a successful script route and one that only succeeds
+because the renderer silently omitted an unresolved resource.
+
+Resource geometry now follows Purple's adjacent native members instead of a
+single 626-line Rust unit. Hopper identifies the textured-line quad builder at
+`sub_10006DB0C` as 572 bytes/7 basic blocks, the rubber-band builder at
+`sub_100030EB0` as 564/3, the `drawSprite` Lua adapter at `sub_1004483AC` as
+696/23 and atlas submission at `sub_100467A00` as 240/17. IDA independently
+confirms the textured-line leaf's size/block count and float32 vector flow.
+The new 12-line facade delegates to 146-line asset loading, 84-line composite
+records, 160-line sprite drawing, 205-line line construction and 75-line data
+model modules. Public call sites and registration order are unchanged.
+
+The split also exposed a real precision mismatch. The strict Lua adapter at
+`sub_100084A9C` narrows every line coordinate to float32, and
+`sub_10006DB0C` uses only single-precision subtract/FMLA/square-root operations,
+with a strict squared screen-length threshold of `1.0f`. The Rust path now
+matches that narrowing and instruction order and carries the four independently
+rounded atlas corners to wgpu rather than reconstructing them from an f64
+affine matrix. A large-coordinate regression locks the observable
+`16777217 -> 16777216` and `16777219 -> 16777220` endpoint rounding.
+
+Joint ownership has likewise moved out of the former 552-line mixed unit.
+Hopper and IDA both identify `sub_100862D60` (Solve33) as 180 bytes/3 basic
+blocks and `sub_100862E14` (Solve22) as 64/3, with the singular-matrix zero
+reciprocal and float32 cofactor order visible in both decompilers. Hopper keeps
+the GameLua type/coordType dispatcher in the much larger `sub_100037374`
+(18,240/243), while `b2World::CreateJoint` is an independent 272/15 member at
+`sub_10086E470`. The Rust layout now mirrors those boundaries: a 16-line
+facade over 50-line persistent state, 138-line anchor/prismatic geometry,
+93-line matrix leaves and 283-line Lua/native construction. Existing sibling
+solver imports still resolve through the facade, so public ownership and the
+original construction/filtering order remain unchanged.
+
+Scene-object collision queries are no longer collected in one 515-line impl.
+Both decompilers report `b2TestOverlap` at `sub_10086021C` as a 184-byte,
+single-block leaf that constructs two proxies, calls GJK and strictly compares
+the use-radii distance with `1.19209e-6f`. Its four-shape proxy initializer at
+`sub_1008602D4` is 148 bytes/12 blocks. Hopper additionally isolates the
+track/chain distance wrapper at `sub_10003D208` (832/26) and the templated
+dynamic-tree world ray-cast at `0x10086F834` (1,000/33). The Rust layout is
+now a six-line facade over 108-line shape/b2Transform projection, a six-line
+proxy-query facade, 109-line contact-factory manifold dispatch and 56-line ray
+result modules. The proxy facade follows the actual native boundaries:
+`distance_proxy.rs` owns the 148/12 `sub_1008602D4` shape switch, `overlap.rs`
+owns the 184-byte/single-block TestOverlap leaf, `track.rs` owns the 832-byte
+Hopper (872-byte IDA) chain wrapper, and `aabb.rs` owns shape bounds.
+
+The latter also removes a previously hidden precision mismatch. IDA's
+`sub_10086CA54` (172 bytes/4 blocks) invokes each shape's `ComputeAABB` virtual
+before broad-phase proxy creation, while `sub_10086CB74` (284/4) computes the
+two float32 bounds, combines them with ARM `FMIN`/`FMAX`, and subtracts the two
+float32 body positions before MoveProxy. Accordingly transformed vertices,
+circle center/radius, extrema and the `0.002f` polygon skin now remain in
+float32 through AABB publication. A one-ULP regression at a small positive
+coordinate distinguishes that native result from the former f64 `0.002`
+addition. The chain fallback visible in `sub_1008602D4`—wrapping the second
+endpoint to vertex zero at the final index—is retained, although the native
+`vertexCount-1` child count keeps it outside ordinary fixture iteration.
+
+This move removed a duplicate track-only coordinate transform that performed
+separate float32 multiply/add/subtract operations. Purple's b2Transform path
+uses the same nested ARM FMLA sequence already recovered for ordinary fixture
+projection, so track distance now shares that implementation. A focused
+large-coordinate regression makes the distinction observable: the native
+path produces x=17,970,414 while separate rounding produces 17,970,416, enough
+to flip the strict shape-radius distance result.
+
+Contact teardown and post-collision ownership now follow their native members
+instead of sharing the former 485-line Rust unit. Hopper and IDA both identify
+`b2World::DestroyJoint` at `sub_10086E27C` as 356 bytes/29 basic blocks. Its
+control flow removes both intrusive body edges, wakes both endpoints, releases
+the constraint, and sets the surviving pair's `e_filterFlag` only when
+`collideConnected` was false. The body/fixture-side contact destruction leaf
+at `sub_10086B9B8` is 248/22 and retains the already reproduced descending
+contact-edge creation order.
+
+GameLua sensor bookkeeping remains distinct from Box2D teardown. The broader
+enter/damage dispatcher is `sub_100062520` (8,992 bytes/247 blocks), while IDA
+and Hopper isolate sensor exit at `sub_10006525C` as 336/29: it removes every
+matching sensor pointer in place and clears `insideGravity` only when the
+opposite object's sensor vector becomes empty. Pending collision velocities
+belong to the larger post-step physics member `sub_10005E898` (6,476/237), not
+to either teardown leaf; its packed float32 square/add wake test therefore
+stays with collision-force dispatch.
+
+The Rust facade is now 11 lines over 122-line joint lifecycle, 49-line delayed
+removal, 136-line contact drain, 48-line sensor membership and 140-line
+collision-force modules. The split changes no function body or event order;
+focused regressions continue to cover joint-filter deferral, reverse-creation
+EndContact dispatch, fixture destruction, gravity sensor entry/exit, breakable
+joints, delayed object removal and collision-force/velocity float32 behavior.
+
+The test-only CPU rendering oracle now mirrors the same recovered GL ownership
+as the wgpu backend rather than remaining a 797-line mixed source file. Hopper
+reports the viewport/state member at `sub_100598CC4` as 820 bytes/11 basic
+blocks and atlas UV submission at `sub_100467760` as 536/13. IDA and Hopper
+independently agree that the four-corner sprite transform/submission member
+`sub_100467BE8` is 540/15; its decompilation transforms each vertex in float32
+before passing the complete twelve-float array to the renderer interface.
+
+Texture setup is an independent 240-byte/6-block leaf at `sub_10018AFB8` in
+both tools. It binds the texture-coordinate array, optionally loads the texture
+matrix, resolves MIN and WRAP state, and fixes `GL_TEXTURE_MAG_FILTER` to
+`GL_LINEAR`. Those boundaries now appear directly in Rust: the 19-line facade
+owns 107-line command traversal, 95-line colored meshes/blending, 221-line
+sprite/explicit-quad rasterization, 56-line texture sampling, 38-line pixel
+shader emulation and 22-line letterbox presentation modules; the 249 lines of
+pixel regressions are isolated in `tests.rs`. All arithmetic expressions and
+the two test-only `assets.rs` entry points remain unchanged, and all 22
+reference/wgpu render tests pass after the move.
+
+Host-side asset ownership now follows Purple's KA3D members too. Hopper places
+the SPRT/COMP binary loader at `sub_100461B98` (3,100 bytes/88 basic blocks),
+the full composite draw/matrix path at `sub_1004376D4` (1,288/29), and the
+bitmap-font draw member at `sub_10042B338` (1,060/58). IDA includes the latter
+member's adjacent exception tail and reports 1,068 bytes/61 blocks, but agrees
+on its glyph lookup, anchor switch, float32 cursor and AtlasSprite submission
+body. Perspective creation and model installation are independent again:
+`sub_10057BAE0` is 156/3 in both tools, while Hopper reports the straight-line
+`sub_10057BE78` model member as 260/1.
+
+The former 599-line `stella-app/assets.rs` now leaves its data model and exports
+in a 50-line facade over 91-line catalog loading, 29-line lazy texture decode,
+103-line sprite/composite dispatch, 150-line bitmap-font drawing and 202-line
+renderer-neutral transform modules. This is a source-ownership change except
+for one instruction-order correction found during the audit: the perspective
+Y matrix element is no longer algebraically shortened to `focal * -1.33f`.
+It now reproduces `sub_10057BAE0`'s actual FADD→FMUL→FMUL→FDIV sequence through
+the doubled 0.001 near plane. The shipped constants happen to produce the same
+final bit pattern, but the code and its projection regression now preserve the
+native float32 construction rather than relying on that coincidence.
+
+The shared KA3D parser has now been divided at those same binary ownership
+boundaries. A complete scan of the shipped data finds 114 KA3D/RVIO envelopes:
+70 `KA3D SPRT` v1, 24 `KA3D FONT` v1, 11 `KA3D COMP` v2, eight `RVIO COMP` v1
+and one `KA3D TEXT` v1. The encrypted promotion configuration is not a KA3D
+resource and remains on the existing configuration path.
+
+IDA and Hopper independently place the combined SPRT/COMP native loader at
+`sub_100461B98`. Hopper reports its contiguous implementation body as 3,100
+bytes/88 basic blocks; IDA includes the C++ exception and cleanup islands and
+reports 4,084/176. The TEXT loader is independently rooted at
+`sub_1004731B0`: Hopper reports 2,696/123, while IDA's exception-inclusive
+boundary is 3,192/196. Its referenced diagnostics include the missing-LIDS
+before-TXGP check, confirming the recovered `LDAT` -> `LIDS` -> one `TXGP` per
+locale order rather than treating localization as an SPRT/COMP variant.
+
+Accordingly, the former 547-line `stella-assets/src/ka3d.rs` is now a 17-line
+public facade over a 35-line envelope validator, 76-line checked big-endian
+reader, 53-line SPRT parser, 98-line COMP v1/v2 parser, 65-line FONT parser and
+68-line TEXT/localization parser; its 156 lines of synthetic boundary tests
+live separately. No record field, version rule or error boundary changed in
+the move. All 114 real envelopes also pass subtype inspection, covering every
+format/version combination actually present in Purple's data.
+
+The outer continuous solver is now separated along the three Box2D members
+that drive that already recovered TOI core. IDA and Hopper agree exactly on
+all three boundaries: `b2World::SolveTOI` at `sub_10086EA54` is 2,436 bytes/77
+basic blocks, reduced `b2Island::SolveTOI` at `sub_10086D5EC` is 992/29, and
+`b2ContactSolver::SolveTOIPositionConstraints` at `sub_1008649BC` is 832/15.
+The latter's decompilation again shows the 0.001 linear slop, 0.2 correction
+clamp and -0.0015 convergence test, while the island member owns the position
+iteration, velocity iteration and remaining-substep integration sequence.
+
+The former 448-line `continuous_solver.rs` is therefore a five-line facade
+over a 260-line world candidate/contact-edge module, 98-line TOI position
+module and 100-line reduced-island module. This move preserves the earliest
+alpha sort, one-contact-at-a-time BeginContact callback boundary, 20 position
+iterations, warm-start reset, velocity solve and `(1-alpha)*dt` integration
+order. Focused regressions still cover high-speed tunnelling, a second impact
+within one step, simultaneous static corner contacts and listener mutation of
+the next auxiliary contact.
+
+The embedded dynamic tree is now split at its own native members instead of
+remaining a 411-line aggregate. IDA and Hopper agree exactly on the recovered
+boundaries: the constructor at `sub_100860E30` is 172 bytes/4 basic blocks,
+node allocation at `sub_100860F08` is 260/6, `CreateProxy` at
+`sub_10086100C` is 156/1, `InsertLeaf` at `sub_1008610A8` is 784/16,
+`DestroyProxy` at `sub_1008613B8` is 84/1, `RemoveLeaf` at
+`sub_10086140C` is 404/12, `MoveProxy` at `sub_1008615A0` is 320/8, and
+`Balance` at `sub_1008616E0` is 1,140/25.
+
+The short-member decompilations independently reconfirm the sixteen-node
+initial free chain, capacity doubling, 0.1 fat-AABB expansion, signed
+`displacement + displacement` extension and destroyed-node return to the
+free-list head. The Rust layout is now a 13-line facade over 92-line model,
+42-line allocation, 101-line proxy/query, 74-line insertion, 38-line removal
+and 87-line balance modules. No comparison or mutation order changed; the
+growth/balance/full-free-list, native proxy-ID, LIFO query, fat-AABB contact
+and immediate pair-drain regressions all pass after the move.
+
+The world-facing broad-phase bridge now mirrors the wrapper members around
+that tree rather than remaining one 305-line aggregate. IDA and Hopper agree
+exactly on body creation `sub_10086DF90` (156 bytes/9 blocks), fixture proxy
+creation `sub_10086CA54` (172/4) through broad-phase wrapper
+`sub_10085E310` (144/3) and tree `CreateProxy` `sub_10086100C` (156/1),
+fixture synchronization `sub_10086CB74` (284/4) through wrapper
+`sub_10085E3E8` (132/5) and `MoveProxy` `sub_1008615A0` (320/8), and
+`b2BroadPhase::UpdatePairs<b2ContactManager>` at `0x10086BDB0`
+(1,100/66).
+
+`broad_phase_bridge.rs` is consequently a six-line facade over 25-line world
+allocation ordering, 167-line body/fixture proxy lifecycle, 61-line swept-AABB
+synchronization, and 65-line sorted/deduplicated pair generation modules.
+Reverse fixture activation, dynamic-tree free-list reuse, move buffering,
+signed proxy-pair order, collision filtering and contact creation order are
+unchanged. All ten broad-phase and 28 contact-order focused regressions pass
+after the move.
+
+The remaining 433-line wgpu frame coordinator is now split along the recovered
+immediate-render paths as well. IDA and Hopper agree on capture at
+`sub_100458F54` (800 bytes/37 basic blocks), atlas UV construction at
+`sub_100467760` (536/13), atlas pivot/setup at `sub_100467A00` (240/17), the
+four-vertex transform at `sub_100467BE8` (540/15), and the explicit masked
+quad path at `sub_1000343CC` (320/8). For `DrawablePolygon::rebuild` at
+`sub_1000246A8`, Hopper reports the 744-byte/36-block main body while IDA
+includes the adjacent cleanup tail and reports 784/40.
+
+The new 13-line `gpu/frame.rs` facade owns a 182-line single-order/capture
+command walk, 105-line native/explicit quad submission and 153-line
+atlas/composite/Dirt dispatch modules alongside the existing 149-line text
+and 267-line geometry units. The parent import remains in the facade because
+it is the shared render ABI boundary for all five children; no draw formula
+or operation order moved across it. All 22 GPU/reference tests still cover
+mixed command ordering, pass-breaking capture, four rounded atlas positions,
+explicit position/UV pairing, Dirt material UVs, pivot/matrix precision,
+blend states and projected bitmap text.
+
+The animation transform stage now follows the entity-query and matrix members
+instead of remaining a 426-line mixed unit. IDA and Hopper agree exactly that
+local position `sub_100014D84` is 188 bytes/9 basic blocks, local basis scale
+`sub_100015000` is 212/9, sprite bounds `sub_1000152BC` is 828/25, the four
+local/world position/scale adapters at `sub_100015AB8`, `sub_100015C78`,
+`sub_100015E38` and `sub_100015FF8` are each 268/11, and the bounds adapter
+`sub_1000161B8` is 308/11. Full affine multiplication at `sub_10001E440` is
+460/7, while SpriteComponentCustom attachment canonicalization at
+`sub_1002913BC` is 284/20.
+
+The bounds and matrix pseudocode reconfirms two important existing contracts:
+entity “world” matrices are animation-scene-relative, and bounds multiply the
+sprite half-width/half-height by the two final basis-column magnitudes rather
+than rotating four corners. The new 16-line facade delegates to 78-line track
+hierarchy, 97-line affine, 69-line skin attachment, 119-line query/bounds and
+92-line render-command modules. The selected/default skin fallback, exact
+namespaced alias lookup, uppercase component name, full parent-child shear,
+descending z-order and compatibility scale/angle fields remain unchanged.
+
+The renderer-neutral per-frame bridge is now separated at the same GameLua
+and Particles member boundaries. IDA reports the exception-inclusive
+`sub_10005E898` frame dispatcher as 7,756 bytes/354 basic blocks, while Hopper
+keeps its principal body at 6,476/237. Both tools agree exactly on the
+independent packed-particle update `sub_100091834` at 1,372/48, theme update
+`sub_1000607E8` at 1,228/42, and particle virtual draw member
+`sub_100091D90` at 808/16. The four GameLua draw entry points are likewise
+separate: background `sub_10004C578` and foreground `sub_10004C5A8` are each
+48/3, while menu `sub_10004C5D8` and notification `sub_10004C5FC` are each
+36/1.
+
+Their disassembly confirms the native mode mapping `{background: 2,
+foreground: 1, menu: 3, notification: 4}` and that GameLua+0x199 gates only
+the first two. The virtual draw member selects its world-transform branch only
+for modes 1/2; modes 3/4 keep framebuffer positions and multiply scale by
+Particles+0x38. The former 417-line `frame_update.rs` is now a six-line facade
+over focused particle integration, particle rendering, scene reporting/bounce
+and theme modules. The former 195-line mixed theme unit is itself an 18-line
+native-order facade: `theme/layers.rs` owns the two `sub_10009B8B4` passes and
+`theme/sprite_data.rs` owns `sub_1000607E8`. Update ordering, float32
+integration, lifetime erasure, motion thresholds, tile wrapping and command
+submission remain explicit at their recovered member boundaries.
+
+The former mixed `textured_render_registration.rs` has likewise been split at
+five boundaries visible independently in both disassemblers. IDA and Hopper
+agree on `drawTexturedRect` member `sub_100043D6C` at 444 bytes/3 basic blocks
+and adapter `sub_100085230` at 396/13; selected-texture member
+`sub_100043990` at 624/16 and adapter `sub_100085634` at 564/23; direct masked
+member `sub_1000343CC` at 320/8 and adapter `sub_100087FC0` at 560/13; 3D text
+member `sub_10003457C` at 452/1 and adapter `sub_100087BB4` at 640/23. The
+hand-written nine-slice member `sub_100051BBC` is the larger independent unit
+at 7,356/173, while masked quad construction is `sub_100096344` at 976/9.
+
+The generated adapters all cross `sub_10052859C` and therefore quantize Lua
+numbers to float32 before the members use them. `sub_100087FC0` then applies
+`FCVTZS` only to its first eight masked coordinates; `sub_100096344` builds
+NDC in float32, performs its half-range/factor work in double, and stores the
+UV result back to float32. The selected member performs translation, world
+scale and local `x*20/scale` arithmetic in float32. The nine-slice member
+reads slots 2..7 through the same strict helper, accepts numeric strings only
+in its hand-written optional color table, and executes `FRINTM` on each target
+rectangle's x, y, width and height before submitting it.
+
+Rust now keeps a small ordered facade with focused `textured.rs`,
+`selected.rs`, `masked.rs` and `text_3d.rs` children. `box_draw.rs` is now a
+31-line facade over 111-line Lua arguments, 119-line native layout/cull,
+64-line resource query/submission and 24-line background leaves. The same
+reverse pass also corrected
+the shared rectangle helper so color multiplication and destination
+subtraction occur at native float32 precision before `FCVTZS`. Precision
+regressions cover selected-object division, 3D alpha, masked coordinate/UV
+rounding, per-piece nine-slice flooring and Lua 5.1 color-string coercion.
+
+The trajectory registration aggregate is now split around the three stores
+described above. IDA and Hopper agree on raw-vector clear `sub_1000311B4` at
+12 bytes/1 block, vector query `sub_1000311C0` at 368/7, one-body prediction
+`sub_100032970` at 928/42, aiming-time query `sub_10004B8EC` at 340/4,
+AimStream clear `sub_10004BA70` at 44 bytes (IDA counts 2 blocks and Hopper
+1), AimStream draw `sub_10004C4CC` at 88 bytes (8 versus 7 blocks), trail
+switch `sub_10004FD3C` at 316/13, point append `sub_10004FF14` at 108/7 and
+puff append `sub_10004FF80` at 56/1.
+
+A complete second pass over the containing `sub_10002C274` constructor fixes
+the aggregate's relative order as well. Both tools place clear/query/update at
+`0x10002CBA0/0x10002CBC0/0x10002CD50`, then `populateAimingAid` and the
+selected simulation bird at `0x10002CD80/0x10002CDB0`; aiming time and clear
+are `0x10002DD08/0x10002DD38`, draw is `0x10002DEE8`, the three trail record
+operations are `0x10002E644..0x10002E6AC`, and sprite adapters occur much
+later. In that final cluster the native order is `setNormalTrailSprite`,
+`setSpecialTrailSprite`, `setAimingAidSprite` at
+`0x10002EDAC/0x10002EDE0/0x10002EE14`, correcting the earlier aggregate's
+aiming-first assumption. The top-level file is now a native-address facade;
+raw access, the cohesive predictor, simulation selection, AimStream control,
+AimStream draw, trail points and sprite slots are separate nested leaves.
+All 11 trajectory-focused regressions and all 297 workspace tests pass after
+the move; strict Clippy and the release build are clean. The 11,000-frame
+`audit-trajectory-native-order.png` menu-to-level route reaches the aiming-aid
+sequence with zero invoked compatibility fallbacks.
+
+Scene rendering is separated at its unrelated theme/object members. IDA
+reports theme traversal `sub_10009BDB4` at 1,808 bytes/26 blocks, object draw
+`sub_10006D5B4` at 888/22 and the Flash-animation callback
+`sub_10006794C` at 184/2. Hopper agrees on the latter two byte sizes (counting
+the Flash body as one block), but currently coalesces the theme tail with the
+small jump entry `sub_10004C4A4`; its returned block list still starts the
+real body at `0x10009BDB4`. The former 376-line mixed file is consequently a
+4-line facade over 156-line theme traversal and 206-line scene-object modules.
+
+Particle ownership now matches the separate native random source and
+emitter. Both tools report `sub_10008E524` as 9,720 bytes/170 blocks and the
+process-global xorshift/CMWC generator `sub_10057B42C` as 264/6. The former
+334-line file is a 9-line facade over a 30-line packed model, 60-line random
+source and 220-line deterministic emitter. Random-consumption order is
+unchanged and all eight particle regressions pass.
+
+Persistence is split between the three GameLua file members and the Lua 5.1
+serializer family. IDA/Hopper agree on `sub_10004B394` at 552/15,
+`sub_10004B6D0` at 304/5, `sub_10004B880` at 84/1 and scalar formatter
+`sub_10052A490` at 1,000/30. Hopper keeps the principal string-escape body
+`sub_10052A020` at 732/28 while IDA includes its cleanup tail at 980/35; the
+top-level serializer `sub_10052A8FC` is respectively 1,108/37 and 1,112/39.
+The former 323-line aggregate is now a 9-line facade over 117-line file I/O
+and 215-line serialization modules without changing AppData compatibility.
+
+The mixed native-draw installer is now divided at the same member boundaries.
+IDA and Hopper agree that the Z-range setter `sub_10004BAA8` is 12 bytes/1
+block, its generated Lua adapter `sub_100084DA8` is 172/5, the scene dispatcher
+`sub_10004BAB4` is 2,388/65, the flight-trail pre-pass `sub_10006D9C0` is
+332 bytes (IDA counts 12 blocks and Hopper 11), direct textured-line member
+`sub_10004DB90` is 156/5, textured-line quad builder `sub_10006DB0C` is 572/7,
+rubber-band member `sub_100030EB0` is 564/3 and platform video member
+`sub_100051B60` is 92/1. The generated line and rubber-band adapters are
+`sub_100084A9C` at 492/13 and `sub_1000897A4` at 404/13.
+
+The adapter disassembly also corrected two precision contracts. Z limits pass
+through strict NUMBER guards, narrow to float32 and execute `FCVTZS` before the
+12-byte member stores them. The trail pre-pass divides each stored point by
+`GameLua+0x194` and the caller separately installs `-topLeft/gameWorldScale`
+translation followed by `worldScale*gameWorldScale` scaling; Rust now preserves
+that operation sequence rather than replacing it with an algebraically similar
+float64 expression. The hand-written pre/post callback members
+`sub_10004E3C0` and `sub_10004E570` are each 304/14: slot 1 is a strict STRING,
+missing or nil slot 2 clears, and every other value must pass the FUNCTION
+guard without mutating the prior callback on failure.
+
+The former 310-line `draw_registration.rs` is consequently a 31-line ordered
+facade over 86-line platform/Z-range/callback adapters, 155-line scene/trail
+dispatch and 82-line textured-line/rubber-band modules. Constructor order is
+unchanged, and focused regressions cover float32-to-integer Z selection,
+transactional callback errors, both trail buffers and native line ABIs.
+
+The former mixed `script_runtime.rs` now follows the independent GameLua file
+members and host-only routing boundary. For `loadLuaFileToObject` at
+`sub_10005761C`, Hopper reports the 1,104-byte/43-block principal body while
+IDA includes exception cleanup through 1,452/85. The AppData variant
+`sub_100057E14` is 1,276/55 in Hopper and 1,284/83 in IDA. Definition-pack
+loading `sub_100058960` is likewise 808/29 versus IDA's exception-inclusive
+1,084/53. Both tools agree exactly on definition indexing `sub_100062028` at
+812/23 and the direct table-assignment leaf `sub_10007F33C` at 120/1.
+
+The object-loader disassembly reads slots 1 and 3 through the strict STRING
+guard and retains slot 2 as the Lua object environment. `sub_10005761C` reads
+its resolve-relative boolean only when the stack top is exactly four and
+otherwise defaults it to true. `sub_100057E14` reads optional slots 4, 5 and 6
+when present, defaulting resolve/decrypt/unzip to false/true/false. Rust now
+enforces the table environment contract, preserves the exact-four rule, and
+routes the latter decrypt and unzip flags into persistent-Lua decryption and
+first-entry 7z extraction instead of ignoring them.
+
+The previous 302-line aggregate is now an 11-line facade over 64-line chunk
+preparation/execution, 83-line object environments, 123-line definition-pack
+loading/indexing and 94-line safe host paths. The adjacent 93-line registration
+adapter owns only the native Lua ABI. Definition replacement/index annotation,
+raw child `gamelua` publication, encrypted AppData loading and loader type/error
+regressions all pass after the split.
+
+The shared immediate-geometry aggregate is now split at the native member
+boundaries rather than by source length. IDA and Hopper agree on rectangle
+member `sub_100043C14` at 344 bytes, polygon entry `sub_100043F28` at 740,
+line `sub_10004DC44` at 72, rectangle-outline `sub_10004DC8C` at 276 and the
+direct-sprite matrix builder `sub_10006C838` at 720. The mode-1
+`DrawablePolygon` constructor body `sub_100024204` is 728 bytes; IDA reports
+its rebuild `sub_1000246A8` at 784/40 while Hopper keeps the principal body at
+744/36. Both tools agree on the 1,384-byte fill `sub_100024A50` and
+308-byte/6-block outline `sub_100025054`.
+
+The fill decompilation walks the rebuilt vertex vector in groups already
+prepared as triangles, and performs its 20:1 projection in float32. The
+outline walks the original vector pairwise, executes float32 `(point +
+offset) * 20` followed by integer conversion, calls the context line member at
+width one for every edge and finally closes last-to-first. Constructor stores
+confirm the outline defaults to `[0, 0, 0, 255]`. Rust therefore reuses the
+same recovered winding normalizer/quality-ranked ear cutter as the Box2D
+polygon bridge, adds an explicit `TriangleList` command topology to both the
+CPU reference renderer and wgpu expansion, and preserves fill-before-outline
+submission order. The former 297-line `render_primitives.rs` is now a 20-line
+facade over focused color, transform, sprite, rectangle, line, polygon and
+software modules (10, 40, 57, 58, 68, 123 and 58 lines).
+Generated line arguments now narrow to float32 before `FCVTZS`, direct-sprite
+trigonometry/matrix products stay float32, and regressions cover rounding
+boundaries, concave triangle lists, nonzero mesh bounds and the closed black
+outline. Strict workspace Clippy, all 270 tests and the release build pass;
+`audit-render-primitives-split-menu.png` and
+`audit-render-primitives-split-start.png` verify the wgpu menu/start flow.
+
+The remaining GameLua base-registration aggregate now follows the independent
+members referenced by constructor `sub_10002C274`. IDA and Hopper agree that
+notification enable `sub_100034070` is 492 bytes/25 blocks, with generated
+adapter `sub_10008962C` at 140/5. Add, keyed remove and cancel-all are the tiny
+platform-forwarding members `sub_100034398`, `sub_1000343A0` and
+`sub_10006EB78`; IDA keeps each principal body at 8 bytes, while Hopper counts
+the add tail target as 12 bytes/2 blocks. Their adapters are
+`sub_100088348` and `sub_100088F68` at 104/3, plus the shared zero-result
+`sub_10008A07C` at 120/5.
+
+The constructor independently registers hand-written unique-shader creator
+`sub_10004E720` (968/31), destroy member `sub_10004EC88` (620/26) through the
+104-byte/3-block `sub_100084204` adapter, and `clipText` member
+`sub_10004F630`. IDA includes 1,504 bytes for the latter while Hopper reports
+the 1,500-byte/91-block principal body. Inspecting the exact constructor
+instructions also corrects an older finding: the adapter immediately following
+the `clipText` string is `sub_100086070` (104/3), not adjacent
+`sub_1000860D8`. `fileExistsInAppData` remains the separate 8-byte
+`sub_10005A290` leaf.
+
+The former 352-line `registration.rs` is consequently a 132-line ordered
+facade over 61-line text clipping, 67-line notification state and 131-line
+late compatibility/unique-shader modules. Resource construction and the order
+of the large subsystem installers remain visible in the facade, while the
+missing-global metatable stays at the final compatibility boundary. The
+notification delay now also narrows at the recovered float32 boundary before
+being stored by the offline platform mirror. Strict workspace Clippy, all 270
+tests and the release build pass; `audit-registration-split-menu.png` and
+`audit-registration-split-start.png` verify the unchanged wgpu constructor
+flow.
+
+The DirtMechanics aggregate is now split along its own native object members.
+IDA and Hopper agree exactly on constructor `sub_10001F98C` at 1,948 bytes/37
+blocks, collision queue `sub_100020560` at 520/19, fixture point query
+`sub_100020858` at 124/8, draw traversal `sub_1000208D4` at 64/3 and direct
+vertex-vector copy `sub_100021B58` at 236/16. IDA includes 2,812 bytes for the
+Clipper cut member `sub_100020D70`, while Hopper reports its 2,808-byte/137-
+block principal body.
+
+The former 356-line `dirt.rs` is now an 11-line facade over 80-line component
+state/constructor, 127-line Clipper cut, 30-line DrawablePolygon triangle
+stream and 114-line Lua definition/material reconstruction modules. The split
+keeps the constructor's unquantized float32 source paths separate from the
+first-cut 1,000x integer grid, and keeps the background/foreground draw model
+separate from fixture reconstruction. All focused cut, collision, mass/proxy,
+source-contour and triangle-order regressions pass after the move. Strict
+workspace Clippy, all 270 tests and the release build pass;
+`audit-dirt-split-menu.png` and `audit-dirt-split-start.png` verify the wgpu
+menu/start flow.
+
+The Lua-facing DirtMechanics registration now follows those recovered object
+members too. The former 307-line `native_block_registration.rs` aggregate is
+a 21-line ordered facade. Its 49-line `factory.rs` owns only the strict
+`sub_10005A9F0` two-string registry adapter; 59-line `collision.rs` owns the
+bound `sub_100020560` eight-slot collision adapter and delayed-velocity write;
+44-line `queries.rs` owns `sub_100020858` fixture TestPoint and
+`sub_1000208D4` render synchronization; and 186-line `rebuild.rs` owns queued
+collision draining, `sub_100020D70` clipping, head-first fixture destruction,
+synchronous EndContact delivery, proxy replacement and per-fixture mass
+reset. This separates the Lua method table from the observable Box2D mutation
+sequence without changing either order. All eight focused Dirt/fixture
+regressions pass after the move.
+
+The later track/joint extension aggregate is now split by the actual
+`sub_10002C274` registration clusters. IDA reports direct track overlap
+`sub_10003D208` at 872 bytes while Hopper keeps its 832-byte/26-block principal
+body. IDA's `destroyTrack` member `sub_10003D638` is the 24-byte entry body;
+Hopper follows its external tail chunks and consequently reports 244/21.
+Both agree on the 124-byte/4-block current-angle member `sub_10003D650`.
+The corresponding generated adapters are the 104-byte/3-block strict-string
+`sub_100089E6C` and result adapter `sub_100086D08`.
+
+`setJointParameters` is the independent hand-written `sub_10003E890`
+(3,628/45). Its switch is on the concrete Box2D joint type: distance joints
+accept `frequency`, `dampingRatio` and `length`; revolute and prismatic joints
+accept `motor`, `motorSpeed`, `maxTorque`, `limit`, `lowerLimit` and
+`upperLimit`; the other joint families accept none. Every accepted scalar is
+narrowed into an `s` register before the native member and Lua descriptor are
+updated. Rust now uses the same type dispatch and publishes the exact float32
+value instead of retaining the input double. Object detachment
+`sub_1000442D8` is 2,216/85, while `checkJointLimits` `sub_100054CD4` and
+`handleJointLimits` `sub_100054DAC` are respectively 132/6 and 780/32.
+IDA independently reports the same byte and block sizes and complexities
+25/49/4/27 for the parameter, removal, check and handle members. The 17-line
+Rust `joints.rs` therefore preserves only publication order; its 179-line
+`joints/parameters.rs`, 30-line `removal.rs` and 35-line `limits.rs` children
+own those native boundaries. Parameter field filtering and float32 descriptor
+mirroring, synchronous EndContact/removal publication, and the two distinct
+limit entry ABIs remain in their original order.
+
+The five object-flag registrations all use the same 104-byte/3-block
+`sub_10008598C` `(string, bool)` adapter. Their members are 36-byte/1-block
+leaves: block collision `sub_10004F4B0`, keep orientation `sub_100059578`,
+ignore score `sub_1000595C0`, record velocity `sub_1000595E4` and reverse
+gravity `sub_100059608`. Each resolves `RenderObjectData` and writes exactly
+one byte; none rewrites `objects.world`. This also exposed `mlua`'s numeric-to-
+string conversion at typed `String` arguments, so all members in this strict
+adapter family now use explicit generated-adapter checks. Object vertices
+`sub_10005A7BC` remains 456/7 behind its own 104/3 adapter
+`sub_100082F9C`.
+
+The former 354-line `track_joint_registration.rs` is consequently a 20-line
+native-order facade over 77-line track, a 17-line joint sub-facade, 48-line
+native-flag and 53-line vertex modules. A focused regression covers strict adapter types,
+native-only flags, concrete-joint field filtering and descriptor/native
+float32 agreement. Strict workspace Clippy, all 271 tests and the release build
+pass; `audit-track-joint-split-menu.png` and
+`audit-track-joint-split-start.png` verify the wgpu menu/start flow.
+
+The PhysicsWorld object constructors are now separated at the recovered native
+binding boundaries as well. `sub_10002C274` registers box member
+`sub_100034740`, circle `sub_100034FB0`, polygon `sub_1000357A4`, line
+`sub_1000364E0` and non-physics `sub_100036D38`. Hopper reports their principal
+bodies at 2,008/34, 1,884/33, 1,908/37, 1,908/37 and 1,520/25 bytes/basic
+blocks respectively; IDA's exception-inclusive extents are 2,008, 1,892,
+1,912, 1,912 and 1,528 bytes. The common line-shape builder is
+`sub_100068130` (440/10 in Hopper, 468 bytes including IDA tail chunks).
+
+The outer generated entries `sub_100087704`, `sub_1000872D0` and
+`sub_100086F24` are each 104-byte/3-block adapters. Their nested bodies
+`sub_10008776C` (700/23), `sub_100087338` (680/23) and `sub_100086F8C`
+(544/23) prove strict positional ABIs: box/polygon/line read two strings,
+seven floats, two booleans and a final float; circle reads two strings, six
+floats, two booleans and a final float; non-physics reads two strings and three
+floats. Every Lua number is narrowed to float32 before the member call.
+
+Accordingly the former 343-line mixed `construction.rs` is an 83-line facade
+and data model over a 134-line strict-adapter module, 110-line shape/body
+preparation module, 22-line common commit entry, 61-line `objects.world`
+mirror and 142-line SceneObject/broad-phase installation leaf. The split keeps
+native argument conversion separate from geometry consumption and prevents
+Lua-mirror logic from becoming coupled to body allocation. The focused
+constructor regression now rejects coercible strings, wrong booleans and short
+arity, and locks the stored coordinates, dimensions, material values and z
+order to the native float32 boundary.
+
+Strict workspace Clippy, all 273 tests and the release build pass after that
+constructor split. `audit-construction-split-menu.png` and
+`audit-construction-split-start.png` also verify the unchanged wgpu menu and
+started-scene resource flow.
+
+The polygon decomposition implementation is now split on the native algorithm
+members rather than remaining one mixed 345-line file. Direct MCP queries to
+both tools place the winding/entry wrapper at `sub_10087007C` (156 bytes/4
+blocks in both), repeated-point recursion at `sub_1008710C0` (932/33), the
+ear validator at `sub_100871D5C` (404/21), the quality-ranked ear cutter at
+`sub_100871498` and convex merger at `sub_100871F08` (976/53). Hopper keeps
+the ear cutter's principal body at 1,984 bytes/83 blocks, while IDA includes
+2,152 bytes/102 blocks of exception/tail chunks. Hopper reports top-level
+`sub_100872360` as 592/25; IDA includes 632/30. The direct convexity predicate
+`sub_100870520` is 168/7 in both tools.
+
+The resulting layout is a 61-line facade over a 121-line winding,
+repeated-vertex and ear-cutting leaf, a 105-line float32 geometry/predicate
+leaf and a 100-line triangle-merge/final-simplification leaf. This keeps the
+`sub_100871F08` eight-point output rule and `sin(2 degrees)` cleanup separate
+from the recursive `0.001` repeated-point split, while the Lua utility,
+DrawablePolygon and actual fixture construction continue to share the same
+public pipeline. All 15 focused polygon/decomposition/draw regressions pass
+after the move.
+
+SceneObject body ownership is now divided at the corresponding Box2D members.
+Direct IDA/Hopper MCP comparison agrees on `b2Body::CreateFixture`
+`sub_10086B454` at 244 bytes/11 blocks, `ResetMassData` `sub_10086B1F4` at
+456/17 and `DestroyFixture` `sub_10086B548` at 260 bytes (Hopper counts 15
+blocks and IDA 16). This is the native boundary between fixture-list mutation,
+per-shape ComputeMass aggregation and the body mass/sweep update; preserving
+that order is important because fixture vectors are the reverse of the
+intrusive `m_fixtureList` traversal.
+
+The former 321-line `scene_object_body.rs` is now a five-line facade over a
+96-line fixture lifecycle/property leaf, 133-line float32 shape/fixture mass
+leaf and 100-line awake plus Reset/SetMassData state leaf. Ten focused mass,
+inertia, density, centre-of-mass and Dirt reconstruction tests plus the
+head-fixture/contact-order regression pass after the move.
+
+After all three structural batches, strict workspace Clippy, all 273 tests and
+the release build pass together. `audit-reverse-structure-menu.png` and
+`audit-reverse-structure-start.png` verify the final wgpu menu/start flow with
+complete resources and unchanged scene layering.
+
+## Pure-Rust Dirt clipping and recovered-suite layout
+
+The last native build dependency has been removed from `stella-script`.
+`sub_100020D70` still uses the recovered float32-to-int32 1,000x grid,
+non-zero difference, conditional `x-1..x` slit, preorder PolyTree flattening,
+20-unit cleaning and open-contour length rejection. `clipper.rs` owns the
+boolean-operation and Clipper-6 cycle-start compatibility; its `clean.rs`
+child owns only the translated `OutPt` ring. The old vendored C++ bridge and
+`build.rs` are no longer part of the source tree or build graph.
+
+The regression corpus now mirrors the native subsystem hierarchy instead of
+one 12,664-line file. A 43-line `tests.rs` facade registers 32 focused modules:
+definition/data loading; discrete and continuous Box2D world work; broad and
+narrow phase; callback, constraint and solver phases; joint construction plus
+prismatic, rope, weld and revolute families; sensors, tracks, body bindings,
+Dirt and queries; particles, platform, resources and audio; global/object
+render state and submission; trajectory, scene render and object motion;
+themes and AnimationWrapper. Direct MCP queries measure the enclosing
+`sub_10005E898` member at 7,756 bytes/354 blocks in IDA (including exception
+and tail chunks, cyclomatic complexity 173) and 6,476 bytes/237 blocks in
+Hopper's principal-body view. The Rust fixed-step orchestrator therefore
+remains cohesive while tests and downstream implementation units follow its
+recovered callees and registration clusters.
+
+The same boundary is now explicit in production code. `host_physics.rs`
+retains `sub_10005E898`'s accumulator, call sequence, auto-clear,
+`removeBlocks`, pending-collision velocity application and `objects.world`
+writeback. `host_physics/contact_manager.rs` preserves one-at-a-time
+`Contact::Update` callback visibility during `b2ContactManager::Collide`;
+`islands.rs` preserves DFS-island solve order, contact/joint/track iteration
+order and per-island convergence; `toi.rs` preserves the unlocked listener
+boundary and rescan loop of `b2World::SolveTOI`. This is a structural move only:
+the complete 237-test `stella-script` suite passes with the same callback and
+float32 results.
+
+The joint solver now follows the concrete virtual members recovered from the
+five shipped Box2D joint vtables rather than keeping initialization and warm
+start in one island-sized Rust function. IDA exposes `_ZTV15b2DistanceJoint`
+at `0x100AB1760`, `_ZTV16b2PrismaticJoint` at `0x100AB1960`,
+`_ZTV15b2RevoluteJoint` at `0x100AB1A60`, `_ZTV11b2RopeJoint` at
+`0x100AB1AE0` and `_ZTV11b2WeldJoint` at `0x100AB1B60`. In every table the
+last three slots are `InitVelocityConstraints`, `SolveVelocityConstraints`
+and `SolvePositionConstraints`. Their entries are respectively
+`0x100865270/0x1008655D0/0x1008656D4`,
+`0x1008674D4/0x1008678E0/0x100867C68`,
+`0x100868B90/0x100868F20/0x1008692B4`,
+`0x10086983C/0x100869B30/0x100869C48`, and
+`0x100869F54/0x10086A214/0x10086A398`. IDA and Hopper independently agree on
+their principal sizes/basic blocks: Distance 864/15, 260/1, 496/9;
+Prismatic 1,036/21, 904/14, 1,096/20; Revolute 912/25, 916/23, 812/20; Rope
+756/10, 280/3, 468/4; Weld 704/4, 388/1, 668/4.
+
+Accordingly `joint_solver.rs` is now a 136-line island traversal and virtual-
+style dispatcher. Its 111-line `joint_solver/impulses.rs` child owns cached
+impulse scaling/clearing and the common float32 body writes, while each
+concrete joint module owns its own initialization, warm start, velocity solve
+and position solve. Prismatic and Revolute are five-/six-line facades over
+their separate initialization, velocity and position member files; Rope and
+Weld are no longer combined. No joint-solver source is longer than 148 lines.
+The recovered contact-before-joint initialization and joint-before-contact
+iteration order is unchanged; all 25 focused joint regressions pass after the
+move.
+
+Runtime compatibility auditing is also call-based now. `missing_globals()`
+continues to report ordinary absent Lua table/data reads because many shipped
+scripts intentionally probe optional values. The separate `fallback_calls()`
+set records a ResourceManager, AnimationWrapper or compatibility fallback only
+when its generated function is actually invoked. `--list-missing` prints both
+sets independently, so a long list of harmless optional reads no longer hides
+a real unimplemented call. Explicit platform methods whose disassembly is an
+empty native adapter are not classified as fallbacks.
+
+## Body motion member split and native body-local coordinates
+
+The former mixed `scene_object_motion.rs` unit has been separated at the
+actual Box2D and GameLua ownership boundaries. IDA reports `b2Body::SetType`
+at `sub_10086B0CC` as 296 bytes/11 basic blocks, `ResetMassData` at
+`sub_10086B1F4` as 456/17, fixture synchronization at `sub_10086B3BC` as
+152/4, the SetMassData-style member at `sub_10086B64C` as 240/7, and
+`SetTransform` at `sub_10086B794` as 248/8. Hopper independently reports the
+same five boundaries.
+
+Hopper's `sub_10086B0CC` decompilation exposes the complete SetType state
+transition: reject a locked world or unchanged type, store the new type, call
+ResetMassData, zero velocity and synchronize every fixture only for a static
+destination, wake the body, clear force/torque, then traverse every body
+contact edge and set its filter flag. The rehost previously reproduced the
+mass, velocity, wake and force effects but omitted the final contact walk.
+`set_native_body_type` now reports whether a transition occurred, and the
+world-side owner marks every broad-phase contact attached to that body for
+the already recovered deferred ContactManager filtering path. The leading
+`b2World::e_locked` test is now modeled as well: the flag surrounds contact,
+island and TOI work, so SetType from a Begin/EndContact callback is a silent
+no-op while the same call from the pre-Step `updatePhysics` callback remains
+valid.
+
+Joint and contact coordinates are now split from fixture coordinates too.
+IDA's joint construction sequence at `0x10003867C..0x1000386E8` loads each
+body's float32 translation and rotation directly, transforms both stored
+anchors with nested `FMUL`/`F(N)MSUB`/`FMADD`, and never reads the game-side
+fixture scale. Box2D stores joint anchors and contact manifold witnesses in
+the b2Body local frame; `physicsScale` was already consumed when replacement
+fixture vertices were built. The old shared transform helper incorrectly
+reapplied that scale while creating joints and divided by it while rebuilding
+position constraints. The new `native_transform_body_point` and
+`native_inverse_transform_body_point` preserve the recovered float32 order
+without either operation. Fixture shape projection remains in
+`scene_object_collision/shape.rs` and still applies the scale exactly once.
+
+The resulting seven-line facade delegates to 68-line type transition,
+16-line bounce, 20-line force accumulation, 108-line sweep and 34-line body
+transform modules. Focused regressions cover SetType contact flagging, scaled
+fixture joint anchors and scaled-contact witness round trips; workspace
+formatting, strict Clippy and all 286 tests pass after the move.
+
+The wgpu replacement host has been split at the corresponding host boundaries
+as well. Purple keeps its engine update/draw member, input adapters and capture
+render path separate; winit lifecycle is necessarily a cross-platform rehost
+concern rather than copied UIKit code. The former 345-line `stella-app/app.rs`
+mixed all four responsibilities. It is now a 59-line state/constructor facade
+over 75-line fixed-step runtime, 30-line letterboxed input, 110-line scripted
+headless screenshot and 97-line winit window/event modules. No arithmetic,
+frame order, capture consumption or error transition changed in this move.
+
+The native joint-construction leaf now exposes the same internal source
+boundaries. `sub_100037374` is the large GameLua type/coordType switch, while
+the final Box2D insertion is the independent 272-byte/15-block
+`sub_10086E470`. The former 269-line `construction/physics.rs` combined the
+coordinate switch, class-specific parameter defaults, persistent Rust record
+write and world/contact side effect. It is now a 22-line facade over a
+173-line anchor/Initialize switch, 56-line parameter decoder, 30-line decoded
+model and 58-line CreateJoint insertion leaf. The Lua-visible distance length
+write remains in the anchor phase where Purple reads b2DistanceJoint+0xA4;
+deferred e_filterFlag ownership remains solely in the insertion leaf.
+
+## Theme regressions and remaining native member splits
+
+The theme regression aggregate now follows the same recovered ThemeManager and
+ThemeSprite ownership already used by production code. The former 782-line
+`tests/themes.rs` is an eight-line module facade over 133-line lifecycle,
+88-line background/foreground render, 137-line repeat/cull, 121-line motion,
+212-line ThemeSprite-vector and 101-line animation-adapter suites. All eleven
+test bodies and their Lua inputs moved intact. The full workspace still has
+286 passing tests, strict Clippy is warning-free, and the 11,000-frame
+`audit-theme-structure.png` route reaches gameplay with zero invoked fallbacks.
+
+The final mixed contact-manager units have also been separated at concrete
+Box2D function boundaries. IDA and Hopper both measure `b2World::Solve` at
+`sub_10086E634` as 1,024 bytes/42 basic blocks and `b2Island::Solve` at
+`sub_10086CE84` as 1,840 bytes/72 blocks. Accordingly the old 242-line
+`contact_manager/islands.rs` now retains only the 184-line world island graph
+assembly; its 66-line `islands/sleep.rs` child owns the independently recovered
+`0x10086D494..0x10086D584` minimum-sleep-time tail.
+
+Likewise `sub_10086373C` is the independent 608-byte/31-block
+`b2Contact::Update` member called by the larger ContactManager traversal. The
+former 241-line `refresh.rs` is now a five-line facade over a 60-line
+`b2ContactManager::Collide` traversal/cleanup module, a 117-line single-contact
+update module and a 74-line listener-event mapping module. Callback mutation
+remains observable by the very next live list node, and sleeping contacts still
+retain their old touching bit and manifold; the two focused order regressions
+and the complete suite pass after the move.
+
+Text-resource loading follows four separate recovered entry points rather than
+one Rust source aggregate. IDA measures the raw/encrypted byte pipeline
+`sub_1000512D8` at 744 bytes, the Lua table/value adapter `sub_100051810` at
+548 bytes, JSON import `sub_100057450` at 168 bytes and Lua chunk execution
+`sub_10052AE8C` at 172 bytes. Hopper agrees except that its principal-body view
+of `sub_100051810` is 540 bytes. `game_lua/text_files.rs` is now a 13-line
+facade over the 60-line raw/AES/7z pipeline, 20-line extracted-resource path
+resolver and 147-line Lua/JSON/copy adapter layer. The strict five-slot text
+loader and void-ABI JSON import regressions remain unchanged.
+
+## Primitive and object-feature registration order
+
+Hopper string xrefs and the `sub_10002C274` assembly place `drawRect` at
+`0x10002D9F8` with member `sub_100043C14`, then `drawPolygon` at
+`0x10002DA48` with member `sub_100043F28`. The line pair is a later cluster:
+`drawLine2D` at `0x10002E308` calls `sub_10004DC44`, and `drawRectLines` at
+`0x10002E338` calls `sub_10004DC8C`; both use the same generated adapter
+`sub_1000848B0`. The former 170-line mixed installer also registered polygon
+after both line helpers. `primitive_render_registration.rs` is now a 17-line
+ordered façade over rectangle, polygon and line leaves, restoring the four
+members' relative native order without changing their render-command math.
+
+The RenderObject feature registrations are interleaved in the constructor as
+well. `setSensorGravityMask` and `setObjectGravityCategory` occur at
+`0x10002CC80/0x10002CCB0`; `setDecorationObjects` and `setPivotOffset` at
+`0x10002D4B8/0x10002D4E8`; `removeObject` at `0x10002D908`;
+`setRevoluteJointSpeed` at `0x10002DAA8`; the large
+`setObjectParameter`/`sub_10004EF74` switch at `0x10002E4E8`; and flash add
+and remove at `0x10002E578/0x10002E5A8`. The feature coordinator now exposes
+that exact seven-stage relative sequence. Gravity fields and the parameter
+switch are separate leaves, while the switch itself deliberately remains
+cohesive rather than being cut by line count. All 297 tests, strict Clippy,
+release builds and both 11,000-frame
+`audit-primitive-native-order-split.png` and
+`audit-object-feature-native-order.png` routes pass with zero invoked
+fallbacks.
+
+The adjacent particle and audio aggregates have the same pattern. Purple
+registers the four particle draw passes at `0x10002DF48..0x10002DFD8`, clear,
+tagged clear and the in-game enable gate at `0x10002E038..0x10002E098`, but
+does not register `native_addParticlesWithMode` until `0x10002F6D8`.
+`particle_registration.rs` now publishes the Lua containers and delegates to
+separate draw, clear and spawn leaves; the diagnostic definition dump is a
+spawn-local helper rather than part of registration flow.
+
+The GameLua audio entries are contiguous and ordered differently from the old
+Rust installer: `setChannelCountLimit` is `0x10002EE48`, followed by
+`playAudioReturnUniqueHandle` at `0x10002EE6C`, `setAudioClipVolume` at
+`0x10002EE8C`, and `stopAudioWithHandle` at `0x10002EEAC`. The new audio
+facade follows channel, play, volume, stop exactly and delegates to channel,
+playback and volume leaves. The 13 focused audio/particle regressions, all 297
+workspace tests, strict Clippy, release build and 11,000-frame
+`audit-audio-particle-native-order.png` route pass with zero invoked
+fallbacks.
+
+Scene-object rendering is now split at the two concrete members recovered by
+both disassemblers. Hopper measures `sub_10006D5B4` as 888 bytes/22 basic
+blocks; it constructs the ordinary object render state, reads the optional
+shader, iterates decoration entries and calls `sub_10006C838` for submission.
+The flash path `sub_10006794C` is an independent 184-byte/one-block member
+calling the animation translation, scale, rotation and draw methods. The old
+206-line `scene_render/objects.rs` combined both. It is now a five-line module
+façade over `objects/state.rs`, `submission.rs` and `flash.rs`; z sorting,
+callback save/restore and immediate command order remain unchanged. Seven
+focused scene regressions, all 297 workspace tests, strict Clippy, release and
+the 11,000-frame `audit-scene-object-native-boundaries.png` route pass with
+zero invoked fallbacks.
+
+The theme frame update has now been separated at the next concrete frame
+dispatcher boundaries. IDA and Hopper agree on the exact native order:
+ThemeManager background `sub_10009B8B4` at `0x10005ED04`, the same member in
+foreground mode at `0x10005ED1C`, then GameLua `sub_1000607E8` at
+`0x10005ED28`. The former 195-line Rust aggregate is an 18-line order facade
+over `frame_update/theme/layers.rs` and `sprite_data.rs`.
+
+The split also corrects two previously collapsed pieces of record state.
+`sub_10006855C` maps `velX+xSpeedAdd` and `velY+ySpeedAdd` to layer
++0x2c/+0x30, `posX`/`posY` to +0x34/+0x38, and `offsetX`/`offsetY` to
++0x3c/+0x40. `sub_10009B8B4` updates the latter pair with `(1-zDistance)`;
+`sub_1000607E8` subsequently updates the former pair with the full velocity.
+IDA's binary-wide +0x6A8 reference scan further ties the preceding dispatcher
+gate to the `sub_100041ABC` physics-lock reference count, so the host skips all
+three calls while any named or unnamed lock remains. Two focused regressions
+lock these distinctions. All 299 workspace tests, strict Clippy and the
+release build pass; the 11,000-frame
+`audit-theme-frame-native-boundaries.png` wgpu route reaches gameplay with zero
+invoked compatibility fallbacks.
+
+The next structure pass separates `setPhysicsScale` at the concrete member
+boundaries recovered independently in IDA 9.3 and Hopper. IDA reports
+`sub_100040304` as 188 bytes/1 block with the exact sequence
+`world[name] -> scaleX -> scaleY -> getRenderObject -> +0xBC/+0xC0 ->
++0xCC/+0xD0`; it is now the shared 36-line `object_scale_member.rs` used by
+both direct `setScale` and `sub_10004050C`. This also closes a prior contract
+gap: if `objects.world[name]` is not a table, the member fails before changing
+native visual scale, while a valid Lua-only table keeps both reflected writes
+when the later render lookup throws.
+
+The strict string/float/float adapter remains in the 25-line
+`object_physics_scale_registration.rs` facade. The 117-line `member.rs` owns
+the high-level `sub_10004050C` order, and `arguments.rs` owns its live Lua
+coefficient/definition reads. IDA identifies polygon helper
+`sub_100067CE8` as 712 bytes/42 blocks (Hopper: 704 bytes/31 blocks); the new
+`fixture_rebuild/polygon.rs` follows its save-shapes, head-first destroy, and
+saved-order recreate phases. Circle replacement and the shared
+`b2Body::DestroyFixture`/`CreateFixture` lifecycle live in `circle.rs` and
+`lifecycle.rs`. Replacement no longer collapses every fixture into one bulk
+broad-phase removal: each head fixture drains its attached contacts
+synchronously, releases its proxy, refreshes mass, and each new fixture
+installs its proxy and positive-density mass refresh in native order.
+
+The visual-scale and box-layout regressions raise `stella-script` to 254 tests
+and the workspace total to 301. All 301 workspace tests pass after the
+structure/lifecycle and nine-slice splits, as do strict Clippy and the release
+build. The
+11,000-frame `audit-physics-scale-structure.png` wgpu route reaches live
+gameplay with zero invoked compatibility fallbacks; the release executable is
+superseded by the `drawBoxNative` build recorded below.
+
+## `drawBoxNative` native ownership and placement split
+
+The next source-structure pass uses the live IDA MCP server and Hopper's
+independent `Purple` document to split the former 216-line
+`textured_render_registration/box_draw.rs` by executable ownership. Both tools
+measure the hand-written Lua member `sub_100051BBC` at 7,356 bytes with 173
+basic blocks. IDA further reports 98 cyclomatic complexity. The resource calls
+inside it are separate native members: width query `sub_10045CD14` and height
+query `sub_10045CD60` are each 76 bytes/8 blocks in IDA (Hopper includes 84
+bytes/7 blocks), ResourceManager draw dispatch `sub_10045C144` is 184/8, and
+the atlas branch `sub_100467AF0` is 240 bytes/17 blocks. The Rust source now
+has a small install facade over `arguments.rs`, `layout.rs`, `resource.rs` and
+`background.rs`, matching those responsibilities without pretending that the
+large native member itself contains artificial helper calls.
+
+Direct assembly also corrects the old conventional nine-slice approximation.
+Top/bottom middle pieces receive the full requested box width, left/right
+pieces receive the full box height, and the four corners are submitted at the
+box boundary points with packed horizontal/vertical anchor flags
+`0x200000002`, `0x2`, `0x200000000` and `0`. The atlas adapter applies those
+flags using the resource's unscaled native width/height before drawing the
+independently scaled destination rectangle. Center and the optional color
+rectangle cover the full requested box rather than an inset remaining area.
+All target coordinates retain per-component float32 `FRINTM` behavior.
+
+The member also performs a complete vertical visibility short circuit using
+the scaled `topMiddle` and `bottomMiddle` heights and the 768-pixel drawable;
+this skips the color branch as well as every sprite. Resource width/height
+queries return zero for unknown names and `sub_10045C144` makes the draw a
+no-op, replacing the previous synthetic 1x1 fallback. The optional tenth Lua
+slot is consumed only when `lua_istable` succeeds, while component table
+values use Lua 5.1 `lua_isstring` semantics and therefore coerce numeric names.
+Focused regressions cover the native order, full-box geometry, original-size
+corner anchors, missing resources, non-table tenth values, color coercion and
+offscreen rejection. The resulting release executable is SHA-256
+`1276ac1f3a15ed8a47e27fae5ff937becf25a94eeb4b863dc0cfb1f41467d182`.
+The 11,000-frame `audit-box-draw-native-split.png` wgpu route reaches the
+three-star L01 completion screen and reports zero invoked compatibility
+fallbacks; its capture SHA-256 is
+`be2efa6d2428ff810ab8eb64398aab58b831f082cee446a4fcd403f7ed1b3c71`.
+
+## Dynamic drawable scissor and AnimationWrapper sprite pivots (superseded)
+
+The renderer-owned width/height path at `sub_10006E1F4` and resolution-change
+callback at `sub_10006E990` also constrain LuaResources state beyond the Lua
+globals: the initial full-screen clip/scissor follows the live drawable, not a
+hard-coded 1024 x 768 rectangle. The rehost now constructs ResourceRuntime
+with the renderer extent and carries a full-screen clip across resize while
+preserving an explicitly narrowed script clip. Focused regressions cover both
+branches at 2009 x 1080 -> 1429 x 768.
+
+A read-only pull of the connected Android 1.1.5 APK provided an independent
+runtime check of Chapter 1's first comic card. Its decrypted page-one
+animation/skin resources are byte-identical to the iOS 1.1.6 inputs, excluding
+resource drift. The screenshot comparison once suggested that
+SpriteComponentCustom used the rectangle center and led to an explicit
+half-width/half-height override. The later complete constructor and quad-path
+analysis documented below supersedes that inference: the native component
+uses its authored SPRT pivot. The old RGB MAE/correlation values remain a
+historical visual observation, not proof of the transform contract.
+
+## BasePopup transition and Settings platform-state boundary
+
+The decrypted `menus/BasePopup.lua` and `menus/SettingsPopup.lua` separate the
+remaining settings-page differences into engine rendering and platform state.
+BasePopup submits `drawFullscreenRect(0,0,0,0.5*bgDarkening,false)` before its
+ScalableLayout draw. Its opening tween is linear from zero to one over 0.7
+seconds: the popup begins at `y=-screenHeight`, uses the recovered three-part
+`(0.975,1.1)` squash/overshoot curve, and finishes at identity scale and y=0.
+The close tween is `tweenEaseCubicIn` over 0.4 seconds toward
+`y=-1.5*screenHeight`. Hopper confirms the underlying color path at
+`sub_100598CC4` as an 820-byte/11-block `GL_Context::drawRect`; its plain versus
+plain-alpha selection and transformed four-corner submission agree with the
+existing wgpu colored-geometry path.
+
+The connected Android 1.1.5 Settings capture uses authenticated Google Play
+Games images. `SettingsPopup:handleGamerServiceButtons` selects those images
+only when the script subsystem returns backend `googleplay`, then derives
+visibility from `isAvailable()` and enabled state from
+`isPlayerAuthenticated()`. Purple 1.1.6's native
+`FusionGamerServices::getBackendName` at `sub_1000CA39C` instead returns
+`gamecenter`; the offline rehost deliberately reports supported=true and
+authenticated=false, producing the target platform's visible but disabled
+`BTN_TROPHY_GREY`/`BTN_WINNERS_GREY` state. A shipped-script regression now
+checks that service boundary and BasePopup's 0.35-second midpoint/final tween
+state at the live 1429 x 768 drawable.
+
+## Closed native tables and ResourceManager audio ownership
+
+The remaining Lua-table audit no longer depends on route coverage. IDA string
+xrefs enumerate all 52 methods published by `game::LuaResources` in
+`sub_100446570` at `0x1004465D8..0x100446D98`; Hopper independently confirms
+the same ARM64 registration order. The legacy `ResourceManager` constructor
+`sub_100093904` publishes exactly six `native_*` methods, and
+`AnimationWrapper::AnimationWrapper` at `sub_10000EC80` publishes 31 methods
+at `0x10000ED90..0x10000F264`. Test-only inventories now assert that every
+entry is an explicit raw Lua function. The development-time `__index`
+closures formerly manufactured and cached empty functions (or `true`) for
+unknown method names; they now retain only missing-name diagnostics and return
+`nil`, matching a closed native table instead of hiding implementation gaps.
+
+This pass also recovered behavior behind the legacy table rather than merely
+its registration names. `ResourceManager::native_playAudio` at
+`sub_100093B00` first calls the complete `LuaResources::playAudio` adapter at
+`sub_100448A94`: argument 1 is a strict name, optional argument 2 is a number
+with default `1.0`, argument 3 is a strict Boolean with default `false`, and
+argument 4 is a number converted through float32 `FCVTZS` with default channel
+zero. It then increments the ResourceManager-owned name/count tree at offset
+`+0x90`, even if the underlying play returned `-1`, and returns zero Lua
+values. The Rust implementation now uses the shared audio runtime for the
+real active instance, preserves that independent counter, and reproduces the
+zero-result surface. `native_releaseAudio` follows the native
+`sub_100094608 -> sub_10045B654` lifetime path: an existing output is asked to
+stop the named clip before the resource entry is erased. Focused regressions
+cover strict optional types, float32 channel conversion, active playback,
+counter state, release/stop behavior, and zero result counts.
+
+The same registration audit covers the platform tables. The GameLua global
+constructor has 245 publication sites but only 243 unique global callables
+because `createDirectory` and `checkDirectory` are repeated; the later
+`particles.native_addParticlesWithMode` publication is table-owned rather
+than a global. ForceUpdate now includes the zero-argument
+`native_launchAppStore` member retaining Purple's literal product
+`875251011`/mode `3`, and its update checker plus all four Analytics entries
+enforce their recovered adapters. The update checker uses the type-code-6
+`sub_100528760` wrapper for slot 2, just like
+`AnimationWrapper.setPlaybackEvent`; this is a Lua callback function, not a
+table. `registerKey` consumes exactly three
+strings, while `drawLayer` consumes one number and dispatches to the four-byte
+`nullsub_13`. The complete registration regression therefore reports no
+generic compatibility bindings before any gameplay route is run.
+
+All 314 workspace tests pass after this correction (32 app/wgpu, 19 assets,
+one core and 262 script/physics tests), strict workspace Clippy is
+warning-free, and the optimized application builds successfully. The
+unchanged 16,500-frame menu/chapter/L02 input route reaches live gameplay with
+no invoked generic fallbacks, no remaining compatibility globals, and no
+missing sprite, font, texture, explicit-quad or non-finite-render diagnostics.
+Its visually checked wgpu capture is
+`audit-closed-native-tables-l02-16500.png`, SHA-256
+`19f4e338764a017004fb762e998b26b4f0edd3126984e640d8acb1d4d1ddd1da`;
+the corresponding release executable is SHA-256
+`f0d17613b470e1a8213775b1ec1d85c95054f671249e4dc9461e02c10f74c446`.
+
+## Legacy ResourceManager byte counters
+
+IDA and Hopper agree on the two diagnostic globals published by the six-entry
+legacy `ResourceManager` table. `native_createSpriteSheet` at
+`sub_10009470C` clears the graphics upload accumulator around
+`sub_100457E38`, stores the resulting positive byte delta in the map at
+ResourceManager `+0x30`, sums the complete map, and publishes that sum through
+the float global setter `sub_10007E538` as `g_usedTextureMemory`.
+`native_releaseSpriteSheet` at `sub_100094800` preserves the map node with a
+zero value, re-sums it, and always republishes the global. The rehost now parses
+the referenced SPRT sheet, sums the PVR v2 `data_length` values that represent
+new cache uploads, and retains texture reference counts so a shared or
+duplicate PVR is not charged twice. Purple's shipped
+`CONNECTION_SCREEN_SHEET_0.dat` independently produces its exact 96,350-byte
+PVR payload value.
+
+The create-audio adapters `sub_100093C10` and `sub_10009410C` call the returned
+AudioClip virtual at object-vptr offset `+0x48`, which resolves to
+`sub_100571E44 -> sub_100574D50` and returns the decoder's total byte field at
+`+0x3C`; the neighboring `sub_100571E34 -> sub_100574D40` is only the block
+alignment field and must not be confused with it. The streaming branch of
+`sub_10045A1C8` retains its decoder, while the non-streaming branch drains it
+in 4,096-byte chunks and wraps the decoded PCM vector in a memory stream.
+Consequently `g_usedAudioMemory` records the WAV `data` chunk, decoded static
+MP3/Vorbis PCM, and no value for a streaming MP3 whose native length remains
+negative. RIFF chunk walking remains format-specific, while MPEG frame/Xing-
+LAME accounting and Ogg final granules provide streaming duration. Static
+compressed clips are now actually drained through the in-process pure-Rust
+decoder, so their published memory is the resulting PCM allocation rather
+than a source-size estimate. Its 18,250-byte result for the shipped
+`metal_hit_01.mp3` matches an independent `mpg123 -s` decode exactly.
+
+Synthetic bundle/AppData fixtures cover publication timing, duplicate sheet
+loads, release-to-zero, and accumulation across two audio entries.
+
+## Audio device construction, composite clips and physical output
+
+The iOS 1.1.6 binary and its shipped bundle are the sole references for this
+implementation; no Android build or capture participates in this pass. IDA and
+Hopper agree on the output creation chain
+`sub_100447914 -> sub_100459F40 -> sub_10057944C -> 0x100579E34` and the input
+chain `sub_10044794C -> sub_100459FF4 -> sub_10057AA08 -> sub_10057ABA4`.
+Channels, sample bits and sample rate are therefore retained explicitly. The
+output staging buffer follows the recovered 25-millisecond expression, rounds
+to frame alignment, and then to the next power of two; stereo 16-bit 44.1-kHz
+construction consequently produces 8,192 bytes.
+
+`createCompositeAudio` at `sub_100447CBC` passes only the ResourceManager,
+name and collected clip vector in `x0..x2` to
+`sub_10045A9CC -> sub_10057919C -> sub_1005790B0`. It walks the Lua sequence
+from index one to the first nil and retains only successfully resolved clips.
+The apparent fourth SIMD argument in one decompiler view is not present at the
+call boundary. The resulting virtual methods at `0x1005792B0` and neighbors
+read child clips sequentially, advancing only when a child returns no data,
+and sum known child lengths. The Rust runtime now freezes that resolved source
+vector at construction rather than inventing random or simultaneous playback.
+
+The desktop host maps the recovered runtime state to `rodio` without leaking a
+backend object into the Lua/native-ABI layer. It opens the default physical
+device when a window resumes, decodes shipped WAV/MP3/Vorbis files, sequences
+composite sources, applies clip/master/track volume and whole-clip looping, and
+reports completed one-shot handles back to GameLua. A missing sound device is
+non-fatal and deterministic screenshot mode does not open one. Every audio
+clip retained after the shipped start-screen initialization is asserted to
+resolve to an actual iOS bundle file.
+
+Start and stop semantics were checked in both disassemblers rather than
+treated as generic pause/resume. `audio::AudioOutputImpl::startOutput` at
+`0x10057972C` creates the worker only while the active byte at `+0x158` is
+clear. `stopOutput` at `0x100579870` clears that byte, releases the worker,
+calls `alSourceStop`, unbinds and deletes the OpenAL source and six buffers,
+deactivates the final audio session, and suspends the context. The host thus
+pauses physical players while output is stopped and resumes their retained
+decoder cursors on a later start. This reproduces the separate manager state:
+the same native stop path calls `sub_1005721DC`, whose complete two-instruction
+body is `STRB WZR, [X0,#0xC4]; RET`; it disables new manager playback but does
+not erase the active `AudioClipInstance` vector.
+
+That manager gate is also enforced at play time. `sub_100572208` reads
+`AudioManager+0xC4` before channel accounting or allocation and immediately
+returns unsigned `0xffffffff` when output is stopped. The Rust Lua surface now
+returns `-1` in that state, while existing handles remain queryable and resume
+after `startAudioOutput`. Each instance freezes its resolved file/composite
+source and duration when played, matching the intrusive clip pointer stored in
+the native 32-byte instance instead of looking up a later same-name resource.
+Same-name replacement also follows pointer identity. Both standalone creation
+at `sub_10045A1C8` and composite creation at `sub_10045A9CC` look up the old
+map node and call `sub_10057960C -> sub_100572910` before assigning the new
+pointer. Direct instances of the replaced top-level name are therefore marked
+finished, while an older composite continues through the child pointers it
+retained at its own construction. The Rust runtime now makes exactly that
+distinction instead of either keeping every old instance or stopping all
+playback that merely refers to the same child name.
+
+Standalone construction is also transactional. `sub_10045A698` first builds
+the bundle stream, and `sub_10045A1C8` calls format detection at
+`sub_1004FB774` plus streaming/static decoder construction before it searches
+or mutates the named clip map. `io::FileInputStream::Impl` at `0x100506A58`
+throws when `fopen` fails, and exact reads at `sub_100574A48` throw on a short
+header. The decoder dispatch at `sub_100574364` is subtler than a generic
+"unknown format" failure: type zero is accepted as headerless two-channel,
+16-bit, 44.1-kHz PCM by `sub_100578FD0`; only a recognized but unsupported
+non-audio type reaches the exception branch. The Rust adapters now validate
+the file and decoded stream before publishing either lifetime/memory state or
+a new asset. A failed same-name construction therefore preserves the old
+top-level clip pointer and its active instances, while a successful
+replacement retains the pointer-identity behavior above.
+
+IDA's instruction view and Hopper's independent assembly agree on the exact
+type detector. `sub_1004FBA20` reads a four-byte host word and executes `REV`,
+so the constants in `sub_1004FB774` are file-order signatures: `BM`, JPEG,
+`DDS `, `8BPS`, PNG, `GIF8`, both TIFF forms, PVR v2/v3, MP3 `FF FB`, `ID3`,
+`hgrf`, and `RIFF` followed by `WAVE` or `WEBP`. Magic wins over the filename;
+otherwise the uppercased extension table selects types 0 through 17. In
+particular, `OggS` has no magic case and Ogg/Vorbis is selected only by
+`.ogg`, an unknown extension selects raw PCM, while the explicitly known
+`.raw` extension maps to unsupported type 15. The rehost preserves these
+counterintuitive target rules and carries raw PCM configuration beside the
+path so the desktop output does not depend on host decoder guessing.
+
+The WAV constructor at `sub_100578858` also has intentionally permissive EOF
+semantics. It rejects a non-RIFF/WAVE 12-byte header, a non-PCM `fmt` chunk,
+or `data` encountered before `fmt`, but it returns successfully if clean EOF
+occurs immediately after `WAVE` or after `fmt` without `data`. Unknown chunks
+advance by their declared size without RIFF even-byte padding. A header-only
+WAV therefore becomes a valid zero-data clip rather than a construction
+error. The Rust RIFF walker now reproduces that boundary, separates successful
+construction from optional host duration, and keeps undefined native cases
+such as a truncated `fmt` payload as deterministic failures rather than
+emulating uninitialized stack bytes.
+
+Purple's worker `threadFunc` at `0x10057999C` initializes six OpenAL buffers
+and repeatedly calls `fillBuffer` at `0x100579C98`; the mixer at
+`sub_100573424/sub_1005738C8` calls `sub_100571E54`, which marks the instance's
+`+0x1E` finished byte when a non-looping decoder returns zero. The following
+`sub_100573250` pass erases precisely those finished instances. Screenshot,
+headless and no-default-device hosts now run a device-independent output clock
+from parsed WAV sample frames, MP3 gapless frame counts, or Ogg final granules.
+It advances independently of scaled game time, freezes while output is
+stopped, preserves loops, and retires one-shots so finite native channel limits
+cannot fill permanently. Every audio asset retained by the shipped start
+sequence has a resolved iOS file and a known decoded duration. The physical
+backend uses the same `sub_100571E54` gate for its rare host-decoder failure
+path: a non-looping handle finishes, while a looping handle remains logically
+alive and its known failure is cached instead of being retried every frame.
+
+Audio input is intentionally not mapped to the host microphone. This is a
+property of Purple 1.1.6, not an omitted desktop backend: the registered
+`startAudioInput` chain `sub_10044AA88 -> sub_10045D784 -> sub_10057AB98`
+only validates that an input object exists and reaches a two-instruction leaf
+returning one, while `stopAudioInput` reaches `sub_10045D8C4 -> nullsub_288`.
+IDA and Hopper expose no registered sample-read member on `LuaResources`.
+Construction and validation state remain reproduced, but opening a physical
+microphone would add behavior that the target game's Lua surface cannot use.
+
+Output replacement has a stronger ownership boundary than merely stopping the
+old instances. `sub_100459F40` clears and releases the pointer at
+`LuaResources+0x38` before constructing its replacement. Each
+`AudioOutputImpl` embeds a fresh mixer at `+0x28`; its constructor
+`sub_100571ED0` clears through mixer `+0xC4`, writes eight track gains of
+`1.0`, writes eight channel limits of `-1`, and thereby resets the next handle
+at `+0xC0` to zero. The outer constructor at `0x100579E34` separately writes
+the `-1.0` master-gain sentinel at output `+0x130`. On first start,
+`initializeBuffers` at `0x100579A44` queries OpenAL `AL_MAX_GAIN`, substitutes
+that value only if the sentinel remains exact, and installs the result on the
+source. `sub_10045D624 -> sub_100579648` proves that `setMasterVolume` is a
+void no-op with no output and otherwise writes this output-owned field.
+
+The Rust lifecycle therefore reconstructs instances, the wrapped handle
+counter, track gains, channel limits and master gain on every output creation,
+including a constructor failure after the old output has already gone. It
+continues to retain the independent LuaResources clip/composite maps. A host
+generation accompanies each output allocation so physical players and the
+device-independent clock cannot confuse a newly reused handle zero with the
+previous output's handle zero. Hopper independently shows the same `0x65`-byte
+mixer clear, `0xbf800000` master sentinel, first-start max-gain substitution,
+and destructor call to `stopOutput` before the embedded mixer destructor.
+
+The full workspace now passes 337 tests: 34 app/audio/wgpu, 19 assets, one
+core, and 283 script/physics tests.
+
+The audio registration source now follows the same recovered ownership rather
+than remaining one 316-line aggregate. Its facade preserves the interleaved
+`LuaResources` publication points, while `devices.rs` owns
+`sub_100459F40/sub_100459FF4` device replacement, `configuration.rs` owns the
+format guards and output-buffer calculation, `clips.rs` owns standalone and
+composite construction, and `controls.rs` owns the four start/stop adapters.
+No adapter, closure lifetime, or registration order moved across this split.
+
+The exact L01-to-L02 input stream above was rerun twice after physical audio
+integration. Both runs reached frame 16,500 with zero invoked fallbacks and
+zero compatibility bindings. Full-image hashes differ because the live
+Box2D/animation route is not an image-sequence lockstep test: an uncompressed
+pixel difference bounds the only changed region to `(276,588)-(339,646)`, the
+moving hammock/cage object. Every other pixel—including all static atlases,
+UVs, pivots, trees, background and tower geometry—was byte-identical. Dynamic
+level captures are therefore checked by route completion, diagnostics, visual
+inspection and localized pixel bounds rather than incorrectly treating one
+whole-frame hash as authoritative.
+
+The same 16,500-frame route was rerun after installing the independent silent
+output clock. It again reached L02 with 88 optional data reads, zero invoked
+fallbacks and zero compatibility bindings; the resulting artifact is
+`build/audit-silent-audio-l02-16500.png`. This pass exercises real one-shot
+retirement even though deterministic screenshot mode intentionally opens no
+sound device.
+
+After matching same-name `AudioClip*` replacement, the route was repeated as
+`build/audit-audio-pointer-l02-16500.png` with the same 88/0/0 diagnostic
+result. This verifies that stopping direct instances during resource
+replacement does not regress the complete L01-to-L02 gameplay path.
+
+After matching failed-construction transaction order, the route was repeated
+as `build/audit-audio-transaction-l02-16500.png`, SHA-256
+`d63ca17d802a815c2f0122af2b92975a572febe495af6e9b518b27537b56e614`,
+again with 88 optional data reads, zero invoked fallbacks, and zero remaining
+compatibility bindings. The corresponding release executable is SHA-256
+`60853ee6d41e9197f02a6db8c14c2a0c7383302e5a7f1b32fa45957e73a37a7c`.
+
+After reconstructing the full output/mixer lifecycle and adding host output
+generations, the exact route was repeated from a fresh isolated AppData root as
+`build/audit-audio-output-manager-l02-16500.png`. It reached the same live L02
+post-ability state with 88 optional data reads, zero invoked fallbacks, zero
+remaining compatibility bindings and an empty stderr log. The capture SHA-256
+is `83f67918901ff1f60d8f140289e79b11f7551b889acf665f3f445eed278f6af7`;
+the corresponding optimized executable is SHA-256
+`0721efc85666fd7e9dec9f487fc5d6100da24d9c0a4081a713cd79a6a8ecd4b0`.
+
+Two additional runs used independent empty AppData directories with the same
+read-only bundle symlink. Their generated `highscores.lua` and `bi_data.lua`
+were byte-identical. Decrypting the native AES-CBC `settings.lua` containers
+showed that the only plaintext difference was a `birdsShot` key rendered by
+Lua as `device_function: 0x...`, i.e. the process address of a function object;
+all level/event seeds were identical. The screenshot difference was again
+confined to `(276,586)-(330,633)`. Render-command inspection identifies the
+changed sprites as `BLOCK_HOMETREE_STRING` and `BUCKET`; their resource name,
+texture, `0.561` scale, pivot and alpha are identical, while only position and
+angle differ slightly. At the capture boundary `BURCKET_1` is intentionally
+still awake, with residual linear velocity around `1.4e-6` and angular
+velocity around `2.8e-8`, and several linked string bodies are also still
+being solved. This is a live joint-chain phase difference coupled to the
+already documented process-address boundary, not an atlas, UV, anchor or
+wgpu placement error; forcing the chain to a screenshot-specific pose would
+depart from Purple's physics behavior.
+
+After reconstructing native audio type detection, raw PCM and permissive WAV
+EOF handling, all 341 workspace tests pass (35 app/wgpu, 19 assets, one core
+and 286 script/physics), strict workspace Clippy remains warning-free, and the
+optimized application builds successfully. The exact 16,500-frame route was
+repeated from another empty AppData root as
+`build/audit-audio-reader-boundaries-l02-16500.png`. It again reached live L02
+with 88 optional missing globals, zero invoked fallbacks and zero compatibility
+bindings. Visual inspection found no missing or displaced atlas content. The
+capture SHA-256 is
+`a68927214f865bb20ff6331da4204edac53678de31774b1a73a1507cf53bf658`;
+the corresponding release executable is SHA-256
+`7c34efcb052d2d0e2cfe392f9bb6d8ab21044a554e1d0184d227cf8baa006e80`.
+
+The clip's source ownership was then aligned beyond mere path identity.
+`sub_100571B28` retains the already opened file stream and decoder for the
+streaming branch, while the non-streaming branch in `sub_10045A1C8` drains the
+decoder before constructing `sub_100571C68`: that constructor owns a
+`MemoryInputStream` over the resulting byte vector and reconstructs a raw
+reader from the decoder's channel/bit-depth/sample-rate triple. Rust audio
+assets now retain their creation-time bytes and streaming tag, so direct and
+composite clips do not reopen a path at play time. A regression overwrites and
+then removes the source file after clip/composite construction and verifies
+that all three frozen instances remain valid.
+
+Static WAV storage now follows the native representation exactly: only its
+declared `data` payload is retained as PCM with the parsed configuration, not
+the RIFF container. `sub_10045A1C8` sizes the vector from decoder `+0x3C`,
+zero-fills it, and performs one read without shrinking to the returned count;
+the Rust walker consequently zero-fills a declared data tail when the host
+file ends early. Streaming WAV retains the encoded stream instead. Headerless
+raw PCM likewise becomes an owned memory clip when non-streaming and a retained
+raw stream when streaming.
+
+After these ownership and static-memory corrections, all 343 workspace tests
+pass (36 app/wgpu, 19 assets, one core and 287 script/physics), strict Clippy
+remains warning-free, and the exact fresh-AppData L01-to-L02 route again
+reports 88 optional missing globals, zero invoked fallbacks and zero
+compatibility bindings. The visually checked capture is
+`build/audit-audio-retained-stream-l02-16500.png`, SHA-256
+`39f3123440180cdf3a2dc2c3ac92868633f1538822cccdb375af01a3dc1a99eb`;
+the corresponding release executable is SHA-256
+`50b22b5866b762f232120b99b771bb011f94f27355218ba873f423e655f6c3c4`.
+
+The remaining non-streaming compressed-audio boundary was then closed.
+IDA's `sub_10045A1C8` shows that the static branch repeatedly requests 4,096
+decoded bytes until a short read, then constructs `sub_100571DD4` from that
+PCM vector and the decoder's channel/bit-depth/rate triple. In contrast, the
+streaming branch constructs `sub_100571C64` around the already initialized
+decoder. The Rust resource layer now performs the same eager decode for MP3
+and Vorbis and publishes `PcmData`; only streaming clips retain compressed
+bytes. Decoder construction is still performed immediately for streaming
+clips, preserving the native pre-publication failure boundary. `rodio`'s
+decode-only features are shared by the script crate without `cpal`; the app
+alone enables physical playback.
+
+The shipped `metal_hit_01.mp3` yields 9,125 mono 16-bit samples in both the
+pure-Rust decoder and the historical generic mpg123 calibration. This first
+checkpoint established matching frame count, channel count, sample rate and
+byte length while leaving a handful of one-LSB synthesis differences for the
+later generic-mpg123 compatibility pass documented below. All 538 shipped MP3
+files were regression-decoded into static native-style memory clips, and every
+clip loaded by the original start-screen sequence is asserted not to retain a
+non-streaming compressed source. A separate short-WAV regression proves the
+native one-read behavior: bytes missing from a declared `data` payload remain
+zero-filled in the owned vector.
+
+All 344 workspace tests now pass (36 app/wgpu, 19 assets, one core and 288
+script/physics), and strict all-target Clippy is warning-free. The complete
+fresh-AppData route was repeated as
+`build/audit-audio-static-decode-l02-16500.png`; it reaches the same live L02
+post-ability state with 88 optional missing globals, zero invoked fallbacks
+and zero compatibility bindings. Visual inspection again shows complete,
+aligned atlases. Its SHA-256 is
+`314f722a014820e3c1e0cef651957bb9dd20ad42e725b79d2c1367c570d9c7b6`;
+the final optimized executable for this pass is SHA-256
+`35bd8d1f5d912cb90d7a5e317f9d4a536f9cca38d1e4a651570bd055289c074e`.
+
+The physical host no longer delegates every active clip to a separate
+floating-point backend player. IDA's `sub_100573424` and
+`sub_1005738C8`, independently checked against Hopper, establish one integer
+mixer owned by `AudioOutputImpl`: it clears a signed 32-bit accumulator for
+each output block, removes instances already carrying the `+0x1E` finished
+flag, reads each surviving decoder, and applies `FCVTZS`-quantized
+clip-times-track gain. Sixteen-bit gain uses a scale of 4,096; equal-channel
+and mono-to-stereo samples shift by 12, while stereo-to-mono sums two values
+shifted by 13. The final accumulator is saturated to signed 16-bit only after
+all instances contribute. Eight-bit output uses scale 256 and retains the
+target's surprising unsigned centering omission in both channel-conversion
+branches. Even a gain below one advances the reader before skipping its mix.
+
+The Rust backend now follows that topology in the separate
+`audio/native_mixer.rs` module. One infinite native-format stream is connected
+to the desktop device; instance and track gains are evaluated inside the
+integer block mixer, while master gain remains on that single stream after
+saturation, matching the OpenAL source property at output `+0x130`. It retains
+the 8,192-byte block size for the shipped stereo/16-bit/44.1-kHz output,
+duplicates or averages only the recovered mono/stereo combinations, preserves
+32-bit wrapping accumulation before saturation, advances muted instances, and
+reports completion on the following block-removal pass. ARM `FCVTZS` NaN and
+overflow keep the integer-indefinite `INT_MIN` result rather than Rust's
+ordinary saturating float cast.
+
+The mixer's format check compares source bit depth to output bit depth and
+does not inspect source sample rate. `fillBuffer` then passes the configured
+output rate to `alBufferData`, so a 16-kHz decoded clip is consumed frame for
+frame in a 44.1-kHz output block rather than being resampled independently.
+The retained source format is now explicit even for compressed streaming
+clips, and the device-independent output clock uses decoded frame count divided
+by the output rate. This keeps screenshot/no-device channel retirement aligned
+with the physical mixer instead of using the file's nominal duration.
+
+All 348 workspace tests now pass (39 app/audio/wgpu, 19 assets, one core and
+289 script/physics), and strict all-target Clippy remains warning-free. The
+optimized application is SHA-256
+`416d0f027ef2e42b5ed7c1c5b0df6bfaf1c9648e3362d0288eddf08263a4d16a`.
+The complete route from a fresh AppData root was repeated as
+`build/audit-native-mixer-l02-16500.png`; it reached the live L02 post-ability
+state with 88 optional data reads, zero invoked fallbacks and zero remaining
+compatibility bindings. Visual inspection shows complete, aligned scene and
+atlas content. The capture SHA-256 is
+`370c30c50732b73f75570a9ee673b4bc4d7912bd4ea337b3132a3812916d1c47`.
+This implementation and validation use only the iOS 1.1.6 `Purple.app`, its
+bundle, IDA, Hopper and desktop tests; no Android binary, capture or handset is
+part of the reference chain.
+
+The host reader beneath that mixer was then changed from eager per-playback
+materialization to an incremental byte reader. This follows the observable
+contract of `AudioClip::read` at `sub_100571DD8`, format dispatch at
+`sub_100574808`, and composite reading at `sub_1005792B0`: static PCM owns a
+seekable memory cursor, retained MP3/Vorbis owns an incrementally advanced
+decoder, and a composite retains distinct child readers plus its child index.
+`sub_100571E54` deliberately retries a short read only for looping instances.
+A non-looping composite which reaches a child boundary therefore returns a
+short block with a silent tail and begins the next child on a later block;
+looping playback continues reading and can wrap within the same requested
+block. Empty looping sources retain their native never-finished state without
+allowing the target's unbounded retry loop to wedge the host callback.
+
+`initializeBuffers` at `0x100579A44` also performs six mixer calls before it
+queues the buffers and starts the single OpenAL source. Physical output now
+reconstructs that prefill on every start: six native blocks advance reader
+cursors and completion/removal edges before the first audible sample. A stop
+destroys that one physical stream and discards queued data; a later start
+creates a fresh stream and prefills again from the still-retained logical
+instances, rather than pausing and resuming a collection of host players.
+
+IDA additionally proves that a target `AudioClip` shares its `AudioReader`
+while each `AudioClipInstance` carries a 32-bit byte cursor; MP3 and Vorbis
+readers seek/cache against that requested cursor. The cross-platform decoder
+keeps an equivalent incremental cursor per physical playback because the
+pure-Rust decoder does not expose mpg123/vorbisfile's identical shared random-
+access state. This preserves emitted PCM, cursor movement, looping and
+completion behavior while avoiding repeated full-stream redecodes when two
+instances interleave.
+
+All 351 workspace tests pass after these boundaries (42 app/audio/wgpu, 19
+assets, one core and 289 script/physics), with strict all-target Clippy clean.
+The new release executable is SHA-256
+`53f1c409dafad85ed60d1bb9f114cdf168709ba786b06c4b97b2c7c5dd398646`.
+The fresh-AppData route again reaches live L02 as
+`build/audit-native-stream-reader-l02-16500.png`, with 88 optional data reads,
+zero invoked fallbacks, zero compatibility bindings and visually complete
+atlases; its SHA-256 is
+`98462f2cbfbea789e3b9a7f7d1b78b6912166a75ab9f716a739286e7214956df`.
+
+The device-independent host clock now follows the same buffer boundary as the
+physical mixer instead of subtracting wall-clock duration from each clip.
+`AudioOutputImpl` stores output channels, bit depth and sample rate at
+`+0x18/+0x1C/+0x20`, while its worker owns the configured byte count at
+`+0x13C`.  Each elapsed output block therefore consumes exactly
+`bufferBytes / (channels * bytesPerSample)` decoded source frames, regardless
+of the source's encoded sample rate.  Start performs the six synchronous
+`initializeBuffers` fills; stop freezes all retained cursors and discards the
+fractional output-block accumulator; restart performs another six fills.
+Unsupported explicit channel/bit-depth combinations remain registered but do
+not advance, matching the early continue in `sub_100573424`/`sub_1005738C8`.
+For non-looping clips, one block can set the instance finished flag after a
+zero read and only the following block removes it and publishes completion.
+Output generation is part of the clock identity, so a reconstructed native
+output can safely reuse the same numeric playback handle.
+
+All 351 workspace tests continue to pass (42 app/audio/wgpu, 19 assets, one
+core and 289 script/physics), strict all-target Clippy is warning-free and the
+optimized application is SHA-256
+`b7c28fe727efa7f87baf0c34d391b775ac8d2caff47266f2e21b2ff9b047fcb2`.
+The complete fresh-AppData route was repeated as
+`build/audit-native-audio-clock-l02-16500.png`; it reaches the live L02
+post-ability state with 88 optional data reads, zero invoked fallbacks and
+zero compatibility bindings.  Visual inspection shows complete, aligned
+scene content.  The capture SHA-256 is
+`4bb99622b910f2f96feef6d6cb2c3495b4c6ac7fef9cdc6ee5a1b17ae08abaf0`.
+This pass, like the preceding mixer work, used only the iOS 1.1.6 executable,
+IDA/Hopper, its bundled resources and deterministic desktop regressions.
+
+The worker cadence was subsequently recovered instead of treating buffer
+consumption as a continuous duration countdown.  IDA and Hopper independently
+show `threadFunc` at `0x10057999C` calling `fillBuffer` once immediately after
+initialization and then sleeping 10 ms between calls.  The full assembly of
+`fillBuffer` at `0x100579C98` queries `AL_BUFFERS_PROCESSED` (`0x1016`) and
+deliberately does nothing while the result is below two.  At two or more it
+unqueues every reported buffer, holds the output mutex while invoking the
+integer mixer once per buffer, requeues the whole batch, and restarts a source
+whose state is `AL_STOPPED`.  This keeps between four and six blocks queued
+ahead rather than refilling every completed block independently.
+
+Both physical output and the device-independent clock now reproduce that
+six-buffer queue, 10 ms polling phase, two-buffer threshold and batched
+refill.  The physical source captures volume/track/new-instance state when
+each future block is actually mixed, preserving the native queue-latency
+envelope during fades instead of concatenating the initial six blocks and
+then running only one block ahead.  The silent clock advances ideal OpenAL
+playback continuously but publishes EOF/removal only on a worker poll; a
+16,000-frame clip in the shipped 44.1-kHz output therefore crosses its second
+refill/removal pass at 190 ms, not at an arbitrary host update boundary.
+Short clips removed during synchronous prefill are collected before the next
+VM tick on the physical path as well as the headless path.
+
+All 352 workspace tests pass after this correction (43 app/audio/wgpu, 19
+assets, one core and 289 script/physics), strict all-target Clippy is clean,
+and the optimized executable is SHA-256
+`8f922ffd4c8d8d21c2fbef613f492ded68d3be60ad9e94c92e427bc80badb474`.
+The fresh-AppData 16,500-frame route again reaches the live L02 post-ability
+state as `build/audit-native-audio-poll-l02-16500.png`, with 88 optional data
+reads, zero invoked fallbacks, zero compatibility bindings and visually
+complete/aligned content.  Its SHA-256 is
+`df901b35562390119ca773b0877184c1df835d81481a7cb155ef76d0e5622428`.
+
+The embedded MP3 synthesis and gapless boundary were then calibrated rather
+than approximated through the host decoder. `sub_100570E04` constructs the
+mpg123 handle with a null decoder name, opens a feed, and supplies source bytes
+in 2,048-byte chunks without setting optional decoder parameters. IDA and
+Hopper independently show `sub_10056CBF0` installing only
+`sub_10057046C`/`sub_100570914`, reporting `Decoder: generic`, and rejecting
+decoder indices two or greater because this build contains one implementation.
+The embedded `optimize.c` diagnostic line 515 fingerprints the same historical
+mpg123 source family as generic 1.19.0, 1.20.0 and 1.21.0 builds; all three
+produce identical PCM for the calibration resources.
+
+`sub_10057046C` accumulates the generic float synthesis window, clips above
+32,767 and below -32,768, and executes ARM64 `FCVTZS` for every ordinary
+sample. The previous nearest-even conversion was therefore incorrect. Pure
+truncation removes almost all differences, but a full 538-resource comparison
+also exposes target gapless delay removal: 334 tagged MP3s discard exactly 529
+interleaved samples at the start. The remaining float-synthesis delta is
+19,175 samples out of 24,104,441 (0.079550%), spread over the fixed shipped
+assets and normally one LSB.
+
+The cross-platform runtime remains pure Rust. A generated 538-entry profile,
+keyed by encoded-byte FNV-1a plus length, records the target output length,
+the optional 529-sample skip, and only those sparse target sample values. Both
+the eager `PcmData` path and retained `StreamingDecoder` apply the same cursor;
+unknown external MP3 data falls back to the recovered clip/saturate/`FCVTZS`
+contract without asset-specific correction. `stella-mp3-audit` reproduces the
+profile from a historical generic decoder, while the runtime ships only the
+172,410-byte read-only encoded table and has no C library, subprocess or
+Android dependency. Full-stream regressions cover both an untagged resource
+and a tagged 529-sample resource; their output lengths and complete FNV hashes
+match the historical target in both static and streaming paths.
+
+The same profile length is also authoritative for retained streaming clips
+and the device-independent output clock. The older MPEG frame scanner counted
+12,096 frames for a representative tagged resource even though Purple emits
+10,991; using the decoded profile removes that 1,105-frame completion delay
+without opening or draining the stream early.
+
+All 354 workspace tests pass (43 app/audio/wgpu, 19 assets, one core and 291
+script/physics), and strict all-target Clippy is warning-free. The optimized
+application is SHA-256
+`bebabeccb141e749042c50b1026843a767d4f5a3b69ef4175938ea6c93c810ff`.
+The complete fresh-AppData route reaches the live L02 post-ability state as
+`build/audit-mpg123-gapless-l02-16500.png`, with 88 optional data reads, zero
+invoked fallbacks, zero compatibility bindings and visually complete/aligned
+content. Its SHA-256 is
+`8d1ee396599b5e0289617d0b1b56f9863af7565e53667dbb66a07fa7378b798b`.
+This calibration and validation use only Purple 1.1.6, its iOS bundle,
+IDA/Hopper and deterministic desktop tooling; no Android executable, capture
+or handset is involved.
+
+## GameLua constructor tables and native pointer/zoom input
+
+The remaining constructor-owned Lua tables were recovered directly from
+`sub_10002C274` and checked independently in Hopper.  After publishing the
+screen size and three key tables, Purple constructs `multitouchSweep`,
+`multitouchZoom` with `zoomCoolingTime = -1.0f`, and a `clippedText` table whose
+identity remains fixed for the complete GameLua lifetime.  `sub_10004F630`
+replaces only that table's `lines` value and writes `widestLine`; it does not
+replace the outer table.  The same constructor loads `highscores.lua`,
+`settings.lua` and `bi_data.lua` through `sub_10005B7D4` into three distinct
+tables, falling back to fresh empty tables when the corresponding AppData
+file is absent.  The Rust bootstrap and `clipText` member now preserve these
+ownership and identity boundaries instead of constructing them lazily or
+replacing the result object.
+
+The platform touch bridge is likewise native rather than a mouse-only
+approximation.  `sub_10005E898` reads the insertion-ordered
+`framework::TouchEvent` vector at GameApp `+0x4C8`, caps publication at two
+16-byte entries, emits each `x`/`y` pair into a fresh Lua `touches` table, and
+formats the table key with `%d` from the signed low 32 bits of the 64-bit touch
+identifier.  `touchcount` is the capped count.  IDA and Hopper agree that
+`MyEAGLViewController` truncates drawable-pixel coordinates in
+`touchesBegan:` (`0x100408DAC`), updates the matching entry in
+`touchesMoved:` (`0x100409020`), and removes it in the ended/cancelled members
+at `0x100409290`/`0x100409508`.  Only the first touch drives LBUTTON/cursor
+state, and ending it does not promote another active touch.  Winit touch
+events now enter the same ordered vector and reproduce that primary-touch
+lifecycle.
+
+`sub_1000293C8` owns both the per-frame zoom easing and the exact-two-touch
+pinch state.  A new pinch snapshots GameApp `+0x4F8`, computes distance with
+the recovered float32 `FMUL`/`FMADD`/`FSQRT` sequence, and writes
+`baselineScale * currentDistance / initialDistance` to `+0x4FC`.  The initial
+distance must be strictly between `FLT_MIN` and `FLT_MAX`.  `sub_10005E898`
+then calls `applyUserZoom((current-previous)*0.5f)` only when `+0x4FC` differs
+from `+0x51C`, and reloads current after the callback before taking the next
+snapshot.  The rehost now shares one input-zoom record between pinch, wheel,
+`setWorldScale` and `resetMouseWheelScale`, removing the former independent
+touch accumulator.
+
+The adjacent wheel path at `sub_100029FF8` is now implemented as well.
+GameApp's constructor `sub_100026D2C` initializes base/current/previous scale
+to `1.0f`, both easing clocks to `-1.0f`, and enables smooth zooming by
+default.  Smooth input selects a 0.1 or 0.2 step divided by the configured
+`gameWorldScale`, applies SHIFT's 0.05 fine multiplier, and creates a 0.5
+second target.  Input during an active easing adds half a step to the target
+and changes the duration to `1-elapsed`.  The frame member advances at most
+0.1 seconds and evaluates the exact cubic ease-out as two `FMADD`s.  Direct
+mode writes current scale immediately unless CONTROL is held.  Both modes
+publish `cursor.wheel`/`wheelTriggered`, with the latter cleared only after the
+following native update.  The desktop host forwards Winit line/pixel wheel
+events and current modifier state to this recovered integer callback.
+
+Four focused regressions cover fresh touch-table publication, signed IDs and
+the two-entry cap; pinch baseline/reset and half-delta callbacks; cubic
+smooth easing and in-flight retargeting; and direct SHIFT/CONTROL behavior.
+All 360 workspace tests pass (43 app/audio/wgpu, 19 assets, one core and 297
+script/physics), formatting and strict all-target Clippy are clean, and the
+optimized executable is SHA-256
+`b033def26e72a6d75b785f5730d07df8398b11d1fc9225fdc7444aa9a6694279`.
+The exact fresh-AppData 16,500-frame menu/L01/result/L02/post-ability route
+again reaches live L02 with 88 optional data reads, zero invoked fallbacks and
+zero compatibility bindings.  Its visually checked wgpu capture is
+`build/audit-native-input-l02-16500.png`, SHA-256
+`f26557248c62f3c73a22baeef57082a9157066744bfb0ab03094aa5b9002b626`.
+This entire recovery and validation pass used only Purple 1.1.6, its bundle,
+IDA, Hopper and the Rust desktop harness; no Android device or Android build
+was used.
+
+### Native five-key bridge
+
+The fixed key publication loop in `sub_10005E898` iterates the five numeric
+codes at `unk_1009AE708`: 57, 86, 87, 82 and 83.  Reading their entries from
+`off_100AA3580` identifies them as `LBUTTON`, `KEY_BACK`, `KEY_MENU`,
+`VOLUME_UP` and `VOLUME_DOWN`.  This is deliberately not a generic host
+keyboard scan.  `sub_1004016F4` reads the persistent hold byte at GameApp
+`+1088+key`, while the GameApp virtual members at `+32` (`sub_10002A208`) and
+`+40` (`sub_10002A218`) write the one-frame press and release arrays at
+`+1424+key` and `+1555+key`.  The native update publishes all five entries to
+`keyPressed`, `keyReleased` and `keyHold` every frame, including explicit
+false values, then clears only the two edge arrays after the Lua callback.
+
+The Rust host now preserves those three state classes and ignores repeated
+host key-down events for edge generation.  Winit Escape, Context Menu, audio
+volume up and audio volume down feed the four matching native names; pointer
+and touch primary-button handling continues to own `LBUTTON`.  SHIFT and
+CONTROL remain internal wheel modifiers (native codes 34 and 35) and are not
+incorrectly added to Purple's five-key Lua publication loop.  A focused
+regression checks initial false publication, press/hold, key repeat, release
+and post-frame edge clearing for every fixed entry.
+
+All 361 workspace tests pass (43 app/audio/wgpu, 19 assets, one core and 298
+script/physics), formatting and strict all-target Clippy are clean, and the
+optimized application is SHA-256
+`c020030c2cce40c60a7fcfccb2ce498f0dfc943ff09788ef6f86bef76a15aea5`.
+The new fresh-AppData 16,500-frame route again reaches the complete live L02
+post-ability state as `build/audit-native-keys-l02-16500.png`, with 88
+optional data reads, zero invoked fallbacks and zero compatibility bindings.
+Its visually inspected capture is SHA-256
+`87e39705eca9a6eb33f022cbdfbde63450322e006cf3528668bf664129a4b566`.
+This batch likewise uses no Android program, screenshot or device.
+
+### Application activation and pointer cancellation
+
+IDA and Hopper agree that `-[MyEAGLViewController viewDidDisappear:]` first
+calls the GameApp virtual at `+0x78`; its target `sub_100401964` assigns the
+touch-vector end pointer from its begin pointer and therefore clears every
+active touch without reallocating the vector.  It then clears
+`m_singleTouch`, and only if LBUTTON code 57 is still held does it call the
+release virtual at `+0x28` followed by `sub_1004016B0(..., 57, false)`.  No
+other key is released by this member.  The desktop lifecycle now uses the
+same ordering and conditional release, while Winit focus loss supplies the
+touch-cancellation event that iOS normally delivers separately.
+
+The surrounding display-link lifetime was recovered as a separate boundary.
+`-[AppController applicationWillResignActive:]` clears `m_allowUpdate` and
+calls `stopUpdate`; that member cancels pending updates, resets the view's
+single-touch owner, invalidates the CADisplayLink and clears its pointer.
+`applicationDidBecomeActive:` sets `m_allowUpdate`, snapshots the current
+monotonic microsecond clock through `sub_1005863E8`, then calls `startUpdate`.
+Both start/stop members also call App's virtual slot `+0x98`, which resolves
+to `sub_100029BE8`.  That member calls `sub_100401678` to zero all 0x83
+platform hold bytes and clear the native touch vector, then forwards the
+active Boolean to GameLua `sub_10005D4D4`.  Once GameLua is initialized, the
+latter invokes the zero-argument Lua global `gameResumed` or `gamePaused`.
+The shipped pause callback stops the retained music name, records play time,
+saves settings/highscores/BI data and emits its event; resume relayouts the
+frames, restores the appropriate music and reports elapsed pause time.
+
+The Rust/wgpu window host now follows the complete chain.  It performs no
+fixed updates while unfocused or suspended, resets its monotonic timestamp
+and pending fixed-step debt before resuming, clears all native key holds and
+touches on each activation transition, and invokes the shipped lifecycle Lua
+callback before restarting updates.  Time spent in the background therefore
+cannot appear as catch-up physics or animation frames, and persistence/audio
+side effects no longer disappear at the platform boundary.
+
+The following App virtual at `+0xB0` resolves to `sub_100029C24`, rather than
+being part of GameLua activation.  IDA and Hopper show its nested lookup of
+the Boolean `settings.root.audioEnabled`, defaulting to enabled when any
+table/value/type test fails.  On activation it starts an existing output only
+when that flag is true and independently starts an existing input; on
+deactivation it stops both unconditionally.  The output wrappers resolve to
+`sub_1005795DC`/`sub_1005795F8` and ultimately
+`AudioOutputImpl::startOutput`/`stopOutput`.  The host now updates the retained
+native device state at this exact point and synchronizes either the physical
+Rust mixer or the device-independent clock immediately, so audio cannot keep
+advancing while the display link is stopped.  This ownership boundary is
+isolated in `game_lua/host_lifecycle.rs`, separate from pointer injection.
+
+The focused pointer regression verifies that disappearance publishes an empty
+touch table, creates exactly one LBUTTON release edge, preserves an unrelated
+held KEY_BACK, clears the release after the following update and does not
+invent a second release when no primary pointer exists.  A second regression
+locks activation-time hold/touch clearing before both callbacks while proving
+that `sub_100401678` does not erase already pending press/release edges.  A
+third covers disabled/default-enabled output, independent input state and the
+native first-start master-gain sentinel.  All 364 workspace tests pass (43
+app/audio/wgpu, 19 assets, one core and 301 script/physics), formatting and
+strict all-target Clippy are clean.  A live desktop-window startup also
+remains stable through the initial `gameResumed`, audio-device synchronization
+and event-loop path.  The optimized application is SHA-256
+`e63c8856f7e99cd1e0dd6bfcaadba5b2ac78c1f0cf3e94e6a31a5c0380411bd2`.
+The fresh 16,500-frame full route reaches the visually complete live L02 state
+as `build/audit-activation-audio-l02-16500.png`, with 88 optional data reads, zero
+invoked fallbacks and zero compatibility bindings; its SHA-256 is
+`d6577891c3fe86c02929dbbd14d1435fd31af1d16220ab202dab15860b61d394`.
+No Android executable, capture or device contributed to this pass.
+
+### GameApp vtable closure and live drawable theme extent
+
+The remaining primary `GameApp` vtable at `0x100A903C0` was audited as one
+closed 27-slot inventory in both IDA and Hopper.  Its touch members are the
+four adjacent entries at slots 12 through 15: `sub_100401700` appends one
+complete 16-byte `TouchEvent`, `sub_100401744` replaces the first event with a
+matching 64-bit id, `sub_10040182C` compacts away every matching id, and
+`sub_100401964` clears the vector by assigning end from begin.  Winit's touch
+adapter now preserves even the otherwise-malformed duplicate-begin case, so
+the observable container semantics match the native members rather than a
+host map keyed by id.
+
+Slot 23 (`sub_100028FB0`) forwards to `sub_100062518`, which returns the byte
+at GameLua `+0x6AC`.  The only store is at `0x10005EB14` inside
+`sub_10005E898`: it reads Lua `g_safeToQuit` through the ordinary
+`lua_toboolean` path at `0x10005EAD4..0x10005EB04`, then latches the result
+before the later Lua update callback.  The rehost now retains this separate
+frame-latched byte and exposes it to the platform host; numeric zero remains
+true under Lua semantics, and a callback-side change becomes visible on the
+next frame.  Slot 25 (`sub_10002A228`) publishes its Boolean as
+`g_mouseAvailable`; the iOS target initializes it false even though the
+desktop adapter can translate a physical pointer into the target's touch and
+LBUTTON interfaces.  Slot 26 and its secondary-base thunk both reach
+`sub_1004016E4(..., 0)`, confirming that the existing `requestExit` state is a
+zero-code platform exit request.  Its Lua wrapper `sub_100030750` saves the
+three persistent tables only for `deviceModel == "wp8"`; the reproduced iOS
+profile correctly skips that Windows Phone branch.
+
+The resolution member at slot 7 resolves through `sub_10002A25C` to
+`sub_10006E1F4`.  Before replacing `screenWidth`/`screenHeight` and invoking
+Lua `resolutionChanged`, it calls `sub_10009961C` on the retained
+ThemeManager.  That member indexes
+`gameCamera.resolutionCorrectedCameras[FCVTZS(float(endCameraIndex))]`, reads
+the selected camera's float32 `sx`, and stores it at ThemeManager `+0xA8`.
+Rust now performs the same pre-callback snapshot and initialization-time
+capture; it does not incorrectly read the newly recalculated camera after the
+callback.
+
+This camera audit exposed a directly visible wide-drawable error.  The
+ThemeManager frame member `sub_10009B8B4` calls renderer vtable slots
+`+0xD8/+0xE0` at `0x10009B94C` and `0x10009B98C`, and its draw member
+`sub_10009BDB4` repeats those width/height calls at
+`0x10009BF74..0x10009BF98`.  GameLua's independent ThemeSpriteData update
+`sub_1000607E8` likewise reads the live width at `0x100060B28` and live height
+at `0x100060BBC`; its foreground wrap thresholds are `4*width/physicsScale`,
+`2.5*width/physicsScale` and `height/physicsScale`.  These paths were still
+using authored `1024x768` constants in Rust.  `RenderBridge` now owns the live
+drawable extent, resolution changes update it before Lua relayout, and theme
+motion, culling, anchoring, repeated-row/column traversal and ThemeSpriteData
+wrap all consume that state.  Authored 1024-by-768 constants remain only in
+native members where the disassembly actually contains those reference-space
+values.
+
+Four new focused regressions cover duplicate touch append/first-replace/all-
+erase semantics, pre-callback float32 camera-scale capture, Lua-truthy
+safe-to-quit frame latency, and theme centering before and after a live
+drawable resize.  All 368 workspace tests pass (44 app/audio/wgpu, 19 assets,
+one core and 304 script/physics), formatting and strict all-target Clippy are
+clean.  The optimized application is SHA-256
+`c8aa6a362420cb11c543677ac545509e4da78f6655ec5d748913e4d1a6e586bd`.
+A new empty-AppData 16,500-frame menu/L01/result/L02/post-ability route reaches
+the complete live L02 state as
+`build/audit-live-extent-fresh-l02-16500.png`, with 88 optional data reads,
+zero invoked fallbacks and zero compatibility bindings.  The visually checked
+capture is SHA-256
+`238c678180a359d72296a2625599e05bed6790986771a2c45863e8c2b02d38eb`.
+This recovery and validation uses only Purple 1.1.6, its iOS resources,
+IDA/Hopper and the Rust/wgpu desktop harness; Android hardware remains
+unnecessary.
+
+### Particle update gates, level-limit remapping, and signed wrap bounds
+
+The `Particles` primary vtable begins at `_ZTV9Particles` `0x100A90810`
+(address point `off_100A90820`). Its update member is slot `+0x48`,
+`sub_100091834`; GameLua invokes that slot at `0x1000605A4..0x1000605D0` with
+`W1 = 1`, `W2 = (GameLua+0x6A8 == 0)`, renderer `GameLua+0xD0`, scaled delta
+in `S0`, and raw delta in `S1`. Consequently the GameLua particle movement
+branch always has scale one. The otherwise visible renderer-height/768 path
+belongs to the shared `ThemeParticleSystem` caller. The update-all versus
+menu/notification-only branch is controlled by the physics-lock total, not by
+GameLua `+0x199`: `enableInGameParticlesNative` (`sub_10004C7F4`) changes only
+the flag consulted by the two in-game draw wrappers at `sub_10004C578` and
+`sub_10004C5A8`. Rust now preserves this separation and the BOOLEAN adapter's
+strict slot-one ABI.
+
+The four infinite-particle wrap values are not a fixed 1024-by-768 rectangle.
+`sub_10004FFB8` writes GameLua `+0x618..+0x624` at `0x1000503D4` and
+`0x1000503DC`. It reads `level*EdgePhysics` and `oldLevel*EdgePhysics`, narrows
+them with `FCVTZS`, adjusts the vertical pair using renderer width/height and
+the fused `FNMSUB` at `0x10005031C`, notifies Particles slot `+0x28`
+(`sub_100091544`), then divides the current four float32 bounds by the fixed
+0.05 physics-to-framebuffer scale and vector-`FCVTZS` stores signed integers.
+`sub_100091544` rescales only lifetime `-1.0f` records about the old viewport
+centre with float32 `FMADD` at `0x1000915D0/0x1000915D8`. The update member
+later loads those signed fields at `0x100091A68..0x100091ABC` and
+`0x100091C3C..0x100091CE8`, using strict comparisons and opposite-edge
+replacement.
+
+The rehost now models that complete chain in the focused
+`world_physics_camera_registration/camera/level_limits.rs` member, retains the
+signed wrap rectangle in `RenderBridge`, remaps existing infinite particles
+before publishing new bounds, and consumes those bounds after integration.
+Regression coverage verifies strict edges, exact-edge retention, old-centre
+remapping, draw-only in-game enable state, physics-lock update gating, and the
+strict generated adapter. The full workspace passes 369 tests and
+`cargo clippy --workspace --all-targets -- -D warnings`; release SHA-256 is
+`05efaa44e63f32a45ee8d312ccd781e4701bd51727bbf3190918891bfd77bd10`.
+A fresh-AppData automated route reached L02 with 88 optional missing data
+globals, zero invoked fallbacks, and zero compatibility bindings. Its
+1024-by-768 screenshot is
+`build/audit-particle-bounds-fresh-l02-16500.png` with SHA-256
+`152c44d0b42bebe4b9c2ea6d06db4f3748790281387dd71046635b77bf8206a4`.
+No Android device or screenshot was used for this closure.
+
+### Theme-particle reachability and independent visual-scale pairs
+
+The native `ThemeParticleSystem` audit closes the apparent second particle
+path without inventing content. Its primary vtable is `_ZTV19ThemeParticleSystem`
+at `0x100A90A80` (address point `0x100A90A90`); slot `+0x48` shares
+`Particles::update` at `sub_100091834`, while slot `+0x60` is
+`sub_100096E4C`. The latter first clears ordinary particles through
+`sub_1000912D8`, then erases and reinitializes both the integer-to-spawner map
+at object `+0x88..+0xB0` and the integer-to-`vector<ParticleData>` map at
+`+0xB8..+0xE0`. ThemeManager constructs two 0xE8-byte instances for background
+and foreground passes. Their creation path is reachable, but the only shipped
+population branch is the optional layer `spawnParameters` handling inside
+`sub_100099C24`. Direct inspection of every 1.1.6 `bgLayers` and `fgLayers`
+entry finds no such field, so the two maps remain empty for the supplied game
+data. This dormant engine subsystem is therefore not a source of missing
+textures or particles in the reproduced route.
+
+A separate immediate-offset audit found an active visual difference. Purple's
+`RenderObjectData` does not keep redundant scale copies: live render scale is
+at `+0xBC/+0xC0`, while persistent bounce-base scale is at `+0xCC/+0xD0`.
+`sub_100040304` and object-parameter cases 5, 17 and 18 write both pairs, and
+`sub_1000403E4` queries the live pair. The per-frame bounce branch in
+`sub_10005E898` instead loads only the base pair at `0x10005F824` and
+`0x10005F844`, performs the two float32 `FMADD` calculations, and writes only
+the live pair at `0x10005F840/0x10005F85C`. The previous Rust state collapsed
+the base into collision-fixture scale, so a visually scaled object bounced
+about the wrong size. `SceneObject` now retains independent live, base and
+fixture scales; ordinary scale setters update both visual pairs, fixture
+rebuilds remain independent, and bounce updates only the live pair.
+
+Focused regressions cover a 2-by-3 visual scale with unchanged 1-by-1 physics
+fixtures, native float32 bounce phase/decay, and the pre-error scale stores of
+`setPhysicsScale`. The complete workspace still passes 369 tests, strict
+all-target Clippy is clean, and the optimized executable is SHA-256
+`b1ec751110925c697b4373e4469fdcf481c17e365b3771bad3ff482b29a19a5b`.
+This recovery used only Purple 1.1.6, its shipped data, IDA/Hopper and the
+desktop Rust test harness; no Android device or capture was used.
+
+The previously 1,085-line physical mixer source is now split along the same
+native ownership boundaries: `audio/native_mixer.rs` is the 243-line
+`AudioOutputImpl` configuration, six-buffer queue and synchronization facade;
+`native_mixer/engine.rs` is the 255-line integer block mixer and
+`AudioClipInstance` lifecycle; `native_mixer/engine/reader.rs` is the 323-line
+memory/decoder/composite `AudioClip` reader family; and the 292-line regression
+suite is separate. This is a structural move with unchanged PCM, cursor,
+prefill and worker-poll semantics. The post-split workspace again passes all
+369 tests and strict all-target Clippy; the final optimized executable is
+SHA-256 `8ae8d7f366ba11244508969bdf6e972c9032003f4b01756fe4d44fc1369cbd30`.
+
+### Strict scalar object members and L02 tutorial route closure
+
+The generated adapter families around `sub_100086690`, `sub_10008598C`,
+`sub_10008897C` and `sub_100085BB4` establish strict stack contracts for five
+previously permissive Rust bindings. `setTextureScale` and
+`native_setWaterDensity` each consume one exact string and one number through
+`sub_1005285CC`/`sub_10052859C`; `native_setIsWater` uses the same string
+reader followed by the strict Boolean reader `sub_1005281BC`;
+`setSensorMinimumAndMaximumForces` consumes a string and two numbers; and
+`native_resizeRadius` consumes a string and four numbers. Every numeric value
+is narrowed to float32 in the adapter before the member call. Extra Lua
+arguments remain irrelevant, but absent or wrongly typed required slots now
+raise an error.
+
+The members themselves are deliberately native-only stores.
+`sub_10004CE38` writes RenderObjectData `+0xC4`, `sub_100059530` writes
+`+0x14B`, `sub_100059554` writes `+0x150`, and `sub_100031388` writes
+`+0x10C/+0x110`; none writes `objects.world`. `sub_100059488` first resolves
+the object, writes its radius at `+0x98`, destroys the old fixture and creates
+the replacement circle with the four adapter values. All five members use
+`sub_10005DAF8`, whose missing-map branch formats `Missing object: %s` and
+throws. Rust now preserves the strict types, float32 boundaries, lack of Lua
+reflection and failed-lookup behavior, including the resize fixture/contact
+lifecycle already recovered earlier.
+
+The deterministic L02 tutorial comparison was also corrected without an
+Android reference. The shipped `Tutorial_StellaTap.lua` targets the current
+level goal, and `TutorialTapArea.lua` requires a two-second stationary hold
+within `screenHeight * 0.15` of that target. The valid deterministic event is
+therefore a 150-frame hold around `(580,620)`, not a tap on the airborne bird.
+Together with the existing menu, level-selection and sling events, this
+dismisses the tutorial and exercises Stella's ability before the camera
+returns to the next ready bird.
+
+Focused regressions now prove strict arity/types, float32 rounding, missing
+object errors, native-only material/water/sensor stores and radius replacement
+behavior. The complete workspace passes 370 tests (44 app/audio/wgpu, 19
+assets, one core and 306 script/physics), formatting and strict all-target
+Clippy are clean. The optimized executable is SHA-256
+`242a8b27ec26c99b43989bd7e6e5c15024c0323cefa1f89d46e1ed5bb137b9bd`.
+The 16,500-frame desktop route reaches the stable live L02 sling-side state in
+`build/audit-strict-scalars-l02-16500.png`, with 85 optional data reads, zero
+invoked fallbacks and zero compatibility bindings; the visually inspected
+capture is SHA-256
+`c2a76ea12debac013ca5a74f7c4c01671fb07b2ed9ced9b7dc8ddffa8998632e`.
+No Android program, hardware or screenshot was used.
+
+### Object mutation, DrawablePolygon snapshots and strict table-stack boundaries
+
+The adjacent object-member audit separates native body state from Lua mirror
+state at several previously conflated boundaries. `applyImpulse`
+(`sub_10003F930`) and `applyForceNative` (`sub_10003F9CC`) share the strict
+string-plus-four-floats adapter `sub_100085BB4`; both use the nullable body
+lookup and modify only a dynamic `b2Body`, with no immediate `objects.world`
+write. `setMaterial` (`sub_10004CBD0`) recognizes only `wood`, `stone` and
+`glass`, stores enum values 1, 2 and 3 at RenderObjectData `+0x18`, and treats
+every other string as a total no-op before lookup. This enum is independent of
+the Lua collision-material string. `setTexture` (`sub_10004CC74`) performs the
+throwing render-object lookup and updates only the native resource name and
+pointer. Both string/string entries use `sub_100089B0C`.
+
+The scalar body cluster now follows its individual lookup contracts rather
+than one blanket policy. Restitution/friction, sleeping and activity use the
+nullable body lookup; damping, fixed rotation and sensor state manually find
+an object and ignore absent/non-body entries; collision enable and gravity
+scale first call throwing `sub_10005DAF8`. Their generated number/Boolean
+adapters are strict and every number is narrowed to float32. The direct
+`setPhysicsEnabled` member at `sub_100041ABC` strictly reads its first Boolean
+and only reads an optional second string when present. `addVertex` uses
+`sub_100088294`, requires two numbers and appends exactly two float32 values.
+`setGameRenderingDisabled` (`sub_100059D58`) reads the strict Boolean at stack
+slot -1, so the topmost extra argument wins rather than the first argument.
+
+`makeRay` is not a live collision-debug overlay. `sub_10004CE5C` copies the
+float2 contour at RenderObjectData `+0x168` with `sub_100024680`, copies the
+current position at `+0xA4/+0xA8`, sets four float32 color channels through
+`sub_1000249E8`, and inserts the completed `DrawablePolygon` into a unique-key
+red-black tree. A duplicate name retains the first record. Its constructor is
+mode 1 with outline byte zero, and `sub_100024A50` submits the ear-cut triangle
+list through the current object callback context. Rust now retains that
+immutable contour/position/color payload, does not move or rotate it after
+later body transforms, and emits the alpha triangle list without the unrelated
+software triangle-fan or black outline.
+
+The hand-written table APIs also now preserve their native stack positions and
+failure behavior. `decomposePolygon` (`sub_100035FFC`) strictly wraps argument
+1 and reads every indexed point's numeric `x/y`; `getIntersectingObjects`
+(`sub_10005411C`) and `getRayCastedObjects` (`sub_10005464C`) wrap stack slot
+-1, require all six/four fields, and operate/publish at float32 precision.
+The AABB member no longer reorders malformed lower/upper edges. `createJoint`
+(`sub_100037374`) and the `createJoints` loop (`sub_10003CC64`) likewise use
+the stack top and require a numeric `type`; malformed batch entries are not
+silently skipped. `createTrack` (`sub_10003CD0C`) deliberately differs by
+using positive index 1, strictly copies point tables and block strings, and
+throws when a named RenderObjectData entry is absent.
+
+Focused regressions cover strict types and arity, top-versus-first stack
+selection, float32 publication, lookup/no-op distinctions, native-only state,
+duplicate ray insertion, frozen ray geometry and the no-outline triangle-list
+path. The complete workspace passes 374 tests (44 app/audio/wgpu, 19 assets,
+one core and 310 script/physics); formatting and strict all-target Clippy are
+clean. The optimized executable SHA-256 is
+`5a63570d66eee8af17a5536640bed2ba27ee01caf11da8da0ad0e00a8dfc0a71`.
+The no-Android 16,500-frame L02 route remains stable in
+`build/audit-native-boundaries-l02-16500.png`, reports 85 optional data reads,
+zero invoked fallbacks and zero compatibility bindings, and has SHA-256
+`0cefffbd6e4a2cf2e903c47ff260daf5a430583e6c62dd2f0d0669061fff2434`.
+
+### LightBeam filtering and strict particle-table cache construction
+
+`makeLightBeam` installs the native object implemented by `sub_10005AD4C` and
+constructed at `sub_10008B01C`. Its generated `plotPath` adapter
+`sub_10008C384` consumes one table after the colon receiver, while the member
+`sub_10008B194` strictly reads numeric `startAngle`, a table-valued
+`startPoint`, and numeric `startPoint.x/y`. IDA and Hopper agree that the
+fixture callback at `sub_10008B7B0` rejects sensors and Box2D shape type 3
+(`b2ChainShape`), but does not inspect the separate RenderObjectData
+collision-enable flag. Rust now has the same strict table boundary and
+float32 path integration, continues until the native termination conditions
+rather than an invented 4,096-iteration cap, ignores nearer sensors and chain
+fixtures, and still stops on a nearer collision-disabled ordinary fixture.
+
+The particle entry `sub_10008E524` is another hand-written stack-tail member:
+it wraps Lua slot -1 rather than searching the argument list. It strictly
+reads `definitionName`, `x`, `y`, `w`, `h`, `angle` and `mode` before consulting
+the name cache. `amount`, `z` and `themeLayerIndex` are guarded numeric fields;
+`ignoreDeltaTimeMultiplier` is a guarded Boolean and defaults true only for
+modes 3 and 4. The cached 0x80-byte definition record strictly reads
+`gravityX/Y`, velocity bounds, angular-velocity bounds, scale bounds, emitter
+angle bounds, particle angle bounds and `lifeTime`; only `amount`, `areaW/H`
+and emitter-area scales have numeric defaults. `sprites` is a required table
+whose sequence entries are strict strings. Missing definitions are therefore
+table errors, not silent empty bursts, and a cache hit does not relax the
+required per-spawn fields. The Rust parser now follows these distinctions and
+preserves the native float32 narrowing, zero-amount fallback, definition cache
+and optional wrong-type fallback behavior.
+
+The same audit exposed a cross-subsystem host-language trap. AArch64 `FCVTZS`
+returns signed integer-indefinite (`INT_MIN`) for NaN and overflow, whereas a
+Rust `as i32` cast saturates and maps NaN to zero. The recovered conversion now
+lives in the shared Lua argument layer rather than the theme module, and is
+used by particle amount/mode/layer fields, object parameters, gravity masks,
+decoration counts, trajectory/AimStream counts, system-font metrics, dirt's
+Clipper grid and unlock-checksum selection. `LuaResources::setClipRect`
+(`sub_100448958`) additionally receives four already-narrowed floats, performs
+its right/bottom additions in float32, then FCVTZS-converts the edges; the
+2^24-plus-one regression distinguishes that sequence from a Lua-double sum.
+
+Focused tests cover LightBeam table/field errors, sensor and collision-disabled
+filtering, particle stack-top selection, required emitter fields, malformed
+definition records, optional type fallbacks and cached first-use state. The
+complete workspace passes 375 tests (44 app/audio/wgpu, 19 assets, one core
+and 311 script/physics); formatting and strict all-target Clippy are clean.
+The optimized executable SHA-256 is
+`3c3c584c047b935103492b7fea50321ff37546a6f34721b6230f2df514bab496`.
+The original iOS 1.1.6 Lua bytecode completes the no-Android 16,500-frame L02
+route with the stricter particle ABI, 85 optional data reads, zero invoked
+fallbacks and zero compatibility bindings. The visually inspected capture is
+`build/audit-no-android-fcvtzs-l02-16500.png`, SHA-256
+`ebef3a6265aa831e5d88dc0b2a5f301ab624bc157dac2a8e4039f7867f695a98`.
+
+### Composite-sprite handwritten stack ABI and entry-map mutation
+
+IDA and Hopper agree that the three composite query members are handwritten
+Lua-state functions rather than generated overload adapters.
+`getCompoSpriteData` at `sub_1004493BC` strictly reads the string in positive
+stack slot 1 and returns a one-based array whose entries contain only
+`{name, x, y}` in numeric slots 1, 2 and 3. It immediately calls the native
+part-count member on the lookup result and has no missing-resource branch; the
+Rust host now reports that invalid lookup as a Lua error instead of inventing
+an empty composite. `getCompoSpriteEntry` at `sub_1004497D8` and
+`setCompoSpriteEntry` at `sub_100449CFC` differ: a missing composite is logged
+and returns zero Lua values before later arguments are inspected. This is
+observably different from returning one `nil`.
+
+Both entry members test selector slot 2 as a number before testing it as a
+string. The numeric path strictly fetches a float, narrows it to float32,
+executes AArch64 `FCVTZS Wd, Sn`, and passes the resulting unsigned index to
+the raw part vector. Consequently `-0.75` selects entry zero, while NaN,
+negative integral and overflow values become invalid unsigned indices. A
+numeric string enters the `lua_isnumber` branch but is then rejected by the
+strict NUMBER-tag reader; it must not fall through to the name map. Unsupported
+selector types return zero values. Native invalid vector/map entries are later
+dereferenced without a safe branch, so the Rust boundary preserves failure as
+a recoverable Lua error rather than returning a fabricated `nil` or risking a
+host-process crash.
+
+The get result publishes `name`, `x`, `y`, `scaleX`, `scaleY`, `flipX`,
+`flipY`, `angle` and `visible`. The setter requires its third argument to be a
+table only after the composite and selector branches succeed. Every field is
+optional by a nil check; present scalar fields intentionally use Lua 5.1
+`lua_tolstring`, `lua_tonumber` and `lua_toboolean` coercions rather than the
+generated strict adapters. This includes hexadecimal numeric strings,
+nonnumeric values becoming zero and ordinary Lua truthiness for flips and
+visibility. Renaming retains the complete `#suffix` in the entry and name map,
+strips it only for the sprite-resource lookup, erases the old key and rebuilds
+the composite geometry. The Rust live part vector and wgpu asset-update queue
+now follow the same mutation.
+
+Focused regressions cover strict slot 1, colon-call rejection, zero-result
+counts, resource-before-selector/table checking, numeric-string rejection,
+float32 `FCVTZS`, safe invalid-entry failure, partial updates, `#suffix`
+renaming and Lua 5.1 hexadecimal/falsey coercions. The complete workspace
+passes 376 tests (44 app/audio/wgpu, 19 assets, one core and 312
+script/physics), formatting and strict all-feature Clippy are clean. The
+optimized executable SHA-256 is
+`c2df62cc9d4155a7fa7e9f21f9e45e773cc158805a7a7d550f72914c6de6407d`.
+A fresh-AppData, no-Android 16,500-frame run of the original iOS Lua bytecode
+reaches the live L02 post-ability scene with 82 optional data reads, zero
+invoked fallbacks and zero compatibility bindings. Its visually inspected
+wgpu capture is `build/audit-composite-abi-l02-16500.png`, SHA-256
+`81d74b10025541544ba9a474a143091580fcaf2a61d475bfa68f73dc8a68535d`.
+
+### FilePath-keyed resource creation, replacement and symmetric release
+
+The ResourceManager lifecycle maps are keyed by parsed `game::FilePath`
+components rather than by the caller's complete string. IDA decompilation of
+`sub_1004FCEDC` and Hopper's independent pseudocode establish the object
+layout: `+0x00` is the normalised complete path, `+0x08` the drive, `+0x10`
+the directory including its final slash, `+0x18` the filename before the last
+dot, and `+0x20` the extension including the dot. The parser converts
+backslashes to slashes, uppercases a lowercase drive prefix and performs its
+native `./`/`../` in-place collapse. `setPath` is the generated raw-method
+thunk `sub_100446E24`, tail-calling `sub_100457140`; that member first parses
+the supplied string as a FilePath before assigning ResourceManager `+0x58`.
+`sub_1004FD2F0` is the corresponding `(base, child)` constructor and delegates
+to the same parser.
+
+SpriteSheet create/release (`sub_100457E38`/`sub_10045ABC4`) and
+CompoSpriteSet create/release (`sub_1004586AC`/`sub_10045AF5C`) parse the
+caller path, copy its `+0x18` stem, parse that stem a second time, and use the
+second `+0x18` value as the red-black-tree key. Thus
+`images/MENU.PROFILE.dat` is keyed as `MENU`, not as the complete path or as
+`MENU.PROFILE`. Bitmap-font create/release
+(`sub_100459324`/`sub_10045B214`) and TextGroupSet create/release
+(`sub_100459AD8`/`sub_10045B41C`) use one `+0x18` extraction. The apparent
+one-argument release thunks at `sub_1004481AC`, `sub_1004481B4` and
+`sub_1004481BC` preserve X1 and tail-call those members; registration at
+`sub_100446570` proves that all three use the generated
+`void(std::string)` raw dispatcher. Hopper assembly confirms the preserved-X1
+tail branch that Hex-Rays omits from its prototype.
+
+Every creator probes its optional replace Boolean by exact Lua type. When it
+is false and the key already exists, the native returns the existing pointer
+without loading the new path. A true value constructs the resource from
+`FilePath(currentPath, callerPath)` and replaces the map node. SpriteSheet and
+CompoSpriteSet accept only the case-sensitive `.dat` and `.json` loader
+branches. The third `createSpriteSheet` Boolean independently defaults true,
+but its X3 value is unused by `sub_100457E38`. Bitmap and system fonts share
+the same native `IFont` map, so a successful forced replacement removes the
+prior font kind rather than leaving two independently selectable entries.
+`releaseSpriteSheet` alone is handwritten and strictly reads an explicit
+second Boolean; the Boolean selects resource release versus map erasure after
+the same double-stem lookup.
+
+Rust now uses host-independent FilePath spelling and stem extraction, applies
+the double/single key rules on both create and release, normalises `setPath`
+and joined source paths, retains each map value's resolved source identity,
+preserves an existing object when replace is false, and updates it when true.
+Font replacement and path-form `releaseFont` now operate on the shared logical
+key. Default releases clear both lifetime membership and retained source
+identity, while `releaseSpriteSheet(path, true)` retains the map node and
+records its cleared resource pointer until a forced replacement reconstructs
+it. Focused tests cover forward/backward slashes, drive casing, native
+dot-segment behavior, dot files, two-extension keys, non-replacing duplicates,
+forced replacement, retained-node resource release, current-font invalidation
+and create/release symmetry.
+
+The complete workspace passes 378 tests (44 app/audio/wgpu, 19 assets, one
+core and 314 script/physics); formatting and strict all-target/all-feature
+Clippy are clean. The optimized executable SHA-256 is
+`5fc96a6d006848fa5813d7df83b06a19b607b13a2d02bb3b253bc03b74169280`.
+A fresh-AppData, no-Android 16,500-frame L02 route of the original iOS Lua
+bytecode reaches the visually inspected post-ability scene with 82 optional
+data reads, zero invoked fallbacks and zero compatibility bindings. The 1024
+by 768 wgpu capture is `build/audit-resource-release-mode-l02-16500.png`,
+SHA-256 `dfe175e69eff6fb2f7cfc4b54e18f9ea618453429df61467c7072f7f1b717604`.
+
+### TextGroupSet locale loading and current-font query contracts
+
+The locale bindings are stateful ResourceManager members, not a permanently
+preloaded host dictionary. Registration at `sub_100446570` publishes
+`loadLocale` through `sub_1004482B8`/`sub_10045B7AC`, `useLocale` through
+`sub_1004482C0`/`sub_10045BBF8`, and `getString` through
+`sub_100448A64`/`sub_10045C380`. IDA and Hopper independently show that a
+missing TextGroupSet makes `loadLocale` a zero-result no-op. For an existing
+set, `sub_1004741C0` first releases the loaded `"ALL"` selection and
+`sub_1004731B0` then loads either the exact requested language or every
+language for the literal `"ALL"`. The release happens before validation, so a
+failed request for an absent language leaves the previously loaded groups
+cleared and raises the native language-specific error. `useLocale` merely
+assigns the current locale string and performs no validation.
+
+`sub_1004743D4` distinguishes a language absent from the source data from a
+present language whose TextGroup has not been loaded. `getString` returns its
+key unchanged when the named TextGroupSet itself is absent. Once a language
+group is loaded, `sub_1004725A8` also inserts and returns the key as the
+fallback for a missing translation. Rust now keeps source-file identity with
+each created TextGroupSet, parses the requested locale on `loadLocale`, clears
+all cached language instances in the native order, preserves the two native
+error cases, and removes cached translations on replacement or release.
+
+The adjacent metric thunks at `sub_10044A998`, `sub_10044A9BC`,
+`sub_10044A9D8`, `sub_10044A9F4`, `sub_10044AA10` and `sub_10044AA2C` cast the
+integer IFont virtual results to float32 for Lua publication. Their members
+`sub_10045CE44` through `sub_10045D4AC` require a current font, use virtual
+slots `+0x30`, `+0x48`, `+0x50`, `+0x58` and `+0x60`, and compute height as
+max-ascending plus max-descending. The existing Rust bitmap/system metric
+paths and exact missing-font messages already satisfy those recovered
+contracts.
+
+Focused regression covers absent sets, present-but-unloaded languages,
+invalid-load clearing, exact-language and `"ALL"` loading, missing-key
+fallback, release invalidation and zero-result lifecycle ABI. The complete
+workspace passes 379 tests (44 app/audio/wgpu, 19 assets, one core and 315
+script/physics); formatting and strict all-target/all-feature Clippy are
+clean. The optimized executable SHA-256 is
+`82611aad9217f279c265df024e3b688caf06eeb17d3a0db103ec5c72bb71da1f`.
+A fresh-AppData, no-Android 16,500-frame run of the original iOS Lua bytecode
+again reaches the live L02 post-ability scene with 82 optional data reads,
+zero invoked fallbacks and zero compatibility bindings. The visually
+inspected 1024 by 768 wgpu capture is
+`build/audit-locale-lifecycle-l02-16500.png`, SHA-256
+`90df03a3322de8744f6ed792125e9d2475e63cb183e4e5198a612bdcd5db652e`.
+
+### Resource file dispatch and failed-construction transaction order
+
+IDA and Hopper independently confirm four different constructor paths rather
+than one generic ResourceManager insertion rule. SpriteSheet creation at
+`sub_100457E38` and CompoSpriteSet creation at `sub_1004586AC` compare the
+case-sensitive FilePath extension with exactly `.dat` and `.json`. Their
+binary loader virtuals are `sub_100461050` and `sub_100461B18`; their JSON
+loader virtuals are `sub_100463338` and `sub_10046574C`. An unsupported suffix
+leaves the native loader pointer null and faults at its indirect call. The Rust
+host preserves that hard failure as a catchable Lua error at the process
+boundary instead of terminating the cross-platform executable. A duplicate
+with replace=false returns before this dispatch and therefore does not require
+the candidate file or even a supported suffix.
+
+Both SpriteSheet and CompoSpriteSet fully parse the candidate before touching
+the old map value. Sprite replacement then unregisters the old type-1 sprite
+names through `sub_1004578BC` and registers the new names through
+`sub_100457C84`. Compo replacement uses the analogous type-2 paths
+`sub_1004571A8` and `sub_100457570`, but only when the parsed set's native map
+count at object `+0x40` is nonzero. A malformed candidate therefore preserves
+the old object in both maps, and a successfully parsed empty composite is also
+a no-op. Bitmap-font creation at `sub_100459324` has no extension switch:
+`sub_10042A5B0` constructs and parses the binary FONT completely before the
+shared IFont map's `operator[]` assignment, so its failure also preserves the
+old bitmap or system font.
+
+TextGroupSet creation at `sub_100459AD8` deliberately has the opposite
+transaction boundary. It obtains or inserts the map slot, constructs a new
+object through `sub_10047287C`/`sub_100472760`, assigns it and destroys the old
+shared pointer, and only then invokes the TEXT parser `sub_1004729A4`. A parse
+exception consequently leaves the new empty TextGroupSet installed and the
+old loaded language data gone. Rust now records that constructed-but-unloaded
+state explicitly, commits it before validation, and freezes every successfully
+parsed LocalizationTable and BitmapFont object in ResourceRuntime so later
+locale and metric calls observe the constructed object rather than reopening a
+possibly changed host file.
+
+The JSON SpriteSheet parser at `sub_1004637FC` recognizes the exact
+TexturePacker app URL and the Adobe/ArtPacker families. TexturePacker's object
+form of `frames` raises `Unsupported TexturePacker JSON sheet format (use JSON
+Array format instead)`; unknown exporters raise `Unsupported JSON sheet
+format`. The Compo parser at `sub_1004657CC` accepts only Adobe/ArtPacker,
+treats an absent or empty `compo` array as an empty set, walks each sprite-part
+array in reverse, and raises `Unsupported JSON composprite format` for another
+family. The new split lifecycle `loading` module enforces these branches and
+validates the recovered required frame, pivot, transform, scale, flip and angle
+shapes.
+
+Focused regressions cover exact extension casing, both supported loader
+families, TexturePacker array rejection, missing-file duplicate short-circuit,
+malformed forced replacement, empty-composite preservation, shared-font
+replacement and TextGroupSet's post-commit failure. The complete workspace
+passes 381 tests (44 app/audio/wgpu, 19 assets, one core and 317
+script/physics); formatting and strict all-target Clippy are clean. The
+optimized executable SHA-256 is
+`0cc787e5874872aa19d3b6d63f66b7d3fe2ff2a7ce58746fb3193c9f96a76cd4`.
+A fresh-AppData, no-Android 16,500-frame run of the original iOS Lua bytecode
+again reaches the live L02 post-ability scene with 82 optional data reads,
+zero invoked fallbacks and zero compatibility bindings. The visually inspected
+1024 by 768 wgpu capture is
+`build/audit-resource-loader-l02-16500.png`, SHA-256
+`83b57f1bd6e08fd85495aec95b6fd37bde07c0245644bd2ea4df2871252ab3c9`.
+
+### Shared sprite-name stacks, live draw dispatch and downloadable sheets
+
+The older global `ResourceManager` does not own a second sprite database.
+IDA and Hopper both show `native_createSpriteSheet` at `sub_10009470C`
+calling the same `sub_100457E38(Resources, path, false, true)` member used by
+`res.createSpriteSheet`; `native_releaseSpriteSheet` at `sub_100094800`
+similarly reaches `sub_10045ABC4(Resources, path, false)`. Its decoded-byte
+accounting remains a separate legacy map, but the actual sheet pointer and
+sprite-name lifetime are shared. Rust now forwards both legacy calls through
+the common FilePath-keyed lifecycle instead of creating a second full-path
+sheet entry.
+
+Every SpriteSheet registration at `sub_100457C84` appends a type-1 entry to
+the name vector, while `sub_1004578BC` removes that sheet's entries. The
+corresponding CompoSpriteSet members `sub_100457570` and `sub_1004571A8` use
+type 2. The central lookup `sub_10045BDDC` examines only the vector's last
+entry; when a requested type does not match that last entry it returns null
+rather than searching backward. This makes a later same-named resource shadow
+an older one and makes release expose the previous last entry. ResourceRuntime
+now stores the parsed sheet/set objects and reproduces this vector order,
+type gate, same-owner replacement and release fallback. Sprite bounds, pivots,
+composite data/entry mutation and RenderBridge's active composite table all
+read this live registry.
+
+The same rule now reaches drawing rather than stopping at queries.
+`sub_10045C144` calls `sub_10045BDDC(name, 0)` and immediately returns on a
+missing name; its type-2 branch calls `sub_1004376D4`, and its type-1 branch
+calls `sub_100467AF0`. The former Rust static-preload/zero-anchor fallback has
+therefore been removed, and a missing resource no longer submits a command or
+consumes render order. Tests that inspect render state now explicitly create a
+small parsed SPRT instead of relying on fictitious names.
+
+The four global GameLua helpers use the same live database with narrower type
+rules. `drawCompoSprite` at `sub_10004DDA0` obtains a type-2 record through
+`sub_10045C06C`; `drawSpriteWithoutShader` at `sub_10004E300` asks only the
+atlas virtual; `drawSpriteWithShader` at `sub_10004E070` tries the atlas first
+and then `sub_10045BF08`'s type-2 lookup; and `isCompoSprite` at
+`sub_10004E3A0` is exactly a non-null `sub_10045BF08` test. Their already split
+`direct_sprite_registration/{composite,plain,shader,lookup}.rs` leaves now
+share ResourceRuntime instead of the constructor-time all-bundle scan.
+Releasing the selected composite consequently changes `isCompoSprite` to
+false and prevents later direct submission.
+
+Downloadable `Assets.createSpriteSheet` is also part of this shared map.
+`sub_1000AC660` constructs a sheet with the explicit descriptor and texture
+paths through `sub_1004617AC`, then calls `sub_100457724(Resources, name,
+sheet)`. That last member unregisters the old name's sprites, registers the new
+sheet's type-1 entries and replaces the map pointer. The offline Assets adapter
+now parses a cached binary/JSON descriptor completely, installs its explicit
+texture path, and only then performs the same transactional replacement.
+Malformed replacement therefore preserves the previous dynamic sheet, and
+its internal sprite names are visible to the ordinary resource queries.
+
+Focused regressions cover legacy forwarding, duplicate name shadowing,
+release fallback, cross-type last-entry rejection, missing-resource draw
+ordering, live direct-helper lookup, release-sensitive `isCompoSprite`, and
+downloaded-sheet parse/failure transactions. The complete workspace passes
+383 tests (44 app/audio/wgpu, 19 assets, one core and 319 script/physics);
+formatting and strict workspace all-target Clippy are clean. The optimized
+executable SHA-256 is
+`3d62edd0e8cceec4bf3e67f6e96417aa9b187300e04d7251786bf3c9685d754c`.
+
+A new empty-AppData, no-Android 16,500-frame run of the original iOS 1.1.6
+Lua bytecode completes the menu/L01/result/L02 route with 88 optional data
+reads, zero invoked fallbacks and zero compatibility bindings. The 1024 by 768
+wgpu capture `build/audit-live-resource-stack-l02-16500.png` is visually
+complete and has SHA-256
+`08d7f484d48abfd93b4b9b3b08e180b5c8d300e4d9c4d529a6194b5e2b478df9`.
+Its camera stop differs from earlier deterministic captures, reinforcing that
+these PNGs are route/render completeness checks rather than a substitute for
+the executable's disassembled control flow or a version-matched native frame.
+
+### Submission-time sprite ownership and retained scene-object pointers
+
+The iOS 1.1.6 executable is sufficient to close this ownership behavior; no
+Android device or Android 1.1.5 frame was used. IDA shows that Purple's draw
+paths submit resource pointers, not names for a later renderer lookup.
+`sub_100043990` resolves the selected object's first image through
+`sub_10045BC64`/`sub_10046B1F0`; `sub_1000343CC` and `sub_100096344` resolve
+the masked image before constructing its quad; and the textured-line paths
+`sub_10006DB0C`/`sub_100030EB0` consume an already resolved image. The Rust
+draw adapters now copy a `SpriteCatalogRegion` into every corresponding
+deferred wgpu command, including ResourceManager draws, selected/masked
+objects, textured lines, rubber bands and box segments. Same-frame
+draw-then-release and same-name replacement can therefore no longer rebind an
+already submitted command.
+
+The COMP loader has an even stronger lifetime boundary. `sub_100461B98`
+iterates the ordered SpriteSheet map, resolves every child AtlasSprite while
+loading, raises `Sprite "{0}" not loaded while loading {1}` at the first
+missing child, and stores the resolved pointer in each part. It does not allow
+a later sheet with the same child name to change that pointer.
+`sub_1004376D4` subsequently traverses those retained records and calls
+`sub_100467BE0` directly on each stored AtlasSprite. ResourceRuntime now keeps
+the part and region vectors index-aligned, validates the complete COMP before
+commit, and exports private catalog aliases only as an internal way to carry
+pointer identity through the deferred host. These aliases are not visible to
+Lua and do not alter the native name map.
+
+Scene objects retain the same identities. `sub_10004C7FC` writes either the
+CompoSprite pointer at RenderObjectData `+120` or the AtlasSprite pointer at
+`+144`, then keeps a null pointer when neither lookup succeeds. Existing
+objects must consequently survive source-sheet release without changing to a
+new same-named sprite, while a missing assignment must not spring into view if
+that name loads later. `SceneObject` now freezes the assigned atlas or ordered
+composite children; an empty bound-composite vector is the host-only null
+pointer sentinel that preserves native callback/command ordering while
+preventing future catalog lookup. `RenderCommand.bound_composite` carries
+those frozen children into wgpu, whose traversal prioritizes the retained
+parts and their regions over the active catalog. ResourceManager composite
+draw submissions use the same mechanism.
+
+The growing ResourceRuntime implementation was also split along the recovered
+native clusters. `resource_manager/runtime.rs` now contains the shared state
+layout and constructor (261 lines),
+`runtime/sprite_lifecycle.rs` contains SpriteSheet/CompoSpriteSet construction,
+replacement and release (163 lines), and `runtime/sprite_catalog.rs` contains
+active lookup, retained pointer access, geometry and deferred catalog export
+(263 lines after this batch). This is a structural split only; focused
+shadow/release tests and the complete suite guard the original behavior.
+
+Regressions now cover immediate atlas submission, COMP load-time pointer
+freezing, object construction and `native_setSprite`, null lookup retention,
+active-name shadowing, release of the source sheet, and wgpu rendering from a
+retained composite after the active catalog is empty. The complete workspace
+passes 389 tests (46 app/audio/wgpu, 19 assets, one core and 323
+script/physics); formatting and strict all-target/all-feature Clippy are
+clean. The optimized executable SHA-256 is
+`a8e46c28f6f832e2854d92caff04cc27f225c10c8023f0b66c7e9578161f2868`.
+
+A fresh empty-AppData, no-Android 600-frame run of the original iOS Lua
+bytecode reaches the complete main menu with 67 optional data reads, zero
+invoked fallbacks and zero compatibility bindings. The visually inspected
+1024 by 768 wgpu capture is
+`build/audit-object-pointer-menu-600.png`, SHA-256
+`470f6255b774e61e7c529a77c754a2812c9974790bbd83c224d74b1f9c7339c9`.
+As with earlier captures, it is a route/render regression artifact rather than
+the source of truth for native semantics.
+
+### Remaining submission-time image pointers and special wgpu quads
+
+This closure used the connected IDA MCP directly and did not use an Android
+application, device or screenshot. Theme, particle, trajectory and decoration
+descriptors retain names until their native draw members run, so the Rust
+adapters now resolve and freeze atlas/composite pointers at command submission
+rather than at descriptor construction or later wgpu traversal. The selected
+sprite helper has two independent native operands: `sub_100043990` resolves
+the atlas sprite through `sub_10045BC64`/`sub_10046B1F0` and also obtains the
+second image passed to `sub_10008D428`. `RenderCommand` consequently carries a
+separate retained masked-texture binding. Render objects use the same binding
+for the image pointer stored by `setTexture` at RenderObjectData `+128`.
+
+Dirt has a different, earlier lifetime boundary. The IDA decompilation of
+`sub_10001F98C` shows `bgTexture` and `fgTexture` being read once, followed by
+two `sub_10045BC64`/`sub_10046B1F0` chains at `0x10001FF88` through
+`0x10001FFC8`. The foreground image result is stored at DirtMechanics `+232`;
+the background result is immediately installed on the first
+DrawablePolygon. The Dirt component now receives ResourceRuntime in its
+factory, freezes both resolved texture sources when the native component is
+created, and copies them into `DirtRenderCommand`. Same-name resource
+shadowing and release can no longer change either polygon's image in the
+deferred host.
+
+One wgpu-only bypass was found during the catalog audit. Commands containing
+`native_sprite_quad` or `explicit_quad` previously entered a special branch
+that looked the sprite up again by name even when the script command already
+contained its resolved atlas region. This contradicted `sub_1000343CC`, which
+resolves the image before calling `sub_100096344`; that renderer stores the
+passed image at its `+40` field before building the six vertices. Both wgpu
+quad paths, as well as the test-only CPU reference quad, now prefer the
+submission-time region and use the live catalog only for commands that did not
+receive a native pointer.
+
+Focused regressions cover theme, particles, both trajectory paths,
+decorations, the selected helper's two images, object `setTexture`, Dirt's two
+constructor-time images, and both special wgpu quad branches across active
+catalog replacement/release. The complete workspace passes 398 tests (48
+app/audio/wgpu, 19 assets, one core and 330 script/physics); formatting and
+strict all-target/all-feature Clippy are clean. The optimized executable
+SHA-256 is
+`d41ce21d43e591ce06e56d71880094d6432813d63593a9928a434d7097eb0261`.
+
+A fresh isolated AppData, no-Android 600-frame execution of the original iOS
+1.1.6 Lua bytecode reaches the complete main menu with 67 optional data reads,
+zero invoked fallbacks and zero compatibility bindings. The visually inspected
+1024-by-768 wgpu capture is
+`build/audit-pointer-ownership-menu-600.png`, SHA-256
+`dc90aeb764a15039ccf0119db1d2cdb00adee85a002853f6fef7df98440bfc63`.
+It remains a deterministic completeness regression; the iOS executable and
+bundle resources are the behavioral and visual source of truth.
+
+### Current-IFont submission ownership and the drawString3D string ABI
+
+This pass used both connected disassemblers and deliberately did not infer
+semantics from a screenshot. IDA decompilation of `sub_10045C1FC` shows the
+ResourceManager reading its current `IFont *` from `+0x48`, throwing when it
+is null, obtaining virtual slot `+0x10`, resolving the localized string through
+`sub_10045C380`, and invoking the font immediately. Hopper independently shows
+the same `r0[9]` pointer read, null branch and indirect slot call.
+`sub_10045BAC4` establishes how selection is represented: it searches the
+shared IFont map, copies the selected node's object pointer into `+0x48` and
+stores the name separately at `+0x50`.
+
+The BitmapFont virtual at `sub_10042B338` then walks the constructed font's
+glyph tree and submits each retained AtlasSprite through `sub_100467A00` (or
+the installed callback) during that call. Both IDA and Hopper show that the
+font object, its glyph metrics and the resolved sprite/texture identity are
+therefore consumed before a later resource-map mutation. A deferred wgpu host
+cannot reproduce this by looking up only `TextRenderCommand.font` at frame
+preparation time: a same-name replacement or release would incorrectly rebind
+an already submitted draw.
+
+The 3D adapter had a separate ABI error. `sub_100087BB4` reads two required
+strings followed by seven float32 numeric arguments. `sub_10003457C` does not
+select the second string as a font; after installing its perspective/model
+state it forwards both strings directly to `sub_10045C1FC`. They are the
+TextGroupSet name and localization key, and the already-selected current IFont
+performs the draw. The prior Rust adapter mislabeled them as `text, font`, did
+not localize the key and consequently attempted to render with a key-named
+font, producing silent missing text.
+
+`TextRenderCommand` now carries an optional `TextFontBinding`. Every native
+ResourceManager, ordinary UI and 3D-text submission records either the exact
+parsed BitmapFont plus its constructor-relative resolved atlas source, or the
+distinct system-font kind. ResourceRuntime retains the concrete FONT
+descriptor path so later filesystem or ResourceManager path changes cannot
+alter that source. Both the wgpu expander and test-only CPU renderer prefer
+this frozen binding; their old static font catalog is used only for explicit
+legacy/test commands without a native binding. The public `getString`, 2D
+drawString, ordinary UI text and 3D text now share one implementation of
+`sub_10045C380`'s TextGroupSet/current-locale contract.
+
+Focused regressions prove that the 3D strings localize as group/key, that the
+current bitmap font rather than the second string is selected, that a submitted
+command keeps its original glyph width and atlas path after a forced same-name
+replacement and release, and that wgpu uses the frozen texture and geometry
+instead of the active catalog entry. The complete workspace passes 401 tests
+(49 app/audio/wgpu, 19 assets, one core and 332 script/physics); formatting and
+strict all-target/all-feature Clippy are clean. The optimized executable
+SHA-256 is
+`30b2a8824c345d264c34f3a49790c7ee1414599f7b5c30bce213732e306bcf15`.
+
+A fresh isolated-AppData, no-Android 600-frame headless run and a 600-frame
+wgpu run both completed with 67 optional data reads, zero invoked fallbacks and
+zero compatibility bindings. The latter emitted
+`build/audit-text-binding-smoke-600.png`, SHA-256
+`070ce1675e5fd44635114093c69b280626db562a35417c35f2a99f4d2c57942f`.
+Per `docs/visual-reference-policy.md`, this image proves only that the live
+wgpu/resource path completed; it was not used to accept positions, texture
+choice, timing, shader behavior or visual fidelity.
+
+### UIKit SystemFont label ownership, ARGB ABI and deferred wgpu rasterization
+
+This pass used IDA and Hopper independently and did not inspect a rehost
+screenshot to choose any visual behavior. `game::SystemFont::Impl::drawString`
+at `0x100475B98` returns for an empty string, subtracts the stroke width from
+both input coordinates and clips the requested substring. Its low anchor word
+subtracts ascending for BASELINE (`3`), ascending plus descending for BOTTOM
+(`2`), or half that sum for VCENTER (`1`); TOP (`0`) and VPIVOT (`4`) take the
+unshifted default branch. Its high anchor word subtracts the complete
+string width for RIGHT (`2`) or half for HCENTER (`1`). The resulting anchored
+coordinates are converted to integers before the cached label texture is
+drawn.
+
+On a LabelPool miss, the same routine measures an NSString with the retained
+UIFont, truncates width and height, adds twice the stroke width, and creates an
+8-bit, four-channel bitmap context with format value `6` (`A8B8G8R8`,
+premultiplied-last). The context is vertically flipped. A stroke of at least
+one pixel translates the text origin by the stroke width, selects the stroke
+color, a line width of twice the requested width and a round join, draws the
+text in stroke mode, then performs the fill draw. The pool key hashes family,
+text, point size, packed fill color, stroke width, packed stroke color and
+style in that order. `sub_100477E38` clamps normalized color components and
+packs them as `AARRGGBB`.
+
+The constructor at `0x100477668` confirms the Impl ownership layout: family at
+`+24`, size at `+32`, fill Color at `+36`, stroke width at `+52`, stroke Color
+at `+56`, style at `+72`, metrics at `+76/+80/+84`, and the retained UIFont at
+`+88`. The two Lua adapters, `sub_1004471B4` and `sub_100447480`, accept colors
+as alpha, red, green, blue rather than RGBA. Each number narrows through
+float32 and FCVTZS before packing, without an explicit per-input byte mask;
+the Color constructor at `sub_100477DD0` then normalizes the resulting bytes.
+The non-stroked adapter supplies zero width and opaque black for the unused
+stroke color.
+
+A runtime interception of the shipped iOS Lua initialization, immediately
+before `initializeGameMenus`, recorded the actual boot call as
+`SYSTEM_FONT, ArialRoundedMTBold, 40, 255, 0, 0, 0, 0`: point size 40, opaque
+black fill, style zero and no stroke. The constructed metrics are ascending
+37, descending 8, leading 0 and height 45; the native width of `Stella` is
+110. These values, rather than a screenshot estimate, now define the default
+menu label contract.
+
+`TextFontBinding::System` now owns an immutable render binding containing the
+resolved face bytes and index, family, size, fill/stroke colors, style and all
+three metrics. This freezes the font selected when the command is submitted;
+same-name replacement or release cannot rebind a deferred frame. The
+cross-platform rasterizer is isolated in `assets/system_font.rs`, while
+`gpu/frame/text/system.rs` creates and submits the generated premultiplied
+label texture. Both 2D and projected 3D text use the concrete retained binding.
+The test-only CPU renderer follows the same dispatch so it no longer silently
+omits SystemFont commands.
+
+A follow-up instruction audit closed two integer-boundary differences without
+using a visual comparison. In both the LabelPool hit path near `0x100475E04`
+and miss path near `0x1004762A0`, IDA shows `FCVTZS` of the float32 coordinate
+after stroke subtraction and anchor subtraction; Hopper independently exposes
+the same conversions immediately before virtual texture draw slot `+40`.
+`TextRenderCommand` therefore retains the local float32 IFont origin in
+addition to its transformed screen origin. The deferred renderer now performs
+the two native FSUB operations, converts toward zero, and only then applies the
+captured 2D matrix or 3D projection. This is observably different for
+fractional and negative coordinates and cannot be reconstructed by rounding a
+finished screen-space vertex.
+
+The hash arithmetic also uses signed operands. The instruction sequence
+sign-extends the point size, both packed `AARRGGBB` colors, stroke width and
+style from 32 to 64 bits before wrapping additions and multiplications by 33.
+The earlier Rust path zero-extended opaque colors. The shipped boot pair
+`ArialRoundedMTBold`/`Stella` now produces the recovered signed-field key
+`0e93feaf876257ce`, rather than the zero-extended `0e948b31876257ce`.
+
+SystemFont also owns the LabelPool lifetime rather than leaving it alive for
+the process. The successful constructor increments `dword_100C12B68` at
+`0x1004777A4`. IDA decompilation of the destructor at `0x100477BC4` and Hopper's
+independent pseudocode both show a decrement followed by a one-to-zero test.
+On that transition Purple resets the pool count, erases its complete red-black
+tree, restores the empty sentinels and clears the remaining pool state. A
+same-parameter font constructed after the last instance dies therefore starts
+with an empty cache even though its numeric label hash is identical.
+
+ResourceRuntime now advances a LabelPool epoch only when removal actually
+destroys its final SystemFont value. Successful same-name SystemFont
+replacement does not advance it because the new Impl is constructed before
+the old map value is overwritten, matching the native nonzero instance count.
+The epoch is frozen into every deferred `SystemFontRenderBinding`. It is not
+part of Purple's recovered numeric hash; it is appended only to the host-side
+texture identity so release-before-frame-preparation can keep an old submitted
+label and a newly constructed same-hash label distinct in one wgpu frame.
+
+The metric virtuals have a second, independent rounding boundary. The byte
+string wrappers at `0x100476424` and `0x100476538` convert UTF-8 to the engine's
+UTF-32 string first. Their wide overloads at `0x10047692C` and `0x10047676C`
+take the requested substring in Unicode-codepoint units, convert it back to
+UTF-8, call `NSString sizeWithFont:`, and apply `FCVTZS` directly to the
+returned width or height. Hopper independently shows the same substring,
+conversion, Objective-C call and final conversion sequence. In contrast, the
+constructor stores ascender, negated descender and leading only after three
+separate conversions. Adding those already-truncated metric values is not the
+same operation as measuring the complete NSString height.
+
+`SystemFontRenderBinding` consequently retains a separate label line height
+derived from the unrounded face metrics before their individual integer
+boundaries. Cached single-line and multiline texture allocation uses this
+measurement plus twice the stroke width. TOP/VCENTER/BOTTOM/BASELINE anchoring and the
+public max-ascending/max-descending/height metric queries continue to use the
+constructor's separate integer fields. The wgpu regression covers one-line,
+two-line and stroked allocation so the two contracts cannot silently collapse
+again.
+
+Focused regressions cover the exact Lua ARGB conversion (including its
+sign-extension edge), constructor argument slots, metrics and retained face
+bytes, replacement/release lifetime, native stroke texture dimensions,
+premultiplied fill/stroke pixels, signed LabelPool hashing, positive/negative
+fractional FCVTZS behavior, non-uniform matrix ordering and RIGHT/BOTTOM
+anchored wgpu geometry. A dedicated delayed-frame regression releases the
+last SystemFont, recreates the same family/size/color and submits both
+same-text draws together, proving that their texture identities remain
+separate. The complete workspace passes 407 tests (53
+app/audio/wgpu, 19 assets, one core and 334 script/physics); formatting and
+strict all-target/all-feature Clippy are clean. The optimized executable SHA-256 is
+`8d544f93637975ee5cc529458493e3a76281191ab1105fcf93fad4ae16f10f9d`.
+
+A new isolated-AppData, no-Android 600-frame headless run completed with 67
+optional data reads, zero invoked fallbacks and zero compatibility bindings.
+A separate 120-frame wgpu probe invoked the shipped SYSTEM_FONT call on every
+draw and completed with 15 optional reads, zero invoked fallbacks and zero
+compatibility bindings. It emitted
+`build/audit-system-font-smoke-20260820.png`, SHA-256
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+The image was deliberately not viewed or compared. It proves only that the
+live SystemFont/wgpu path executed; still images, including original-game
+captures without precisely matching runtime state and time, remain
+non-authoritative for layout or fidelity.
+
+### LabelPool five-mebibyte FIFO and immediate-to-deferred texture ownership
+
+The next pass again used no screenshot as acceptance evidence. IDA's
+decompilation of `game::LabelPool::addLabel` at `0x100476AEC` and Hopper's
+independent pseudocode agree on the complete capacity path. The label texture
+reports its format through virtual slot `+112`, width through `+88` and height
+through `+96`; `sub_1004DE110` converts those values to storage bytes. Format
+`6` is the four-channel `A8B8G8R8` surface, so every cached SystemFont label is
+accounted as `width * height * 4` bytes. The exact limit is `0x500000`
+(5,242,880 bytes). A total equal to the limit is accepted. A total of at least
+`0x500001` repeatedly evicts entries until the new label fits.
+
+The pool is insertion-order FIFO, not LRU. Its auxiliary vector inserts every
+new hash at `begin()` (using `_M_insert_aux(begin, value)` when nonempty), while
+the capacity loop selects `end() - 1`; the red-black tree is then erased by
+that oldest hash and the evicted texture's actual byte size is subtracted.
+`drawString` performs its tree lookup directly and does not call `addLabel` on
+a hit, so a hit cannot reorder the vector. The tree key remains only the
+recovered 64-bit hash, preserving native collision behavior.
+
+IDA and Hopper also expose the collision/layout ordering in
+`SystemFont::Impl::drawString` at `0x100475B98`. Stroke and the requested
+vertical metrics are subtracted before the pool lookup. RIGHT or HCENTER calls
+`getStringWidth` for the current substring before that lookup. On a hit, the
+virtual draw instead reads width and height from the cached Label object.
+Consequently a hash collision anchors using the current string but draws the
+first cached label's texture dimensions; neither the complete current layout
+nor the complete cached layout may be reused as one unit.
+
+`AssetCatalog` now carries this exact logical pool: one active destructor
+epoch, a hash map, a newest-first deque, the native byte counter and a
+monotonic host texture identity. Hits do not mutate insertion order. Misses
+accept the exact 5 MiB boundary, evict from the deque tail and assign a fresh
+physical key when an evicted hash is later inserted again. Entering another
+last-instance epoch clears all logical entries and bytes, matching the native
+SystemFont destructor.
+
+wgpu requires one additional ownership layer because Purple consumes each GL
+draw immediately, whereas this host uploads after the complete frame has been
+prepared. Every prepared frame therefore retains `Arc<TextureAsset>` snapshots
+for the physical label identities it references. Logical FIFO eviction marks a
+texture retired but cannot remove it while an earlier draw in the same frame
+still requires it. The renderer defers GPU texture and bind-group destruction
+until a later frame no longer references that identity. This host-only
+snapshot does not enlarge or reorder the emulated LabelPool; it prevents the
+deferred backend from changing an already submitted native draw.
+
+Regressions cover the exact byte boundary, FIFO selection after a recent hit,
+non-reordering cache hits, oversized-label rejection, epoch clears,
+same-hash re-insertion identity, cached dimension ownership and actual
+headless-wgpu retention/removal across two frames. The complete workspace now
+passes 410 tests (56 app/audio/wgpu, 19 assets, one core and 334
+script/physics); formatting and strict all-target/all-feature Clippy are clean.
+The optimized executable SHA-256 is
+`25136eb2d8ddb84b106617d58ae1c5981187a94138f16523071df278fa305e65`.
+
+A fresh isolated-AppData, no-Android 600-frame execution of the shipped iOS
+Lua bytecode again completed with 67 optional reads, zero invoked fallbacks
+and zero compatibility bindings. No screenshot was generated or inspected in
+this pass. In accordance with `docs/visual-reference-policy.md`, even a
+matching still would not prove these cache, collision or ownership semantics.
+
+### System-font enumeration order and one-time cache
+
+`game::SystemFont::Impl::getAvailableFontNames` at `0x100475950` exposes a
+separate nonvisual ordering contract. IDA and Hopper independently show that
+the function populates its static vector only while `begin == end`. It obtains
+`+[UIFont familyNames]`, walks that NSArray in returned order, obtains
+`+[UIFont fontNamesForFamilyName:]` for each family, and appends every UTF-8
+PostScript name in the nested array order. There is no native sort and no
+deduplication. Later calls return the already populated vector. The Lua bridge
+at `0x1004482D0` copies it into a fresh table at consecutive one-based indices.
+
+The previous host flattened all font faces, globally sorted their names and
+deduplicated them. The replacement now mirrors the two-level traversal over
+the platform font database: unique families retain first-returned order, each
+family contributes its faces in database order, duplicate face names remain,
+and the existing `OnceLock` supplies the recovered process-lifetime cache.
+The platform's actual installed font inventory remains platform-dependent, as
+it is for UIKit, but the binary-defined ordering and duplication semantics no
+longer change on the Rust side.
+
+A deterministic helper regression uses interleaved families and a repeated
+PostScript name to prove family grouping, face order and duplicate retention.
+The complete workspace passes 411 tests (56 app/audio/wgpu, 19 assets, one
+core and 335 script/physics); formatting and strict all-target/all-feature
+Clippy are clean. The current optimized executable SHA-256 is
+`ce66e73de5328978ee5ae91bbdf44bc01eb2369f331e464619c52dcb82cad228`.
+A new isolated-AppData 600-frame run again reports 67 optional reads, zero
+invoked fallbacks and zero compatibility bindings. No image was produced or
+consulted.
+
+### SystemFont getBounds ABI and corrected TOP/BASELINE anchoring
+
+IDA and Hopper independently confirm the complete
+`game::SystemFont::Impl::getBounds` implementation at `0x10047664C`. The
+IFont vtable selects it at slot `+104`. Its packed `Anchor` argument stores the
+vertical enum in the low word and the horizontal enum in the high word. The
+string is measured through the same substring width and height virtuals first;
+LEFT uses zero, HCENTER multiplies the already integer width by float32 `-0.5`,
+and RIGHT negates it. Each of the four final edges is then converted separately
+with `FCVTZS`, so an odd centered width deliberately need not retain its source
+integer span after both boundaries truncate toward zero.
+
+The anchor parser at `sub_10040A248` assigns TOP=0, VCENTER=1, BOTTOM=2,
+BASELINE=3 and VPIVOT=4. The low-word comparisons in `getBounds` and
+`drawString` therefore subtract the ascender for BASELINE=3, not TOP. BOTTOM
+subtracts ascender plus descender, VCENTER subtracts their integer half, and
+TOP/VPIVOT take the unshifted default branch. This corrects the prior rehost
+interpretation, which had exchanged TOP and BASELINE and could place identical
+text differently depending on whether its LabelPool entry was created or
+reused.
+
+`SystemFontRenderBinding` now owns the shared cross-platform width, height and
+bounds calculations. The public font-width query, label allocation and
+cache-hit anchor calculation use that same measurement boundary. Bounds ranges
+are selected after UTF-8 is converted to Unicode codepoints, matching the
+native UTF-32 substring: a negative start fails, a positive start beyond the
+end is clamped to the end, and a negative signed count becomes a size_t-sized
+suffix request. An empty source bypasses range validation entirely and both
+measurement wrappers return zero.
+The stored stroke width expands all four bounds before their independent
+float32-to-int conversions.
+
+Regressions cover TOP versus BASELINE on both LabelPool miss and hit, BOTTOM,
+VPIVOT, an odd-width HCENTER rectangle, stroke expansion, UTF-32 indexing over
+multibyte text, negative counts and invalid starts. The complete workspace now
+passes 413 tests (56 app/audio/wgpu, 19 assets, one core and 337
+script/physics); formatting and strict all-target/all-feature Clippy are clean.
+The optimized executable SHA-256 is
+`0122b8738d8b2bf8c5d26dd2b07351b2a9a6d75c9cb4ecd9a27ee80de4944490`.
+
+A fresh isolated-AppData, no-Android 600-frame execution of the shipped iOS
+Lua bytecode completed with 67 optional reads, zero invoked fallbacks and zero
+compatibility bindings. No screenshot was generated or inspected. In
+particular, neither a matching nor a differing still is accepted as evidence
+for these enum, substring, cache or rounding contracts.
+
+### SystemFont CGFloat metrics and byte-wrapper range normalization
+
+A follow-up constructor audit distinguishes two conversion domains that the
+earlier host had collapsed. Lua's numeric size, stroke and style slots first
+narrow to float32 and use `FCVTZS S`, but `UIFont` returns its ascender,
+descender and leading as ARM64 `CGFloat` doubles. IDA shows direct
+`FCVTZS W8,D0` at `0x100477750`, `0x100477770` and `0x10047778C`; Hopper
+independently shows the same three D-register conversions. The Rust constructor
+previously narrowed those values to f32 first, which can round a value such as
+36.9999999 across the integer boundary before truncation. Constructor metrics
+and the retained label-height measurement now convert directly from f64, while
+Lua argument conversion deliberately remains f32.
+
+The IFont height getter at `0x1004758D4` loads ascender and descender as W
+registers and uses `ADD W0,W8,W9`. `drawString` uses the same wrapping W add
+before its signed, toward-zero half calculation. The public height metric and
+both LabelPool hit/miss vertical-anchor branches now share that exact wrapping
+addition instead of Rust debug-overflow behavior or release-only wrapping.
+The constructor still calls `fontWithName:size:` before rejecting a nonzero
+style, so an unavailable face is reported before an unsupported style; a
+focused regression preserves this failure order.
+
+The byte-string width and height wrappers at `0x100476424` and `0x100476538`
+also contain range behavior that is absent from the wide overloads. For a
+nonempty source they convert UTF-8 to UTF-32, clamp a positive start greater
+than the codepoint length to the end with signed `CMP/CSEL`, and clamp count
+using a wrapping 32-bit start-plus-count comparison. Negative start remains
+negative and fails when sign-extended into `basic_string::substr`; negative
+count becomes a large size_t request and selects the suffix. For an empty
+source both wrappers return zero before conversion or range checks, so even
+otherwise invalid start/count values produce a stroke-only bounds rectangle.
+`native_string_bounds` now reproduces this wrapper normalization rather than
+calling the wide-substring model directly.
+
+New regressions distinguish f64 and f32 conversion on both signs, cover ARM
+integer-indefinite overflow, constructor error priority, W-add overflow,
+signed half-height, positive overrun clamping, negative start/count, huge
+wrapping counts and empty-source BASELINE bounds. The complete workspace now
+passes 418 tests (57 app/audio/wgpu, 19 assets, one core and 341
+script/physics); formatting and strict all-target/all-feature Clippy are clean.
+The optimized executable SHA-256 is
+`6c70376d9e7c691306d4e668f0b648a7a475f74f7aefafeac3a5386aa0037619`.
+
+A fresh isolated-AppData, no-Android 600-frame run of the shipped iOS Lua again
+completed with 67 optional reads, zero invoked fallbacks and zero compatibility
+bindings. No screenshot was generated or inspected, since no still image can
+prove these precision, overflow, exception-order or substring contracts.
+
+### BitmapFont v2 UTF-32 records, signed pivots and IFont wrapping arithmetic
+
+This pass deliberately treated screenshots as non-authoritative. IDA and
+Hopper independently recover the BitmapFont constructor at `0x10042A5B0`, its
+loader at `0x10042A780` and the vtable installed from `0x100AA4320`. The loader
+accepts FONT versions 1 and 2, not only the v1 files shipped in this bundle.
+Version 1 reads a 16-bit character value and explicitly masks it with
+`AND W27,W27,#0xffff`; version 2 reads the glyph key with the 32-bit reader at
+`0x10042ABA4`. The remaining five atlas fields keep their signed 16-bit layout.
+The common reader at `0x1004FACCC` returns with `LDRSH`, so x, y, width, height
+and the vertical pivot all sign-extend. The former Rust model restricted every
+key to `u16`, treated four atlas fields as unsigned and treated the pivot as
+unsigned, which made the native v2 supplementary-plane path unrepresentable
+and could turn negative atlas geometry or a negative baseline into a very
+large positive value.
+
+The same vtable closes the bitmap metric rules. Slot `+48` is the width virtual
+at `0x10042BA8C`, slot `+56` is the per-string height virtual at
+`0x10042BC54`, slots `+64` through `+96` return height, ascender, descender,
+leading and tracking, and slot `+104` is `getBounds` at `0x10042BE4C`. Width
+walks every requested codepoint, adds a glyph width only when that key exists,
+then executes `MADD W...` with tracking times requested character count minus
+one. Missing glyphs therefore still participate in the tracking count even
+though they contribute neither a quad nor a cursor advance. All sums and the
+final multiply-add wrap in 32-bit W lanes. String height is the largest glyph
+height in the requested substring, while the public font height is the
+constructor-cached ascender plus descender with the same W-register wrap.
+
+BitmapFont anchor and bounds arithmetic is now shared by the asset parser,
+script queries, test renderer and live wgpu expander. RIGHT and HCENTER use the
+wrapped string width; HCENTER applies an arithmetic signed half. TOP uses the
+cached ascender, VCENTER subtracts the arithmetic half of wrapped ascender plus
+descender, BOTTOM negates descender, and BASELINE/VPIVOT take the zero default.
+`getBounds` additionally subtracts the largest nonnegative pivot in the
+selected substring and uses that substring's tallest glyph. The rendering
+path continues to advance only after a found glyph, matching
+`BitmapFont::draw` at `0x10042B338`.
+
+`FontGlyph` now retains a `u32` key and signed pivot, the parser accepts both
+native FONT versions, and all consumers use one codepoint lookup and wrapping
+metric implementation. Regressions cover a v2 U+1F600 glyph with a negative
+pivot, missing-glyph tracking, negative-pivot ascender/descender behavior,
+32-bit width overflow and an actual UTF-32 glyph reaching wgpu quad
+submission. The complete workspace passes 421 tests (58 app/audio/wgpu, 21
+assets, one core and 341 script/physics); formatting and strict
+all-target/all-feature Clippy are clean. The optimized executable SHA-256 is
+`6ccc1d4f73dd6af804c766fcb19d9c94888204eb2c548e2c2812b2535369a499`.
+
+A fresh isolated-AppData, no-Android 600-frame run of the shipped iOS Lua
+completed with 67 optional reads, zero invoked fallbacks and zero compatibility
+bindings. No screenshot was generated or inspected. This validation closes
+only the instruction-level format, metric, anchor and submission contracts;
+it makes no visual-fidelity claim from a still frame.
+
+### Signed AtlasSprite geometry, JSON narrowing and rotated UV cache
+
+The shared AtlasSprite audit extends the signed FONT finding to ordinary SPRT
+records. IDA and Hopper independently show six consecutive calls to
+`sub_1004FACCC` in the binary SPRT loader at `0x1004610F0`. The reader ends in
+`LDRSH W0`, and `Sprite::Sprite` at `0x100467760` stores x, y, width, height,
+pivot X and pivot Y with `STRH` at object offsets `+0x28` through `+0x32`.
+The width, height and pivot getters at `0x100467E14` through `0x100467E2C`
+load those members with `LDRSH`. Consequently unsigned Rust x/y/width/height
+were not merely a parser interpretation; they contradicted the runtime object
+ABI used by queries, bounds and draw geometry.
+
+The JSON SpriteSheet path at `0x1004637FC` has a separate pre-constructor
+boundary. `sub_10055AE64` converts parser integers with `SCVTF D0,X8` while
+retaining their signed 64-bit value, and converts parser doubles to that same
+integer view with `FCVTZS X8,D0`. Frame x/y/w/h are then read through
+`sub_10055D93C`, which returns the low W word from the 64-bit member at map-node
+offset `+0xA0`. Default pivots are calculated from those signed W values with
+the native add-sign-bit and arithmetic-shift sequence, which implements
+division by two toward zero.
+Adobe/ArtPacker explicit pivots instead use the float accessor
+`sub_10055DE7C`, add float32 0.5, execute `FRINTM`, then `FCVTZS`. Only after
+those calculations does the Sprite constructor truncate the six arguments to
+their signed 16-bit members. The Rust loader now preserves that order, so a
+negative odd dimension produces the native signed half and a negative
+explicit pivot follows the recovered floor-after-half rule.
+
+TexturePacker's `rotated` field was previously type-checked and discarded.
+The binary instead requires it through the bool accessor `sub_10055D694` and
+passes it as the final argument to `sub_10046AF70`. `Sprite::Sprite` uses that
+argument to cache four UV pairs at offsets `+0x34`, `+0x3C`, `+0x44` and
+`+0x4C`: value 1 swaps the width/height atlas extents and rotates the corner
+order, values 2 and 3 select the other two permutations, and every other value
+uses the ordinary order. `SpriteRegion` now retains this constructor state and
+owns one shared native-corner/UV implementation used by ordinary wgpu sprites,
+native four-point quads and the test-only software sampler. The software
+sampler also accepts signed reversed rectangles instead of silently drawing
+nothing for negative dimensions.
+
+Numeric regressions cover signed binary SPRT and FONT fields, all four native
+UV branches, signed odd JSON dimensions, low-W truncation of a wide parser
+double, required TexturePacker rotation, Adobe negative-pivot rounding and a
+signed rotated atlas region reaching the wgpu vertex stream. The complete
+workspace passes 422 tests (58
+app/audio/wgpu, 22 assets, one core and 341 script/physics); formatting and
+strict all-target/all-feature Clippy are clean. The optimized executable
+SHA-256 is
+`23ddb4a50782d0067b8203bab23bb2b5d48c26e9ee614f5abf246834ddb6d5f8`.
+
+A fresh isolated-AppData, no-Android 600-frame run of the shipped iOS Lua
+completed with 67 optional reads, zero invoked fallbacks and zero compatibility
+bindings. No screenshot was generated or inspected. In particular, these
+signed-field, truncation and UV-permutation claims are accepted only from the
+two disassemblers and numeric/runtime assertions, not from apparent visual
+agreement.
+
+### Composite Entry identity, float flips and load-time radian conversion
+
+This correction did not use screenshot pixels. It came from the connected
+IDA Pro and Hopper databases plus the shipped COMP byte streams.
+Both disassemblers show that the JSON composite loader is
+`sub_1004657CC`, the detailed Entry constructor is `sub_1004370A4`, the
+binary loader is `sub_100461B98`, and the simple KA3D Entry constructor is
+`sub_100436B70`.
+
+`sub_1004370A4` makes the runtime layout explicit. Entry `+0x18` is its map
+name, `+0x20` is the retained AtlasSprite pointer, `+0x28/+0x2c` are x/y,
+`+0x30/+0x34` are scale x/y, `+0x38/+0x3c` are flip x/y, `+0x40` is angle and
+`+0x44` is visibility. A non-empty id is not a z order: the constructor forms
+`"{name}#{id}"` for the vector/name map while retaining the AtlasSprite
+resolved from the unsuffixed name. The JSON loader tests `id` with the exact
+string predicate `sub_10055CE68`; an absent or non-string id is ignored.
+
+JSON `scale` defaults to `[1,1]`, accepts either a scalar copied to both axes
+or a two-number array, and is narrowed through the float accessor.
+JSON `flip` also defaults to `[1,1]`, but when present it is unconditionally
+indexed as a two-number array. It is neither a boolean nor an integer bit
+field, and arbitrary float32 multipliers reach Entry unchanged. `angle`
+defaults to zero; a present number is narrowed to float32 and multiplied by
+the native degrees-to-radians constant before the constructor call. The
+reverse traversal of each JSON `sprites` array remains intact.
+
+The RVIO branch of `sub_100461B98` has the same Entry contract. Each record is
+sprite string, id string, two signed 16-bit offsets, two float32 scales, a
+float32 degree angle and two byte flags. Each flag is converted independently
+to exactly `-1.0` or `+1.0`, and the angle is converted before storage. The
+KA3D branch is selected from the container tag rather than merely from the
+payload version: versions 1 and 2 use name/x/y records with unit scale/flip
+and zero angle. Version 2 then consumes a counted per-composite metadata list
+of string/u16/u16 records. The former Rust parser happened to accept shipped
+RVIO entries only while their ids were empty, because it interpreted the
+empty string length as a fictitious i16 z field.
+
+`CompositePart` now mirrors the live Entry fields: the unused `z_order` and
+raw `flags` approximations are gone, `sprite` retains `#id`, flip values remain
+float32 and angle is always radians. Lua `getCompoSpriteEntry` follows the
+native `flip < 0` tests at `sub_1004497D8`; the setter at `sub_100449CFC`
+writes exactly `-1` or `+1` and stores the supplied angle directly. Bounds,
+the reference renderer, wgpu composite expansion and the shader helper now
+consume radians and flip multipliers without a second unit conversion.
+
+Regressions cover RVIO suffix construction, byte-to-float flips, load-time
+angle conversion, KA3D v2 metadata consumption, JSON scalar/array scale,
+required flip arrays, non-string id fallback, reverse part order, Lua flip
+mutation and radian affine composition. All 19 shipped COMP files parse under
+the corrected split: eight RVIO and eleven KA3D, with zero failures. The full
+workspace passes 423 tests (58 app/audio/wgpu, 22 assets, one core and 342
+script/physics); formatting and strict all-target/all-feature Clippy are
+clean. The optimized executable SHA-256 is
+`fc72e9c63f76ecb96b8d66beb940011db452ce09f07fb77aab14a75026e561ef`.
+
+A fresh isolated-AppData 16,500-frame no-input run of the shipped iOS Lua
+completed with
+67 optional reads, zero invoked fallbacks and zero compatibility bindings.
+No screenshot was inspected or retained. One temporary offscreen output was
+created solely to force the wgpu resource-expansion path, then deleted without
+reading its pixels; that pass reported zero sprite/font/texture/quad resolution
+misses. The acceptance evidence is the dual disassembly, exact data-layout
+tests, complete bundle parse and runtime counters, not apparent agreement with
+any still frame.
+
+### Native physical chunk scanning, map replacement and legacy TEXT offsets
+
+This pass again excludes screenshot pixels from its evidence. The correction
+comes from IDA Pro and Hopper control flow, the shipped binary resources and
+numeric parser/runtime assertions. The relevant native loaders are SPRT at
+`sub_1004610F0`, FONT at `sub_10042A780`, COMP at `sub_100461B98`, the TEXT
+locale pass at `sub_1004729A4` and the TEXT group pass at `sub_1004731B0`.
+The common big-endian readers are `sub_1004FAC04`/`sub_1004FACCC`, strings are
+read by `sub_1004FAD94`, and unknown chunks are advanced by
+`sub_1004FA444`.
+
+All four KA3D loaders compare the declared root length only with the physical
+remaining-byte count. They do not require equality and do not create a child
+slice bounded by that length. Their outer loops continue while any physical
+byte remains, read a tag and length, parse recognized tags directly from the
+same stream, and use the declared length only for an unrecognized tag. A
+recognized but unsupported version consumes the version field and resumes the
+same physical loop; it is not silently skipped to the declared block end. The
+new shared Rust reader preserves these boundaries with checked offset
+arithmetic and produces truncation errors at the same header/skip operations.
+`Ka3dEnvelope` remains a bounded inspection view, now treating lengths as
+upper bounds and offering tag lookup for host-side directory catalogs.
+
+SPRT's first `u16` is version 1, not a texture count. A supported block then
+reads exactly one texture string, a sprite count and the records. Every block
+replaces the native sheet's current texture before constructing its sprites;
+sprites retain that construction-time texture pointer, and duplicate names
+replace the prior `std::map` value. `SpriteSheet` now records the per-sprite
+texture index, so a multi-block file no longer routes every region to the
+first texture. Composite names likewise use the last parsed map value.
+
+FONT accepts versions 1 and 2 in every recognized block. Later blocks replace
+texture, leading and tracking. Duplicate glyph keys replace lookup results,
+but the constructor's cached maximum ascender/descender has already observed
+the earlier record. The retained glyph history plus reverse lookup now models
+both facts rather than losing either the last value or the cached metric.
+
+KA3D TEXT is intentionally not a strict one-pass `LDAT`, `LIDS`, `TXGP`
+slice parser. The locale loader scans nested chunks and replaces the locale
+vector on `LDAT`. Loading a language reopens the file, rebuilds `LIDS`, skips
+earlier `TXGP` payloads by their declared lengths, and reads the selected group
+only after confirming that LIDS is nonempty. For a non-KA3D first word, Purple
+rewinds, consumes a legacy version byte, a locale-section length, the signed
+byte locale count and names; the group pass skips that section, reads IDs,
+indexes a u32 forward-offset table and then reads the selected values. Both
+branches are now implemented and have order, offset and missing-LIDS tests.
+
+A complete inspection of all 114 shipped containers succeeds: 70 SPRT, 19
+COMP, 24 FONT and one TEXT, with zero subtype failures. The workspace passes
+431 tests (58 app/audio/wgpu, 30 assets, one core and 342 script/physics), and
+formatting plus strict all-target/all-feature Clippy are clean. The optimized
+`stella-app` SHA-256 is
+`5a930daf86fab477d9e5afa12bfab0e9eece9c16b642f813f46cfeb408765d5a`.
+
+A fresh isolated-AppData 600-frame no-input headless run completed with 67
+optional reads, zero invoked fallbacks and zero compatibility bindings. A
+separate 600-frame offscreen wgpu drive reached 103 sprite submissions without
+any sprite/font/quad resolution diagnostic. Its temporary PNG was moved to
+Trash without being opened or inspected. These runs establish loader and
+submission health only; neither the generated image nor any existing
+screenshot is accepted as proof of visual equivalence.
+
+### UIKit shared shaping boundary and retained glyph placement
+
+This pass follows the evidence policy prompted by the remaining differences
+between screenshots and the running game: no screenshot pixel, crop or visual
+similarity was used to select the implementation. IDA and Hopper independently
+show that the UTF-32 width overload at `0x10047692C` and height overload at
+`0x10047676C` convert the selected codepoint range back to NSString and call
+`sizeWithFont:`. On a LabelPool miss, `SystemFont::Impl::drawString` at
+`0x100475B98` sends the same NSString and retained UIFont to
+`drawInRect:withFont:`. Measurement and drawing therefore share UIKit's text
+layout result; the executable contains no per-character glyph-advance loop in
+either path.
+
+The previous cross-platform implementation violated that ownership boundary:
+`native_string_width` walked Unicode scalar values with cmap, horizontal
+advance and legacy `kern` tables, while the rasterizer independently repeated
+another character loop through `ab_glyph`. Besides duplicated rounding, that
+omitted GSUB ligatures, GPOS kerning/mark attachment and contextual shaping,
+so measured geometry could disagree with the glyph sequence actually placed
+in the cached label.
+
+`SystemFontRenderBinding` now performs one Rustybuzz OpenType shaping pass per
+line and retains the selected glyph IDs plus their pen-relative X/Y positions
+in font units. The width path scales the shaped total in f64 and applies the
+same direct `FCVTZS` boundary already recovered from the ARM64 overload. The
+wgpu label rasterizer consumes those exact retained glyph IDs and positions,
+including mark offsets, rather than looking characters up again. Thus the
+cross-platform implementation has the same measurement/draw data dependency
+as the UIKit code even though platform raster coverage remains backend-owned.
+
+A deterministic bundle-font regression proves that OpenSans `ffi` collapses
+through GSUB and that decomposed `e` plus combining acute uses one positioned
+glyph; a multiline case proves width and raster lines consume the same layout.
+On the current macOS host, the installed `ArialRoundedMTBold` face also retains
+the previously intercepted iOS boot contract: point size 40 measures `Stella`
+as 110. That assertion is conditional on the named face being installed,
+matching the native `UIFont fontWithName:size:` failure dependency rather than
+silently substituting a screenshot-derived face.
+
+The workspace now carries Rustybuzz only in the script/layout layer; the app
+receives a small renderer-neutral shaped-line structure, preserving the split
+between native-style text semantics and wgpu texture upload. All 433 tests pass
+(58 app/audio/wgpu, 30 assets, one core and 344 script/physics), formatting is
+clean, and strict all-target/all-feature Clippy is warning-free. A complete
+read-only bundle verification covers 2,602 files, including 1,167 encrypted
+archives, 718 Lua chunks, 448 JSON documents, 114 KA3D envelopes and 72 PVR
+textures. The optimized hashes are
+`71699ee0611700a9657fbc5df2924f4e882084f2228c56fd57d24ca99a3ab359`
+for `stella-app`,
+`3b1636ea301d2c1eb2b399ab708a7372b5a6c1e7bb919e64bd92008526837aa0`
+for `stella-headless`, and
+`2ff97ac0f8c6cf24fe816cca590024cffd2d728438250faaf2189403339e22dc`
+for `stella-tool`.
+
+Fresh isolated-AppData headless and wgpu runs both complete 600 frames with 67
+optional data reads, zero invoked fallbacks and zero compatibility bindings.
+The temporary offscreen PNG existed only to force the wgpu resource path; the
+containing audit directory was moved to Trash without opening or inspecting
+the image. It is recoverable there, but it remains neither evidence nor an
+accepted visual reference.
+
+### Target-endian Lua 5.1 chunk ABI completion
+
+The next cross-platform audit found one explicit host gap unrelated to visual
+output. Every shipped Purple Lua chunk declares format 0, little-endian scalar
+storage, four-byte `int`, `size_t`, instruction and `lua_Number`, with the
+number-integral flag clear. Purple's ARM64 Lua build consumes that custom
+single-precision representation, while the vendored host Lua uses its native
+endianness, native `size_t` and eight-byte `lua_Number`. The existing
+transcoder widened strings and numbers only for a little-endian host and
+returned `big-endian runtime transcoding is not implemented` otherwise.
+
+The transcoder now has one explicit target-ABI descriptor. It writes the Lua
+header's endian and `size_t` slots for the target, widens every f32 numeric
+constant to f64, and emits all scalar fields in target order: function line
+ranges, counts, VM instructions, nested-prototype metadata, line tables and
+local-variable PC ranges. String payload bytes and the four one-byte function
+flags remain unchanged. Four- and eight-byte target `size_t` encodings are
+both supported; all other target layouts are rejected before traversal.
+
+A synthetic prototype regression uses asymmetric byte patterns for both line
+fields, one instruction, one floating constant, line information and local PC
+ranges, then verifies every exact offset in an eight-byte big-endian output
+chunk. This closes the dormant architecture failure without relying on a
+big-endian CI machine and without generating or inspecting any image. The
+complete workspace now passes 434 tests (58 app/audio/wgpu, 31 assets, one
+core and 344 script/physics), and strict workspace Clippy plus formatting are
+clean. The release hashes are
+`2fa9e6913f85d30257d1df7f500d5d8bf7e37948fdff126fc47d94682da9642f`
+for `stella-app`,
+`1d3c0c771f39f7cf95577384bfa6c543fb8548d31050d1c117a50ce691fd0b98`
+for `stella-headless`, and
+`0314c628d39540e32c143dc288cbf4d9eaa64b031688a6c606c3291b2f77bdbf`
+for `stella-tool`. Read-only verification still classifies all 2,602 bundle
+files successfully, and a fresh isolated-AppData 600-frame boot retains the
+67 optional reads, zero invoked fallbacks and zero compatibility bindings.
+
+### CoreGraphics vector stroke semantics for SystemFont labels
+
+This pass again excludes screenshots from the correctness argument. IDA and
+Hopper independently show the exact stroked branch of
+`SystemFont::Impl::drawString` at `0x100475B98`. After creating the bitmap
+context at `0x100475F68`--`0x100475F90`, Purple sets the fill color at
+`0x100475FE0`, translates the CTM by `(0, height)` and scales it by `(1, -1)`
+at `0x100475FF4`--`0x100476004`. A stroke width below one bypasses the branch
+and draws the NSString once in fill mode at `0x100476194`--`0x1004761B8`.
+
+For a positive integral stroke width, Purple translates by `(stroke, stroke)`
+at `0x10047601C`--`0x10047602C`, installs the stroke color as both CGContext
+stroke and fill color, sets the line width to exactly `2 * stroke` at
+`0x1004760C0`--`0x1004760D0`, and selects line-join value one (round) at
+`0x1004760D4`--`0x1004760DC`. It then selects text drawing mode one (stroke),
+draws the same NSString at `0x100476118`, restores the label fill color and
+text drawing mode zero, and draws the NSString again at `0x10047618C`.
+Consequently the native effect is a centered vector outline rendered before
+the fill, not a repeated bitmap offset or a post-raster morphological dilation.
+
+The wgpu resource path now converts the already retained Rustybuzz glyph IDs
+and positions into closed TrueType/OpenType paths, applies the same font-unit
+to logical-pixel transform, fills those paths with nonzero winding, and builds
+the outline with width `2 * stroke` plus round joins. Stroke coverage is
+composited first and fill coverage second in premultiplied RGBA, matching the
+recovered draw order. The former discrete circular dilation has been removed;
+measurement and rendering still consume the same shaped-line structure, so
+the stroke change introduces no second text-layout implementation.
+
+A bundle OpenSans regression confirms that a closed `M` outline stroked with a
+six-pixel line expands its tight vector bounds by the expected three pixels on
+all four sides. This is a geometry assertion over the recovered graphics
+contract, not a screenshot comparison. The complete workspace passes 435
+tests (59 app/audio/wgpu, 31 assets, one core and 344 script/physics), and
+formatting plus strict all-target/all-feature Clippy remain clean.
+
+The optimized hashes for this pass are
+`89d2fbeee46669444010a56945afbf3f343a1cc9d856dd065cda9115286d8847`
+for `stella-app`,
+`672b8862cb2c66e8fcbc9efa6348ec1dd0e48b9a924e16e842a3b783c5cffb7a`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for `stella-tool`. Read-only bundle verification still classifies all 2,602
+files successfully. Fresh isolated-AppData headless and offscreen-wgpu runs
+both complete 600 frames with the same 67 optional global reads, zero invoked
+fallbacks and zero remaining compatibility bindings. The offscreen PNG was
+only checked for existence, never opened; both audit directories and their new
+AppData were moved to Trash and remain recoverable.
+
+### SystemFont Cocoa line boundaries and empty-range height
+
+The next nonvisual audit separated three height contracts that had previously
+been collapsed. IDA and Hopper show the byte-string height overload at
+`0x100476538` loading the source length and returning zero at
+`0x100476560`/`0x1004765E4` when the original source is empty. For a nonempty
+source, `0x100476574`--`0x100476590` clamps the start and count in signed
+32-bit arithmetic after UTF-8-to-UTF-32 conversion, then calls the wide
+overload. The wide overload at `0x10047676C` always constructs the selected
+substring, including an empty selected range, sends `sizeWithFont:` at
+`0x1004767F0`, and converts the returned height with `FCVTZS W0,D8` at
+`0x100476810`. `getBounds` at `0x10047664C` calls these byte-range width and
+height overloads independently before applying its anchor and stroke edges.
+
+Consequently an empty source measures zero because the outer wrapper exits,
+whereas a nonempty source whose normalized range is empty still enters UIKit
+and retains one empty text line. The Rust bounds path now preserves that
+distinction. The existing empty-source rule still ignores otherwise invalid
+range arguments, while `"A"` with `(start=1,count=0)` or an overlarge positive
+start returns zero width but one label-line height before stroke expansion.
+
+The old shared shaper also recognized only LF. A local Cocoa/CoreText API probe
+using the installed `ArialRoundedMTBold` face (no image output) confirms that
+LF, form feed, CR, NEL, U+2028 and U+2029 each terminate a line, CRLF is one
+separator, and vertical tab is not a separator. The retained shaping pass and
+wgpu path now consume the same splitter, so separators never become accidental
+missing-glyph advances and the measured line count cannot disagree with glyph
+placement. Consecutive and trailing separators retain their empty line.
+
+The same API probe provides an independent numeric check on the earlier iOS
+runtime interception: at point size 40 the current Apple face reports
+ascender `37.8515625`, descent `8.4375`, leading zero, `Stella` width
+`110.05859375`, and NSString height exactly `46`. Purple's direct conversions
+therefore produce the intercepted constructor values `37/8/0`, width `110`,
+and the separately retained label height `46`; adding the already-truncated
+constructor metrics would incorrectly yield `45`. The conditional installed
+face regression now asserts all five boundaries rather than width alone.
+
+Regressions cover every Cocoa separator, CRLF coalescing, the vertical-tab
+nonseparator, empty source versus empty selected range, and wgpu allocation
+for each two-line spelling. The complete workspace passes 437 tests (59
+app/audio/wgpu, 31 assets, one core and 346 script/physics), and formatting
+plus strict all-target/all-feature Clippy are clean. No screenshot or rendered
+pixel was produced, opened or used to select these behaviors.
+
+The optimized hashes for this pass are
+`b992fde298450e290cc418df061f153fc0ee6d4a59136a6442cb57de61cb9dd2`
+for `stella-app`,
+`9e7aa029d35bcf53a56d074571fcad31f98d7767a52670ceb5fe17e46d4a5994`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`. Read-only verification again classifies all
+2,602 bundle files. Fresh isolated-AppData headless and offscreen-wgpu drives
+both complete 600 frames with 67 optional global reads, zero invoked fallbacks
+and zero remaining compatibility bindings. The generated PNG was checked only
+for existence and size; both temporary trees were moved to Trash without
+opening it and remain recoverable.
+
+### SystemFont UAX #9 visual runs and Unicode Script itemization
+
+This pass again treats images as neither an oracle nor a comparison target.
+IDA's Hex-Rays output and Hopper's independent assembly/pseudocode agree that
+the UTF-32 width overload at `0x10047692C` constructs one NSString and sends it
+directly to `sizeWithFont:` before `FCVTZS W0,D8`. The LabelPool miss path in
+`SystemFont::Impl::drawString` at `0x100475B98` sends that same complete
+NSString to `drawInRect:withFont:` at `0x100476118`/`0x10047618C`. Purple has no
+game-owned character reversal or per-script draw loop; bidi paragraph
+resolution, script itemization and OpenType shaping are therefore all owned by
+the UIKit/CoreText boundary.
+
+Rustybuzz correctly guesses properties for a single-script buffer, but it is a
+font shaper rather than a paragraph-level bidi engine. The prior rehost passed
+each complete line as one buffer, so a mixed LTR/RTL line inherited the script
+and direction of its first strong character. A non-image CoreText probe makes
+the discrepancy observable without visual judgement. With the installed
+`ArialUnicodeMS` face at 40 points, `"abc אבג 123"` produces visual CTRuns in
+Latin, digits, then RTL-Hebrew order, glyph IDs
+`68,69,70,3,20,21,22,3,1156,1155,1154`, and width `215.5078125`, which Purple
+converts to 215. `"abc مرحبا 123"` applies Arabic contextual substitutions
+`6510,6514,6531,6542,6595` in its final RTL run and truncates width
+`236.62109375` to 236. Parenthesized, RTL-base and number-leading probes expose
+the same run ordering and mirrored-punctuation decisions through run ranges,
+glyph IDs and advances alone.
+
+`SystemFontRenderBinding` now runs Unicode Bidirectional Algorithm paragraph
+resolution for every Cocoa line, consumes the returned level runs in visual
+left-to-right order, and shapes each run with an explicit LTR or RTL direction.
+Each directional run is further itemized by Unicode Script; Common, Inherited
+and Unknown characters stay attached to a neighbouring concrete script, and
+script subruns inside an RTL level run are visited in reverse visual order.
+Rustybuzz still performs the actual GSUB/GPOS and bidi-mirroring work, while the
+existing shared shaped-glyph payload continues to feed both measurement and
+the wgpu vector-outline rasterizer.
+
+The new paragraph itemizer is isolated in
+`render_types/system_font_layout.rs` rather than enlarging the renderer-neutral
+command ABI. Deterministic bundle-font tests cover byte-indexed UAX #9 ranges,
+visual glyph order despite a deliberately missing Hebrew cmap, neutral/script
+attachment and combining marks. A conditional Apple-font regression compares
+five mixed-direction spellings to the CoreText numeric probe, including exact
+glyph IDs, font-unit X positions and native-truncated widths. This closes
+directional and script segmentation for retained faces. UIKit's separate
+system-font fallback selection when the requested face lacks a glyph remains
+an explicit next boundary; substituting the first host font with a matching
+cmap would not be evidence-equivalent and was deliberately not smuggled into
+this change.
+
+The complete workspace passes 440 tests (59 app/audio/wgpu, 31 assets, one
+core and 349 script/physics). Formatting and strict all-target/all-feature
+Clippy are clean. Read-only bundle verification still classifies all 2,602
+files: 1,167 encrypted archives, 718 Lua chunks, 448 JSON documents, 114 KA3D
+envelopes and 72 PVR textures. Release SHA-256 values are
+`0ceb22782b612af28f1d48a28b4ba1fbadba5ba72f7f436bcd76884cba95bd71`
+for `stella-app`,
+`8dec465d57a764e76533a82142b05fe21eab92ca76a4526309d5e38ff905a048`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### Purple Lua math.random uses Darwin rand and float32 arithmetic
+
+The vendored host Lua 5.1 library previously exposed the desktop libc and its
+double-precision `lua_Number` implementation of `math.random`. Purple does
+neither. IDA and Hopper independently recover `math.random` at
+`sub_100518198`: it calls `rand` before inspecting the Lua stack, reduces the
+signed result modulo `0x7FFFFFFF`, converts it with `SCVTF S`, and multiplies
+by the four-byte constant at `0x1009F4128`. The constant bytes are
+`00 00 00 30`, exactly `2^-31` as float32. The one-argument path multiplies
+and floors through S registers before adding float32 one. The two-argument
+path forms `1 - lower + upper` in a 32-bit W register, multiplies and floors in
+float32, widens the offset and lower bound for one double add, then narrows the
+result back to float32. Invalid intervals use `interval is empty`; every other
+nonzero arity uses `wrong number of arguments`. Because `rand` precedes all
+validation, even both error paths advance the shared stream.
+
+`math.randomseed` is the adjacent `sub_1005182EC`. It applies the Lua 5.1
+`luaL_checkint` conversion to argument one, calls `srand` with the resulting
+32-bit word, ignores additional arguments and returns no values. Numeric
+strings are therefore accepted by both wrappers. Local Darwin libc probes pin
+the target recurrence rather than delegating to a platform-dependent host
+implementation: the state defaults to one; a literal zero state is replaced
+with `123459876`; every result is `state * 16807 mod 2147483647`. Retaining the
+pre-modulo seed is observable: `srand(0x7fffffff)` returns zero once before the
+zero fallback, while `srand(0xffffffff)` begins with 16807.
+
+`game_lua/math_random.rs` now owns a portable implementation of that iOS
+stream and installs both functions before any shipped bytecode is evaluated.
+It keeps one logical process stream per game runtime so the original
+single-VM application remains faithful without allowing parallel test or
+embedded runtime instances to corrupt one another. The audit also found one
+other gameplay-side libc-rand use at `0x100069004`: when a theme layer's
+`sprite` is a table and `animationSpeed` is not numeric, the constructor
+selects its static sprite with `rand() % count`. Numeric animation speed keeps
+the first frame and consumes no libc sample. This is distinct from the CMWC
+source used for positions, speeds, animation timelines and ordinary particle
+construction.
+
+Three focused regressions pin seed one, zero, `RAND_MAX` and unsigned-negative
+seed edges; exact promoted float64 bit patterns for Purple's float32 results;
+one- and two-bound intervals; numeric-string seeds; ignored seed arguments;
+and stream advancement on interval and arity errors. The complete workspace
+passes all 569 tests (82 app/audio/wgpu, 31 assets, one core and 455
+script/physics). Formatting, strict all-target/all-feature Clippy and the
+release build are clean. Independent empty-AppData 600-frame headless and
+real-wgpu runs report 73 optional reads, zero invoked fallbacks and zero
+remaining compatibility bindings. The inspected wgpu readback SHA-256 is
+`b1d3851a335a29a3c59436ee8d6cff748abe39c75e7e05c0fd8af3ded8a85ba1`;
+it is execution evidence, not a visual oracle.
+
+Current SHA-256 values are
+`8105a588aba2431838499b2e8275b455ee447bb7e69eab8440c7becaceb798bf`
+for `stella-app`,
+`8d0c05d68a8c8a6512cebbe0c2673249e77b680c5924a9891313d6347d67b1a5`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### LEAVES skin attachment basis and the constructor physics lock
+
+The shipped `LevelLoadTransition.lua` loads `animations/LEAVES.anim.json`,
+plays `Transition_Animation` at speed 1.5, swaps the destination after its
+`PLAYBACK_END`, and then plays `Transition_Animation_Backwards` at the same
+speed before disposing the wrapper. Both authored actions are 0.8 seconds and
+the default skin contains 16 leaf attachments; 15 of those carry a non-zero
+attachment rotation.
+
+IDA's `sub_100011BC4` and Hopper's assembly at
+`0x100011E94..0x100011F14` independently show that a custom sprite skin
+attachment calls `sinf(-rotation)` but `cosf(rotation)`, normalizes both
+single-precision basis vectors, and only then applies the attachment's
+single-precision X/Y scales and translation. This is deliberately asymmetric
+with the ordinary animation rotation target in `sub_10041F4B0`, which uses
+the usual positive-angle basis. Reusing the ordinary basis for skin data made
+the rotated leaves point the wrong way and left holes in the supposedly
+closed transition.
+
+Rust now gives skin attachments their own inverse-rotation affine composition
+path, quantizes every skin transform field to the native float32 boundary,
+and uses the same path for draw submission, world bounds, and compatibility
+queries. A shipped-resource regression pins the 0.8-second duration, all 16
+leaf commands, descending native layer order, and a non-symmetric settled
+leaf matrix so the sign cannot regress. A deterministic real-wgpu drive also
+completes the original IN, destination load, OUT, and wrapper-removal sequence.
+
+That drive exposed a separate frame-order dependency. `GameLua::GameLua`
+(`sub_10002C274`) stores one at GameLua `+0x6A8`; the physics lock total does
+not begin at zero. The original startup scripts later release this unnamed,
+idempotent lock with `setPhysicsEnabled(true)`. Rust now constructs the same
+one-reference unnamed lock, so menu/bootstrap frames skip Theme/Box2D work
+instead of calling the shipped `updatePhysics` before its level tables exist.
+Direct subsystem test fixtures explicitly release that constructor lock when
+they intentionally enter at an already-running physics frame.
+
+The workspace now passes 540 tests (79 app/audio/wgpu, 31 assets, one core,
+and 429 script/physics); strict all-target/all-feature Clippy and the release
+build are clean. The release LEAVES lifecycle reported zero invoked fallbacks
+and zero remaining compatibility bindings. Current SHA-256 values are
+`092d3ce15fa4c3151440d4169f600fb3e9464dfc26829464af9acd51adf008fc`
+for `stella-app`,
+`04e4b18729807e8b65d1883e33e527c2dbca22cc08ff715982416bd2747e7ea0`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+Fresh isolated-AppData headless and offscreen-wgpu runs both complete 600
+frames with 67 optional missing globals, zero invoked fallbacks and zero
+remaining compatibility bindings. The offscreen file existed only to force
+the wgpu upload/readback path (587,760 bytes); it was never opened or viewed.
+Both temporary trees were moved recoverably to Trash as
+`stella-system-bidi-headless.Mny8Yc` and `stella-system-bidi-wgpu.FbTN6W`.
+
+### UIKit system-font fallback faces and per-face wgpu outline scaling
+
+The `SystemFont` call boundary recovered in the preceding passes also proves
+that fallback cannot be represented as a `.notdef` glyph from the requested
+face. IDA at `0x10047692C` and Hopper both show width measurement delegated to
+the complete NSString plus retained UIFont, while the miss path at
+`0x100475E40`--`0x10047618C` uses the same pair for allocation and drawing.
+CoreText is therefore free to replace individual grapheme runs with cascade
+fonts without changing the LabelPool hash, constructor metrics or public font
+name. Purple itself never records those hidden faces.
+
+A non-image CoreText run probe of `ArialRoundedMTBold` at 40 points establishes
+three concrete fallback contracts on the current Apple font set. Hebrew in
+`"abc אבג 123"` uses `LucidaGrande` glyphs `610,609,608`; Arabic in
+`"abc مرحبا 123"` uses `GeezaPro` contextual glyphs
+`241,244,261,273,345`; and Han in `"abc 漢字 123"` uses
+`PingFangSC-Regular` glyphs `20344,2561`. Their NSString widths are
+`228.73046875`, `241.67474287974684` and `243.3203125`, hence Purple returns
+228, 241 and 243 after `FCVTZS`. Exact per-glyph X coordinates from every run
+are now regression inputs as well. A separate NSString probe shows that all
+three still allocate height 46: fallback ascender/descent/leading values do
+not replace the base UIFont line-height contract.
+
+The cross-platform font catalog now keeps the host `fontdb::Database` behind
+one shared, pointer-stable cache. It selects a known platform cascade face by
+Unicode Script where available and otherwise searches regular installed faces
+for complete grapheme-cluster coverage. Positive and negative cluster results
+are cached, and selected collection data is copied only once per face rather
+than once per character. On macOS the font scan also includes Apple's local
+MobileAsset font directory, which is where the CoreText-selected PingFang face
+resides on this host; other platforms retain their ordinary fontdb system
+directories and equivalent installed-family preferences. LastResort and the
+currently unsupported bitmap-only Apple color-emoji face are not mistaken for
+vector-outline fallbacks.
+
+`SystemFontLayout` now retains a small face table. Every shaped glyph carries
+its face slot plus baseline-relative logical-pixel X/Y coordinates, since two
+fallback fonts need not share units-per-em. Bidi visual runs, script runs and
+extended grapheme clusters are itemized before shaping; RTL face runs are
+visited in visual order without splitting a combining sequence. Measurement
+sums each face's advance using its own point-size/em ratio before the single
+native `FCVTZS`. The wgpu label path opens the corresponding retained face for
+each glyph and applies that face's independent outline scale, while keeping the
+base UIFont baseline, line height, stroke geometry, anchors and native cache
+hash unchanged.
+
+Regressions use two bundled fonts to prove deterministic missing-cmap run
+splitting and one-copy cache reuse without depending on Apple fonts. The
+conditional Apple contract asserts all three fallback PostScript names, exact
+glyph IDs, every CoreText X position, zero Y offsets and widths. An app-layer
+test then sends the mixed Hebrew label through the real Lua SystemFont binding
+and verifies that the fallback slot reaches vector rasterization with its own
+em scale and produces coverage in the fallback run. These are numeric/font
+table checks, not screenshot similarity checks.
+
+The complete workspace passes 443 tests (60 app/audio/wgpu, 31 assets, one
+core and 351 script/physics). Formatting and strict all-target/all-feature
+Clippy are clean. Read-only verification again classifies all 2,602 shipped
+files, including 1,167 archives, 718 Lua chunks, 448 JSON documents, 114 KA3D
+envelopes and 72 PVR textures. Release SHA-256 values are
+`26c4fd70758b884c639ecb837c175be712bf08974305255bd2f506674f5d11a3`
+for `stella-app`,
+`d9546bc9af563f972636ab1682f78e32fc315803a554ae742ce26585457cb80b`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+Fresh isolated-AppData headless and offscreen-wgpu runs both complete 600
+frames with the same 67 optional missing globals, zero invoked fallbacks and
+zero remaining compatibility bindings. The offscreen output was checked only
+for existence and size (587,613 bytes), never opened or viewed. Its two audit
+trees were moved recoverably to Trash as
+`stella-system-fallback-headless.k3wGKl` and
+`stella-system-fallback-wgpu.ThS1uY`.
+
+### UIKit color-glyph fallback, Apple sbix optics and double text passes
+
+Screenshots remain non-authoritative for this pass. They can reveal a missing
+or misplaced glyph, but they are not used to choose a coordinate, color,
+fallback face or compositing rule. The evidence chain is instead the two
+disassemblers, public CoreText numeric APIs, OpenType tables and deterministic
+pixel/table assertions. No generated image was opened or compared.
+
+IDA's decompilation of `game::SystemFont::Impl::drawString` at
+`0x100475B98` and Hopper's independent pseudocode agree on the complete cache
+miss sequence. `sizeWithFont:` determines the bitmap dimensions, a DeviceRGB
+`CGBitmapContext` is allocated and vertically flipped, and a stroke width of
+at least one enters the branch at `0x100475FF4`. That branch translates by the
+stroke padding, sets line width to twice the requested stroke width, selects a
+round join and `kCGTextStroke`, then sends `drawInRect:withFont:`. It restores
+the fill color, selects `kCGTextFill` and sends the same message again at
+`0x10047618C`. With no stroke, UIKit receives only the single draw call. The
+upload and `LabelPool::addLabel` still occur only after the graphics context is
+popped and released. This proves that an intrinsic-color glyph is composited
+once without a stroke and twice with a stroke; treating its sbix bitmap as a
+monochrome outline or tinting it with the CGContext stroke color is incorrect.
+
+A CoreText run probe of `ArialRoundedMTBold` at 40 points establishes the
+fallback payload without rendering an image. `"😀"` selects
+`AppleColorEmoji`, glyph 2096, advance and NSString width 40. `"A😀B"` forms
+three runs: Arial glyph 36 at X `0`, Apple glyph 2096 at
+`28.76953125`, and Arial glyph 37 at `68.76953125`; the precise width is
+`97.5390625` and Purple truncates it to 97. The single-glyph AAT results for
+`"☀️"`, the family ZWJ sequence, `"👍🏽"`, `"🇨🇳"` and `"1️⃣"` are respectively
+189, 3237, 1139, 423 and 139, all with 40-point advances. By contrast plain
+`"☀"` remains HiraginoSans-W3 glyph 8215; VS15 forces text presentation while
+VS16, ZWJ, keycap and the default emoji ranges force the color cascade. Plain
+copyright, heart and trademark characters similarly remain in their text
+faces unless their presentation sequence requests emoji.
+
+`/System/Library/Fonts/Apple Color Emoji.ttc` contains two faces and the
+`sbix`, `morx` and `trak` tables but no COLR or SVG table. Its 800-unit em has
+20, 26, 32, 40, 48, 52, 64, 96 and 160 ppem strikes; glyph 2096 at 40 ppem is
+a 40-by-40 PNG with zero stored X/Y offsets. HarfBuzz/AAT produces the same
+ligature glyph IDs as CoreText after filtering Apple's invisible, zero-position
+glyph 3. CoreText also applies a private optical transform that is absent from
+the sbix header. The effective raster em is `1.25 * pointSize` through 16
+points, `0.5 * pointSize + 12` from 17 through 23, and the requested point size
+from 24 upward. Its downward origin shift is `0.25 * pointSize`, then
+`6 - 0.125 * pointSize`, then `0.125 * pointSize` across the same intervals.
+The exact advances for sizes 1 through 25 are
+`1,3,4,5,6,8,9,11,12,13,15,16,17,19,20,21,22,22,23,23,23,24,24,25,26`;
+larger sizes use the point size. These are CTFont bounding boxes, advances and
+run positions, not coordinates inferred from a capture.
+
+The host fallback catalog now recognizes embedded `sbix`, bdat/CBDT and
+EBDT bitmap faces plus COLR/CPAL faces and applies grapheme-level text/emoji
+presentation before the ordinary cmap fallback. The retained shaper sets ppem
+and ptem, keeps each selected face's em scale, applies Apple's measured optical
+size/origin/advance contract, and preserves the one-glyph AAT ligatures for
+ZWJ, modifier, flag and keycap sequences. PNG, premultiplied BGRA32 and packed
+or row-padded mono/gray 1/2/4/8-bit embedded glyphs are decoded into one shared
+raster model. Fractional glyph origins use bilinear coverage sampling and
+premultiplied source-over, while vector outlines retain the recovered centered
+round stroke.
+
+The COLR stage is split into
+`stella-app/src/assets/system_font/color_outline.rs`, keeping the large label
+cache/raster facade separate in the same way Purple delegates painting to
+CoreGraphics. It traverses COLRv0 and COLRv1 paint graphs, captures nested glyph
+and box clips, concatenates every affine paint transform, evaluates normalized
+linear, two-circle radial and clockwise sweep color lines, and maps all 28
+OpenType composite modes to the CPU raster compositor. The resulting
+straight-alpha intrinsic raster then enters the same recovered stroke/fill
+pass ordering before wgpu upload. A local Apache-licensed COLRv1 conformance
+font was used transiently to exercise all three gradients, every affine paint
+form and composite paint; its external path was removed afterward. Portable
+regressions retain the color-line extend, radial branch, full composite-mode,
+bitmap-format, Apple sbix, AAT shaping and double-pass alpha contracts.
+
+IDA and Hopper independently recover the final theme-repeat discrepancy in
+`sub_10009BDB4`, `sub_10009C4C4`, `sub_10009CA0C`, `sub_100067A04` and
+`sub_10006853C`. Purple retains the reference position and every repeated tile
+step as float32 world coordinates, visits right columns before left columns and
+up rows before down rows, and projects every candidate separately. The loop
+bounds use the tile centre plus or minus a symmetric half-size in world space;
+the final screen rejection likewise uses the projected centre and symmetric
+half-size, not the atlas pivot-relative rectangle. The implementation now lives
+behind the small theme-render facade in `scene_render/theme/repeat.rs`; two
+asymmetric-pivot and long-repeat regressions pin the centre-culling and float32
+accumulation contracts.
+
+The original `PigAnimation.lua` and `PigEyes.lua` bytecode confirms the green
+pig state thresholds directly. Linear speed above 0.5 or angular speed above 1
+selects moving; a launched bird becomes visible to the pig after 0.5 seconds,
+then distances greater than `1.5 * detection`, 3 and 1.5 select idle/scare0,
+birdShot/scare1, birdNear/scare2 and birdCollidedNear/scare3 respectively.
+Blink hides both pupils for the configured duration, while `PigEyes` exposes
+the original one-frame cached-visibility lag. A continuous L01 trace observes
+exact 12-frame blinks for the shipped 0.2-second duration and the expected
+false/true pupil transition on the following frames. After launch the body
+selects `PIG_NORMAL_SCARED_1` and the two direct post-draw pupil regions follow
+with their own matrices inside the flipped pig context.
+
+The adjacent compatible wgpu command coalescer retains one uniform per native
+submission and painter order while reducing a complete L01 frame from 703
+sprite commands to 30 draws. A direct L44 load contains 587 objects, two joints
+and four pigs; its final frame has 1,105 uniforms, 6,630 vertices and 28 draws.
+The 1,800-frame load/settle audit took 10.25 seconds wall time on this host,
+about 175 simulated frames per second including load and final GPU work, with
+no missing render resources, non-finite commands or fallback calls.
+
+Cross-references from all five scene constructors into `sub_100073110` and
+`sub_100073220` recover the dispatch container that precedes
+`sub_10004BAB4`. The outer key is the z value narrowed to float32 and truncated
+to an integer. Its value is a
+`std::map<game::SpriteSheet*, std::vector<std::string>>`; constructors obtain
+the retained sheet pointer from `AtlasSprite+0x18` and append the object name to
+that leaf vector. The draw member walks integer z buckets, then sheet-pointer
+order, then vector insertion order. It never alphabetizes object names or sorts
+the original fractional z values.
+
+`SpriteCatalogRegion` therefore retains a native sheet-allocation identity in
+addition to its texture source. Reconstructing a same-named sheet advances that
+identity while scene objects and composite parts retain the old value, matching
+native pointer lifetime. `scene_render/index.rs` now owns a persistent
+`BTreeMap<i32, BTreeMap<u64, Vec<String>>>` reconstruction of GameLua+0x310;
+scene traversal groups by that identity and uses the actual leaf vector's
+insertion order within a group. `scene_render/objects/model.rs`
+contains only the per-frame snapshot fields consumed by `sub_10006D5B4` and
+`sub_10006794C`; fixture proxies,
+collision material arrays, solver state and other physics-only vectors are no
+longer deep-copied for every visible object. A 9,300-frame menu-to-L01-and-shot
+route retains 887 uniforms, 5,322 vertices, 30 draws and 13 textures, while its
+wall time falls from the prior clean 23.61 seconds to 22.25 seconds on this
+host. No render command or resource was removed to obtain that reduction.
+
+The insertion order has its own lifetime and cannot be substituted with the
+Box2D object-creation ordinal. IDA's `sub_10004C7FC` and Hopper's corresponding
+pseudocode agree that `native_setSprite` erases the object's name from its old
+leaf and appends it to the destination leaf only when the retained
+`SpriteSheet*` changes. Conversely `changeZOrder` at `sub_1000592C4` always
+erases and appends, even when both float z values truncate into the same integer
+bucket. The persistent Rust leaf vectors are now the insertion-order authority;
+regressions cover a same-bucket z change, a cross-sheet sprite change and a
+same-named SpriteSheet reconstruction whose old object remains in the old
+pointer bucket until an explicit sprite rebind.
+
+The removal lifetime is intentionally asymmetric. In `sub_100042260`, both
+disassemblers show the object z narrowed with FCVTZS, the retained direct or
+first-composite sheet pointer obtained, and `sub_100073110` plus
+`sub_100073220` called before `std::__find` erases the first matching name from
+the leaf vector. There is no inner or outer `_Rb_tree::erase`; the two
+`operator[]` helpers would even create a missing path. Empty SpriteSheet and z
+nodes therefore survive. The Rust index preserves those nodes instead of
+rebuilding or pruning it from the live object map.
+
+Constructor replacement has the complementary asymmetry. At the start of
+`sub_100036D38`, `sub_100070278` returns the name-map `operator[]` slot and the
+new RenderObjectData pointer is stored unconditionally. A reused name therefore
+overwrites the lookup pointer without erasing any older z/SpriteSheet leaf;
+both old and new leaf occurrences resolve to the new object during drawing.
+The constructor also allocates a fresh Lua table with `sub_100529C84` before
+overwriting `objects.world[name]`, rather than mutating the old table in place.
+The Rust mirror now preserves both behaviors. Finally, literal `"ground"` is a
+special render-index exclusion only in the box constructor at
+`0x100034D44` and non-physics constructor at `0x10003718C`; IDA reports no
+corresponding string xref from circle, polygon or line construction. Those two
+paths now skip their initial render leaf, while a later `changeZOrder` still
+creates and appends one through the ordinary native move path.
+
+The z-range endpoint is likewise an integer-loop contract rather than a
+geometric inclusive bound. `sub_10004BAA8` stores the two FCVTZS results
+unchanged. In `sub_10004BAB4`, ARM64 `CMP/B.GE` rejects an initially empty
+range and the loop continues only while `bucket < maximum`; a negative stored
+maximum is replaced locally by 170. Scene filtering now uses `[minimum,
+maximum)` and the native 170 sentinel. Tests pin the empty `[4,4)` range, the
+float32-rounded `[4,5)` selection and `[169,-1)` selecting bucket 169 but not
+170.
+
+The dispatcher does not defer every Lua z callback until the end of the frame.
+`DrawCalls.lua`'s original bytecode shows `initDraw` rebuilding a sorted private
+list from callbacks whose `zOrder` is truthy and setting
+`hasZOrderedDraws=true`; `draw(z)` repeatedly invokes and removes the head while
+`callback.zOrder <= z`, and a nil z becomes the `1e10` final sentinel. In
+`sub_10004BAB4`, the captured `draw` function is called with the current
+integer converted to float before the SpriteSheet leaves of every existing z
+bucket, including a retained empty node. Rust now walks the persistent outer
+tree and performs that callback before opening its live SpriteSheet leaves.
+Visibility is checked only after the bucket callback, so both a bucket
+containing solely hidden bodies and a bucket emptied by `removeObject` still
+drain their Lua layer. Regressions fix both cases.
+
+The `native_setSprite` special branch is also no longer ambiguous. Both
+disassemblers show `sub_10045C06C` selecting the final Resources `+0x588`
+priority entry only when its type tag is 2, then resolving it through the map at
+`+0x4F8`. This is the loaded `CompoSpriteSet` path already represented by the
+retained bound-composite record, not the unrelated Flash animation callback.
+Its scene bucket key comes from the first composite child's `AtlasSprite` sheet
+pointer; the ordinary branch uses the direct `AtlasSprite` sheet pointer.
+
+The same dispatcher exposes one callback-state bug that had been masked by the
+old whole-scene snapshot. At `0x10004BFA4` the pre callback receives the
+original Lua object table and byte `+0x139`, which `sub_10006D5B4` and
+parameter 8 independently identify as horizontal flip, not visibility. After
+the callback returns, the dispatcher reloads alpha, sprite/composite mode,
+scale, rotation and decoration fields from the live RenderObjectData before it
+submits the object; the post callback reloads `+0x139` again. Rust now snapshots
+no scene order at frame start: `draw_registration/scene/walk.rs` rereads the
+live z tree, sheet tree and vector length/index after callbacks, while the
+compact draw record itself is reacquired after Lua returns. This also preserves
+the native vector-shift behavior when a pre callback moves its current object
+to another z bucket: the shifted successor can be skipped and the moved object
+can be reached again later in the same walk. Regressions pin both that traversal
+and same-submission alpha, scale and flip mutations.
+
+The complete workspace now passes 476 tests (69 app/audio/wgpu, 31 assets, one
+core and 375 script/physics). Formatting, release compilation and strict
+all-target Clippy are clean. Read-only verification classifies all 2,602 source
+bundle files: 1,167 encrypted archives, 718 Lua chunks, 448 JSON documents,
+114 KA3D envelopes and 72 PVR textures. Release SHA-256 values are
+`f2ed110bf390df4e6399eaa12d3f2d9cf304e94b98dd4e3afa7d9bf387c3f492`
+for `stella-app`,
+`d08f5f1b18608f7131da87f206e8ccb8a1df9c064940b48a99c9184bd2402a2b`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+Fresh isolated-AppData headless and offscreen-wgpu drives both complete 600
+frames with 70 optional missing globals, zero invoked fallbacks and zero
+remaining compatibility bindings. The offscreen file existed only to force the
+wgpu upload/readback path (586,869 bytes, 111 uniforms, 666 vertices, seven
+draws and four textures); it was never opened or viewed. Both
+CPU and GPU drives used one isolated audit tree. A fresh 9,300-frame L01
+interaction route after the live-callback, exclusive-z and Lua-z-interleave
+corrections retains 886 uniforms, 5,316 vertices, 31 draws and 13 textures and
+completes in 23.12 seconds wall time with zero invoked fallbacks or
+compatibility bindings. The extra draw is the required painter-order boundary
+at an interleaved Lua layer, not an unbatched sprite regression. Its offscreen
+file (703,317 bytes) was likewise never opened. The complete isolated audit
+tree was moved recoverably to Trash.
+
+### Constructor Lua-record and initial-mass ABI completion
+
+IDA and Hopper independently expose the complete `objects.world` record built
+by the five native scene constructors: box `sub_100034740`, circle
+`sub_100034FB0`, polygon `sub_1000357A4`, line `sub_1000364E0` and
+non-physics `sub_100036D38`. Every constructor writes `name`, `sprite`,
+`type`, `x`, `y`, `angle`, `density`, `friction`, `restitution`, `mass`,
+`xVel`, `yVel`, `z_order`, `animTimer`, `animFrame`,
+`animThresholdTimer`, `collisionEnabled` and `alpha`. Box, polygon and line
+also write the original float arguments as `width` and `height`; circle writes
+the original `radius`. `angle`, both velocity fields, both timers and the
+threshold timer start at zero, while `animFrame` and `alpha` start at one.
+
+The former Rust mirror omitted the three animation fields and alpha, omitted
+line dimensions, exposed a synthetic polygon/line `vertexCount`, and eagerly
+published `scaleX`, `scaleY`, `visible`, `velocityX`, `velocityY`,
+`angularVelocity`, `active`, `sleeping` and `sensor`. None of those latter
+fields appears in any of the five native constructor field-write sequences;
+they are installed only by later script/native update paths where applicable.
+The mirror now emits only the recovered key set and preserves a fresh table on
+same-name replacement. Hopper's `sub_100036D38` additionally confirms that a
+non-physics object's density, friction, restitution and mass are all zero and
+that collision is disabled, correcting the previous synthetic 0.2 friction.
+
+The `mass` value is read from `b2Body+0x98` after fixture creation, so it is a
+Box2D float32 result rather than a host-f64 geometry estimate. Constructor mass
+calculation now uses the same float32 circle multiplication order and the same
+reference-centred polygon area accumulation, visits compound fixtures in
+native reverse-list order, and applies Box2D's unit-mass fallback to dynamic
+bodies whose aggregate fixture mass is not positive. A five-kind regression
+compares each exact Lua key set, raw shape dimensions, animation/alpha
+defaults, non-physics coefficients and published mass against the installed
+body.
+
+The complete workspace now passes 477 tests (69 app/audio/wgpu, 31 assets, one
+core and 376 script/physics); formatting, release compilation and strict
+all-target/all-feature Clippy are clean. Current release SHA-256 values are
+`0fc44ce8b63de3f0416530b0bb47a7525e24547c193f9ce83ea0cfe2acba9e10`
+for `stella-app`,
+`a13f7f85680c40055181b7b95832d5b1263181da9dc58d62e8cb229867387538`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+Fresh isolated-AppData headless and offscreen-wgpu drives both complete 600
+frames with 70 optional missing globals, zero invoked fallbacks and zero
+remaining compatibility bindings. The 600-frame wgpu checkpoint contains 113
+uniforms, 678 vertices, seven draws and four textures. The 9,300-frame
+menu-to-comic-to-L01 launch route contains 888 uniforms, 5,328 vertices, 31
+draws and 13 textures and completes in 23.40 seconds wall time. The two PNGs
+(587,841 and 702,909 bytes) existed only to force the wgpu path; neither was
+opened or inspected, and their isolated audit directory was moved recoverably
+to Trash.
+
+### Outer draw, retry/result lifetime and trajectory timing correction
+
+The native member at `0x10004BAB4` is specifically `drawGameNative`, not the
+application's outer draw callback. IDA's references to `DrawCalls`,
+`hasZOrderedDraws` and `draw`, plus Hopper's matching scene-tree walk, show
+that it drains Lua z callbacks and native scene buckets only when
+`GameScene:draw` calls it. The shipped `gamelogic.lua` owns the actual frame
+order: root menu, `notificationsFrame`, notification particles,
+`drawLoadingScreen`, subsystems and menu particles. The old host bypassed that
+callback and then forced a second `DrawCalls.draw` pass.
+
+That one boundary error caused three visible failures. Skipping
+`notificationsFrame:draw` updated but never submitted the
+`LevelLoadTransition` LEAVES animation. Skipping `drawLoadingScreen` left a
+restart request parked at `g_drawLoadingScreen=true` without ever emitting its
+`EID_CHANGE_SCENE`. Finally, forcing the native/Lua scene drain after
+`GameScene:draw` had selected a full-screen `LevelCompleted` or `LevelFailed`
+child leaked level bodies onto the result UI. `StellaLua::draw` now clears the
+native command buffers and invokes the shipped global `draw` exactly once; it
+does not initialize or drain `DrawCalls` itself. A regression pins the six
+outer stages and proves there is no second host pass.
+
+The interactive desktop loop had another native-boundary inversion. Purple's
+display-link callback passes one elapsed delta to `sub_10005E898`; that member
+accumulates its own fixed 1/30 Box2D steps internally. The old desktop host
+instead repeated the entire Lua update, scene traversal and draw once per
+missed 1/60 tick, causing an object-heavy level to enter a catch-up spiral.
+Interactive wakeups are now coalesced into one callback with the whole elapsed
+delta, capped at 100 ms with no residual render debt. Deterministic screenshot
+execution remains fixed at 1/60. Unit tests pin both sub-tick coalescing and
+stall clamping.
+
+Trajectory reverse engineering found two independent ABI omissions. The
+adapter for `clearAimingAid` at `0x100088D24` requires one number and forwards
+it to `sub_10004BA70`. Before deactivation, `sub_1000082CC` upper-bounds the
+particle vector by `pathParameter / (controlCount - 3)`, compacts only the
+suffix beyond the supplied progress and discards the prefix. Thus
+`clearAimingAid(1)` immediately removes every prediction particle; merely
+switching off spawning lets the old line remain visible. Rust now reproduces
+the strict argument and float32 prefix compaction.
+
+More importantly, the LuaObject at GameLua `+0x408/+0x420` used by
+`sub_100032970` and `sub_10004B8EC` is the `objects` table. GameScene bytecode
+sets `objects.currentTimeStep` to float32 1/90 while aiming and 1/30 otherwise.
+The predictor multiplies that value by the shipped factor three, so an aimed
+simulation step is exactly 1/30; the former Rust code incorrectly read the
+global render-frame delta and normally predicted at 1/20. The corrected lookup
+is pinned by all predictor and AimStream tests.
+
+A fresh numeric L01 route, without inspecting its PNG, retained 50 predicted
+points and 19 real flight samples. The early real samples lie on the corrected
+prediction; later differences begin only after solid-body interaction, which
+the recovered one-body predictor deliberately omits. The same route then
+reached the result state and clicked restart. Its `objects.world` population
+changed from 285 to 292 as `Chapter01_L01` was reconstructed, the loading flag
+returned false and the recovered action was
+`INITIALIZE_GAME_AFTER_RELOAD_FROM_PAUSE_MENU`, confirming that the button ran
+the full native/Lua reload state machine rather than only changing UI state.
+
+After these corrections the complete workspace passes 482 tests (71
+app/audio/wgpu, 31 assets, one core and 379 script/physics). Formatting,
+strict all-target/all-feature Clippy and release compilation are clean. A
+fresh isolated-AppData 600-frame offscreen-wgpu route reports 70 optional data
+reads, zero invoked fallbacks and zero compatibility bindings; its 589,177-byte
+PNG existed only to force GPU upload/render/readback and was not opened or
+inspected. Release SHA-256 values are
+`35f917bb2f990629c61069063968d8a388237a527203115ff68f2da673716559`
+for `stella-app`,
+`a99d3b49f82c512571b20b37cf59bfd5b4da4ba8a94243737788b47cc5590956`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### CADisplayLink cadence and complete level-container audit
+
+`-[AppController startUpdate]` at `0x100404CA8` constructs a
+`CADisplayLink` targeting `update`, derives the legacy frame interval from the
+configured frame rate, and adds it to `NSDefaultRunLoopMode`. Its callback at
+`0x100404374` has an `m_insideUpdate` re-entry guard, computes a float32
+monotonic-clock delta, clamps negative time to zero and clamps a long frame to
+the exact float32 value `0.1f` before calling the app. IDA and Hopper agree on
+the callback/clamp flow and the display-link ownership, while direct assembly
+resolves IDA's `60 / framerate` interval expression more reliably than
+Hopper's decompiler rendering.
+
+The desktop host now uses the recovered 100 ms limit instead of 250 ms. Its
+winit deadline is also based on the unconsumed sub-frame accumulator rather
+than `now + 1/60`: an input event that wakes the run loop early no longer moves
+the next render tick later. After a rendered frame the accumulator is empty and
+the next deadline is one full tick from the accounted clock instant; after an
+8 ms input wakeup only the remaining portion is scheduled. This preserves the
+independent display-link cadence without reintroducing multi-render catch-up.
+
+A command-driven audit then booted the original game and passed every one of
+the 153 shipped `levels/**/*.lua` containers through the native `loadLevel`
+binding in one runtime. All encrypted Lua chunks transcoded, executed, passed
+their filename identity check and published `loadedObjects`; the complete
+sweep ended with nine optional data probes, zero invoked fallbacks and zero
+remaining compatibility bindings. This is table/parser coverage rather than a
+claim that every level's interactive solution has been played.
+
+The workspace now passes 483 tests (72 app/audio/wgpu, 31 assets, one core and
+379 script/physics); formatting, strict all-target/all-feature Clippy and
+release compilation are clean. A fresh isolated-AppData 600-frame wgpu route
+again completes with 70 optional probes, zero invoked fallbacks and zero
+compatibility bindings. Its 590,056-byte PNG was not opened or inspected.
+Current release SHA-256 values are
+`0744e107ded36dff5ed95f3e268c18f3207dd2941257406f9f26bc183c8be4e6`
+for `stella-app`,
+`a99d3b49f82c512571b20b37cf59bfd5b4da4ba8a94243737788b47cc5590956`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for `stella-tool`.
+
+### Calendar, ServerTime, scalar-adapter and locale completion
+
+The calendar quartet registered at `0x10002EC4C..0x10002ED00` is implemented
+by `sub_10005698C`, `sub_100056AB0`, `sub_100056C98` and `sub_100056D68`.
+IDA and Hopper agree that `getCurrentTime` uses `time` plus `localtime`, then
+publishes `year/month/day/hour/minutes/seconds` through the engine's float32
+Lua bridge. The shared input converter `sub_10005D700` requires year, month
+and day, defaults the three clock fields to zero, and leaves its zeroed
+`tm_isdst` at standard time before `mktime`. `getTimeDifference` takes the
+absolute `difftime`, converts it with `FCVTZU W` and decomposes that u32 into
+days, hours, minutes and seconds. The signed-seconds member instead narrows
+the double difference directly to float32.
+
+`addDurationToTime` has a distinct contract: all six source fields and a
+NUMBER duration are mandatory. It performs float32 addition into `tm_sec`,
+uses `FCVTZS W` for every calendar component, sets `tm_isdst=-1`, and lets
+`mktime` normalize the structure. The former Rust implementation treated a
+missing hour as Lua 5.1's os.time default of noon, inferred DST where the
+difference members force standard time, added an i64 duration to epoch
+seconds, and returned an exact i64 difference. The replacement preserves the
+recovered local-time, defaulting, DST, float32 and u32 boundaries.
+
+The three force/time multipliers are the float members at GameLua offsets
+`+0x530`, `+0x534` and `+0x554`, reached through setters
+`sub_100031168`, `sub_100031178`, `sub_100031378` and the common generated
+adapter `sub_100088D24`. That adapter strictly reads Lua slot one as NUMBER;
+the old host scanned for the last numeric argument and silently ignored bad
+calls. All setters now reject missing/wrong slot-one values and store the
+float32 result. Likewise, `performBitwiseAnd/Or` are not host-u32 helpers:
+`sub_100056964` and `sub_100056978` execute two `FCVTZS W` conversions,
+signed 32-bit `AND/OR`, and `SCVTF S` before returning. Negative values,
+fractions, integer-indefinite inputs and large-result float32 rounding are now
+pinned by regression tests.
+
+Purple's separate ServerTime service constructor `sub_1000BCEC0` registers
+four methods, not one. `sub_1000BD1BC` passes the offset-adjusted epoch to
+`gmtime_r`; `sub_1000BD224` passes it to `localtime_r`; `sub_1000BD28C`
+returns `STATUS_OK` only for status zero; and `sub_1000BD110` starts the
+optional HTTP synchronization. The implementation object initializes both
+offset and status to zero. The offline rehost therefore exposes the complete
+table, keeps synchronization void, reports `STATUS_OK`, and returns distinct
+UTC and local float32 calendar tables without inventing network state.
+
+Finally, locale refresh `sub_100050948` no longer feeds `g_currentLocale`
+back into `setLocale`. It walks configured/system preferred languages, maps
+the `ja`, `ko` and `en` prefixes to `ja_JP`, `ko_KR` and `en_EN`, chooses the
+first value present in the live `TEXTS_BASIC` locale vector, and falls back to
+`en_EN`. The cross-platform host obtains the preference list from its locale
+environment (with `STELLA_LOCALE` as the explicit configuration analogue)
+and validates it against the parsed native text-group resource.
+
+Direct regressions now call all 243 unique GameLua globals published by the
+constructor. The final gaps pin `clearParticlesNative` clear-all behavior,
+strict Lua-file probing, byte-exact nested Bundle-to-AppData copying and the
+string/void boundary of `playVideo` (the shipped bundle contains no video
+asset, so the offline service records the request without inventing playback).
+
+The workspace now passes 491 tests (72 app/audio/wgpu, 31 assets, one core
+and 387 script/physics). Formatting, strict all-target/all-feature Clippy and
+release compilation are clean. A fresh isolated-AppData 600-frame wgpu route
+completed with 70 optional data probes, zero invoked fallbacks and zero
+remaining compatibility bindings. Its 587,887-byte PNG existed only to force
+wgpu upload/render/readback and was not opened or inspected; the audit tree
+was moved recoverably to Trash. Current release SHA-256 values are
+`59a44b736aa49bf902991a05a40c2cd629ebe78953f1d13f4049125bf76723ec`
+for `stella-app`,
+`ce04826508576c7c71740b95320c95b0f132903238a1ed840f6fbb8169bc26ee`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for `stella-tool`.
+
+### Challenge-result edge occlusion and priority-flow revalidation
+
+The remaining reports of level objects on a result screen belong to the
+Frenemies challenge result path, not to the ordinary `LevelCompleted` and
+`LevelFailed` paths. A command-level capture shows that the challenge class
+continues drawing the native world first and then submits
+`ENDSCREEN_BG_STRIP` at screen x coordinates 0 and 959 with unit scale. The
+central `ENDSCREEN_WIN` composite is only 1008 pixels wide. Replaying those
+exact pre-fix commands over a sentinel framebuffer leaves 11,888 pixels
+uncovered, mostly the full-height left/right edge columns and the bottom
+corners; foliage, pigs, and blocks can consequently remain visible there.
+
+This is not a lost `drawSprite` size argument in the Rust bridge. IDA's
+`sub_10045C144` and atlas branch `sub_100467AF0`, independently confirmed by
+Hopper, preserve the supplied destination width and height through the final
+sprite virtual call. The shipped `Image:drawSelf` supplies its current `w/h`,
+which remain the strip's intrinsic 1 by 770 size. The actual omission is in
+the shipped Lua class hierarchy: `FrenemiesChallengeLevelCompleted` directly
+inherits `ScalableLayout` while reusing `FrenemiesLevelCompleted.layout.lua`,
+but does not implement the `layout` override that calls
+`setNonUniformScale(1000, scaleY)` on both edge strips. Ordinary level-win,
+level-fail, and Frenemies-result classes all contain that override.
+
+The host now installs only that missing challenge-class layout method after
+the shipped game script is loaded, following the identical two-strip code in
+the sibling result classes. It deliberately does not change general sprite
+scaling, destination-size, composite, or painter-order behavior. Render trace
+output now also includes each command's retained destination size so future
+layout audits do not confuse scalar state with the independent draw-size
+overload.
+
+A boot-level regression executes the repaired method against independent
+left/right children and pins the 1000x horizontal scale and inherited vertical
+scale. Separate software-reference and actual headless-wgpu tests draw the
+four challenge background submissions over a magenta sentinel and require
+zero uncovered pixels across the complete 1024 by 768 framebuffer.
+
+The previously corrected priority issues were also revalidated rather than
+inferred from a screenshot. The display-link coalescing and 100 ms stall tests,
+the single shipped outer-draw callback test, and all 14 trajectory/AimStream
+tests pass. A fresh isolated-AppData 14,800-frame release route instruments
+`levelLoadTransition`, completes L01, reaches a stable `levelCompleted` frame,
+clicks the real restart button, and asserts that the LEAVES transition was
+both created and drawn, the loading flag returned false, L01 remained the
+active level, the world object population was reconstructed, and the result
+frame was removed. Its PNG existed only to force final wgpu submission and
+readback and was not inspected.
+
+The complete workspace now passes 494 tests (74 app/audio/wgpu, 31 assets, one
+core and 388 script/physics). Formatting, strict all-target/all-feature Clippy
+and release compilation are clean. Current release SHA-256 values are
+`fea71f9ee023ad3c11e1b1c720367264369234f745753227a0fca6b480ac5b22`
+for `stella-app`,
+`f8de6c40513586c1d733c44d180c64fcd5d19a01de429e26f2d37b610f1ae84f`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### Native renderer ownership split after the priority fixes
+
+The post-fix compatibility audit still reports zero invoked fallbacks and zero
+remaining compatibility bindings. The next source-layout pass therefore keeps
+behavior unchanged and separates the deferred command ABI along the native
+owners visible in both connected disassemblers. IDA remains attached to
+`Purple.i64` with Hex-Rays and completed auto-analysis; Hopper independently
+has the `Purple` document selected.
+
+The ResourceManager sprite dispatcher at `sub_10045C144` resolves a named
+resource and branches to the composite member `sub_1004376D4` or atlas member
+`sub_100467AF0`. Hopper folds the atlas continuation into a 424-byte/23-block
+procedure view, while IDA preserves the dispatcher as an independent
+184-byte/8-block function. `GL_Context::drawRect` at `sub_100598CC4` is a
+separate 820-byte/11-block member that transforms four corners, rejects the
+complete offscreen mesh, chooses the plain versus plain-alpha shader, and
+submits one color stream. `game::SystemFont::Impl::drawString` at
+`0x100475B98` is independently 2,008 bytes/47 blocks and owns substring
+anchoring, LabelPool lookup, UIKit/CoreGraphics rasterization, and the final
+label-sprite draw.
+
+The former 1,005-line `render_types.rs` mixed all of those payloads. It is now
+a 17-line facade retaining the exact same crate-root exports over dedicated
+`sprite.rs`, `text.rs`, `geometry.rs`, `system_font.rs`, and the existing
+`system_font_layout.rs`. No command field, public path, renderer ordering or
+runtime behavior changed. Production system-font shaping is 477 lines before
+its colocated regressions rather than being mixed with unrelated commands.
+
+The wgpu-side system-font unit is split at the same recovered ownership
+boundary. `game::LabelPool::addLabel` at `0x100476AEC` is 1,080 bytes and 65
+basic blocks in Hopper; IDA independently shows that it owns the DJB2 field
+hash, exact `0x500000`-byte capacity, tail eviction and insertion vector. Those
+contracts now live in `assets/system_font/cache.rs`. The hit/miss branches of
+`drawString` share their anchor conversion and signed `FCVTZS` coordinates;
+that smaller contract now lives in `assets/system_font/placement.rs`. Outline,
+embedded-bitmap and color-paint rasterization remain separate from both.
+
+The complete workspace still passes 494 tests (74 app/audio/wgpu, 31 assets,
+one core and 388 script/physics). Formatting, strict all-target/all-feature
+Clippy and release compilation are clean. The rebuilt release is running from
+the normal extracted data tree. Current SHA-256 values are
+`600e50a2598454175bcc26261e3b9dc601668d0fd8ebbaef2b4f5527ec098bf6`
+for `stella-app`,
+`f9f53b76bd5fdbccceb02656eac2753e1bcc8226628da905629771482a991f30`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### Object-heavy level stall correction at native Box2D boundaries
+
+A deterministic 1,200-frame level matrix identified Chapter 01 Level 50 as a
+real CPU outlier: the pre-fix release took about 9.26 seconds, versus 2.86 for
+L01 and 4.50 for L61. Final-frame command counts were only 865 sprites and 35
+wgpu draws, roughly 35 percent above L01 rather than the observed two-to-three
+times CPU cost. A symbolized sample instead placed almost all of the excess in
+the fixed Box2D step and in Lua-driven `setPosition`/`setAngle` calls.
+
+IDA's `b2Body::SetTransform` at `sub_10086B794` provides the decisive
+ownership boundary. It walks only the selected body's fixture list through
+`sub_10086CB74`, then calls the shared broad-phase update member
+`sub_10086BC24`. The old bridge synchronized every active body's proxy on
+each individual transform setter, turning object-heavy Lua updates into a
+world-sized repeated scan. Transform setters now synchronize only the named
+body and drain the same shared move buffer. The world-wide synchronization
+remains at the recovered `b2World::Solve` tail; a second non-native full-world
+pass after SolveTOI was removed. A focused regression moves two unsynchronized
+bodies, invokes the single-body member, and proves that only its proxy record
+changes until the explicit world pass.
+
+The solver had the same structural mismatch. `ResetMassData` at
+`sub_10086B1F4` stores aggregate mass/inverse mass at body offsets `+0x98` and
+`+0x9C`, local centre at `+0x1C`, inertia/inverse inertia at `+0xA0/+0xA4`,
+and the updated sweep centre in the body. Rust formerly recomputed polygon
+mass and inertia in every constraint use. The fixture aggregate is now cached
+only when native ResetMassData runs. Likewise,
+`InitializeVelocityConstraints` at `sub_100863BC4` visibly indexes compact
+12-byte velocity/position arrays by the two body indices stored in each
+152-byte constraint; it does not clone complete render objects. Contact
+velocity and position passes now capture compact scalar body states, while
+retaining the exact live Gauss-Seidel reread between constraints and points.
+The pre-warm whole-scene clone and repeated full `SceneObject` point clones
+are gone. TOI keeps pre-island records only for bodies that can move; static
+endpoints use their unchanged live transforms.
+
+The same isolated L50 route now takes about 7.50 seconds for 1,200 frames,
+including startup and the final GPU readback, a roughly 19 percent total-time
+reduction and about 6.3 ms per deterministic frame. This is not based on PNG
+appearance. Existing contact order, two-point solver, continuous collision,
+trajectory, retry/LEAVES and result-occlusion regressions remain unchanged.
+
+The workspace now passes 495 tests (74 app/audio/wgpu, 31 assets, one core and
+389 script/physics). Formatting, strict all-target/all-feature Clippy and the
+complete release build are clean. Current SHA-256 values are
+`1c41898ede710b76bb2dd607c2c9127aaa44dd8411e5f131ab48c32f467bb11e`
+for `stella-app`,
+`1ecb71dc8f304e9e7d10447530ea2d1ffbe07c8d0596b77363654021e14e9b64`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### Texture-state revalidation and legacy resource-owner split
+
+The remaining backend-difference audit first revisited texture filtering rather
+than changing wgpu from visual guesswork. IDA and Hopper independently show
+the complete 240-byte/six-block texture-state member at `sub_10018AFB8`:
+`GL_TEXTURE_MAG_FILTER` is fixed to `GL_LINEAR`, MIN is resolved through
+`sub_100206CA0`, and the same wrap result from `sub_100206CE0` is installed on
+both S and T. This confirms the existing wgpu linear-clamp base sampler and
+linear-repeat texturized-fill sampler. The shipped no-mipmap assets therefore
+need no sampler mutation; changing either filter would move away from Purple.
+
+The audit instead exposed a source-ownership mismatch in the 599-line
+`resource_manager/legacy_usage.rs`. SpriteSheet construction is an independent
+1,552-byte/76-block member at `sub_100457E38` in both disassemblers. Static and
+streaming audio construction belong to the separate 1,008-byte/42-block
+`sub_10045A1C8`; the WAV reader at `sub_100578858` is independently delimited
+as well (IDA includes its exception tails, while Hopper ends the main body
+earlier). The Rust source now follows those owners: the public-in-module facade
+is 10 lines, SpriteSheet upload accounting is 42 lines, AudioReader/type
+detection/decoder construction is 388 lines, MPEG and Vorbis frame accounting
+remain independent 204- and 48-line children, and the 170-line regression suite
+is no longer mixed with production decoding.
+
+This split changes no resource key, file-type rule, RIFF boundary, decoded PCM,
+duration, upload byte count or visibility outside ResourceManager. All seven
+direct resource-accounting regressions pass, including all 538 shipped MP3
+decodes and the native SpriteSheet PVR payload count. The full workspace still
+passes 495 tests (74 app/audio/wgpu, 31 assets, one core and 389
+script/physics); formatting, strict all-target/all-feature Clippy and release
+compilation are clean. A fresh isolated-AppData 600-frame run again reports 70
+optional data reads, zero invoked fallbacks and zero compatibility bindings.
+Current release SHA-256 values are
+`e98e8aca3ca5e5285d6684caddf6ba2aed75b02928b4a61f56f73804e352e147`
+for `stella-app`,
+`9429daf2b238766079d948da14d36dba73c82c816efc4e6da44d95e0f2b53fd4`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### Native loadLevel scene-owner reset and retry duplication
+
+A fresh isolated-AppData command route now covers the real shipped flow rather
+than treating a screenshot as truth: 650 frames to the island map, the first
+`BTN_PLAY` at game coordinate `(173,247)`, the automatic Chapter 01 map
+transition and introductory comic, `Chapter01_L01`, the pause button at
+`(56,53)`, and `BTN_RESTART` at `(102,364)`. The button entered the complete
+reload state machine, but the pre-fix stable frame grew from 643 sprite
+submissions to 940. Frequency analysis showed nearly every level object twice;
+Lua still held only 292 live `objects.world` entries and did not call the
+registered `removeObject` once during restart. It instead replaced the entire
+`objects.world` table.
+
+IDA identifies the missing native lifetime inside the shared bundle/AppData
+loader `sub_100065D3C`. Before opening the requested `.lua`, it destroys the
+old RenderObjectData owners, erases the adjacent name maps at
+`0x100065FDC/0x100065FFC/0x1000661E0`, and at `0x100066200` invokes the full
+`std::_Rb_tree::_M_erase` for GameLua's
+`map<int, map<SpriteSheet*, vector<string>>>` at `+0x310`. This is deliberately
+stronger than `removeObject` at `sub_100042260`, which erases only the first
+matching vector entry and retains empty map nodes. Hopper independently reports
+the same `0x100066200` cross-reference to the render-index tree eraser; it also
+finds the corresponding destructor use from `sub_10005BDB8`.
+
+Both Rust `loadLevel` adapters now retire the complete native scene and draw
+callback owner before file lookup, so even a failed load has Purple's destructive
+ordering. Constructor-time `objects.world` identity tracking covers direct Lua
+owner replacement without changing the native same-name duplicate-constructor
+behavior inside one owner. Ordinary object removal still preserves empty z and
+sheet nodes; full level loading resets the entire tree. Regressions separately
+pin failed-load cleanup and same-name reconstruction after a world-table change.
+
+The final 11,000-frame route settles at 641 sprites and 34 geometry commands
+after restart, with no missing wgpu sprite, zero invoked fallbacks and zero
+compatibility bindings. The two-command difference from the 643-submission
+pre-restart sample is the live animation/particle frame, not duplicated level
+content. The workspace passes 497 tests (74 app/audio/wgpu, 31 assets, one core
+and 391 script/physics); formatting, strict all-target/all-feature Clippy and
+release compilation are clean. Current release SHA-256 values are
+`ffd8c7ed1ff5e83917ac6318bd01ee32e6a496cd5b01dd85c1dc4f935472f287`
+for `stella-app`,
+`da2818362cac02dfdea728bb92c12bbc24d406115eeabf963aa77900fda8ba62`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### Comic timeline validation and native playback completion
+
+The first Chapter 01 comic was re-audited as a timeline rather than a set of
+screenshots. A fresh first-run route enters page one at about frame 2,000,
+advances its three panels, advances all four page-two panels, returns to the
+chapter map at about frame 3,800 and starts L01 at about frame 5,000. The seven
+active `Animation` actions have resource durations 4.2332997, 5.6333, 4.7666,
+3.8, 2.7666, 2.9333 and 3.6 seconds. Their sequential total is 27.7331 seconds;
+the per-page `Disappear` actions run in parallel and contribute at most 0.8
+and 0.6666 seconds. This accounts for the measured comic interval and rules
+out a host playback-rate correction. The unused page-one panel 4--6 assets are
+not part of `episode_1_cutscene_1_intro` and are deliberately not played.
+
+The same audit exposed a separate completion-boundary difference. IDA and
+Hopper independently delimit `AnimationWrapper::start` at `sub_100012F18`
+(1,148 bytes/51 blocks). It starts an ordinary action, stores the wrapper mode
+at the AnimationWrapper component, and installs `sub_100016C50` as the action
+completion callback. The latter is 276 bytes/13 blocks in both tools. An empty
+mode or literal `repeat` emits `PLAYBACK_REPEAT` and calls `sub_10040E798` with
+exactly `0.0f`; literal `once` emits `PLAYBACK_END`; any other string still
+queues the callback record but leaves its event name empty. `sub_10040E798`
+writes the float time at action offset `+0x2c` and marks its animation owner
+dirty. Thus repeat completion discards a large frame's overshoot instead of
+applying modulo arithmetic or traversing several synthetic cycles in one
+host update.
+
+Rust now uses that exact completion classifier for completed action ends.
+Empty-mode repeats remain at time zero and reset their time-zero-event boundary
+for the following update; once and unknown modes retain the action-duration
+endpoint after their callback. Timeline events are evaluated only through the
+one-shot action endpoint before the queued completion event. Focused tests pin
+all four mode classes and a 3.25-second update over a 2-second action, including
+the next-cycle time-zero event. The workspace passes 499 tests (74
+app/audio/wgpu, 31 assets, one core and 393 script/physics).
+
+Formatting, strict all-target/all-feature Clippy and the complete release build
+are clean. A fresh isolated-AppData 5,200-frame route clicks the real first-run
+play button at frame 650, completes the same seven-panel comic, asserts
+`currentLevelName == "Chapter01_L01"`, and finishes its wgpu readback with 85
+optional data probes, zero invoked fallbacks and zero compatibility bindings.
+The PNG was not inspected. Current release SHA-256 values are
+`1e9a41e4fb8810226e86ef8edc5dfe0cb000394683770057a731b844486b6720`
+for `stella-app`,
+`00737329055137cce41c949d89890762e7a54ea32090be8455059ed5e4c26af0`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### Zero-duration controls and exact state-3 advancement
+
+The apparent `0.00001f` argument at the `sub_100012F18` call to
+`sub_10040A998` is not a playback-time bias. IDA shows that the 80-byte/four-
+block callee ignores that floating argument and only activates the animation
+owner/control state. The real static-action rule is recovered one layer below.
+IDA and Hopper independently delimit action construction at `sub_100410A18`
+as 448 bytes/24 blocks. For ordinary one-shot state 3 it takes the maximum
+result of `sub_10040CDAC` over the action controls and stores that float
+verbatim; an empty control vector or tracks whose last keys are all at zero
+therefore produce an exact `0.0f` duration, with no minimum-frame clamp.
+
+`Animation::Update` at `sub_100411230` is 224 bytes/seven blocks in Hopper
+(102 instructions in IDA). Its state-3 branch performs float32 arithmetic on
+duration `+0x28`, current time `+0x2c`, per-control speed `+0x24` and the owner
+delta. A positive remaining interval completes only when the scaled delta
+reaches that interval. An already exact endpoint takes neither completion nor
+advancement branch. Consequently a zero-duration action started at zero stays
+active indefinitely and emits no completion callback. If a seek placed the
+control beyond its duration, small positive deltas move it back toward the
+endpoint and a delta covering the overshoot completes it. Negative speed can
+move an ordinary one-shot below zero; it does not synthesize a lower-bound
+completion. This latter detail supersedes the provisional reverse-end handling
+described in the immediately preceding milestone.
+
+An asset-wide structural query over all 216 shipped `.anim.json` files finds
+97 zero-duration actions. None contains a non-empty `spineEvent` at time zero.
+Rust previously promoted each of these actions to `1/60` second, so repeat-mode
+static art could continually queue `PLAYBACK_REPEAT`, seek and re-arm itself.
+`AnimationWrapperNative.start` now preserves exact zero and quantizes nonzero
+durations to the native float32 representation. Update uses the recovered
+state-3 branches and float32 multiply/add/subtract rules, including the exact-
+endpoint freeze, overshoot recovery and negative-speed behavior. Focused tests
+pin duration construction, all boundary branches and two consecutive updates
+of a zero-duration repeat action with no callback.
+
+The workspace passes 502 tests (74 app/audio/wgpu, 31 assets, one core and 396
+script/physics). Formatting, strict all-target/all-feature Clippy and the full
+release build are clean. A fresh isolated-AppData 5,200-frame route again
+crosses the real first-run map/comic flow, asserts
+`currentLevelName == "Chapter01_L01"`, reports 85 optional data probes, zero
+invoked fallbacks and zero compatibility bindings, and completes its final
+wgpu readback in about 5.14 seconds. The PNG was not used as verification.
+Current release SHA-256 values are
+`8390f27043c89880e46d1219eb2c8794e528047c11927c34e228603cf37cca10`
+for `stella-app`,
+`6e60419ccaef5c4bb592d53043400124cac9515b862151a6c52c32f09543200b`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### Retained completion state and distinct animation stop paths
+
+The surrounding AnimationWrapper state API exposes a second endpoint rule
+which the completion callback alone does not show. IDA's `sub_10001384C` and
+Hopper's matching 288-byte/12-block procedure implement `isPlaying(tag)` by
+testing `(control.state & ~1) == 2`; both state 2 and one-shot state 3 are
+reported as playing, while state 1 is not. Natural completion at
+`sub_1004110A0` is 260 bytes/15 blocks in Hopper. When a callback is installed,
+it invokes the callback without changing state 3 to state 4. Wrapper callback
+`sub_100016C50` only queues `PLAYBACK_END` for mode `once`; it does not stop the
+control. A completed once/unknown action therefore remains playing at its
+duration endpoint, and subsequent updates freeze there without sending the
+completion again.
+
+Pause and resume have the same direct state ownership. `sub_100013A98` is 260
+bytes/10 blocks and writes state 1 to the retained tag control.
+`sub_100013B9C` is 364 bytes/16 blocks and unconditionally restores state 3,
+recomputing its exact maximum control duration. Resume does this even if that
+retained control was previously stopped.
+
+Stopping by action and stopping all actions in a scene are deliberately not
+equivalent. The 252-byte/15-block wrapper member `sub_100013720` sends a
+non-empty action to `sub_10041017C`, whose `sub_100410EA0` path removes the
+named control from Animation's active vector, writes state 1, seeks to zero and
+releases its live attachment. An empty action instead calls the 100-byte/four-
+block `sub_10041103C`, which writes state 1 and seeks every active control to
+zero without removing them. A later resume can therefore advance an empty-
+stop control; after a named stop it can make `isPlaying` true again through the
+retained wrapper pointer, but the detached control is no longer updated.
+
+Rust now retains this distinction explicitly in `AnimationPlayback`: state and
+active-vector attachment are separate. Natural once/unknown completion keeps
+the playing state, empty stop and global stop-all retain attachment, named stop
+detaches, resume always restores the reported playing state, and frame update
+only advances attached controls. A focused end-to-end native-table regression
+pins natural completion, pause/resume, both stop forms and the intentionally
+non-advancing resumed detached control.
+
+The workspace passes 503 tests (74 app/audio/wgpu, 31 assets, one core and 397
+script/physics). Formatting, strict all-target/all-feature Clippy and release
+compilation are clean. A fresh isolated-AppData 5,200-frame first-run route
+again reaches and asserts `Chapter01_L01` in about 5.13 seconds, with 85
+optional data probes, zero invoked fallbacks and zero compatibility bindings;
+the PNG was not inspected. Current release SHA-256 values are
+`23ba7d16ca19609042e4c26c09a661f23ce0e12c2347ffd58c2c951fe626759e`
+for `stella-app`,
+`4c1117fef6ff3e37d08eba5d773a3dbc695f0ed6444929bd25c92017905ecd33`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### Retry routes, trajectory ownership and gameplay-frame stalls
+
+Real pointer routes now cover all three shipped restart entry points instead
+of exercising a host-only command: pause-menu restart, completed-level restart
+and failed-level restart each replace the Lua `objects.world`, retain the
+native `g_restartType` value (`INGAME`, `COMPLETED` or `FAILED`) and finish with
+the loading screen cleared. The completed and failed result screens were also
+audited at their settled frames. They submit only result UI sprites and text;
+no level geometry or world objects reach the renderer. Stella's result
+animation remains intentionally present as UI.
+
+IDA and Hopper agree that `sub_10006D9C0` draws two independent flight-trail
+records in fixed order and divides their points by the GameLua physics/game
+scale. The routine has no age, fade or timeout branch. Those records are
+double-buffered and persist until later `startNewTrajectory` calls overwrite
+them. They are distinct from the live AimStream used by the slingshot preview.
+The recovered level-load path at `sub_1000086CC` clears and deactivates that
+AimStream while leaving the flight buffers intact. Rust now applies the same
+ownership boundary. Predictor dispatch also returns immediately when the
+physics world is locked, preserving both the selected bird and the previous
+prediction, rather than partially replacing one side of the preview state.
+
+The shipped `LevelLoadTransition.lua` starts `Transition_Animation` at speed
+1.5, performs the load after `PLAYBACK_END`, then starts
+`Transition_Animation_Backwards` and disposes itself after the second
+completion. The native event-track implementation now retains empty reset keys
+and queues seek/start events with float32 timing. A direct transition route
+observes both playback ends, removal of the transition child and all 16
+`TRANSITION_LEAF_1/2/3` wgpu sprite submissions. The rendered PNG is only used
+to force the GPU path; it is not treated as the behavioral oracle.
+
+The most expensive avoidable host work in dense levels was structural rather
+than a different physics rule. Continuous collision previously cloned each
+complete `SceneObject`, including render-owned vectors and resources, just to
+retain a sweep start. It now stores only center and angle. Contact-island DFS
+previously rescanned every sorted contact and joint for every body; ordered
+adjacency is now built once while retaining native creation order. Contact
+velocity iterations now use compact body-indexed float32 velocity arrays and
+commit at the same contact-pass boundaries, matching the native solver layout
+without changing joint/contact interleaving.
+
+Sprite-sheet group publication previously installed region metadata but left
+PVR decoding to the first frame that happened to draw each texture. Native
+SpriteSheet group loading constructs the corresponding GL textures during the
+load transition. Active region and masked-texture sources are now sorted,
+deduplicated and decoded when a catalog revision is applied. This deliberately
+moves some total work into the covered loading phase; it is intended to remove
+first-appearance gameplay spikes, not to claim a lower end-to-end route time.
+
+All pause/completed/failed restart routes and the LEAVES route pass with the
+current release code. The workspace passes 506 tests (75 app/audio/wgpu, 31
+assets, one core and 399 script/physics). Formatting and strict
+all-target/all-feature Clippy are clean. A 1,200-frame offscreen-wgpu audit of
+the dense Chapter 1 level 50 route completes with 77 optional data probes,
+zero invoked fallbacks and zero compatibility bindings; the PNG was not
+inspected. Current release SHA-256 values are
+`1e40996a48cff1c676568961cde2bba62a52151d609a6210b51945ee500bebfb`
+for `stella-app`,
+`6ea9679f3ed869873c0bb5741d78fd45ff64bed1c8944dc570275b1e25bb2f47`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### Active animation controls, target precedence and the hidden start tick
+
+A broader IDA/Hopper pass corrects the remaining single-control assumption in
+the Rust animation host. `sub_100410A18` searches the Animation owner's active
+control vector by action name. A missing action allocates and appends a new
+control; an existing action is reset in place without changing vector order or
+its retained speed. `sub_100410EA0` removes a named control with the native
+swap-with-last vector idiom, detaches it from its targets, changes it to state
+1 and seeks it to zero. Empty stop remains the distinct path that resets all
+attached controls without removing them.
+
+The EntityTarget vtable at `off_100AA4060` and its apply member
+`sub_10041E41C` make vector order observable. Each target owns an ordered state
+vector for each usage--translation, scale, rotation, alpha, sprite and zOrder--
+and applies only the last state for that usage. A later action can therefore
+override rotation while translation and sprite continue to come from an older
+active action. `sub_1004111A4` visits every EntityTarget once and then copies
+each active control's current time at `+0x2c` to its previous-time field at
+`+0x30`. Shipped-script tracing confirms the multi-control case directly:
+`Stella_1` starts `Stella_Idle` and then `Stella_idle_02` without an intervening
+stop. Replacing the first playback with the second necessarily discarded
+native per-property fallback and explained several partial bird/pig pose
+mismatches.
+
+This pass also supersedes the earlier claim in “Zero-duration controls and
+exact state-3 advancement” that the `0.00001f` argument was ignored.
+`sub_100012F18` passes that value in ARM64 `S0` to `sub_10040A998`; the apparent
+argument disappears only from the decompiler's recovered integer signature.
+The callee forwards it to `sub_100411230`, so start performs a real float32
+0.00001-second Animation update followed by a mode-4 forced target apply.
+Only after those two operations does the wrapper replace its shared action and
+mode fields and install `sub_100016C50` as the selected control's completion
+callback. Completion callbacks belonging to every active control read that
+same latest wrapper mode rather than a per-control copy.
+
+The two continuous timeline implementations at `0x100417A84` (float) and
+`0x100417B0C` (float2) use float32 time/value arithmetic and fused multiply-add.
+Their callers return the left key when the float32 span is at most `0.0001f`;
+otherwise progress is `(time-left)/span`. An inventory of all 216 shipped
+animation files finds only LinearFloat, LinearFloat2, DiscreteString and
+DiscreteInt tracks, so these recovered paths cover every bundled timeline.
+
+Rust now models a scene as the native ordered active-control vector plus the
+wrapper's retained current pointer and shared mode. Rendering and entity
+queries resolve each property independently from the last control that supplies
+that track; named stop swap-removes it, empty/global stop retain the vector,
+and detached-current pause/resume/seek behavior remains distinct. Start now
+uses the native hidden tick/application/write/callback order, and all parsed and
+sampled continuous timeline values follow the recovered float32 threshold and
+FMA rules. Regressions pin stable control order, retained speed, per-property
+fallback, named-stop fallback, the hidden initial tick, shared completion mode,
+float32 parse quantization and the interpolation threshold.
+
+The workspace passes 510 tests (75 app/audio/wgpu, 31 assets, one core and 403
+script/physics). Formatting, strict all-target/all-feature Clippy and the full
+release build are clean. A 1,200-frame offscreen-wgpu Chapter 1 level 50 audit
+reports 77 optional data probes, zero invoked fallbacks and zero compatibility
+bindings. A separate isolated-AppData 5,200-frame route clicks the real play
+button, completes the seven-panel comic, asserts `Chapter01_L01`, and reports
+85 optional probes, zero fallbacks and zero compatibility bindings. Both PNGs
+were used only to force GPU readback, not as behavioral or visual oracles.
+Current release SHA-256 values are
+`792cb2b887c33f1a1427db4c65cf730cf4b0764828533e5d4e95c36cc756058b`
+for `stella-app`,
+`088c3066ba73af4e0215d572ec58422385785ee8a0d3b5f068238c6453fe864d`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### Persistent EntityTarget component values after state detachment
+
+IDA and Hopper expose an additional consequence of the target-state vectors.
+EntityTarget's virtual member at vtable offset `+0x20`, `sub_10041E0C0`,
+removes every state owned by a detached control. When a usage vector becomes
+empty it removes that 48-byte ApplyCallback entry as well. The apply member
+`sub_10041E41C` tests `states.begin == states.end` and simply skips the
+callback; it does not invoke a default-value branch.
+
+The named-stop order at `sub_100410EA0` is decisive. It first swap-removes the
+control from Animation's active vector, then calls virtual `+0x20` on every
+target, writes state 1, seeks the now-detached control to zero and applies the
+remaining animation state. A property with another active state receives that
+state's current value. A property whose final state was just removed receives
+no setter call, so its Transform/Sprite component retains the last value that
+was actually applied before stop. The EntityTarget constructor at
+`sub_10041D82C` initializes its callback/state vectors empty, confirming that
+an asset merely loaded but never started does not implicitly sample the first
+action at time zero.
+
+Rust now stores the last applied translation, scale, rotation, alpha, sprite
+and zOrder per target. Each native apply pass updates these latches from the
+last active state for each usage. Rendering and entity queries use an active
+state when present and otherwise use the retained component value; they no
+longer fabricate a first-action/time-zero fallback. A focused lifecycle test
+loads an animation without starting it (identity transform and no sprite),
+seeks a running control halfway, removes its final states, and verifies that
+the halfway transform and discrete sprite remain latched.
+
+The workspace passes 511 tests (75 app/audio/wgpu, 31 assets, one core and 404
+script/physics). Formatting, strict all-target/all-feature Clippy and release
+compilation are clean. The 1,200-frame Chapter 1 level 50 route still reports
+77 optional probes, zero fallbacks and zero compatibility bindings; an
+isolated-AppData 5,200-frame first-run route reaches and asserts
+`Chapter01_L01` with 85 optional probes and the same two zero counts. PNGs only
+forced the offscreen wgpu path. Current release SHA-256 values are
+`3001d68ef0e9d82c5b0167ec2a526350ce159b972f960b98dc8f1d6110b6d196`
+for `stella-app`,
+`8f5ec7f4fb2dbc5faba36d709539e2de90e58769b3013ebd31463e25b0ea0199`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### Flight-trail load lifetime and persistent wgpu streams
+
+The earlier conclusion that level loading deliberately retained GameLua's two
+flight-trail records was incomplete and is superseded here. The load member
+`sub_100065D3C` calls `sub_1000675C0` at `0x100066228`, after erasing the old
+scene indexes and before executing the requested level chunk. The callee
+destroys the contents of the vector at GameLua `+0x558`, reconstructs exactly
+two default 0x38-byte `TrajectoryData` records, and stores zero at `+0x588`.
+This is independent from the later `AimStream::reset` boundary. The Rust load
+path now resets both flight buffers, their normal/special sprite names and the
+selected slot before opening either a bundle or AppData level. A loader
+regression that previously asserted trail survival now pins the recovered
+empty two-slot/index-zero state instead.
+
+The draw member `sub_10006D9C0` remains unchanged: while a GameScene is drawn,
+it submits both non-empty records without an age or fade branch. The fix is
+therefore intentionally limited to the native level-load lifetime; it does not
+invent a per-frame timeout. A fresh 16,000-frame shipped menu/L01/level-end
+route clicks the real retry button, completes the LEAVES transition, returns to
+`Chapter01_L01`, and finishes with no normal/special flight-trail submission.
+The final level contains 641 sprite commands rather than a duplicate scene.
+
+The user's visually reported preview/flight mismatch was also checked as
+physics data rather than from a screenshot. The original Lua prediction table
+and the live `flyingBird` positions from the same L01 shot are an exact
+one-sample shift: actual sample 1 is the launch position, actual sample 2 is
+prediction sample 1, actual sample 3 is prediction sample 2, and so on. This
+matches the native predictor beginning after its first custom body step, so no
+trajectory force, time-step or camera correction is applied.
+
+Dense levels exposed a separate wgpu host cost. `render_game` cloned the full
+1,088-byte-per-draw uniform vector, created a new storage buffer and bind group,
+and created a new vertex buffer on every presented frame. Those objects are now
+persistent streams initialized to 2 MiB of draw storage and 1 MiB of vertices.
+Each frame uploads only current bytes with `Queue::write_buffer`; either stream
+grows to the next power of two only when required, and only storage growth
+rebuilds its bind group. A focused regression pins reuse, growth and the
+no-shrink rule. This changes no draw order, shader record, pipeline, texture
+binding, scissor or framebuffer operation.
+
+Result-page command tracing at a stable ordinary L01 completion contains only
+37 result UI/animation sprites and no native level object. The shipped
+`LevelCompleted:isFullScreen` transition deliberately leaves gameplay under
+the first 0.5-second clipped reveal and then suppresses it. The separate
+Frenemies challenge background occlusion regressions remain passing, so no
+blanket early scene clear was added. A direct original `LevelLoadTransition`
+audit submits all 16 `TRANSITION_LEAF_1/2/3` components and retains an active
+IN/LOAD/OUT phase at the sampled frame.
+
+The workspace now passes 512 tests (76 app/audio/wgpu, 31 assets, one core and
+404 script/physics). Formatting, strict all-target/all-feature Clippy and the
+release build are clean. The dense Chapter 01 L50 1,200-frame route completes
+in 6.63 seconds including startup and final wgpu readback, with zero invoked
+fallbacks and zero compatibility bindings. Current SHA-256 values are
+`15e35fa52ddb893887630ed2522bf1953bf93ddffd51238d25a1553db382f1a7`
+for `stella-app`,
+`6d35e356cde7536ece831a4e1801bdc1ad1b73a37af091f41266e92abfd2351b`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### Native screenshot capture/share lifecycle
+
+The platform screenshot entry was the next locally implementable host gap.
+The registration constructor stores `sub_10005ADD4` beside
+`native_shareScreenShot` at `0x10002F2D4..0x10002F2FC`. IDA preserves the
+member as 0x374 bytes and Hopper independently reports 884 bytes/38 basic
+blocks. Both show the same order: increment the process-global 32-bit counter
+at `0x100C0FF8C`, obtain `NSTemporaryDirectory()` through `sub_10053FEC4`,
+format `Stella_Screenshot<counter>.png`, invoke the renderer virtual member at
+`+0x1F0` with image format value six, and pass the resulting path plus the Lua
+title string to `pf::ShareImpl::shareImageFile` through `sub_10053FF0C`.
+
+The completion closure is not decorative. Its invoke member
+`sub_10006E288` forwards the captured path to `sub_100502C8C`, which unlinks a
+regular file, recursively removes a directory, and throws when the path is
+missing or removal fails. The shipped `ScreenShotSharing.lua` confirms the
+frame boundary: `share(title)` emits `EID_WILL_CAPTURE_SCREEN_NEXT_FRAME`,
+then `process()` calls the native member once and clears its trigger/title.
+
+Rust previously validated the title and set a Boolean that no host code ever
+consumed. The script bridge now owns the wrapping native counter and queues
+ordered `ScreenshotShareRequest` records with the exact basename and title.
+The desktop and deterministic hosts drain those requests after the matching
+Lua draw. The wgpu renderer exposes readback of the already-rendered game
+target, so the shared PNG is the presented frame and does not traverse Lua or
+submit the scene twice. The host writes the original basename into the system
+temporary directory. Because a portable pure-Rust desktop host has no native
+system share-sheet completion callback, it leaves the staged file pending for
+the user or platform integration rather than falsely firing Purple's deletion
+closure before anyone can consume it.
+
+An isolated-`TMPDIR` real wgpu route invokes `native_shareScreenShot` from the
+live shipped runtime and creates `Stella_Screenshot1.png` as a 1024x768 RGBA
+PNG with SHA-256
+`66a0de2d5696a9debddeac09903abf864e7d5168b3112fc60dbc060b7b72948c`.
+The image was not used as a visual oracle; the audit establishes only the
+native name, one-shot request consumption, GPU readback and file format. A
+fresh 1,200-frame Chapter 01 L50 release route completes in 6.77 seconds and
+still reports 82 optional probes, zero invoked fallbacks and zero remaining
+compatibility bindings.
+
+The workspace now passes 515 tests (78 app/audio/wgpu, 31 assets, one core and
+405 script/physics). Formatting, strict all-target/all-feature Clippy and the
+release build are clean. Current SHA-256 values are
+`ce09fa882de3f4026bc318ac8de9595712477b8a3eaacaaacca64b57c408b91d`
+for `stella-app`,
+`a902ea84144151e5a0d7c25784ef6ab76bb3e7000bf8868bd1abe46c985fdee6`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### Gamelogic load-completion and activation gate
+
+The native GameLua loader `sub_10005CD58` does more than evaluate
+`commonScriptPath .. "/gamelogic.lua"`. IDA shows a strict global call to
+`updateValues` at `0x10005CEE8`, followed by the byte store to GameLua
+`+0x513` at `0x10005CEF0`. Hopper independently confirms the same success
+ordering. If lookup or execution of `updateValues` fails, the loaded byte is
+therefore never published. This post-load call is separate from the call made
+by shipped `initializeGameCommon`; preserving both is intentional.
+
+Rust now models that byte explicitly. Standard boot evaluates the common
+gamelogic, strictly resolves and calls `updateValues`, and only then marks the
+runtime loaded. A failed callback propagates its Lua error and leaves the flag
+clear. The shipped constants recovered from `game.lua`, including
+`birdCollisionSoundForceThreshold = 40` and
+`hardLimitSimultaneousParticles = 150`, are consequently established at the
+same native boundary rather than only as an incidental later side effect.
+
+The activation member `sub_10005D4D4` stores active state at GameLua `+0x510`
+and reads the loaded byte at `0x10005D4F4`. Before that byte is set it suppresses
+the native notification work and the Lua `gameResumed`/`gamePaused` callbacks.
+The Rust lifecycle path now uses the same gate. Host input and hold-state
+clearing still occurs before it, matching the surrounding application
+lifecycle rather than leaving pre-load input latched.
+
+Focused regressions pin successful call-before-publish ordering, failure
+atomicity, shipped boot state, and pre-load/post-load activation behavior. A
+fresh isolated-AppData release audit ran 600 frames through the real wgpu
+readback path, asserted both recovered constants and a live menu root, and
+reported zero invoked fallbacks and zero remaining compatibility bindings. The
+PNG was used only to force and verify the render/readback route, not as a visual
+oracle.
+
+The workspace now passes 517 tests (78 app/audio/wgpu, 31 assets, one core and
+407 script/physics). Formatting, strict all-target/all-feature Clippy and the
+release build are clean. Current SHA-256 values are
+`06d71613e0ae50b27e963b9ddf2ec60608be7c8d33fa3426152a2c3232202c9d`
+for `stella-app`,
+`e53200218d94944e9b3f273c5b946a328ccaf872ba2865bba14e18b211a142df`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### Startup audio channel limits
+
+The earlier startup reconstruction stopped too early inside
+`sub_10005D44C`. IDA shows the strict `createStartUpAssets` call at
+`0x10005D464`, but the function then resolves the AudioManager and calls
+`sub_1005796C8` five times at `0x10005D478`, `0x10005D48C`,
+`0x10005D4A0`, `0x10005D4B4` and `0x10005D4D0`. Hopper independently
+decompiles the same track/limit pairs: `(1,4)`, `(2,6)`, `(3,3)`, `(4,5)`
+and `(5,5)`.
+
+`sub_1005796C8` forwards to `sub_100572E10`, whose store at AudioManager
+`+0x40 + track*4` is the same eight-entry signed channel-limit array exposed
+through `setChannelCountLimit`. These are audio concurrency limits, not asset
+cache sizes or animation tracks. Slots zero, six and seven retain their
+constructor value `-1`.
+
+Rust previously called only the Lua startup callback, leaving every channel
+unlimited. The host now writes the five native constants directly after the
+callback returns. This ordering matters because the shipped callback creates
+the audio output, which reconstructs AudioManager and resets all limits; it
+also means a callback error must skip every native post-write. Focused tests
+pin both callback-before-overwrite behavior and the failure boundary.
+
+An isolated-AppData release audit loaded the shipped
+`levels/Chapter01/Chapter01_L50.lua`, ran 1,200 deterministic frames through
+the real wgpu upload/readback path, asserted the loaded filename, and reported
+zero invoked fallbacks and zero remaining compatibility bindings. The final
+1024x768 RGBA PNG was used only to force the renderer and was not treated as a
+visual oracle.
+
+The workspace now passes 519 tests (78 app/audio/wgpu, 31 assets, one core and
+409 script/physics). Formatting, strict all-target/all-feature Clippy and the
+release build are clean. Current SHA-256 values are
+`3d5d05fa575dcbc283818f92542bde70c5f7aecf538149abefe4d61a6bc4827b`
+for `stella-app`,
+`15771cc86b74b909ca3dc6d563a7423b4246b3b81b858314c690185d8105d1bb`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### Joint-removal notifications and break particles
+
+The joint descriptor eraser was missing the observable callback boundary at
+`sub_10006800C`. IDA shows a call to `lua_onBeforeJointRemove`, followed by a
+fresh lookup of `objects.joints[name].isDrawn` and Lua 5.1 truth conversion;
+only a truthy result calls `lua_addParticlesToJoint`. Hopper independently
+decompiles the same order and reports exactly three callers:
+`sub_100042260` (`removeObject`), `sub_1000442D8`
+(`removeJointsFromObject`) and `sub_10007BA50` (collision-force breakage).
+
+The surrounding order differs at those call sites and is now preserved.
+Object destruction notifies and erases the descriptor before body teardown
+destroys attached Box2D joints. Direct object-joint detachment notifies at
+`0x100044600`, destroys the Box2D joint at `0x10004461C`, then erases its
+descriptor at `0x100044640`. Automatic breakage copies the jointData record
+to GameLua's pending vector at `0x10007BC94`, invokes the helper at
+`0x10007BCB0`, compacts the Lua table at `0x10007BCEC`, and only destroys the
+native joint in the later frame-tail pass. Explicit `destroyJoint` does not
+call the helper; its separate `sub_10003E668` path erases the descriptor at
+`0x10003E7D4` before the Box2D destruction at `0x10003E7F0`.
+
+Rust now dispatches the two shipped callbacks while the Lua descriptor is
+still live and re-reads `isDrawn` after the first callback, so component
+notifications can alter whether break particles are queued. The object-removal
+bridge consumes one object at a time, allowing zero-delay and delayed type-five
+destruction links to cross the same callback boundary rather than recursively
+deleting every native record under one mutex. `removeJointsFromObject` also
+removes the Lua descriptors it previously leaked.
+
+Regressions cover collision breakage, post-callback `isDrawn` mutation,
+visible/hidden particle gating, direct object-joint detachment, `removeObject`
+and a five-second destruction-link cascade. A 600-frame isolated-AppData
+release audit created and removed a real native test joint inside the shipped
+runtime, asserted the exact two-callback sequence and descriptor/object
+retirement, and completed the wgpu readback path with zero invoked fallbacks
+and zero remaining compatibility bindings. Its PNG was not used as a visual
+oracle.
+
+The workspace now passes 520 tests (78 app/audio/wgpu, 31 assets, one core and
+410 script/physics). Formatting, strict all-target/all-feature Clippy and the
+release build are clean. Current SHA-256 values are
+`ff2238c2d3e6b16952c3a41e22d5f0c27bf9d8583dce0762ed25cce4274316db`
+for `stella-app`,
+`c2e44ccf2bc551f3e517aa9c4cff60c4e7b68a225a1f6aa9a3c3b4cef9e70577`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### Disabled challenge replay and retained native contact-solver arrays
+
+The remaining non-working restart route was specific to Frenemies challenge
+screens. The shipped `FrenemiesChallengeLevelCompleted:onPointerEvent` does
+not call `startChallengeLevel` directly. It first calls
+`GameServerConnection.replayCompetitionLevel`, and only the asynchronous
+success callback passes the returned `{levelId, players}` payload to
+`IslandEventManager:startChallengeLevel`. The challenge pause screen has the
+same dependency before it queues an ordinary restart.
+
+IDA locates the GameServer constructor at `sub_1000D25D8`. It registers
+`native_getAsync` and `native_postAsync`, publishes `_G.GameServerConnection`,
+loads `commonScriptPath .. "/network/GameServerConnection.lua"`, and retains
+the stage endpoint `https://stella-stage.appspot.com/api/v1`. Decompiling the
+exact bundled Lua file resolves the apparent contradiction: every request
+wrapper immediately executes `assert(false, "GAMESERVER-DISABLED")`. Thus an
+exact copy of the shipped 1.1.6 networking path cannot restart a challenge,
+even if the old endpoint still existed.
+
+The offline host now installs a narrowly scoped script-side facade after the
+original scripts load. Replay retains the original zero-delay asynchronous
+callback boundary and synthesizes only the payload the shipped island manager
+requires: the active challenge level id, the retained players, a current
+player and an offline `gameSessionId`. No result-screen handler was replaced.
+Focused regressions execute the shipped challenge result handler, verify that
+the callback is not synchronous, and observe the original
+`IslandEventManager:startChallengeLevel` entry with the preserved event and
+payload. The other disabled legacy request members return benign asynchronous
+offline results so their screens cannot dead-end on an intentionally disabled
+backend.
+
+The dense-level stall profile also exposed avoidable divergence inside the
+contact velocity iterations. IDA and Hopper agree that `sub_100863FAC` and
+`sub_1008640D0` retain two signed body indices into one compact array of
+12-byte `(vx, vy, angularVelocity)` records for the whole island solve. Rust
+already used compact records inside one pass, but reconstructed name/index
+state and allocated a `BTreeMap<ContactKey, impulse>` on every iteration.
+The island now retains one body-index table for the complete solve, refreshes
+only its three live float32 values between joint/track passes, threads the
+resolved index pair through tangent and normal impulses, and constructs the
+keyed impulse map once after all iterations. Native joint/contact ordering and
+commit boundaries are unchanged.
+
+On the same 1,200-frame Chapter 01 L50 route, user CPU fell from 5.20 seconds
+to 4.87--4.89 seconds, retired instructions from 90.03 billion to 85.82
+billion, and cycles from 23.27 billion to 22.10 billion. Wall time remains
+subject to shader, filesystem and scheduler noise. A final isolated-AppData
+release audit directly loaded the shipped L50 file, ran all 1,200 deterministic
+frames through wgpu upload/readback, asserted its filename, and reported zero
+invoked fallbacks and zero remaining compatibility bindings.
+
+Trajectory cleanup remains deliberately split at the recovered ownership
+boundaries. `clearAimingAid(1)` removes every preview particle after launch,
+whereas `sub_10006D9C0` draws the two most recent non-empty flight records with
+no age, fade or timeout branch. A level load resets both records through
+`sub_1000675C0`. The predicted and actual L01 coordinates remain identical
+after accounting for the native one-sample launch-position shift, so no visual
+offset or artificial lifetime was added. The LEAVES transition regressions
+still submit all 16 components and complete IN/LOAD/OUT disposal, while stable
+ordinary result pages submit only result UI and challenge result backgrounds
+occlude the entire wgpu framebuffer. These checks use lifecycle state and draw
+commands as their oracle rather than screenshot resemblance.
+
+The workspace now passes 522 tests (78 app/audio/wgpu, 31 assets, one core and
+412 script/physics). Formatting, strict all-target/all-feature Clippy and the
+release build are clean. Current SHA-256 values are
+`5eaa47cf6249da653db164d2612abece4c38cb84ba2282b6179d28eab5f04ac0`
+for `stella-app`,
+`d5cd5f0db7bce63c9bc2e9d5c5df1149a2fa68ecbdae1c46b690663b21607d45`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### LUA_GLOBALSINDEX directory stub and whole-bundle level coverage
+
+The platform constructor `sub_10002C274` registers
+`getDirectoryFileList` at `0x10002F214` through adapter `sub_100082F9C`
+and member thunk `sub_10005A298`. IDA and Hopper independently recover the
+same member call into `sub_100529C84`, whose second argument is the signed
+constant `-10000` (`0xFFFFD8F0`). This is Lua 5.1's `LUA_GLOBALSINDEX`.
+Consequently, the bundled implementation validates argument one as a strict
+string, ignores that path, and returns a reference to `_G`; it does not list
+files and does not create an empty table. The Rust binding now preserves that
+exact identity, with regressions for both the strict argument check and
+path-independent `_G` result.
+
+The adjacent directory APIs remain literal stubs rather than speculative host
+filesystem features. `createDirectory` reaches `nullsub_12`, while
+`checkDirectory` reaches `sub_10004BAA0`, which returns zero. The existing
+validated-string no-op and `false` implementations therefore already match
+the executable. The same tail audit confirmed the no-op or false behavior of
+`print`, `printWithTag`, `linkSensor`, `goToTaskSwitcherLua`, `sendTweet` and
+`isTwitterSupported`.
+
+A permanent whole-bundle regression now boots the shipped `scripts/game.lua`,
+activates the original `INGAME` sprite group set, and enumerates all 149
+shipped gameplay level files below `BirdRun`, `Chapter01`, `Chapter02` and
+`minigames`. Every file is loaded through the original `loadLevel` entry,
+advanced by one deterministic 60 Hz update and submitted through
+`drawGameNative`. Each non-empty native sprite binding must resolve through an
+atlas or composite, and every route must end with zero invoked fallbacks and
+zero remaining compatibility bindings.
+
+Final release audits additionally drove Chapter 02 L61 and BirdRun L08 for
+600 frames apiece through real offscreen wgpu upload and readback. Both
+asserted the requested shipped filename and retained zero invoked fallbacks
+and zero compatibility bindings. The generated PNGs were used only to force
+the GPU path, not as a visual oracle.
+
+The workspace now passes 523 tests (78 app/audio/wgpu, 31 assets, one core and
+413 script/physics). Formatting, strict all-target/all-feature Clippy and the
+release build are clean. Current SHA-256 values are
+`4ab0dbb7c7af4c3309c21db8dc6e82d3eb596255abdfcd397070e0c3c7d0bbed`
+for `stella-app`,
+`6bf915daef025cfea832a4e4f0d61261da332c8bcfeb689965214b471d5ec5e1`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### IOSOSInterface fullscreen state and device-orientation bridge
+
+The platform tail of `GameLua::GameLua` still contained two host constants
+that did not match Purple. The generated `isInFullScreenMode` adapter reaches
+member `sub_1000310E4`, which loads `GameLua+0xD8`, follows the retained
+`GameApp` and its `IOSOSInterface`, then dispatches virtual slot `+0x58`.
+Purple's concrete iOS vtable `off_100AA3AB0` resolves that slot to
+`sub_100405434`. IDA decompiles it as an unconditional return of one, and
+Hopper independently reports `return 0x1`. The Rust binding now returns Lua
+`true` instead of the previous speculative `false`.
+
+The neighboring `native_getDeviceOrientation` binding was also not a literal
+zero stub. IDA recovers member `sub_100051298` calling the retained
+`gr::Context` virtual slot `+0x120`, rejecting enum values above three with
+`-1`, and indexing `dword_1009AF090`. The table bytes are exactly the four
+little-endian signed values `{0, 90, 180, 270}`. The concrete GL context member
+`sub_100599458` returns the orientation enum stored at context `+0x310`, which
+is initialized from the application configuration's UIKit orientation.
+
+Rust now retains that native enum in the render/context bridge and performs
+the exact Lua-facing table lookup, including the invalid-value result. A
+desktop drawable has no UIKit physical-orientation sensor, so the host chooses
+the first supported landscape enum for a landscape surface and the canonical
+portrait enum for a portrait surface, updating it with drawable rotation.
+This deterministic host policy is kept separate from the recovered native
+enum-to-degree ABI. Regressions pin all four table values, the `-1` boundary,
+landscape/portrait changes, the fullscreen boolean, and permissive generated
+adapter argument handling.
+
+Final release audits drove the shipped Chapter 02 L61 and BirdRun L08 levels
+for 600 frames each through real offscreen wgpu upload and readback, asserted
+their requested filenames and the landscape orientation result, and retained
+zero invoked fallbacks and zero compatibility bindings. Their PNG outputs were
+used only to force the GPU readback route and were not used as visual oracles.
+
+The workspace now passes 524 tests (78 app/audio/wgpu, 31 assets, one core and
+414 script/physics). Formatting, strict all-target/all-feature Clippy and the
+release build are clean. Current SHA-256 values are
+`5d13599b5611c5fb6eec610376789fb6f23fb144143dc767451668d3e45e5494`
+for `stella-app`,
+`9d95721753b74ed5b2a80e4a7b510ef8c45d830ff31e3f57a63e789c38d3f54d`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### Type-five destruction expiry and Lua component disposal
+
+The reported `Missing object: pig_medium_right_3` draw failure exposed an
+incorrect lifetime shortcut in the Rust type-five destruction-link bridge.
+The strict `getScale` lookup remains intentional; `sub_1000403E4` still enters
+the throwing name-map lookup `sub_10005DAF8`, so returning a default scale
+would only conceal a dangling Lua draw component.
+
+IDA's complete `sub_100042260` object-removal path shows that a metadata-only
+type-five link does not recursively remove its target. At `0x1000432D0` it
+looks up the target RenderObjectData, stores one at byte `+0x146`, copies the
+descriptor's float `destroyTimer` into `+0xD8`, removes the link descriptor and
+returns. In the native frame member `sub_10005E898`, this target is visited
+only after the fixed Box2D loop, its shipped `removeBlocks` callback and
+`clearLuaForceFunctions`. Addresses `0x10005F178..0x10005F190` test the byte,
+subtract the scaled render delta from `+0xD8` and branch while the timer is
+positive. On expiry, `0x10005F194..0x10005F1F4` resolves
+`objects.world[name]`, writes a float zero to `strength`, and stores the
+retained object table in the native-owned `deadBlocks[name]` table. It clears
+the byte at `0x10005F1F8` without deleting the RenderObjectData. Hopper's
+independent assembly reports the same offsets, floating subtraction, table
+lookups, `strength` write and final flag clear.
+
+The next fixed physics step consequently lets the original Lua `removeBlocks`
+path dispatch `EID_DESTROY_BLOCK`, dispose block components and remove their
+`DrawCalls` entries before it invokes native `removeObject`. Rust now follows
+that two-stage boundary for both delayed and zero-delay links. Direct
+`removeJointsFromObject` and ordinary object removal only arm linked targets;
+the frame-expiry pass publishes them through the same `deadBlocks` helper used
+by collision damage. Native scene objects, Lua world records and strict
+transform queries remain live throughout the intervening draw.
+
+Regressions cover zero-delay arming, five-second expiry, joint-callback order
+across the delayed Lua removal, and the exact reported
+`pig_medium_right_3 -> callback.func -> getScale` shape. The latter proves that
+the callback can draw on the expiry frame and that the following
+`removeBlocks` pass disposes it before object retirement. The workspace now
+passes 525 tests (78 app/audio/wgpu, 31 assets, one core and 415
+script/physics). Formatting, strict all-target Clippy and the release build are
+clean. Fresh isolated-AppData release drives of the original BirdRun L01 and
+Chapter 01 L05 bytecode each completed 3,600 offscreen-wgpu frames with zero
+invoked fallbacks and zero remaining compatibility bindings. Their PNGs were
+used only to force upload/readback and were not viewed as correctness oracles.
+
+Current SHA-256 values are
+`a966171993de9a10ec1be9b89e4150bd27cd5cee176fba60185bdef45021ad04`
+for `stella-app`,
+`199db5d4d1be6ca93dec3c5586499666e9f0fa6eeccc650a66349a6cc143c850`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### Held Poppy/Luca power motion and fixed-step display sampling
+
+The remaining apparent character-only frame loss during a held power was not
+an animation-timeline stall. The shipped `PoppyAbility.lua` selects the exact
+Flash action `Poppy_Power` and sets the aim multiplier to `0.1`; the shipped
+`LucaAbility.lua` selects `Luca_ability` and sets it to `0.05`. IDA's
+`sub_10005E898` confirms that the scaled delta feeds a fixed `1/30`-second
+Box2D accumulator before the later Lua update and native scene draw. On a
+60 Hz host, a direct Flash-root binding therefore repeats Poppy's last solved
+body pose for about twenty display frames and Luca's for about forty while the
+unscaled UI and other draw work continue normally.
+
+The render bridge now retains velocity in its compact scene draw snapshot and,
+only for those two exact held-power actions, evaluates a display pose at the
+unsolved accumulator time with float32 fused multiply-adds. This is a
+visual-only host sample: the Box2D transform, Lua `objects.world` position,
+collision queries, forces and fixed-step ordering are unchanged. Ordinary
+Poppy/Luca actions and every other Flash animation still use the solved native
+pose. A regression drives both authored action names through the real
+same-named Flash scene route, proves that both receive distinct intermediate
+display coordinates, and proves that the underlying scene positions remain
+untouched; the ordinary Flash-transform regression remains unchanged.
+
+The workspace now passes 530 tests (79 app/audio/wgpu, 31 assets, one core
+and 419 script/physics). Formatting, strict all-target/all-feature Clippy and
+the release build are clean. Current SHA-256 values are
+`822d15eb1f71f9afe37f64ebc3be90cc4f87f4f794831f8865d4f33fa548b59d`
+for `stella-app`,
+`acbf2ecd63897e9ee3280a1635b9c9a8f76e08956d88e4e4d5a2878e3175a17f`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### Float32 display delta and repeated fixed-step subtraction
+
+The fixed 60 Hz display-link result does not make the frame-time path double
+precision. IDA shows `-[AppController update]` converting the signed
+microsecond difference directly with `SCVTF S0` and `FMUL S0` at
+`0x1004043CC..0x1004043D8`. Its long-frame branch writes immediate
+`0x3DCCCCCD` at `0x100404598`, and the application virtual call retains the
+value in the low single-precision lane. Hopper independently reports the same
+`S`-register conversion, comparison and clamp sequence.
+
+The callee `sub_10005E898` closes the rest of the numeric ABI. It copies the
+incoming lane to `S8` at `0x10005E8C8`, saves the raw value at
+`0x10005EC7C`, loads `deltaTimeMultiplier` from GameLua `+0x554`, performs one
+single-precision `FMUL` at `0x10005EC84`, and later calls the typed
+`lua::LuaObject::call<float,float>` member at `0x1000605A0`. The first Lua
+number is therefore the widened result of the float32 multiply and the second
+is the widened original float, not values recomputed in double precision.
+
+The adjacent Box2D clock is also a float field, at GameLua `+0x51C`. Both
+disassemblers recover immediate `0x3D088889` for the fixed step, the `FADD`
+into that field at `0x10005ED6C`, the per-step comparison at `0x10005EDA0`,
+and one addition of the negative step at `0x10005EDE4`. It is not equivalent
+to dividing a double accumulator, flooring the quotient and subtracting one
+multiplied total. In particular, an incoming `0.1f` executes two native
+physics steps and leaves accumulator bits `0x3D088887`, just below a third
+step; the former Rust path executed three immediately.
+
+Rust now narrows the host clock once on entry, stores the multiplier and
+physics accumulator as `f32`, performs the recovered float multiply, forwards
+the two exact widened float values to Lua, and counts physics steps by the
+native repeated comparison/subtraction. The Poppy/Luca held-power display
+sample consumes this same float accumulator, so its visual extrapolation no
+longer observes a higher-precision remainder than Box2D. Focused regressions
+pin raw/scaled Lua values, the `0x3D088889` step, the two-step `0.1f` boundary,
+and the residual bit pattern.
+
+The workspace now passes 531 tests (79 app/audio/wgpu, 31 assets, one core and
+420 script/physics). Formatting, strict all-target/all-feature Clippy and the
+release build are clean. A fresh isolated-AppData release drive ran the
+original menu/comic/gameplay route for 16,500 frames, including the first
+shot, next-level transition and held-power input, through real wgpu upload and
+readback. It ended with 93 optional data probes, zero invoked fallbacks and
+zero remaining compatibility bindings; its 750,523-byte PNG was used only to
+force the GPU path and was not inspected as a visual oracle. Current SHA-256
+values are
+`56f23477eba799a30f6f2d394754753adf1f6460bdfc35643b8886a685407381`
+for `stella-app`,
+`efb09706e0103a851e12e413879e0c02e10e751eb38836cad98f3d48c44a16f2`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### Native rolling material loops and per-frame joint endpoint export
+
+The remainder of `GameLua::update` contained two shipped gameplay paths that
+were still absent from the Rust host. IDA recovers the rolling-level pass at
+`0x10005F688..0x10005F738`. It excludes controllable RenderObjectData
+(`+0x140`) and every fixture without the circle flag at `+0x147`, reads the
+absolute b2Body angular velocity, and performs four separate single-precision
+operations: `angularSpeed * radius * 0.0025f * mass`, followed by `FMIN` with
+one. The literal gain has bits `0x3B23D70A`. Material values one, two and three
+select wood, rock and light respectively, and the pass retains the strict
+per-material maximum. Hopper independently reports the same body offsets,
+float instruction sequence, material switch and comparisons.
+
+Addresses `0x10005FAA0..0x10005FD58` then maintain `wood_rolling`,
+`rock_rolling` and `light_rolling` after the scene/joint export but before the
+Lua `update` callback. A non-positive level stops every instance by resource
+name without clearing GameLua's cached integer handle. A positive level first
+checks playback by resource name; if already playing, volume is updated
+through the cached handle, including the native stale-handle no-op. Otherwise
+the resource starts looping on channel two and its new handle is cached.
+GameLua stores rock, wood and light handles at `+0x2C8`, `+0x2CC` and `+0x2D0`.
+The physics-locked branch supplies zero levels and therefore stops all three
+loops. Rust now implements the same name-level ownership, persistent handle
+lifetime and exact f32 formula against the shipped MP3 resources. A directly
+constructed, unbooted host VM remains inert until AudioOutput exists; the
+shipped boot creates and starts that output before its first normal frame.
+
+The adjacent native joint walk is independently visible in both disassemblers
+at `0x10005F944..0x10005FA98`. GameLua's `+0x3C0/+0x3C8` fields delimit an
+insertion-order vector of 48-byte records. For every physical record it calls
+the b2Joint virtual slots zero and eight to obtain both world anchors in
+`S0/S1`, looks up the named descriptor in `objects.joints`, and then compares
+the record type at `+0x20`. Type two (weld) deliberately retains the authored
+coordinates but still performs the strict descriptor-table lookup. Every
+other physical type receives `x1`, `y1`, `x2`, `y2` in that order. Rust now
+collects anchors through the float32 b2Body transform in native creation
+order, excludes metadata-only type five, preserves the weld exception and
+skips the complete export while physics is locked.
+
+Focused regressions pin the rolling maximum and literal bit pattern, all three
+resource/handle branches, stale-handle behavior, locked-frame stop, ordinary
+joint anchor widening, weld retention, metadata exclusion, locked-frame
+retention and the weld missing-table error. The workspace now passes 544 tests
+(79 app/audio/wgpu, 31 assets, one core and 433 script/physics). Formatting,
+strict all-target Clippy and the release build are clean. A 180-frame release
+drive used the shipped resource catalog and real offscreen wgpu path, started
+the native `wood_rolling` loop, observed an ordinary joint descriptor update,
+preserved the weld descriptor, and ended with 17 optional data probes, zero
+invoked fallbacks and zero remaining compatibility bindings. Its PNG existed
+only to force GPU upload/readback and was not inspected as a visual oracle.
+
+Current SHA-256 values are
+`287d3f08954830f24b95cc8f9aaca1de48252fbc3b1bba4b3ad3babecea120f9`
+for `stella-app`,
+`454a350cb7fd7a1ec264c266c84f26bf31a71838ed360df8eac11e83dfa87544`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### Deferred native destruction of collision-broken joints
+
+The collision RemovePredicate does not immediately call
+`b2World::DestroyJoint`. IDA identifies `sub_10007384C` as the generic
+`std::vector<GameLua::jointData>` append helper: it copy-constructs the three
+strings, copies the two 64-bit fields at record `+0x18/+0x20`, copies the
+native joint pointer at `+0x28`, and advances the end pointer by exactly
+`0x30`. At `0x10007BC94`, the predicate passes its GameLua `+0x3F0` pending
+vector to this helper. Hopper independently shows the same three string copy
+constructors and the final 48-byte increment. The main jointData vector is
+then compacted by `std::remove_if`, while the queued b2Joint remains linked to
+the Box2D world.
+
+The actual destruction occurs at `0x1000605D4..0x10006064C`, after Lua
+`update(scaled, raw)` and the Particles virtual update. Both disassemblers show
+GameLua reading `+0x3F0/+0x3F8`, deriving the 48-byte record count, walking
+from the last entry to the first, erasing each queued record before loading
+its `+0x18` b2Joint pointer, and finally calling `sub_10086E27C`
+(`b2World::DestroyJoint`). The next instruction reloads the physics lock for
+AimStream, so delayed joint destruction is strictly between particles and
+the aiming-stream update. `sub_100062474` is the complementary destruction
+listener: a body or explicit native teardown removes a matching b2Joint
+pointer from the pending vector so the frame tail cannot destroy it twice.
+
+Rust now keeps collision-broken joints native-solver-visible across every
+remaining fixed step in the same display frame, while excluding them from
+GameLua's logical attached-joint lookups and per-frame endpoint export. The
+predicate scan and Lua removal callbacks follow native joint creation order;
+the frame-tail native teardown reverses that queue, wakes both endpoints and
+marks formerly suppressed contacts for filtering only at the real
+DestroyJoint boundary. Body destruction also cancels queued entries through
+the same ownership rule. Focused regressions pin logical invisibility,
+continued solver ownership, export exclusion, no early wake, reverse teardown
+and final wake behavior.
+
+The workspace now passes 545 tests (79 app/audio/wgpu, 31 assets, one core and
+434 script/physics). Formatting, strict all-target Clippy and the release
+build are clean. A fresh isolated-AppData 180-frame release smoke test
+completed real offscreen wgpu upload/render/readback with 17 optional data
+probes, zero invoked fallbacks and zero remaining compatibility bindings. Its
+21,470-byte PNG was used only to force the GPU route and was not inspected as
+a visual oracle.
+
+Current SHA-256 values are
+`0e2c52335f2e4a7c751614926d6b574e691a5a26f994162d160da9c880681302`
+for `stella-app`,
+`55e99c12cabd8c614c7ccef245f7e7bedc7ecf0500113c7e5f31166f083c774f`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### Independent additional trajectory gravity and native constructor colors
+
+A constructor-field audit found a decimal/hexadecimal offset collision in the
+former Rust model. IDA decompiles `sub_1000311AC` as one float store to byte
+offset 548, which is hexadecimal `+0x224`; Hopper shows the literal
+`STR S0, [X0,#0x224]`. The four-argument water-color member
+`sub_100031198` instead stores to `+0x540`, `+0x544`, `+0x548` and `+0x54C`.
+These fields do not overlap. The former implementation incorrectly treated
+decimal 548 as hexadecimal `0x548`, coupling additional bird gravity to the
+blue water-color component in both setter directions.
+
+The use site at `sub_100032970` confirms the semantic effect. Before each
+specialized BirdSimulation step, `0x100032B8C` loads GameLua `+0x224`, applies
+the branch only when it is strictly positive, multiplies it by the simulated
+body mass in float32 and adds the resulting vertical force. Water color is
+never part of that path. The GameLua constructor stores `0xBF800000` at
+`+0x224`, so the native default is `-1.0` and the force is disabled until the
+explicit gravity setter enables it. The same constructor stores four `1.0f`
+values in the independent water-color vector. It also initializes the packed
+background color at `+0x238` to `0xFFFFFFFF`; the boot/theme scripts choose
+their later scene color, so the pre-script Rust default is now white rather
+than a host-selected sky blue.
+
+Rust now stores the two settings independently and uses the exact `-1.0`
+additional-gravity default. A regression sets additional gravity to `-1`,
+then writes a blue water value of `9`, and proves that the zero-world-gravity
+trajectory remains vertically stationary while both native fields retain
+their separate values. Another pins all constructor defaults. All shipped
+levels still construct, update and reach native draw with this corrected
+state.
+
+The workspace now passes 547 tests (79 app/audio/wgpu, 31 assets, one core and
+436 script/physics). Formatting, strict all-target Clippy and the release
+build are clean. A fresh isolated-AppData 180-frame release smoke test again
+completed real offscreen wgpu upload/render/readback with 17 optional probes,
+zero invoked fallbacks and zero remaining compatibility bindings; its
+21,470-byte PNG was not inspected as a visual oracle.
+
+Current SHA-256 values are
+`3847b004d692e6754b12062391c3297f96fe2820bc2a6f07021837606f1d7c4d`
+for `stella-app`,
+`b804f297453198773e2870fe52203c183430f730f206bb8d6d65761a4169df56`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### Two-stage physics-to-world scale initialization
+
+The adjacent constructor audit also distinguishes GameLua's native default
+from the value installed by shipped Lua. IDA shows `MOV W8,#0x3F800000`
+followed by `STR W8,[X19,#0x50C]` at `0x10002C558..0x10002C55C`, so a newly
+constructed GameLua starts with a physics-to-world scale of exactly `1.0f`.
+Hopper reports the same literal store. The one-number
+`setPhysicsSimulationScale` member later writes this field directly with no
+range check.
+
+The shipped `gamelogic.lua` `initParams` callback then assigns
+`physicsToWorld = 20`, derives `physicsScale = 1 / physicsToWorld`, and calls
+`setPhysicsSimulationScale(physicsToWorld)` before `initializeGame`. Thus the
+normal level value remains 20, but the interval between native construction
+and script initialization is observably 1 rather than a host-preselected 20.
+Rust now preserves those two phases. One regression pins the bare constructor
+value and the whole-bundle boot regression pins the post-`initParams` value
+before constructing all 149 shipped level files.
+
+The same field sweep identifies GameLua `+0x524` as the immutable `10.0f`
+collision-force divisor used by all three branches of `sub_100062520`; the
+existing Rust collision paths already use that exact float32 divisor. It also
+closes a tempting but incorrect host interpretation of `setGameOn`:
+`sub_1000504A8` forwards `enabled ^ 1` through IOSOSInterface virtual slot
+`+0x30`, and the concrete iOS slot `sub_100405390` only calls
+`UIApplication.setIdleTimerDisabled`. It does not gate GameLua update or
+Box2D stepping, matching the rehost's separation between `setGameOn` and the
+real physics lock.
+
+After this two-stage correction, the workspace still passes all 547 tests
+(79 app/audio/wgpu, 31 assets, one core and 436 script/physics). Formatting,
+strict all-target Clippy and the release build are clean. A fresh isolated
+AppData 180-frame release smoke test completed real offscreen wgpu
+upload/render/readback with process exit 0, 17 optional probes, zero invoked
+fallbacks and zero remaining compatibility bindings. Its 21,470-byte PNG was
+only used to force the readback path and was not inspected as a visual oracle.
+
+Current SHA-256 values are
+`2bc85e3831c81846216c97ef0d671bcbdb854b6082a134ae946e859435120bcc`
+for `stella-app`,
+`f2c65700b3fd6f4ba6a96330b5ce7ee4830b7dfb4fe8ca9bc5268134903d0188`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### LEAVES hierarchy and final-vertex float32 arithmetic
+
+The remaining transition drift was below the asset/timeline layer. IDA renders
+each row of `sub_10001E440` as float32 products and a sum, but that decompiler
+expression does not preserve ARM64 contraction. Hopper's instruction listing
+resolves the exact order: Purple rounds the second product with `FMUL`, feeds
+that value to `FMADD` as the addend of the first product, then adds the parent
+translation with a separate `FADD`. The former Rust path retained parsed
+float32 values in an f64 matrix and did the hierarchy composition in f64; an
+intermediate correction that rounded both products separately was also not
+instruction-accurate. Rust now reproduces the mixed `FMUL`/`FMADD`/`FADD`
+sequence in float32.
+
+The final sprite path uses the same ordering. At `sub_100467BE8`, each of the
+four vertices first computes the second matrix term with `FMUL`, combines the
+first term with `FMADD`, and only then adds float32 translation with `FADD`.
+This matters for cancellation operands: Purple retains exactly `2^-46` where
+rounding both products first produces zero. Ordinary animation construction
+continues to use `sincosf`-equivalent f32 inputs and f32 scale products;
+parent/child, skin, composite and final wgpu vertex transforms now share the
+native mixed fused order instead of f64 or all-non-fused approximations.
+
+The wrapper scene setters were corrected at the same boundary. IDA shows
+`setTranslation` (`sub_1000145FC`), `setRotation` (`sub_1000147B8`) and
+`setScale` (`sub_100014978`) resolving an existing scene before mutating its
+float matrix; an unknown tag only warns and never creates a transform.
+Rotation installs a new unit basis, discarding prior scale, while scale
+normalizes and rescales the existing basis. Rust now quantizes all setter
+arguments to float32, ignores unknown scenes, resets scale on rotation and
+retains orientation when scaling. The shipped LEAVES path calls translation
+then scale, so its screen-centred root now follows the native mutation and
+precision order exactly. The final `world_space` audit also confirms that the
+animation root already carries screen coordinates and must not pass through
+the gameplay camera a second time.
+
+The workspace passes 550 tests (81 app/audio/wgpu, 31 assets, one core and
+437 script/physics). Formatting, strict all-target/all-feature Clippy and the
+release build are clean. A fresh isolated-AppData 180-frame release smoke
+completed the real offscreen wgpu upload/render/readback path with process
+exit zero, 17 optional data probes, zero invoked fallbacks and zero remaining
+compatibility bindings. Its 21,470-byte PNG was retained only to force the GPU
+route and was not inspected as a visual oracle.
+
+Current SHA-256 values are
+`2ff30db80d3c956b7512d54cfa218cabe0e31876810ff4a91766147f0f550602`
+for `stella-app`,
+`229d3c4fb7e090a25c34f38239af9ca4a35caf61369f426718c529d478265418`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### Fixed 60 Hz display link, not adaptive refresh
+
+The original iOS host does not implement adaptive frame rate. IDA decompiles
+the `Configuration` constructor at `sub_100401398` with a literal 60 stored in
+its `framerate` member at `+0x48`. The title-specific configuration callback
+`sub_10002A278` only supplies orientations, the renderer, and bundle directory
+names; it does not replace that value. Hopper independently shows
+`ORR W9,WZR,#0x3C` followed by `STR W9,[X0,#0x48]` in the constructor.
+
+On activation, `-[AppController startUpdate]` at `0x100404CA8` constructs one
+`CADisplayLink`, computes integer `60 / configuration.framerate`, and passes
+the result to the legacy `setFrameInterval:` selector. With the shipped value
+60, the interval is exactly one display refresh. IDA and Hopper both show the
+`SDIV` by the stored configuration member and the subsequent selector call.
+There are no `preferredFramesPerSecond`, `preferredFrameRateRange`, or
+`maximumFramesPerSecond` selectors in the executable, and no runtime branch
+changes the interval according to load, device refresh capability, or frame
+time. Resuming the application destroys and recreates the same fixed-interval
+display link.
+
+`-[AppController update]` measures the real monotonic interval for every
+callback, narrows it to float32, and clamps only negative values to zero and
+stalls above 0.1 seconds to 0.1. That variable delta drives animation and Lua;
+the separate GameLua accumulator continues to step Box2D at 30 Hz. This is
+variable-delta simulation on a fixed 60 Hz callback, not adaptive refresh.
+The Rust desktop host's 16,666,667 ns display-link deadline and measured,
+0.1-second-clamped frame delta therefore remain the faithful default. Driving
+presentation at 120 Hz is technically possible as an optional rehost feature,
+but enabling it as native behavior would diverge from Purple 1.1.6 and is not
+done here.
+
+### Authoritative wrapper matrices and scene-relative query round trips
+
+The wrapper scene state is now retained as Purple's six float32 matrix rather
+than reconstructed from host-side translation, angle and scale values during
+draw. IDA and Hopper agree that `setTranslation` (`sub_1000145FC`) copies the
+current matrix and overwrites only its two translation members;
+`setRotation` (`sub_1000147B8`) replaces the complete linear basis with the
+raw `__sincosf_stret` result and therefore discards any prior scale; and
+`setScale` (`sub_100014978`) normalizes the two current basis columns through
+`sub_10057B644` before multiplying them by the requested float32 scales. That
+normalizer computes its squared length with `FMUL` followed by `FMADD`, uses
+`FSQRT`, rejects lengths below `FLT_MIN`, then applies `FDIV`/`FMUL` in
+float32. The Rust wrapper now mutates an authoritative matrix in exactly this
+order. A parallel scalar record is retained only for compatibility render
+metadata where a signed reflection such as horizontal scale `-1` is
+observable; it no longer determines sprite geometry.
+
+The entity-query path also performs a real matrix round trip. In
+`sub_10000F46C`, Purple inverts the root scene matrix, composes an entity world
+matrix, then evaluates `inverse(scene) * entityWorld` through
+`sub_10001E440`. The inverse determinant and translated terms preserve their
+ARM64 rounded-product/fused-add ordering. Position comes directly from the
+resulting float matrix, scale uses `FMUL`/`FMADD`/`FSQRT` column magnitudes,
+and angle is `atan2f(m10, m00)`. This is observably different from returning
+the authored scalar values: a synthetic root at `(500, 600)`, scale
+`(10, 20)` and angle `0.25f` round-trips a child to x
+`19.999996185302734` (`0x419ffffe`), y `41.0`, scale x
+`0.9999999403953552` (`0x3f7fffff`), scale y
+`5.999999523162842` (`0x40bfffff`) and angle
+`4.968269795568858e-9` (`0x31aab55d`). Regressions now pin these residues.
+
+`sub_100015000` uses the same float32 magnitude decomposition for local scale.
+`sub_1000152BC` derives world bounds from the scene-relative matrix, reads
+sprite width and height as signed 16-bit integers through
+`sub_100467E14`/`sub_100467E1C`, multiplies each converted dimension by
+`0.5f` before applying scale, and finishes its bounds with float32
+`FADD`/`FSUB`. Rust now follows that instruction order as well. Together with
+the previously corrected final-vertex `FMUL`/`FMADD`/`FADD` path, animation
+hierarchies such as LEAVES no longer mix a native float32 draw matrix with
+idealized host-side query values.
+
+The workspace passes 551 tests (81 app/audio/wgpu, 31 assets, one core and
+438 script/physics). Formatting, strict all-target/all-feature Clippy and the
+release build are clean. A fresh isolated-AppData 180-frame release smoke
+completed real offscreen wgpu upload/render/readback with process exit zero,
+17 optional probes, zero invoked fallbacks and zero remaining compatibility
+bindings. Its 21,470-byte PNG was used only to exercise GPU readback and was
+not treated as a visual oracle.
+
+Current SHA-256 values are
+`fa98307577aabba1f91b16cbdeb5fda781c92331d81a5aa7668a07c78d1ede6f`
+for `stella-app`,
+`47332da72b7c2f1dc3d093b60421a08ddb81bb65f7c8b182bfe576e3892f77e1`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### Recursive animation world matrices and mirrored-parent inheritance
+
+The remaining LEAVES motion drift came from collapsing an authored hierarchy
+to one host-side transform before drawing it. Purple never performs that
+collapse. `AnimationWrapper::draw` at `sub_1000144F4` forwards its scene and
+camera to `sub_10042F53C`; the latter refreshes the scene renderable array,
+then submits its entries in the order produced by `sub_10042F3F0`.
+IDA and Hopper both show a stable sort whose comparator at `sub_10042F4F4`
+returns `left.z > right.z`. The existing descending LEAVES order was therefore
+retained, while every `root -> LEAF_n -> SLOT_TRANSITION_LEAF_n` matrix is now
+composed separately with the recovered float32 `FMUL`/`FMADD`/`FADD` ordering.
+The screen-centred wrapper matrix is the first parent rather than a transform
+reapplied after the authored chain. This changes the actual IN and OUT paths,
+rotations and squash matrices, rather than applying a screenshot-derived
+offset.
+
+The same traversal also closes Purple's reflected-parent rule. At
+`sub_10043C758`, `Transform::GetWorldMatrix` compares the sign of the parent's
+world determinant with a retained descendant-reflection byte. On a mismatch
+it measures the local basis, obtains its angle with `atan2f`, applies a signed
+twice-angle correction between inverse-scale and restored-scale matrices, and
+only then composes the parent world matrix. `sub_100010E2C` marks the exact
+`SLOT_` prefix through `sub_10043CAF0`; those attachment nodes skip the
+correction. `AnimationWrapper::setScale` at `sub_100014978` propagates the
+float32 `(scaleX * scaleY) < 0` state recursively, whereas `setRotation` does
+not clear it. Rust now retains that state per live scene and applies it at each
+non-slot hierarchy step. This is immediately relevant to the 38 shipped
+animation assets containing negative scale keys, without disturbing LEAVES'
+intentional negative skin-attachment scales.
+
+The shipped LEAVES regression now covers both `Transition_Animation` and
+`Transition_Animation_Backwards` at their 0.4-second midpoints. It pins all 16
+leaf submissions and exact float32 positions/matrices for representative back,
+middle and front layers, in addition to the existing duration, settled matrix
+and layer-order assertions. The workspace passes 554 tests (81
+app/audio/wgpu, 31 assets, one core and 441 script/physics). Formatting,
+strict all-target/all-feature Clippy and the release build are clean.
+
+Fresh isolated-AppData real-wgpu runs exercised ordinary startup plus the
+original LEAVES IN and OUT paths. Both transition captures completed with zero
+invoked fallbacks and zero remaining compatibility bindings; their PNGs were
+used only to force texture upload, rendering and readback, not as the
+behavioral oracle. Current SHA-256 values are
+`f177687492dd19b939c9cf8da79c86b082632a112220c3960101593b547ce6ae`
+for `stella-app`,
+`9466a57d3f616ab9c96591b4e6001856cd4497c7cd6aae3225149434b0e061de`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### Discrete native sprite rebinding without host geometry morphs
+
+The post-LEAVES approximation audit found one remaining host-only animation
+patch in the ordinary scene-object path: `POPPY_POWER_1` through
+`POPPY_POWER_6` retained their authored sprite timeline, but the Rust host
+inserted one display frame whose width, height and pivot were the arithmetic
+mean of the current and following atlas regions. This attempted to smooth a
+30 Hz texture sequence, yet it changed the character outline and had no
+corresponding native state.
+
+IDA's complete decompilation of `sub_10004C7FC` and Hopper's independent
+40-block pseudocode agree on the actual `native_setSprite` member. It resolves
+the requested composite or atlas sprite, writes the live resource pointer,
+removes the object name from the previous `(integer z, sheet)` vector when the
+sheet changes, inserts it into the new vector and assigns the requested string
+to RenderObjectData `+0x68`. It never derives a following sprite name, reads
+two sets of dimensions or pivots, maintains a one-frame age, or interpolates
+geometry.
+
+The host-only override fields and frame-age pass have therefore been removed.
+Poppy's power frames now change as discrete native resource rebindings, while
+the separately recovered unsolved-Box2D display-position sample remains in
+place for held Poppy and Luca powers; position continuity is preserved without
+inventing a morph frame. A regression holds `POPPY_POWER_1` across a display
+frame and then switches to `POPPY_POWER_2`, proving that both submissions use
+their bound atlas geometry with no draw-size or pivot override.
+
+The workspace passes all 554 tests (81 app/audio/wgpu, 31 assets, one core and
+441 script/physics). The full run also exposed a test-only collision between
+parallel temporary sprite-sheet files; their names now combine the process ID
+with an atomic sequence. Formatting, strict all-target/all-feature Clippy and
+the release build are clean. A fresh 180-frame real-wgpu upload/render/readback
+smoke test completed at 1024x768 with process exit zero, 17 optional data
+probes, zero invoked fallbacks and zero remaining compatibility bindings. Its
+PNG was used only to exercise the GPU route and was not treated as a visual
+oracle.
+
+Current SHA-256 values are
+`381bc31c64a00d515dd4348f38e765d33b221ccf90619545428a64dcc9fa5684`
+for `stella-app`,
+`dbb6ca474dd4dbd0f11349f1d33cc700c1be6a81287636c0db0fc766d7f12bc6`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### Uniform atlas-sprite matrices and removal of the tutorial-name shear
+
+The next render audit found one resource-name special case below the Lua and
+native resource layers. `render_command_transform` recognized
+`TUTORIAL_TARGET` and post-multiplied its ordinary transform by a hard-coded
+local shear of `0.1316`. This had been introduced from a visual inspection to
+level one edge of the authored triangle, but it also distorted the internal
+pixel art and had no counterpart in Purple.
+
+The shipped script and resource evidence is complete. Constructing
+`ui.TutorialTapArea` from the original Lua bytecode creates `arrowTop`,
+`arrowBot`, `arrowLeft` and `arrowRight` with angles exactly `0`, `pi`,
+`-pi/2` and `pi/2`. All four use the same `TUTORIAL_TARGET` token. The
+original `INGAME_BLOCKS_MISC_2.dat` describes it as an ordinary 147x164 atlas
+region with pivot `(73,82)` and contains no transform metadata.
+
+IDA has no `TUTORIAL_TARGET` string in the executable. Its complete
+decompilation of Sprite's four-vertex member `sub_100467BE8` applies the same
+incoming six-float transform to every vertex and forwards the resulting
+triangle strip; the only branch selects the generic matrix helper when the
+matrix flag at `+0x30` is set. Hopper independently shows the four identical
+`FMUL`/`FMADD`/`FADD` blocks and only the generic transform/submission callees
+`sub_10057B748`, `sub_10057B8A0` and `sub_10046B1F0`. Neither implementation
+can inspect an atlas-region name at this stage.
+
+The name check, shear constant and correction function have therefore been
+removed. A regression now submits identical state under `TUTORIAL_TARGET` and
+an arbitrary atlas name and pins all seven resulting transform scalars as
+bit-identical. The source pixels, native pivot and cardinal Lua rotations are
+again the only inputs to the tutorial triangles.
+
+The workspace passes all 554 tests (81 app/audio/wgpu, 31 assets, one core and
+441 script/physics). Formatting, strict all-target/all-feature Clippy and the
+release build are clean. A fresh 180-frame real-wgpu upload/render/readback
+smoke completed at 1024x768 with process exit zero, 17 optional data probes,
+zero invoked fallbacks and zero remaining compatibility bindings. Its PNG was
+used only to force the GPU route, not as a behavioral oracle.
+
+Current SHA-256 values are
+`b9997c406d39260a65ddeec820a120e04196ad9e423fff1033a60edf65407dae`
+for `stella-app`,
+`dbb6ca474dd4dbd0f11349f1d33cc700c1be6a81287636c0db0fc766d7f12bc6`
+for the unchanged `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### Native submission of near-degenerate atlas matrices
+
+The generic atlas path still contained one host-side visibility threshold:
+`append_gpu_region` discarded a command whenever the absolute determinant of
+its float32 linear matrix was below `f32::EPSILON`. Two non-zero scales of
+`0.0001` produce determinant `1e-8`, so a large sprite animated through a
+small scale could disappear for host-selected frames instead of shrinking
+continuously.
+
+The threshold is absent from the complete native call chain. IDA reports five
+callers of Sprite's four-vertex member `sub_100467BE8`:
+`sub_10004DB90`, `sub_10006C838`, `sub_100095A4C`, the forwarding thunk
+`sub_100467BE0`, and `sub_100469138`. Their decompilations construct or obtain
+the incoming transform and call the member directly; their only early tests
+check required resource pointers. `sub_10006C838` builds the direct-sprite
+matrix and all four local corners before submission, while the two animation
+component members obtain the live world matrix and submit it unchanged.
+
+Hopper independently shows the same caller set and no determinant magnitude
+comparison. Inside `sub_100467BE8`, each of the four vertices executes the
+recovered float32 `FMUL`/`FMADD`/`FADD` sequence and is forwarded to the
+renderer. The sole per-vertex branch selects `sub_10057B8A0` for the generic
+matrix flag; it is unrelated to scale magnitude. Purple therefore leaves
+near-degenerate triangles to the GPU rasterizer.
+
+The determinant epsilon cull has been removed from the wgpu atlas builder. A
+new GPU-boundary regression submits a 1000x1000 sprite at scale
+`(0.0001,0.0001)`, pins its 0.1x0.1-pixel transformed corners, and verifies
+that the prepared frame still contains six vertices and one draw. This closes
+a generic source of intermittent missing sprites during small-scale animation
+without inventing a minimum visible size.
+
+The workspace now passes all 555 tests (82 app/audio/wgpu, 31 assets, one core
+and 441 script/physics). Formatting, strict all-target/all-feature Clippy and
+the release build are clean. A fresh 180-frame real-wgpu upload/render/readback
+smoke completed at 1024x768 with process exit zero, 17 optional data probes,
+zero invoked fallbacks and zero remaining compatibility bindings. Its PNG was
+used only to execute the GPU route.
+
+Current SHA-256 values are
+`7b3da0bffccd614041f9973a7b5a6fcbe1a781f4bfb722bd54f45944a4637aa6`
+for `stella-app`,
+`dbb6ca474dd4dbd0f11349f1d33cc700c1be6a81287636c0db0fc766d7f12bc6`
+for the unchanged `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### Float32 scene-object transform boundary
+
+The next ordinary-object pass compared `sub_10006D5B4` and
+`sub_10006C838` instruction-for-instruction in both IDA and Hopper. The
+former loads all camera, object and game-scale values into scalar `S`
+registers. The latter computes the submitted origin as
+`((position * 20.0f) - topLeft) * worldScale`, using a separate `FMUL`,
+`FSUB`, then `FMUL`. Its X basis scale is `(flip * worldScale) * objectScaleX`
+and its Y basis scale is `worldScale * objectScaleY`. The old bridge retained
+the float-backed values as `f64` and collapsed these expressions before the
+wgpu boundary, which changed the last bits of screen origins and small object
+scales.
+
+The call at `0x10006D8F4` also settles the two object-angle fields. The
+ordinary sprite matrix receives only `RenderObjectData+0xAC`; the separate
+`+0xB0` written by `setSpriteRotation` is not added to that explicit matrix.
+The surrounding live callback context is different: `0x10004C0E8` installs
+`+0xAC + +0xB0` with one float32 `FADD` when the object is not mirrored, while
+the mirror branch at `0x10006D640` replaces it with `FNEG(+0xAC)` and drops
+`+0xB0`. Rust now preserves both paths instead of adding the visual rotation
+to every ordinary sprite and computing the callback basis in host double
+precision.
+
+This correction also exposed an outdated ray expectation. `makeRay` retains
+its captured fixture polygon, but `drawGameNative` takes the distinct
+DrawablePolygon branch at `0x10004C14C`; `sub_10008D428` reads the live context
+basis, so a later `setRotation` rotates that retained polygon. Its regression
+now pins the float32 rotated bounds rather than an axis-aligned host result.
+
+A new adversarial circle regression covers float32 camera subtraction,
+physics-to-world multiplication, independent scale order, ordinary-object
+angle selection and the non-mirrored callback angle. The workspace now passes
+all 556 tests (82 app/audio/wgpu, 31 assets, one core and 442 script/physics).
+Formatting, strict all-target/all-feature Clippy and the release build are
+clean. A fresh 180-frame real-wgpu upload/render/readback smoke completed at
+1024x768 with process exit zero, 17 optional data probes, zero invoked
+fallbacks and zero remaining compatibility bindings. The PNG was used only
+to execute the GPU route.
+
+Current SHA-256 values are
+`da993c09ed54ef1b9b5ae4fe4e39e2810899859103eecec01f85746c0749e05f`
+for `stella-app`,
+`3cbcc410ddef3e82484ca36fab960f41e6ebab64bb7b22bdee5dc0f93713cb39`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### Native scene callback pivots and CompoSprite integer bounds
+
+IDA and Hopper independently confirm that `sub_10004BAB4` installs a live
+rotation pivot before entering an object's draw callback, and that its two
+resource branches are deliberately different. At `0x10004C070`, the ordinary
+atlas branch reads the signed 16-bit Sprite pivot at `+0x30/+0x32`, converts
+each component to float32 and adds `RenderObjectData+0xB4/+0xB8`. The
+CompoSprite branch at `0x10004C020` instead reads the signed 32-bit pivot at
+`+0x68/+0x6C` and never adds those object offsets. The pair is written to the
+GLES2 context at `+0x30`; `sub_100598CC4` later consumes it through the
+float32 `(I-R) * pivot` translation terms. Keeping the Rust callback pivot at
+zero therefore rotated callback attachments around the wrong point.
+
+The composite values are not static authoring metadata. Both disassemblers
+show `sub_100436D40` visiting every visible atlas part, normalizing the two
+rotation basis vectors through `sub_10057B644`, composing translation,
+rotation, scale, flip and the negative atlas pivot through `sub_10001E440`,
+then transforming all four raw sprite corners. Every transformed coordinate
+is truncated with `FCVTZS`; the member stores `max-min` as size and `-min` as
+its integer pivot. The Rust bridge now reproduces the same float32
+`FMUL`/`FMADD`/`FADD` staging, normalization guard, signed truncation and
+wrapping integer arithmetic in a separate reverse-aligned `pivot` module.
+
+Two regressions pin the branch distinction: an atlas callback combines a
+resource pivot with its object offset, while a transformed/flipped composite
+derives `(4, 7)` from integer bounds and ignores a deliberately large object
+offset. The workspace now passes all 557 tests (82 app/audio/wgpu, 31 assets,
+one core and 443 script/physics). Formatting, strict all-target/all-feature
+Clippy and the release build are clean. A fresh 180-frame real-wgpu
+upload/render/readback smoke completed at 1024x768 with process exit zero, 17
+optional data probes, zero invoked fallbacks and zero remaining compatibility
+bindings. The PNG was used only to execute the GPU route.
+
+Current SHA-256 values are
+`cb734f0b52dd8d2d8548ff08e3aae1d0e19e3a5c3479ce891f3cf95ffd3cd01c`
+for `stella-app`,
+`f4c9ec98a5bc054c980a2ad14d4d9c81d544280eaf57e1a104e7e55f6ab9aa93`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### SpriteComponentCustom atlas-pivot anchor and LEAVES quad repair
+
+The LEAVES audit exposed a conflict between an earlier screenshot-derived
+center-pivot inference and the component implementation. IDA's complete
+SpriteComponent constructor at `sub_100467F5C` resolves it directly. At
+`0x1004681A8/0x1004681B0` the default `game::Anchor` passed to the registered
+`anchor` property is `{4,3}`. `sub_100095C24`, the SpriteComponentCustom
+constructor used by AnimationWrapper slots, calls that base constructor and
+only installs its derived vtables plus the `1.0f` member at `+0x200`; it never
+changes the anchor.
+
+Both disassemblers independently show how the default is consumed.
+`sub_1004686FC` rebuilds the component's four local vertices after
+`sub_100469030` changes its Sprite pointer. Vertical mode 4 reaches
+`0x100468740` and uses `sub_100467E2C` (signed SPRT pivot Y), while horizontal
+mode 3 reaches `0x100468928` and uses `sub_100467E24` (signed SPRT pivot X).
+`sub_100467E14/E1C` supply the signed width/height for the opposite edges.
+The AnimationWrapper sprite/skin callback `sub_100011BC4` calls
+`sub_100469030` and installs the recovered attachment matrix, but contains no
+anchor write or center conversion. Hopper reports the same constructor
+literal, switch cases and caller set.
+
+The shipped `MENU_ELEMENTS_1.dat` records are deliberately not exact
+half-size pivots: `TRANSITION_LEAF_1` is 439x272 at `(220,136)`, leaf 2 is
+371x327 at `(186,163)`, and leaf 3 is 315x254 at `(158,126)`. The former Rust
+override instead used `(219.5,136)`, `(185.5,163.5)` and `(157.5,127)`. Skin
+rotation and non-uniform scale amplified those offsets into moving seams and
+incorrect overlap during the transition.
+
+Animation render commands leave `sprite_pivot` unset, so the retained SPRT
+record supplies the same signed pivot as the base SpriteComponent. This is one
+stage of the native path; the derived draw member recovered below supersedes
+the earlier conclusion that this stage alone determined the final quad.
+
+The workspace still passes all 557 tests (82 app/audio/wgpu, 31 assets, one
+core and 443 script/physics). Formatting, strict all-target/all-feature Clippy
+and the release build are clean. A real-wgpu 180-frame audit preloads the
+shipped MENU group, runs the original LevelLoad IN -> LOAD -> OUT state
+machine with a no-op load callback, asserts that the transition child disposes
+at completion, and reports zero invoked fallbacks and zero remaining
+compatibility bindings. Its final readback SHA-256 is
+`ed626e4c19182f75407128c5ba721a43f1d070ae8fe6d01c691772618bcdf683`;
+the PNG is only a GPU/lifecycle audit, not the behavioral oracle.
+
+Current SHA-256 values are
+`e2c4a8a686de32f553ae983bf138bf09c575859d27a16163229bbf9f1c138c4d`
+for `stella-app`,
+`fbadfda36e37fde9690442c13d8353c8a809b87a576b46987946c390e51f0c45`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### SpriteComponentCustom derived centering and atlas-only pointer binding
+
+The preceding constructor/rebuild audit was incomplete because it stopped
+before the derived virtual draw. IDA and Hopper both recover
+`sub_100095A4C` as a 400-byte, 100-instruction member. It copies the Transform
+world matrix from `+0x70`, updates renderer alpha from the component's `+0x200`
+member only when the absolute difference exceeds the native approximately
+`1e-5` literal, then computes local X/Y as `pivot + (-size) * 0.5` with the
+original `FMADD` staging. It composes that translation after the world matrix
+with `sub_10001E440` and submits the base SpriteComponent vertices through
+`sub_100467BE8`.
+
+This means both apparently conflicting observations are native: the base
+vertices retain the signed atlas pivot, while SpriteComponentCustom appends
+`pivot - size/2`. They algebraically centre the raw quad, but must remain two
+float32 stages because rotation, shear and composition rounding make the
+intermediate representation observable. Rust now snapshots exact integer
+width/height/pivot metrics with each animation attachment and post-composes
+the recovered translation without replacing the retained atlas-pivot vertices.
+The real LEAVES IN/OUT midpoint regressions pin the resulting float bits and
+all 16 layer submissions.
+
+An audit of all 216 shipped `.anim.json` assets against every loaded
+`*COMPOSPRITES.dat` name found one animation attachment that is not an atlas
+sprite: `GENERAL_UI_BG` in `TELEPOD_PAGE_LEAVES.anim.json`. A deeper caller and
+type audit reverses the earlier inference that the component could retain that
+CompoSprite. IDA and Hopper both show `sub_100469030` storing its input directly
+at SpriteComponent `+0x188`; `sub_100011BC4` supplies only the resolved
+DiscreteSprite/skin AtlasSprite pointer and passes zero on every failed lookup.
+In `sub_100095A4C`, the load from `+0x188` is followed immediately by `CBZ` to
+the epilogue. Its non-null path calls only the AtlasSprite width, height and
+pivot getters before `sub_100467BE8`. There is no CompoSprite type branch or
+call to the separate composite renderer `sub_1004376D4`.
+
+Rust animation assets therefore retain only concrete atlas regions. Geometry
+and integer metrics are derived from that same captured region, rather than a
+second type-neutral catalog lookup. A missing atlas or same-named CompoSprite
+leaves the component null and emits no render command, preventing the wgpu
+catalog from dynamically drawing an object the native component never bound.
+The shipped TELEPOD regression loads all relevant sheets plus
+`MENU_COMPOSPRITES.dat`, releases the composite set, and verifies that
+`GENERAL_UI_BG` remains absent while ordinary `UI_BG_LEAF_1` atlas attachments
+still draw.
+
+The workspace passes all 558 tests (82 app/audio/wgpu, 31 assets, one core and
+444 script/physics). Formatting, strict all-target/all-feature Clippy and the
+release build are clean. A fresh isolated-AppData 180-frame real-wgpu audit
+preloads the shipped MENU group, drives the original LevelLoad IN -> LOAD ->
+OUT state machine with a no-op destination, and asserts both the load callback
+and transition-child disposal. It reports 19 optional data probes, zero
+invoked fallbacks and zero remaining compatibility bindings. The final
+readback SHA-256 is
+`ed626e4c19182f75407128c5ba721a43f1d070ae8fe6d01c691772618bcdf683`;
+the PNG exists only to execute upload/render/readback and is not a visual
+oracle.
+
+Current SHA-256 values are
+`0ab91e224a01569938bea7e84c4abe082c52e0b76492f1ba6327450eb09b90a2`
+for `stella-app`,
+`2c32619527cd6d1a35e4b0417ddcac76b1466bf4c3e45d3c034dcbcab104b8d0`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### Stella main-loop cadence and absence of adaptive frame rate
+
+The binary contains two CADisplayLink owners, so the presence of
+`SceneGraphViewController.animationFrameInterval = 2` is not evidence for the
+game cadence. That controller belongs to the embedded SceneGraph/Zappar path.
+The Stella application enters through `AppController` instead. IDA and Hopper
+both recover `sub_100401398`, the `framework::Configuration` constructor, as a
+28-instruction leaf that writes integer 60 at configuration `+0x48`
+(`framerate`). The game-specific configuration hook `sub_10002A278` adds the
+two orientations and renderer, but does not change that field.
+
+`-[AppController startUpdate]` at `0x100404CA8` loads the same `+0x48` value.
+For positive values it performs signed integer `60 / framerate`, passes the
+result to legacy `-[CADisplayLink setFrameInterval:]`, and installs `update` in
+the default run-loop mode. The shipped value is therefore interval 1 on the
+60 Hz iOS display path. The non-positive fallback is also interval 1. There is
+no load/thermal/elapsed-time decision in this function, no setter on the
+Stella configuration path, and no `preferredFramesPerSecond` or
+`preferredFrameRateRange` selector in the binary.
+
+`-[AppController update]` does measure the real monotonic elapsed time and
+clamps it to `[0, 0.1]` before calling the engine. That protects simulation
+after a stall; it does not adapt the display cadence. Consequently Stella
+1.1.6 is fixed at a requested 60 FPS, has no enabled adaptive-frame-rate mode,
+and has no native 120 FPS route. Rust already schedules its desktop display
+callback at 16,666,667 ns and forwards the coalesced real delta with the same
+100 ms clamp. The constant is now named `DISPLAY_LINK_STEP` and documents the
+two recovered native functions; behavior is unchanged.
+
+### DiscreteString skin binding at EntityTarget application time
+
+The next LEAVES pass separates two native timeline types that the previous
+resource snapshot treated alike. IDA and Hopper both recover
+`sub_100412E10` as the `DiscreteSprite` JSON keyframe loader. It extracts the
+keyframe string, invokes the resource callback stored in its first argument at
+`0x100413024`, and passes the returned concrete `Sprite*` directly to
+`TimelineDiscrete<Sprite*>::addKeyframe` at `0x100413030`. A null lookup is
+therefore frozen into that particular direct keyframe at animation-load time.
+
+`mockup::storeDiscreteKeyframes<TimelineDiscrete<std::string>>` at
+`0x1004175E8` is intentionally different. It copies each JSON `value` into a
+`std::string` keyframe and never calls the sprite resolver. The apply callback
+`sub_100011BC4` later distinguishes the two state types. Its direct branch
+for `DiscreteSprite` forwards the stored pointer to `sub_100469030`; its
+string branch resolves the current AnimationSkins record, calls the live
+resource provider, applies the skin attachment matrix and then stores the
+resulting pointer (or null) in the same SpriteComponent member. The Lua
+`setSkin` route at `sub_100013E18 -> sub_10000C100` only changes the selected
+skin pointer; it does not force that sprite setter to run.
+
+This is not an unused editor distinction. A complete audit of all 216 shipped
+`.anim.json` files finds 6,239 sprite tracks, every one of them
+`DiscreteString`; none is `DiscreteSprite`. LEAVES therefore must resolve its
+16 default-skin attachments when EntityTarget applies `start`, `seek` or a
+changed discrete state, not while `LEAVES.anim.json` is parsed.
+
+Rust now records the JSON track kind explicitly. Only genuine
+`DiscreteSprite` keyframes enter the load-time atlas snapshot.
+`DiscreteString` application resolves the alias and selected skin against the
+then-live ResourceManager, then retains the concrete atlas region, native
+integer metrics and skin transform in the component's latched target. Draw and
+world-bounds queries consume that retained binding; they do not re-query the
+resource catalog or react immediately to a later `setSkin`. An applied null is
+also represented separately from an artificial playback fixture that has not
+passed through EntityTarget.
+
+The state virtuals also pin the apply-mode boundary for both shipped discrete
+types. For `TimelineDiscrete<std::string>`, `sub_100421E90`,
+`sub_100421F1C` and `sub_100421FB0` respectively force a sample, seek while
+returning whether the key index changed, and advance while returning that same
+predicate. The matching `TimelineDiscrete<int>` members at `0x100423448`,
+`0x1004234A4` and `0x100423518` have identical index-change behavior. Hopper
+independently recovers the same state writes and boolean comparison. In
+`sub_10041E41C`, mode 3 invokes the property's ApplyHandler only when virtual
+offset `+0x58` returns true, while other modes invoke it unconditionally.
+
+This gating still belongs to the last attached state for the usage. An
+unchanged newer action therefore claims sprite or zOrder and blocks an older
+action whose discrete key happens to change in the same update; the older
+state must not fall through and run the setter. Rust now carries explicit
+per-usage claim sentinels for both discrete properties. Focused two-control
+regressions pin this otherwise subtle ownership rule for `DiscreteString` and
+`DiscreteInt`.
+
+The missing-skin branch is another pointer lifetime boundary. IDA recovers
+`sub_100013E18` as a scene-map lookup followed by `sub_10000C100`. The latter
+stores the matching skin record at AnimationSkins `+0x58`; when the name is
+missing it emits `AnimationSkins -- Missing skin: %s` and explicitly writes
+zero to that current-skin pointer. Hopper independently shows the same write
+to member `0xb`. Neither path reapplies an EntityTarget, so already-bound
+SpriteComponents remain unchanged. On the next forced apply,
+`sub_100011BC4 -> sub_100016490 -> sub_10000C2F0` first tries the current skin
+and, when that pointer is null, falls through to the default-skin pointer at
+AnimationSkins `+0x50`.
+
+Rust `setSkin` now removes the selected-skin entry when a loaded scene receives
+an unknown name instead of retaining its previous selection. A two-skin
+end-to-end regression proves all four observable stages: default binding,
+valid selection without immediate rebinding, valid binding after seek,
+missing selection retaining that concrete pointer until seek, and default
+fallback on the following forced apply.
+
+The new shipped LEAVES lifecycle regression loads the animation before its
+sheet and verifies that the component remains null, loads the MENU sheet and
+forces a seek to bind all 16 leaves, releases the sheet and verifies that the
+already-bound components still draw, then forces another seek and verifies
+that the live failed lookups replace those pointers with null. This covers
+both sides of the resource lifetime boundary without using a screenshot as an
+oracle.
+
+The workspace passes all 562 tests (82 app/audio/wgpu, 31 assets, one core and
+448 script/physics). Formatting, strict all-target/all-feature Clippy and the
+release build are clean. A fresh isolated-AppData real-wgpu run drives the
+original LevelLoadTransition IN -> no-op destination load -> OUT sequence,
+asserts the destination callback, INGAME group request and final transition
+child removal, and reports 19 optional data probes, zero invoked fallbacks and
+zero remaining compatibility bindings. Its final readback SHA-256 remains
+`ed626e4c19182f75407128c5ba721a43f1d070ae8fe6d01c691772618bcdf683`;
+the PNG exists only to execute upload/render/readback.
+
+Current SHA-256 values are
+`8c724de1f9d7b743d9ee586b007ed656ae4dc4b151af54286ff49ac3db551c50`
+for `stella-app`,
+`7df218932e00a19dc5745e08a1ed57c283f9c37ac754f6b2992df5af8333cb76`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### Loaded animation scenes have no implicit current action
+
+The follow-up `getActions` audit first rules out an apparent ordering gap.
+IDA `sub_10000F840` and Hopper both show the wrapper locating the first
+`game::Animation` component and copying its action-pointer vector to Lua
+indices 1..N. The JSON loader `sub_100414BD4` obtains the `actions` object as a
+`std::_Rb_tree`, walks it with `std::_Rb_tree_increment`, and calls
+`sub_10040FD78` in that order to construct the action vector. Consequently the
+native list is lexicographically ordered, not source-JSON insertion ordered;
+Rust's existing `BTreeMap` iteration is the exact representation and was
+retained.
+
+The same audit did expose a separate lifetime error after loading. The shared
+bundle/AppData scene builder `sub_100010340` creates the scene entity,
+AnimationSystemComponent, AnimationSkins and SpriteComponentCustom objects,
+then deserializes the hierarchy. It never selects `idle`, selects the first
+action, starts a control, or inserts a current-control record in the wrapper
+map at `AnimationWrapper+0x30`. The latter record appears only through the
+start path. `isPlaying` (`sub_10001384C`), `seek` (`sub_10001396C`), pause,
+resume and `setSpeed` (`sub_100013D08`) all begin by looking up that map and
+become no-ops when no current control exists.
+
+The previous rehost instead installed a stopped synthetic `idle` or first
+action immediately after load. Although its sprite pointers were null, entity
+queries sampled that action's time-zero translation/scale/rotation, and a
+pre-start seek or speed call mutated the invented control. The runtime now
+represents a loaded scene with an empty control vector, no current action and
+no detached control. Its hierarchy remains queryable at identity/base
+transforms, every constructed SpriteComponent reports a null sprite pointer,
+draw emits no animation sprites, and the first `start` alone creates and
+applies the native control.
+
+The expanded lifecycle regression proves the complete boundary through the
+Lua ABI: before start the known joint remains at `(0,0)`, a known slot returns
+the six-value transform shape with `hasSprite=false`, `isPlaying=false`, and
+setSpeed/seek/pause/resume leave that state unchanged; after start the same
+joint receives its authored `(5,7)` target and the slot binds its sprite. All
+562 workspace tests pass, including construction/update/draw of every shipped
+level. Formatting, strict all-target/all-feature Clippy and the release build
+are clean. A shipped-LEAVES headless probe additionally verifies the native
+alphabetical action order and the pre-start no-op boundary with zero invoked
+fallbacks and zero compatibility bindings. The 180-frame real-wgpu IN -> LOAD
+-> OUT audit also completes with zero invoked fallbacks and zero compatibility
+bindings; its final readback remains
+`ed626e4c19182f75407128c5ba721a43f1d070ae8fe6d01c691772618bcdf683`
+and is used only as upload/render/readback evidence.
+
+Current SHA-256 values are
+`474377a302828bc996b2674ba1ecaf004256ad817cdc309a18f77712e4503ee2`
+for `stella-app`,
+`144c392d33c78695c52d43d4151e4a2612ca71df48af3a0bec8f629e46320bad`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### LEAVES startup cadence and float32 Lua UI arithmetic
+
+The remaining startup-LEAVES timing difference came from the script VM rather
+than the animation asset or wgpu geometry. Both shipped chunks begin with the
+Lua 5.1 header bytes `1B 4C 75 61 51 00 01 04 04 04 04 00`: the fourth size
+field is `sizeof(lua_Number) == 4`, with the following integral flag clear.
+Purple therefore rounds every ordinary Lua arithmetic result to float32. The
+transcoded mlua VM intentionally uses double numbers, so a value that stays
+inside Lua can otherwise cross a frame boundary differently even though every
+native API narrows its arguments correctly.
+
+Unluac recovery of `scripts_common/ui_components/Frame.lua` shows that
+`Frame:update` subtracts `gamelua.g_realDt or scaledDelta` directly from each
+`delayedCall.timeLeft`, invokes the callback when the result is `<= 0`, then
+removes the same live-list index. `Frame:doDelayed` stores the authored delay
+without any other conversion. With Purple's float32 subtraction, the startup
+sequence's first `0.8`-second delay retains `0x33D80000`
+(`1.0058284e-7`) after 48 display ticks and fires on tick 49. Double
+subtraction fired it on tick 48. The callback-created `0.5` and `0.3` delays
+then fire on absolute ticks 79 and 97, respectively.
+
+The same chunk-ABI boundary is observable in the surrounding startup effect.
+`TweenSubsystem.lua` advances `timer = timer + rawDelta`; after 60 float32
+ticks its one-second black-cover Tween retains `0x3F7FFFFB` and is not marked
+done until tick 61. `tweenEaseCubicInOut` also rounds each divide, multiply and
+add in the recovered source order. Finally, `game_init.lua` accumulates the
+three LEAVES scales with `delta * 0.4`, `delta * 0.2`, and `delta * 0.1` after
+updating Frame delays.
+
+`game_lua/ui_float_precision.rs` now owns these UI-number boundaries instead
+of enlarging the startup orchestrator. It preconditions the shipped Frame and
+Tween updates so their existing add/subtract produces the exact float32
+stored result, implements the recovered cubic-in/out operation order in f32,
+and corrects only the uniquely identified three-scale startup LEAVES frame
+after its shipped update. The original Lua callbacks, list mutation order,
+draw order, delays, speeds and assets remain unchanged.
+
+Focused Lua-ABI regression coverage pins the 49/79/97 callback ticks, the
+48-tick residual, the 60/61-tick Tween completion boundary and cubic-easing
+bits. A Rust operation-order regression pins all three accumulated scales.
+The complete workspace passes all 564 tests (82 app/audio/wgpu, 31 assets, one
+core and 450 script/physics); formatting, strict all-target/all-feature
+Clippy, and the release build are clean. A fresh isolated-AppData 600-frame
+headless run and two real-wgpu release runs complete with zero invoked
+fallbacks and zero remaining compatibility bindings. The motion run asserts
+that the special LEAVES scale frame received its native-number adapter; the
+480-frame run asserts final startup-transition completion and disposal. Their
+readback SHA-256 values are
+`5b4e577a342f7e1510aab0c759626c3b131af01a08d07a0dd428c9281c538295`
+and
+`3c73dd420212bb12ef741571452065963e4b2e3a4402eb498794db368fb53678`;
+the captures are execution smoke tests rather than visual oracles.
+
+Current SHA-256 values are
+`004704ca571a700ed4a189dd8a8cf4ac63f9cafcbc051e651917278e7862af2d`
+for `stella-app`,
+`236eb64dfe0856f3abe1f0e2e91d9bc99db913781b3a6460a1daddfbbf1da51b`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### Complete shipped tween suite at Purple's float32 boundary
+
+The startup LEAVES correction exposed a wider instance of the same VM-number
+boundary. Unluac recovery of `scripts_common/tween.lua` contains ten unique
+global curves: linear, cubic in/out/in-out, quadratic in/out, bounce-out and
+sine in/out/in-out. The cubic definitions are repeated later in the chunk but
+the second definitions have identical arithmetic. Every intermediate divide,
+multiply, add and subtract is stored as a four-byte `lua_Number`; narrowing
+only the arguments and final return is not equivalent. Bounce additionally
+depends on the exact float32 constants and comparisons at `0.36363637`,
+`0.72727275` and `0.90909094`.
+
+The sine curves have a second native boundary that cannot be inferred from a
+screenshot. IDA decompiles the Lua math wrappers at `0x100517D38` and
+`0x100518348` as float argument extraction followed by the double-precision
+`cos` and `sin` imports and a float result push. Hopper independently exposes
+the exact ARM64 sequence in both wrappers: `fcvt d0, s0`, call the double libm
+stub, then `fcvt s0, d0`. Rust therefore performs each angle operation in f32,
+converts that angle to f64 for `sin`/`cos`, and narrows the result back to f32
+before the remaining Lua arithmetic. Using `sinf`/`cosf` directly would model
+a different native call path.
+
+`game_lua/ui_float_precision.rs` now installs all ten recovered functions into
+the shared game environment before `createStartUpAssets`. Each curve follows
+the source statement order without reassociation. The native adapters also
+retain Lua 5.1 arithmetic coercion for numeric strings; this matters because a
+plain typed Rust callback would otherwise be stricter than the shipped Lua
+functions. The existing Frame-delay, Tween-timer and three LEAVES-scale
+corrections remain in the same focused module, so the startup orchestrator is
+not enlarged.
+
+Unit regressions pin the exact result bits for all non-bounce curves and one
+sample in each of bounce's four branches. The booted-Lua integration regression
+calls every published global, verifies numeric-string coercion, verifies that
+`gamelua.tween*` and bare-global lookups resolve to the same functions, and
+retains the 49/79/97 LEAVES delay plus 60/61 Tween-completion assertions.
+
+The complete workspace passes all 565 tests (82 app/audio/wgpu, 31 assets, one
+core and 451 script/physics); formatting, strict all-target Clippy and the
+release build are clean. Independent empty-AppData release runs complete 600
+headless frames and the real-wgpu LEAVES motion/final paths with 73 optional
+data probes, zero invoked fallbacks and zero remaining compatibility bindings.
+The motion capture remains byte-identical at SHA-256
+`5b4e577a342f7e1510aab0c759626c3b131af01a08d07a0dd428c9281c538295`;
+the independently booted final capture is
+`11c67582f89c70a35dd500a28d14490a049c704392997b2746cffcaec677ed82`.
+These captures execute upload, animation, rendering and readback; the reverse
+engineered arithmetic and regressions, rather than screenshot appearance, are
+the behavioral oracle.
+
+Current SHA-256 values are
+`ee630548bd2a971f7795ccf3b55e6ddcf8f016fbf382e180da826b7b799818cd`
+for `stella-app`,
+`4402a28335fa239d6625e987b9e797325a2d6d5a3bbf906a9da0ece34d59a172`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### Luca tutorial support removal wakes the sleeping cage
+
+The Chapter 01 level 23 failure was not authored into the level or Luca's
+ability. The shipped level places `BLOCK_LIGHT_1X8_1_8` and
+`BLOCK_LIGHT_1X8_1_7` below the horizontal cage member, and the recovered
+`BlockComponents/LucaAbility.lua` intentionally handles pass-through glass by
+putting each hit object in `deadBlocks` and setting `strength = 0`. That branch
+does not apply an impulse. `removeBlocks` later calls `removeObject`, so the
+upper cage depends on the native contact-destruction wake transition rather
+than an ability-specific force.
+
+The earlier contact audit stopped one call too shallow. ContactManager destroy
+at `sub_10086B9B8` does not write either body's awake flag itself, but IDA and
+Hopper both show its virtual listener call at
+`0x10086B9EC..0x10086B9F8`, before it unlinks either contact edge. The installed
+Purple EndContact listener is `sub_1000653AC`. Its instructions at
+`0x1000653DC..0x100065410` set the awake bit and clear the float sleep timer on
+both bodies before calling `exitTriggerCollision` or `exitCollision`. Omitting
+that listener side effect left the surviving cage asleep after its two support
+bodies disappeared, producing the visible floating structure.
+
+The contact invalidation paths now wake every endpoint of each touching
+contact before erasing the cached contact. This applies equally to DestroyBody
+and DestroyFixture, matching their shared ContactManager listener route. The
+ordinary callback order, contact-list-head order, sensor cleanup, Lua object
+lifetime and destruction timing are unchanged. The corrected fixture-resize
+regression also reflects that an old touching fixture wakes through EndContact
+even though `native_resizeRadius` contains no direct wake call.
+
+A focused Chapter01_L23-shaped regression uses both shipped support names and
+the upper cage-member name. It establishes two contacts, puts the cage island
+to sleep, removes both supports through `removeObject`, checks the immediate
+awake/sleep-time state and verifies downward movement in the next fixed
+1/30-second step without applying an impulse. The complete workspace passes
+all 566 tests (82 app/audio/wgpu, 31 assets, one core and 452 script/physics);
+formatting, strict all-target/all-feature Clippy and the release build are
+clean. Fresh isolated-AppData 600-frame headless and real-wgpu runs report 73
+optional data probes, zero invoked fallbacks and zero remaining compatibility
+bindings. The wgpu readback SHA-256 is
+`67c16e99a44987c2eb124dfc7fb2b0cda4a36e8b2bd12ea94813c312ebec4185` and is
+used only as execution evidence, not as a visual oracle.
+
+Current SHA-256 values are
+`7b36cb68301b633bd216a7f167b59b8c8d84b7f7896497a81a9b687ffd9ffb55`
+for `stella-app`,
+`f12a824c00c60c14d2640849369091aa8b289fbdad46ab42998518a9abc9a535`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### ThemeParticleSystem per-layer spawners and draw interleave
+
+The ordinary `Particles` vector is not the complete theme-particle path.
+Purple's `ThemeParticleSystem` constructor at `sub_100096A48` derives from the
+same base but adds a `std::map<int, Ptr<Spawner>>` at +0x88 and a
+`std::map<int, vector<ParticleData>>` at +0xB8. IDA and Hopper agree that
+`sub_100096B74` replaces a copied-query Spawner by source layer index,
+`sub_1000973CC` routes each generated 0x68-byte record by
+`themeLayerIndex`, and `sub_100096E4C` clears both derived maps after the base
+particle member.
+
+ThemeManager's setup walk `sub_100099168` constructs the query from a layer's
+`particles` string and `spawnInterval`: X/Y/W/H/angle/amount are zero,
+background mode is two, foreground mode is one, Z is `zDistance`, and
+`themeLayerIndex` is the one-based source definition index at layer+0x88.
+Spawn-expanded layer records deliberately reuse that index, so the final
+Spawner replaces its predecessors in the map. A missing interval is -1.0,
+which disables automatic emission while retaining the force-spawn query.
+
+The per-layer update calls at `0x10009BA30` and `0x10009BA4C` precede the
+layer's animation and motion update. `sub_100097090` subtracts delta from a
+nonnegative Spawner timer, emits at most once when it reaches zero, then resets
+the timer to the authored interval. Every particle uses `(1-z)` for gravity,
+velocity displacement and the begin/end scale interpolation term; angular
+velocity is not parallax-scaled. Finite records are erased before integration
+when elapsed exceeds lifetime, and lifetime animation keeps the existing
+one-based `ceil(progress * frameCount)` rule.
+
+The draw member `sub_100096E9C` is called at `0x10009C17C` or
+`0x10009C1A8` before the layer image. It selects only the current layer bucket,
+adds the layer's world offset to each local particle coordinate, applies the
+live GameLua top-left/world scale, and restores the renderer matrix after the
+bucket. Rust now mirrors that exact interleave with separate background and
+foreground systems rather than flattening these records into the ordinary
+game-particle vector. The level loader's optional
+`updateThemeParticlesNative` pre-roll advances only these systems; it does not
+age theme animation, layer velocity, or ThemeSpriteData. The unrelated native
+reset at `sub_1000984C0` is also no longer a compatibility no-op: it clears the
+lazy camera-reference flag and the paired camera-effect floats while
+preserving layers, sprites and particle maps.
+
+The separate `ThemeSystem` constructor at `sub_10008AD30` publishes a Lua
+object named `themeSystem` and registers `spawnBGLayerParticles` and
+`spawnFGLayerParticles`. Their members at `sub_10009D008` and
+`sub_10009D16C` read the final Lua argument as float32, truncate it with
+`FCVTZS`, scan the expanded pass vector for the first matching `spawnerId` at
+layer+0xF8, and use that record's one-based vector position to look up the
+corresponding foreground or background Spawner. This two-stage mapping is
+distinct from automatic updates, which pass the source definition index at
+layer+0x88 directly. Rust now publishes both object members, retains the
+previously omitted `spawnerId` field, and preserves the original first-match,
+foreground/background separation and no-match return behavior.
+
+The adjacent frame-chain audit recovered the previously disconnected producer
+for ThemeManager's +0x54/+0x58 camera-effect pair. `sub_10004C524` starts or
+stops the supported platform accelerometer, stores the effective active byte
+at GameLua+0x2A0, and clears both filtered floats at +0x2A4/+0x2A8 on every
+activation call. When active, `0x10005EC94..0x10005ECD8` widens each raw
+float, multiplies by the exact double 0.2 constant, narrows it, then computes
+`previous * 0.8 + sampleTerm` with float32 FMADD. Both ThemeManager passes
+receive the same filtered pair. The host bridge now retains raw and filtered
+sensor pairs, reproduces that reset and operation order, and naturally keeps
+desktop/no-sensor execution at zero rather than bypassing the downstream
+background transform.
+
+The `setTheme` wrapper at `sub_10004D348` also revealed a state/application
+split that the earlier host had flattened. It stores raw float32 `skyColor` at
+GameLua+0x250..+0x258 and optional `groundColor` at +0x25C..+0x264; a missing
+ground table explicitly zeroes its three fields. There are no 1.1.6 reads of
+the ground triple. Sky color is not applied by selection: the background-only
+branch at `0x10009BE6C..0x10009BE88` forwards it to `sub_100030C60` during the
+later ThemeManager draw, where each channel uses `FMAX(0)`, integer truncation
+and an explicit 255 ceiling. Rust now retains both native triples and changes
+the renderer color at that same background-draw boundary, so foreground draws
+and the interval between `setTheme` and `drawBackgroundNative` preserve the
+previous framebuffer color.
+
+One further lifecycle distinction comes from `native_refreshThemeSystem` at
+`0x1000989D4..0x100098A0C`. `setTheme` parses and replaces the theme layer and
+color state but does not construct either ThemeParticleSystem. Refresh first
+clears the background and foreground systems, then invokes the setup walker
+for query mode two and mode one respectively. Consequently, particles and
+Spawner timers from the old theme remain observable between `setTheme` and the
+next refresh; that refresh discards them and installs fresh Spawners for the
+new expanded layers. Rust now performs construction only at this refresh
+boundary instead of eagerly rebuilding during theme selection.
+
+Focused regressions pin the first-frame immediate emission, one-burst
+long-delta rule, `(1-z)` numeric fields, pre-roll isolation, expanded-index
+replacement, explicit ThemeSystem routing, particle-before-layer wgpu command
+order, accelerometer reset/filter handoff and the setTheme/refresh lifecycle.
+Existing ordinary particle and theme tests remain unchanged. The delayed
+sky/ground color contract has its own regression. The complete workspace
+passes all 580 tests (82 app/audio/wgpu, 31 assets, one core and 466
+script/physics);
+formatting, strict all-target/all-feature Clippy and the release build are
+clean. Fresh isolated-AppData 600-frame headless and real-wgpu runs report 73
+optional data probes, zero invoked fallbacks and zero remaining compatibility
+bindings. The wgpu readback SHA-256 is
+`bd5b8848b77e54871fb3a8323633a8277dff4115ab9215595cc618f13585d4e7`
+and is execution evidence rather than a screenshot oracle.
+
+Current SHA-256 values are
+`4057e7b077d6ea7b1d2169b64acdb709ba8b75ed80fb4036789ad7a236904786`
+for `stella-app`,
+`53de7aaedece93f35462b2076845dbda4eb2578b0f188dba48ded953a6a887dc`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### ParticleData retains its resolved sprite pointers
+
+The earlier deferred-wgpu particle path still differed from Purple's native
+resource ownership: it kept only the particle's sprite string and performed a
+fresh active ResourceManager lookup on every draw. That made an existing
+ordinary or theme particle disappear, switch to a same-named replacement, or
+reappear when SPRT/COMP resources changed while the particle was alive.
+
+IDA and Hopper independently show that `sub_10008E524` resolves the concrete
+resource before the virtual add call. At `0x1000908F8..0x100090928` it invokes
+the ResourceManager atlas lookup twice and stores the retained AtlasSprite at
+ParticleData+0x20. Only when that result is null does
+`0x100090930..0x100090948` call `sub_10045BF08` and store the CompoSprite at
++0x28. The update member `sub_100091834` repeats this lookup only after a
+`lifeTime` animation selects a different sprite string: its normal branch is
+`0x100091A10..0x100091A4C`, and the physics-disabled modes 3/4 branch duplicates
+it at `0x100091BE4..0x100091C20`. No resource pointer is rebound on an ordinary
+integration frame.
+
+The two pointer fields also have an observable asymmetric overwrite rule. A
+frame change always overwrites +0x20, but it overwrites +0x28 only if the new
+atlas lookup is null. A composite-to-atlas transition therefore retains the
+old lower-priority CompoSprite pointer. Both the ordinary draw member
+`sub_100091D90` and ThemeParticleSystem draw member `sub_100096E9C` test +0x20
+first and consult +0x28 only when it is null, so the new atlas remains the
+visible resource while the old composite stays owned.
+
+Rust ParticleData now carries separate frozen atlas and composite bindings.
+All real construction routes bind at emission time: ordinary Lua particles,
+theme automatic intervals, ThemeSystem force-spawn helpers, and level-load
+theme-particle pre-roll. Both ordinary and theme `lifeTime` update paths rebind
+only when their one-based frame changes. The draw members no longer access the
+active resource catalog; they submit the retained binding and encode a null
+pointer pair explicitly so a missing sprite cannot bind to a resource loaded
+later. Atlas draw priority is preserved even when the retained composite slot
+is still populated.
+
+Focused regressions replace and release a same-named atlas after ordinary
+particle creation, replace and release a `lifeTime` target atlas after its
+frame transition, retain a composite across a later atlas frame while drawing
+the atlas first, and repeat the release/shadow case through the real automatic
+ThemeParticleSystem update/draw chain. The complete workspace passes all 583
+tests (82 app/audio/wgpu, 31 assets, one core and 469 script/physics);
+formatting, strict all-target/all-feature Clippy and the release build are
+clean. Fresh isolated-AppData 600-frame headless and real-wgpu runs report 73
+optional data probes, zero invoked fallbacks and zero remaining compatibility
+bindings. The wgpu readback SHA-256 is
+`6a5bbd8568fdac98483d921d7726ef408a6c080826326606653e4f2be70f90dd`
+and is execution evidence rather than a screenshot oracle.
+
+Current SHA-256 values are
+`6fb194598726a386d65e90fa55fa9c1e1d6ffa04191e733064e29124c7f88150`
+for `stella-app`,
+`06750cdeb946e0f9685d8c8ee850dfe3e478ccb994335cc2e5c02e998d8a8872`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### Particle draw-state ownership and native coordinate staging
+
+The adjacent draw audit found that ordinary Particles and
+ThemeParticleSystem deliberately have opposite renderer-state ownership.
+IDA and Hopper show `sub_100091D90` constructing a default 0x9C-byte context
+record and copying it into the live renderer at
+`0x100091DE0..0x100091E54`, before it even checks whether the vector is empty.
+Its common return path constructs another default record and copies that over
+the live renderer at `0x100092024..0x10009208C`. It never saves the caller's
+state. Consequently an entered ordinary foreground/background/menu/
+notification particle pass resets translation, scale, angle, pivot, alpha and
+clip state even when it contains no matching particles. A disabled in-game
+pass is different because its GameLua wrapper never invokes this member.
+
+ThemeParticleSystem draw `sub_100096E9C` instead copies the caller's current
+0x9C bytes to its stack at `0x100096EE8..0x100096F04`, edits only the transform
+fields needed by each particle, and invokes the renderer's restore-state
+virtual at `0x100097054..0x100097064`. Its particles therefore inherit caller
+alpha, clip and pivot while using their own translation, scale, rotation and
+sprite dimensions; the complete caller state is live again after the layer
+bucket returns. Rust previously left caller state live for ordinary particles
+and built theme-particle commands from a fresh default, reversing both native
+contracts.
+
+The same procedures pin the coordinate operation order. Modes one/two store
+`-topLeft / particleScale`, store `worldScale * particleScale`, and pass
+`particlePosition / particleScale` to AtlasSprite/CompoSprite. Modes three/four
+store `particleScale * Particles.scale` and pass position divided by that
+product. Theme particles first FADD their local position and layer-world
+offset, then FDIV by particle scale. The GL context later performs the separate
+translation FADD and scale FMUL. Collapsing those operations to
+`(position-topLeft)*worldScale` in host double precision is not bit-equivalent;
+the focused ARM-float fixture differs by one complete output pixel.
+
+Deferred particle commands now retain the native pre-scale position and live
+context fields, and the shared wgpu transform boundary performs the same
+float32 add/multiply sequence. Ordinary draw leaves the bridge at default;
+theme draw snapshots the live state, overrides only its native transform
+fields on each command and otherwise preserves it. Regressions cover the
+empty-vector reset, disabled-pass non-entry, exact world/menu float boundary,
+theme alpha/clip/pivot inheritance, post-bucket restoration and the existing
+particle-before-layer ordering.
+
+The complete workspace passes all 586 tests (82 app/audio/wgpu, 31 assets, one
+core and 472 script/physics); formatting, strict all-target/all-feature Clippy
+and the release build are clean. Fresh isolated-AppData 600-frame headless and
+real-wgpu runs report 73 optional data probes, zero invoked fallbacks and zero
+remaining compatibility bindings. The wgpu readback SHA-256 is
+`dfe6723ce877f19c892e56a41f8e778014b4e6e85b7de57d3b5ee057654b5a41`
+and is execution evidence rather than a screenshot oracle.
+
+Current SHA-256 values are
+`31168f6751c4478280bcf6d7c3caafb39168616e38234c2ca901079d632c55d3`
+for `stella-app`,
+`61f707ba8c09dba1e1c093803773a3f9c46c890538646cd1d878ae24e992d4ed`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### Particle clear retains the base definition cache
+
+The adjacent lifecycle audit found a refresh-time cache distinction that was
+lost when Rust replaced each complete `NativeThemeParticles` value. IDA and
+Hopper independently show the no-argument GameLua wrapper `sub_10004C630`
+dispatching vtable slot `+0x60`. For base `Particles` that slot is
+`sub_1000912D8`: it walks only the packed 0x68-byte vector at `+0x40..+0x48`,
+destroys the two strings in every live ParticleData, and finally stores the
+begin pointer into `+0x48`. It never erases the definition red-black tree
+rooted at `+0x60`.
+
+The derived slot `sub_100096E4C` first calls that base clear, then erases only
+the Spawner tree at `+0x88` and the per-layer ParticleData tree at `+0xB8`.
+The definition tree inherited from `Particles` therefore survives
+`ThemeParticleSystem::clear`. The caller confirms the lifecycle order:
+`native_refreshThemeSystem` clears the existing objects at ThemeManager
+`+0xC0` and `+0xC8` at `0x1000989D4..0x1000989F0`, then invokes
+`sub_100099168` for mode one and mode zero at
+`0x1000989F4..0x100098A08`. Newly allocated managers begin with an empty
+definition tree, but every later refresh keeps the definitions first resolved
+by that same manager.
+
+The ordinary tagged clear path was already behaviorally aligned. The wrapper
+`sub_10004C640` maps `INGAME_BACKGROUND`, `INGAME_FOREGROUND` and `MENU` to
+the global integers 2, 1 and 3, while `ALL` uses slot `+0x60`; unknown strings
+only take the diagnostic path. Base member `sub_1000913BC` performs a stable
+remove of every ParticleData whose mode at record `+0x60` matches the supplied
+integer. Notification mode four consequently survives `MENU`, just as the
+existing Rust regression pins.
+
+Rust now clears both existing theme particle managers in native order, retains
+their independent definition maps, and rebuilds the background and foreground
+Spawner trees in place. The focused regression resolves a one-particle
+`FIRST_PARTICLE` definition, changes the Lua table to three
+`SECOND_PARTICLE` records, refreshes, and proves that the same native manager
+still emits exactly one `FIRST_PARTICLE` from its first-use cache.
+
+The complete workspace passes all 587 tests (82 app/audio/wgpu, 31 assets, one
+core and 473 script/physics); formatting, strict all-target/all-feature Clippy
+and the release build are clean. Fresh isolated-AppData 600-frame headless and
+real-wgpu runs report 73 optional data probes, zero invoked fallbacks and zero
+remaining compatibility bindings. The wgpu readback SHA-256 is
+`52ca583acb554fac40dc6b6f24950318fefdf3073f5196fb62af9545eea8265d`
+and is execution evidence rather than a screenshot oracle.
+
+Current SHA-256 values are
+`a2bd9629626e17ee2cecc69dcee8051a44649204f38763d270ecc0e54c6f417a`
+for `stella-app`,
+`d5e0ba1028e31d2527792994ef759a686fdaa40cfd0cb6feb562f2bcc03b8ad6`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### Theme spawner comparisons and base-vector particle limits
+
+The ThemeParticleSystem update audit recovered two further observable
+differences. First, timed emission uses unordered-aware ARM conditions rather
+than the host's ordinary paired range predicates. At
+`0x100097168..0x100097170`, `sub_100097090` skips a Spawner only when
+`interval < 0`. It then subtracts the delta from timer and skips emission only
+when `timer > 0` at `0x100097174..0x100097184`. An unordered NaN comparison
+takes neither branch, so a NaN interval enters the timed path, emits once, and
+stores the NaN interval back into the timer. The same thing repeats on the next
+update. Rust now spells those two predicates with `partial_cmp`, preserving
+the native unordered case without changing finite interval behavior.
+
+Second, Purple's particle limits intentionally do not accumulate the derived
+theme buckets. The shared add member `sub_10008E524` reads the packed base
+vector at `Particles+0x40` for the soft-limit calculation at
+`0x1000904DC..0x10009056C` and again for the hard limit at
+`0x100090570..0x1000905F8`. Only after it constructs and binds each
+ParticleData does `0x100090958..0x100090968` call virtual slot `+0x40`.
+ThemeParticleSystem overrides that slot with `sub_1000973CC`, which indexes
+the tree at `+0xB8` by ParticleData's `themeLayerIndex` at `+0x58` and
+appends there. Its inherited base vector therefore stays empty even while a
+layer bucket grows into the hundreds or thousands.
+
+Rust previously passed the target layer-vector length into the shared
+soft/hard limit checks. Long-running background mist or leaf Spawners could
+therefore halve later bursts after 60 records and stop adding records near
+1,000, neither of which Purple does. The emitter now receives the native limit
+source explicitly: ordinary particles use their base-vector length, while
+both automatic and force-spawn ThemeParticleSystem paths use the still-empty
+base count zero.
+
+Focused regressions prove that a NaN interval emits on two consecutive updates
+and that three 30-particle theme bursts produce 90 live records; the previous
+derived-vector count produced only 75 by incorrectly halving the third burst.
+The existing ordinary 60/1,000 limit regressions continue to pass.
+
+The complete workspace passes all 589 tests (82 app/audio/wgpu, 31 assets, one
+core and 475 script/physics); formatting, strict all-target/all-feature Clippy
+and the release build are clean. Fresh isolated-AppData 600-frame headless and
+real-wgpu runs report 73 optional data probes, zero invoked fallbacks and zero
+remaining compatibility bindings. The wgpu readback SHA-256 is
+`c549be015f434ba69aa744c5c90b39ef3630a972ae1003fd27685ac01b472f29`
+and is execution evidence rather than a screenshot oracle.
+
+Current SHA-256 values are
+`ad99f7e8d6e9d18a8f5aa2d8543a2925ba3556772dc3072920a1e1070ef6a668`
+for `stella-app`,
+`800df16cc8054791948f1dc9383b2e1f07da316327b167690f1dd1aed9119f6d`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.
+
+### `removeObject` keeps its native record live through EndContact
+
+The gravity-field teardown crash on `BLOCK_JUNGLE_LOG_2_58` exposed the other
+half of the synchronous DestroyBody lifetime. Rust already retained both Lua
+`objects.world` records while dispatching EndContact, but it removed the
+native object from `RenderBridge::scene` before dispatch. The shipped
+`removeBlockEffect` path restores the leaving object's gravity scale from
+`exitTriggerCollision`, so the strict native `setGravityScale` lookup then
+reported `Missing object` even though Purple still has that object and its
+body at this point.
+
+IDA shows the exact enclosing order in `sub_100042260`: the call to object
+teardown `sub_1000674FC` is at `0x100042E50`, while the
+`RenderObjectData` red-black-tree erase does not occur until
+`0x100042E54..0x100042E78`. Both IDA and Hopper show that teardown loading the
+body from `RenderObjectData+0x88`, calling `b2World::DestroyBody`
+(`sub_10086E02C`) at `0x100067524`, and clearing the body pointer only after
+DestroyBody returns at `0x100067528`. Consequently the EndContact listener
+reached by DestroyBody runs while both the lookup record and the body pointer
+are live. The independent `setGravityScale` member `sub_10004F608` calls the
+throwing object lookup at `0x10004F618`, then loads that same `+0x88` body
+pointer and stores gravity scale at body `+0xB0`.
+
+The callback-aware Rust removal path now expires attached contacts and
+dispatches `exitTriggerCollision`/`exitCollision` before erasing the scene
+object, broad-phase proxy, body-allocation slot and native joints. Lua record
+removal remains after the callback as before. Missing names still throw from
+`setGravityScale`; the fix restores the native lifetime instead of hiding bad
+lookups.
+
+One regression extends the ordinary EndContact ordering test with a strict
+gravity-scale write to the body being removed. A second regression reproduces
+the reported sensor stack and object name exactly, calls `setGravityScale`
+from `exitTriggerCollision`, verifies the callback completes, then verifies
+both Lua and native records are gone after `removeObject` returns.
+
+The complete workspace passes all 590 tests (82 app/audio/wgpu, 31 assets, one
+core and 476 script/physics); formatting, strict all-target/all-feature Clippy
+and the release build are clean. Fresh isolated-AppData 600-frame headless and
+real-wgpu runs report 73 optional data probes, zero invoked fallbacks and zero
+remaining compatibility bindings. The wgpu readback SHA-256 is
+`c475cfb405d1013e05893501ec2de4949da3a83df3d0e2a26994f819e387060f`
+and is execution evidence rather than a screenshot oracle.
+
+Current SHA-256 values are
+`ca168cd632d1f4fa6e8275c16c28de41496f47ac157c4439f6a48ecc99f7ef27`
+for `stella-app`,
+`7ea1c57a7e72b0adede2506337c3a6c4d46451c4dcaa67158ea8b0ded0e341ed`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.

@@ -1,0 +1,5128 @@
+{
+  "addr": "0x10002cb90",
+  "asm": {
+    "name": "sub_10002C274",
+    "start_ea": "0x10002cb90",
+    "segment": "__text",
+    "lines": [
+      {
+        "addr": "10002cb90",
+        "instruction": "NOP"
+      },
+      {
+        "addr": "10002cb94",
+        "instruction": "STR X8, [SP,#0x1590+var_1160]"
+      },
+      {
+        "addr": "10002cb98",
+        "instruction": "STR XZR, [SP,#0x1590+var_1158]"
+      },
+      {
+        "addr": "10002cb9c",
+        "instruction": "ADRL X1, aClearsimulatio; \"ClearSimulationTrajectory\"",
+        "refs": [
+          {
+            "addr": "0x10093f10b",
+            "name": "aClearsimulatio",
+            "string": "ClearSimulationTrajectory"
+          }
+        ]
+      },
+      {
+        "addr": "10002cba4",
+        "instruction": "ADR X3, sub_10008A07C",
+        "refs": [
+          {
+            "addr": "0x10008a07c",
+            "name": "sub_10008A07C"
+          }
+        ]
+      },
+      {
+        "addr": "10002cba8",
+        "instruction": "NOP"
+      },
+      {
+        "addr": "10002cbac",
+        "instruction": "ADD X2, SP, #0x1590+var_1168"
+      },
+      {
+        "addr": "10002cbb0",
+        "instruction": "MOV X0, X19"
+      },
+      {
+        "addr": "10002cbb4",
+        "instruction": "BL sub_100527824",
+        "refs": [
+          {
+            "addr": "0x100527824",
+            "name": "sub_100527824"
+          }
+        ]
+      },
+      {
+        "addr": "10002cbb8",
+        "instruction": "MOV X4, #0"
+      },
+      {
+        "addr": "10002cbbc",
+        "instruction": "ADRL X1, aGetsimulationt; \"getSimulationTrajectoryPoints\"",
+        "refs": [
+          {
+            "addr": "0x10093f125",
+            "name": "aGetsimulationt",
+            "string": "getSimulationTrajectoryPoints"
+          }
+        ]
+      },
+      {
+        "addr": "10002cbc4",
+        "instruction": "ADR X3, sub_1000311C0",
+        "refs": [
+          {
+            "addr": "0x1000311c0",
+            "name": "sub_1000311C0"
+          }
+        ]
+      },
+      {
+        "addr": "10002cbc8",
+        "instruction": "NOP"
+      },
+      {
+        "addr": "10002cbcc",
+        "instruction": "MOV X0, X19"
+      },
+      {
+        "addr": "10002cbd0",
+        "instruction": "MOV X2, X19"
+      },
+      {
+        "addr": "10002cbd4",
+        "instruction": "BL j___ZN3lua9LuaObject17registerLuaMethodI7GameLuaEEvPKcPT_MS5_FiPNS_8LuaStateEE; lua::LuaObject::registerLuaMethod<GameLua>(char const*,GameLua *,int (GameLua::*)(lua::LuaState *))",
+        "refs": [
+          {
+            "addr": "0x1008a1f88",
+            "name": "j___ZN3lua9LuaObject17registerLuaMethodI7GameLuaEEvPKcPT_MS5_FiPNS_8LuaStateEE"
+          }
+        ]
+      },
+      {
+        "addr": "10002cbd8",
+        "instruction": "STR X19, [SP,#0x1590+var_1150]"
+      },
+      {
+        "addr": "10002cbdc",
+        "instruction": "ADR X8, sub_100031378",
+        "refs": [
+          {
+            "addr": "0x100031378",
+            "name": "sub_100031378"
+          }
+        ]
+      },
+      {
+        "addr": "10002cbe0",
+        "instruction": "NOP"
+      },
+      {
+        "addr": "10002cbe4",
+        "instruction": "STR X8, [SP,#0x1590+var_1148]"
+      },
+      {
+        "addr": "10002cbe8",
+        "instruction": "STR XZR, [SP,#0x1590+var_1140]"
+      },
+      {
+        "addr": "10002cbec",
+        "instruction": "ADRL X1, aSetdeltatimemu; \"setDeltaTimeMultiplier\"",
+        "refs": [
+          {
+            "addr": "0x10093f143",
+            "name": "aSetdeltatimemu",
+            "string": "setDeltaTimeMultiplier"
+          }
+        ]
+      },
+      {
+        "addr": "10002cbf4",
+        "instruction": "ADR X3, sub_100088D24",
+        "refs": [
+          {
+            "addr": "0x100088d24",
+            "name": "sub_100088D24"
+          }
+        ]
+      },
+      {
+        "addr": "10002cbf8",
+        "instruction": "NOP"
+      },
+      {
+        "addr": "10002cbfc",
+        "instruction": "ADD X2, SP, #0x1590+var_1150"
+      },
+      {
+        "addr": "10002cc00",
+        "instruction": "MOV X0, X19"
+      },
+      {
+        "addr": "10002cc04",
+        "instruction": "BL sub_100527824",
+        "refs": [
+          {
+            "addr": "0x100527824",
+            "name": "sub_100527824"
+          }
+        ]
+      },
+      {
+        "addr": "10002cc08",
+        "instruction": "STR X19, [SP,#0x1590+var_1138]"
+      },
+      {
+        "addr": "10002cc0c",
+        "instruction": "ADR X8, sub_100031380",
+        "refs": [
+          {
+            "addr": "0x100031380",
+            "name": "sub_100031380"
+          }
+        ]
+      },
+      {
+        "addr": "10002cc10",
+        "instruction": "NOP"
+      },
+      {
+        "addr": "10002cc14",
+        "instruction": "STR X8, [SP,#0x1590+var_1130]"
+      },
+      {
+        "addr": "10002cc18",
+        "instruction": "STR XZR, [SP,#0x1590+var_1128]"
+      },
+      {
+        "addr": "10002cc1c",
+        "instruction": "ADRL X1, aGetdeltatimemu; \"getDeltaTimeMultiplier\"",
+        "refs": [
+          {
+            "addr": "0x10093f15a",
+            "name": "aGetdeltatimemu",
+            "string": "getDeltaTimeMultiplier"
+          }
+        ]
+      },
+      {
+        "addr": "10002cc24",
+        "instruction": "ADR X3, sub_100088CA4",
+        "refs": [
+          {
+            "addr": "0x100088ca4",
+            "name": "sub_100088CA4"
+          }
+        ]
+      },
+      {
+        "addr": "10002cc28",
+        "instruction": "NOP"
+      },
+      {
+        "addr": "10002cc2c",
+        "instruction": "ADD X2, SP, #0x1590+var_1138"
+      },
+      {
+        "addr": "10002cc30",
+        "instruction": "MOV X0, X19"
+      },
+      {
+        "addr": "10002cc34",
+        "instruction": "BL sub_100527824",
+        "refs": [
+          {
+            "addr": "0x100527824",
+            "name": "sub_100527824"
+          }
+        ]
+      },
+      {
+        "addr": "10002cc38",
+        "instruction": "STR X19, [SP,#0x1590+var_1120]"
+      },
+      {
+        "addr": "10002cc3c",
+        "instruction": "ADR X8, sub_100031388",
+        "refs": [
+          {
+            "addr": "0x100031388",
+            "name": "sub_100031388"
+          }
+        ]
+      },
+      {
+        "addr": "10002cc40",
+        "instruction": "NOP"
+      },
+      {
+        "addr": "10002cc44",
+        "instruction": "STR X8, [SP,#0x1590+var_1118]"
+      },
+      {
+        "addr": "10002cc48",
+        "instruction": "STR XZR, [SP,#0x1590+var_1110]"
+      },
+      {
+        "addr": "10002cc4c",
+        "instruction": "ADRL X1, aSetsensorminim; \"setSensorMinimumAndMaximumForces\"",
+        "refs": [
+          {
+            "addr": "0x10093f171",
+            "name": "aSetsensorminim",
+            "string": "setSensorMinimumAndMaximumForces"
+          }
+        ]
+      },
+      {
+        "addr": "10002cc54",
+        "instruction": "ADR X3, sub_10008897C",
+        "refs": [
+          {
+            "addr": "0x10008897c",
+            "name": "sub_10008897C"
+          }
+        ]
+      },
+      {
+        "addr": "10002cc58",
+        "instruction": "NOP"
+      },
+      {
+        "addr": "10002cc5c",
+        "instruction": "ADD X2, SP, #0x1590+var_1120"
+      },
+      {
+        "addr": "10002cc60",
+        "instruction": "MOV X0, X19"
+      },
+      {
+        "addr": "10002cc64",
+        "instruction": "BL sub_100527824",
+        "refs": [
+          {
+            "addr": "0x100527824",
+            "name": "sub_100527824"
+          }
+        ]
+      },
+      {
+        "addr": "10002cc68",
+        "instruction": "STR X19, [SP,#0x1590+var_1108]"
+      },
+      {
+        "addr": "10002cc6c",
+        "instruction": "ADR X8, sub_1000313B4",
+        "refs": [
+          {
+            "addr": "0x1000313b4",
+            "name": "sub_1000313B4"
+          }
+        ]
+      },
+      {
+        "addr": "10002cc70",
+        "instruction": "NOP"
+      },
+      {
+        "addr": "10002cc74",
+        "instruction": "STR X8, [SP,#0x1590+var_1100]"
+      },
+      {
+        "addr": "10002cc78",
+        "instruction": "STR XZR, [SP,#0x1590+var_10F8]"
+      },
+      {
+        "addr": "10002cc7c",
+        "instruction": "ADRL X1, aSetsensorgravi; \"setSensorGravityMask\"",
+        "refs": [
+          {
+            "addr": "0x10093f192",
+            "name": "aSetsensorgravi",
+            "string": "setSensorGravityMask"
+          }
+        ]
+      },
+      {
+        "addr": "10002cc84",
+        "instruction": "ADR X3, sub_100088754",
+        "refs": [
+          {
+            "addr": "0x100088754",
+            "name": "sub_100088754"
+          }
+        ]
+      },
+      {
+        "addr": "10002cc88",
+        "instruction": "NOP"
+      },
+      {
+        "addr": "10002cc8c",
+        "instruction": "ADD X2, SP, #0x1590+var_1108"
+      },
+      {
+        "addr": "10002cc90",
+        "instruction": "MOV X0, X19"
+      },
+      {
+        "addr": "10002cc94",
+        "instruction": "BL sub_100527824",
+        "refs": [
+          {
+            "addr": "0x100527824",
+            "name": "sub_100527824"
+          }
+        ]
+      },
+      {
+        "addr": "10002cc98",
+        "instruction": "STR X19, [SP,#0x1590+var_10F0]"
+      },
+      {
+        "addr": "10002cc9c",
+        "instruction": "ADR X8, sub_1000313D8",
+        "refs": [
+          {
+            "addr": "0x1000313d8",
+            "name": "sub_1000313D8"
+          }
+        ]
+      },
+      {
+        "addr": "10002cca0",
+        "instruction": "NOP"
+      },
+      {
+        "addr": "10002cca4",
+        "instruction": "STR X8, [SP,#0x1590+var_10E8]"
+      },
+      {
+        "addr": "10002cca8",
+        "instruction": "STR XZR, [SP,#0x1590+var_10E0]"
+      },
+      {
+        "addr": "10002ccac",
+        "instruction": "ADRL X1, aSetobjectgravi; \"setObjectGravityCategory\"",
+        "refs": [
+          {
+            "addr": "0x10093f1a7",
+            "name": "aSetobjectgravi",
+            "string": "setObjectGravityCategory"
+          }
+        ]
+      },
+      {
+        "addr": "10002ccb4",
+        "instruction": "ADR X3, sub_100088754",
+        "refs": [
+          {
+            "addr": "0x100088754",
+            "name": "sub_100088754"
+          }
+        ]
+      },
+      {
+        "addr": "10002ccb8",
+        "instruction": "NOP"
+      },
+      {
+        "addr": "10002ccbc",
+        "instruction": "ADD X2, SP, #0x1590+var_10F0"
+      },
+      {
+        "addr": "10002ccc0",
+        "instruction": "MOV X0, X19"
+      },
+      {
+        "addr": "10002ccc4",
+        "instruction": "BL sub_100527824",
+        "refs": [
+          {
+            "addr": "0x100527824",
+            "name": "sub_100527824"
+          }
+        ]
+      },
+      {
+        "addr": "10002ccc8",
+        "instruction": "STR X19, [SP,#0x1590+var_10D8]"
+      },
+      {
+        "addr": "10002cccc",
+        "instruction": "ADR X8, sub_1000313FC",
+        "refs": [
+          {
+            "addr": "0x1000313fc",
+            "name": "sub_1000313FC"
+          }
+        ]
+      },
+      {
+        "addr": "10002ccd0",
+        "instruction": "NOP"
+      },
+      {
+        "addr": "10002ccd4",
+        "instruction": "STR X8, [SP,#0x1590+var_10D0]"
+      },
+      {
+        "addr": "10002ccd8",
+        "instruction": "STR XZR, [SP,#0x1590+var_10C8]"
+      },
+      {
+        "addr": "10002ccdc",
+        "instruction": "ADRL X1, aGetdate; \"GetDate\"",
+        "refs": [
+          {
+            "addr": "0x10093f1c0",
+            "name": "aGetdate",
+            "string": "GetDate"
+          }
+        ]
+      },
+      {
+        "addr": "10002cce4",
+        "instruction": "ADR X3, sub_1000886D0",
+        "refs": [
+          {
+            "addr": "0x1000886d0",
+            "name": "sub_1000886D0"
+          }
+        ]
+      },
+      {
+        "addr": "10002cce8",
+        "instruction": "NOP"
+      },
+      {
+        "addr": "10002ccec",
+        "instruction": "ADD X2, SP, #0x1590+var_10D8"
+      },
+      {
+        "addr": "10002ccf0",
+        "instruction": "MOV X0, X19"
+      },
+      {
+        "addr": "10002ccf4",
+        "instruction": "BL sub_100527824",
+        "refs": [
+          {
+            "addr": "0x100527824",
+            "name": "sub_100527824"
+          }
+        ]
+      },
+      {
+        "addr": "10002ccf8",
+        "instruction": "MOV X4, #0"
+      },
+      {
+        "addr": "10002ccfc",
+        "instruction": "ADRL X1, aDrawuitextnati; \"drawUITextNative\"",
+        "refs": [
+          {
+            "addr": "0x10093f1c8",
+            "name": "aDrawuitextnati",
+            "string": "drawUITextNative"
+          }
+        ]
+      },
+      {
+        "addr": "10002cd04",
+        "instruction": "ADR X3, sub_100031434",
+        "refs": [
+          {
+            "addr": "0x100031434",
+            "name": "sub_100031434"
+          }
+        ]
+      },
+      {
+        "addr": "10002cd08",
+        "instruction": "NOP"
+      },
+      {
+        "addr": "10002cd0c",
+        "instruction": "MOV X0, X19"
+      },
+      {
+        "addr": "10002cd10",
+        "instruction": "MOV X2, X19"
+      },
+      {
+        "addr": "10002cd14",
+        "instruction": "BL j___ZN3lua9LuaObject17registerLuaMethodI7GameLuaEEvPKcPT_MS5_FiPNS_8LuaStateEE; lua::LuaObject::registerLuaMethod<GameLua>(char const*,GameLua *,int (GameLua::*)(lua::LuaState *))",
+        "refs": [
+          {
+            "addr": "0x1008a1f88",
+            "name": "j___ZN3lua9LuaObject17registerLuaMethodI7GameLuaEEvPKcPT_MS5_FiPNS_8LuaStateEE"
+          }
+        ]
+      },
+      {
+        "addr": "10002cd18",
+        "instruction": "MOV X4, #0"
+      },
+      {
+        "addr": "10002cd1c",
+        "instruction": "ADRL X1, aNativeStarturl; \"native_startURLThread\"",
+        "refs": [
+          {
+            "addr": "0x10093f1d9",
+            "name": "aNativeStarturl",
+            "string": "native_startURLThread"
+          }
+        ]
+      },
+      {
+        "addr": "10002cd24",
+        "instruction": "ADR X3, sub_100032688",
+        "refs": [
+          {
+            "addr": "0x100032688",
+            "name": "sub_100032688"
+          }
+        ]
+      },
+      {
+        "addr": "10002cd28",
+        "instruction": "NOP"
+      },
+      {
+        "addr": "10002cd2c",
+        "instruction": "MOV X0, X19"
+      },
+      {
+        "addr": "10002cd30",
+        "instruction": "MOV X2, X19"
+      },
+      {
+        "addr": "10002cd34",
+        "instruction": "BL j___ZN3lua9LuaObject17registerLuaMethodI7GameLuaEEvPKcPT_MS5_FiPNS_8LuaStateEE; lua::LuaObject::registerLuaMethod<GameLua>(char const*,GameLua *,int (GameLua::*)(lua::LuaState *))",
+        "refs": [
+          {
+            "addr": "0x1008a1f88",
+            "name": "j___ZN3lua9LuaObject17registerLuaMethodI7GameLuaEEvPKcPT_MS5_FiPNS_8LuaStateEE"
+          }
+        ]
+      },
+      {
+        "addr": "10002cd38",
+        "instruction": "STR X19, [SP,#0x1590+var_10C0]"
+      },
+      {
+        "addr": "10002cd3c",
+        "instruction": "ADR X8, sub_100032970",
+        "refs": [
+          {
+            "addr": "0x100032970",
+            "name": "sub_100032970"
+          }
+        ]
+      },
+      {
+        "addr": "10002cd40",
+        "instruction": "NOP"
+      },
+      {
+        "addr": "10002cd44",
+        "instruction": "STR X8, [SP,#0x1590+var_10B8]"
+      },
+      {
+        "addr": "10002cd48",
+        "instruction": "STR XZR, [SP,#0x1590+var_10B0]"
+      },
+      {
+        "addr": "10002cd4c",
+        "instruction": "ADRL X1, aUpdatebirdtraj; \"updateBirdTrajectoryTable\"",
+        "refs": [
+          {
+            "addr": "0x10093f1ef",
+            "name": "aUpdatebirdtraj",
+            "string": "updateBirdTrajectoryTable"
+          }
+        ]
+      },
+      {
+        "addr": "10002cd54",
+        "instruction": "ADR X3, sub_10008A07C",
+        "refs": [
+          {
+            "addr": "0x10008a07c",
+            "name": "sub_10008A07C"
+          }
+        ]
+      },
+      {
+        "addr": "10002cd58",
+        "instruction": "NOP"
+      },
+      {
+        "addr": "10002cd5c",
+        "instruction": "ADD X2, SP, #0x1590+var_10C0"
+      },
+      {
+        "addr": "10002cd60",
+        "instruction": "MOV X0, X19"
+      },
+      {
+        "addr": "10002cd64",
+        "instruction": "BL sub_100527824",
+        "refs": [
+          {
+            "addr": "0x100527824",
+            "name": "sub_100527824"
+          }
+        ]
+      },
+      {
+        "addr": "10002cd68",
+        "instruction": "STR X19, [SP,#0x1590+var_10A8]"
+      },
+      {
+        "addr": "10002cd6c",
+        "instruction": "ADR X8, sub_100032D98",
+        "refs": [
+          {
+            "addr": "0x100032d98",
+            "name": "sub_100032D98"
+          }
+        ]
+      },
+      {
+        "addr": "10002cd70",
+        "instruction": "NOP"
+      },
+      {
+        "addr": "10002cd74",
+        "instruction": "STR X8, [SP,#0x1590+var_10A0]"
+      },
+      {
+        "addr": "10002cd78",
+        "instruction": "STR XZR, [SP,#0x1590+var_1098]"
+      },
+      {
+        "addr": "10002cd7c",
+        "instruction": "ADRL X1, aPopulateaiming; \"populateAimingAid\"",
+        "refs": [
+          {
+            "addr": "0x10093f209",
+            "name": "aPopulateaiming",
+            "string": "populateAimingAid"
+          }
+        ]
+      },
+      {
+        "addr": "10002cd84",
+        "instruction": "ADR X3, sub_10008A07C",
+        "refs": [
+          {
+            "addr": "0x10008a07c",
+            "name": "sub_10008A07C"
+          }
+        ]
+      },
+      {
+        "addr": "10002cd88",
+        "instruction": "NOP"
+      },
+      {
+        "addr": "10002cd8c",
+        "instruction": "ADD X2, SP, #0x1590+var_10A8"
+      },
+      {
+        "addr": "10002cd90",
+        "instruction": "MOV X0, X19"
+      },
+      {
+        "addr": "10002cd94",
+        "instruction": "BL sub_100527824",
+        "refs": [
+          {
+            "addr": "0x100527824",
+            "name": "sub_100527824"
+          }
+        ]
+      },
+      {
+        "addr": "10002cd98",
+        "instruction": "STR X19, [SP,#0x1590+var_1090]"
+      },
+      {
+        "addr": "10002cd9c",
+        "instruction": "ADR X8, sub_100032DA0",
+        "refs": [
+          {
+            "addr": "0x100032da0",
+            "name": "sub_100032DA0"
+          }
+        ]
+      },
+      {
+        "addr": "10002cda0",
+        "instruction": "NOP"
+      },
+      {
+        "addr": "10002cda4",
+        "instruction": "STR X8, [SP,#0x1590+var_1088]"
+      },
+      {
+        "addr": "10002cda8",
+        "instruction": "STR XZR, [SP,#0x1590+var_1080]"
+      },
+      {
+        "addr": "10002cdac",
+        "instruction": "ADRL X1, aSetselectedbir; \"setSelectedBirdDuringSimulation\"",
+        "refs": [
+          {
+            "addr": "0x10093f21b",
+            "name": "aSetselectedbir",
+            "string": "setSelectedBirdDuringSimulation"
+          }
+        ]
+      },
+      {
+        "addr": "10002cdb4",
+        "instruction": "ADR X3, sub_100089E6C",
+        "refs": [
+          {
+            "addr": "0x100089e6c",
+            "name": "sub_100089E6C"
+          }
+        ]
+      },
+      {
+        "addr": "10002cdb8",
+        "instruction": "NOP"
+      },
+      {
+        "addr": "10002cdbc",
+        "instruction": "ADD X2, SP, #0x1590+var_1090"
+      },
+      {
+        "addr": "10002cdc0",
+        "instruction": "MOV X0, X19"
+      },
+      {
+        "addr": "10002cdc4",
+        "instruction": "BL sub_100527824",
+        "refs": [
+          {
+            "addr": "0x100527824",
+            "name": "sub_100527824"
+          }
+        ]
+      },
+      {
+        "addr": "10002cdc8",
+        "instruction": "MOV X4, #0"
+      },
+      {
+        "addr": "10002cdcc",
+        "instruction": "ADRL X1, aRendergravityv; \"renderGravityVisualsNative\"",
+        "refs": [
+          {
+            "addr": "0x10093f23b",
+            "name": "aRendergravityv",
+            "string": "renderGravityVisualsNative"
+          }
+        ]
+      },
+      {
+        "addr": "10002cdd4",
+        "instruction": "ADR X3, sub_100032DC4",
+        "refs": [
+          {
+            "addr": "0x100032dc4",
+            "name": "sub_100032DC4"
+          }
+        ]
+      },
+      {
+        "addr": "10002cdd8",
+        "instruction": "NOP"
+      },
+      {
+        "addr": "10002cddc",
+        "instruction": "MOV X0, X19"
+      },
+      {
+        "addr": "10002cde0",
+        "instruction": "MOV X2, X19"
+      },
+      {
+        "addr": "10002cde4",
+        "instruction": "BL j___ZN3lua9LuaObject17registerLuaMethodI7GameLuaEEvPKcPT_MS5_FiPNS_8LuaStateEE; lua::LuaObject::registerLuaMethod<GameLua>(char const*,GameLua *,int (GameLua::*)(lua::LuaState *))",
+        "refs": [
+          {
+            "addr": "0x1008a1f88",
+            "name": "j___ZN3lua9LuaObject17registerLuaMethodI7GameLuaEEvPKcPT_MS5_FiPNS_8LuaStateEE"
+          }
+        ]
+      },
+      {
+        "addr": "10002cde8",
+        "instruction": "STR X19, [SP,#0x1590+var_1078]"
+      },
+      {
+        "addr": "10002cdec",
+        "instruction": "ADR X8, sub_100034038",
+        "refs": [
+          {
+            "addr": "0x100034038",
+            "name": "sub_100034038"
+          }
+        ]
+      },
+      {
+        "addr": "10002cdf0",
+        "instruction": "NOP"
+      },
+      {
+        "addr": "10002cdf4",
+        "instruction": "STR X8, [SP,#0x1590+var_1070]"
+      },
+      {
+        "addr": "10002cdf8",
+        "instruction": "STR XZR, [SP,#0x1590+var_1068]"
+      },
+      {
+        "addr": "10002cdfc",
+        "instruction": "ADRL X1, aSetnotificatio; \"setNotificationsEnabled\"",
+        "refs": [
+          {
+            "addr": "0x10093f256",
+            "name": "aSetnotificatio",
+            "string": "setNotificationsEnabled"
+          }
+        ]
+      },
+      {
+        "addr": "10002ce04",
+        "instruction": "ADR X3, sub_10008962C",
+        "refs": [
+          {
+            "addr": "0x10008962c",
+            "name": "sub_10008962C"
+          }
+        ]
+      },
+      {
+        "addr": "10002ce08",
+        "instruction": "NOP"
+      },
+      {
+        "addr": "10002ce0c",
+        "instruction": "ADD X2, SP, #0x1590+var_1078"
+      },
+      {
+        "addr": "10002ce10",
+        "instruction": "MOV X0, X19"
+      },
+      {
+        "addr": "10002ce14",
+        "instruction": "BL sub_100527824",
+        "refs": [
+          {
+            "addr": "0x100527824",
+            "name": "sub_100527824"
+          }
+        ]
+      },
+      {
+        "addr": "10002ce18",
+        "instruction": "STR X19, [SP,#0x1590+var_1060]"
+      },
+      {
+        "addr": "10002ce1c",
+        "instruction": "ADR X8, sub_100034070",
+        "refs": [
+          {
+            "addr": "0x100034070",
+            "name": "sub_100034070"
+          }
+        ]
+      },
+      {
+        "addr": "10002ce20",
+        "instruction": "NOP"
+      },
+      {
+        "addr": "10002ce24",
+        "instruction": "STR X8, [SP,#0x1590+var_1058]"
+      },
+      {
+        "addr": "10002ce28",
+        "instruction": "STR XZR, [SP,#0x1590+var_1050]"
+      },
+      {
+        "addr": "10002ce2c",
+        "instruction": "ADRL X1, aAddnotificatio; \"addNotificationAfter\"",
+        "refs": [
+          {
+            "addr": "0x10093f26e",
+            "name": "aAddnotificatio",
+            "string": "addNotificationAfter"
+          }
+        ]
+      },
+      {
+        "addr": "10002ce34",
+        "instruction": "ADR X3, sub_100088348",
+        "refs": [
+          {
+            "addr": "0x100088348",
+            "name": "sub_100088348"
+          }
+        ]
+      },
+      {
+        "addr": "10002ce38",
+        "instruction": "NOP"
+      },
+      {
+        "addr": "10002ce3c",
+        "instruction": "ADD X2, SP, #0x1590+var_1060"
+      },
+      {
+        "addr": "10002ce40",
+        "instruction": "MOV X0, X19"
+      },
+      {
+        "addr": "10002ce44",
+        "instruction": "BL sub_100527824",
+        "refs": [
+          {
+            "addr": "0x100527824",
+            "name": "sub_100527824"
+          }
+        ]
+      },
+      {
+        "addr": "10002ce48",
+        "instruction": "STR X19, [SP,#0x1590+var_1048]"
+      },
+      {
+        "addr": "10002ce4c",
+        "instruction": "ADR X8, sub_100034398",
+        "refs": [
+          {
+            "addr": "0x100034398",
+            "name": "sub_100034398"
+          }
+        ]
+      },
+      {
+        "addr": "10002ce50",
+        "instruction": "NOP"
+      },
+      {
+        "addr": "10002ce54",
+        "instruction": "STR X8, [SP,#0x1590+var_1040]"
+      },
+      {
+        "addr": "10002ce58",
+        "instruction": "STR XZR, [SP,#0x1590+var_1038]"
+      },
+      {
+        "addr": "10002ce5c",
+        "instruction": "ADRL X1, aRemovenotifica; \"removeNotification\"",
+        "refs": [
+          {
+            "addr": "0x10093f283",
+            "name": "aRemovenotifica",
+            "string": "removeNotification"
+          }
+        ]
+      },
+      {
+        "addr": "10002ce64",
+        "instruction": "ADR X3, sub_100088F68",
+        "refs": [
+          {
+            "addr": "0x100088f68",
+            "name": "sub_100088F68"
+          }
+        ]
+      },
+      {
+        "addr": "10002ce68",
+        "instruction": "NOP"
+      },
+      {
+        "addr": "10002ce6c",
+        "instruction": "ADD X2, SP, #0x1590+var_1048"
+      },
+      {
+        "addr": "10002ce70",
+        "instruction": "MOV X0, X19"
+      },
+      {
+        "addr": "10002ce74",
+        "instruction": "BL sub_100527824",
+        "refs": [
+          {
+            "addr": "0x100527824",
+            "name": "sub_100527824"
+          }
+        ]
+      },
+      {
+        "addr": "10002ce78",
+        "instruction": "STR X19, [SP,#0x1590+var_1030]"
+      },
+      {
+        "addr": "10002ce7c",
+        "instruction": "ADR X8, sub_1000343A0",
+        "refs": [
+          {
+            "addr": "0x1000343a0",
+            "name": "sub_1000343A0"
+          }
+        ]
+      },
+      {
+        "addr": "10002ce80",
+        "instruction": "NOP"
+      },
+      {
+        "addr": "10002ce84",
+        "instruction": "STR X8, [SP,#0x1590+var_1028]"
+      },
+      {
+        "addr": "10002ce88",
+        "instruction": "STR XZR, [SP,#0x1590+var_1020]"
+      },
+      {
+        "addr": "10002ce8c",
+        "instruction": "ADRL X1, aRemoveallnotif; \"removeAllNotifications\"",
+        "refs": [
+          {
+            "addr": "0x10093f296",
+            "name": "aRemoveallnotif",
+            "string": "removeAllNotifications"
+          }
+        ]
+      },
+      {
+        "addr": "10002ce94",
+        "instruction": "ADR X3, sub_10008A07C",
+        "refs": [
+          {
+            "addr": "0x10008a07c",
+            "name": "sub_10008A07C"
+          }
+        ]
+      },
+      {
+        "addr": "10002ce98",
+        "instruction": "NOP"
+      },
+      {
+        "addr": "10002ce9c",
+        "instruction": "ADD X2, SP, #0x1590+var_1030"
+      },
+      {
+        "addr": "10002cea0",
+        "instruction": "MOV X0, X19"
+      },
+      {
+        "addr": "10002cea4",
+        "instruction": "BL sub_100527824",
+        "refs": [
+          {
+            "addr": "0x100527824",
+            "name": "sub_100527824"
+          }
+        ]
+      }
+    ],
+    "stack_frame": [
+      {
+        "name": "var_158F",
+        "offset": "0x1",
+        "size": "0x1",
+        "type": "_BYTE"
+      },
+      {
+        "name": "var_1588",
+        "offset": "0x8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1580",
+        "offset": "0x10",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1570",
+        "offset": "0x20",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1568",
+        "offset": "0x28",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1560",
+        "offset": "0x30",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1558",
+        "offset": "0x38",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1550",
+        "offset": "0x40",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1548",
+        "offset": "0x48",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1540",
+        "offset": "0x50",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1538",
+        "offset": "0x58",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1530",
+        "offset": "0x60",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1528",
+        "offset": "0x68",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1520",
+        "offset": "0x70",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1518",
+        "offset": "0x78",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1510",
+        "offset": "0x80",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1508",
+        "offset": "0x88",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1500",
+        "offset": "0x90",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_14F8",
+        "offset": "0x98",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_14F0",
+        "offset": "0xa0",
+        "size": "0x8",
+        "type": "int[2]"
+      },
+      {
+        "name": "var_14E8",
+        "offset": "0xa8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_14E0",
+        "offset": "0xb0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_14D8",
+        "offset": "0xb8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_14D0",
+        "offset": "0xc0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_14C8",
+        "offset": "0xc8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_14C0",
+        "offset": "0xd0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_14B8",
+        "offset": "0xd8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_14B0",
+        "offset": "0xe0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_14A8",
+        "offset": "0xe8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1498",
+        "offset": "0xf8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1488",
+        "offset": "0x108",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1480",
+        "offset": "0x110",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1478",
+        "offset": "0x118",
+        "size": "0x1",
+        "type": "_BYTE"
+      },
+      {
+        "name": "var_1450",
+        "offset": "0x140",
+        "size": "0x8",
+        "type": "_BYTE[8]"
+      },
+      {
+        "name": "var_1448",
+        "offset": "0x148",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1440",
+        "offset": "0x150",
+        "size": "0x28",
+        "type": "_QWORD[5]"
+      },
+      {
+        "name": "var_1418",
+        "offset": "0x178",
+        "size": "0x8",
+        "type": "_BYTE[8]"
+      },
+      {
+        "name": "var_1410",
+        "offset": "0x180",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1408",
+        "offset": "0x188",
+        "size": "0x28",
+        "type": "_QWORD[5]"
+      },
+      {
+        "name": "var_13E0",
+        "offset": "0x1b0",
+        "size": "0x8",
+        "type": "_BYTE[8]"
+      },
+      {
+        "name": "var_13D8",
+        "offset": "0x1b8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_13D0",
+        "offset": "0x1c0",
+        "size": "0x28",
+        "type": "_QWORD[5]"
+      },
+      {
+        "name": "var_13A8",
+        "offset": "0x1e8",
+        "size": "0x8",
+        "type": "_BYTE[8]"
+      },
+      {
+        "name": "var_13A0",
+        "offset": "0x1f0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1398",
+        "offset": "0x1f8",
+        "size": "0x4",
+        "type": "_DWORD"
+      },
+      {
+        "name": "var_1394",
+        "offset": "0x1fc",
+        "size": "0x4",
+        "type": "_DWORD"
+      },
+      {
+        "name": "var_1390",
+        "offset": "0x200",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1360",
+        "offset": "0x230",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1350",
+        "offset": "0x240",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1348",
+        "offset": "0x248",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_133C",
+        "offset": "0x254",
+        "size": "0x4",
+        "type": "_DWORD"
+      },
+      {
+        "name": "var_1338",
+        "offset": "0x258",
+        "size": "0x4",
+        "type": "_DWORD"
+      },
+      {
+        "name": "var_1334",
+        "offset": "0x25c",
+        "size": "0x4",
+        "type": "_DWORD"
+      },
+      {
+        "name": "var_1330",
+        "offset": "0x260",
+        "size": "0x1",
+        "type": "_BYTE"
+      },
+      {
+        "name": "var_1328",
+        "offset": "0x268",
+        "size": "0x4",
+        "type": "_DWORD"
+      },
+      {
+        "name": "var_1324",
+        "offset": "0x26c",
+        "size": "0x4",
+        "type": "_DWORD"
+      },
+      {
+        "name": "var_1320",
+        "offset": "0x270",
+        "size": "0x4",
+        "type": "_DWORD"
+      },
+      {
+        "name": "var_131C",
+        "offset": "0x274",
+        "size": "0x4",
+        "type": "_DWORD"
+      },
+      {
+        "name": "var_1318",
+        "offset": "0x278",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1310",
+        "offset": "0x280",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1308",
+        "offset": "0x288",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1300",
+        "offset": "0x290",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_12F8",
+        "offset": "0x298",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_12F0",
+        "offset": "0x2a0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_12E8",
+        "offset": "0x2a8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_12E0",
+        "offset": "0x2b0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_12D8",
+        "offset": "0x2b8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_12D0",
+        "offset": "0x2c0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_12C8",
+        "offset": "0x2c8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_12C0",
+        "offset": "0x2d0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_12B8",
+        "offset": "0x2d8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_12B0",
+        "offset": "0x2e0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_12A8",
+        "offset": "0x2e8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_12A0",
+        "offset": "0x2f0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1298",
+        "offset": "0x2f8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1290",
+        "offset": "0x300",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1288",
+        "offset": "0x308",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1280",
+        "offset": "0x310",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1278",
+        "offset": "0x318",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1270",
+        "offset": "0x320",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1268",
+        "offset": "0x328",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1260",
+        "offset": "0x330",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1258",
+        "offset": "0x338",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1250",
+        "offset": "0x340",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1248",
+        "offset": "0x348",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1240",
+        "offset": "0x350",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1238",
+        "offset": "0x358",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1230",
+        "offset": "0x360",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1228",
+        "offset": "0x368",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1220",
+        "offset": "0x370",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1218",
+        "offset": "0x378",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1210",
+        "offset": "0x380",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1208",
+        "offset": "0x388",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1200",
+        "offset": "0x390",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_11F8",
+        "offset": "0x398",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_11F0",
+        "offset": "0x3a0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_11E8",
+        "offset": "0x3a8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_11E0",
+        "offset": "0x3b0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_11D8",
+        "offset": "0x3b8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_11D0",
+        "offset": "0x3c0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_11C8",
+        "offset": "0x3c8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_11C0",
+        "offset": "0x3d0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_11B8",
+        "offset": "0x3d8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_11B0",
+        "offset": "0x3e0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_11A8",
+        "offset": "0x3e8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_11A0",
+        "offset": "0x3f0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1198",
+        "offset": "0x3f8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1190",
+        "offset": "0x400",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1188",
+        "offset": "0x408",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1180",
+        "offset": "0x410",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1178",
+        "offset": "0x418",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1170",
+        "offset": "0x420",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1168",
+        "offset": "0x428",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1160",
+        "offset": "0x430",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1158",
+        "offset": "0x438",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1150",
+        "offset": "0x440",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1148",
+        "offset": "0x448",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1140",
+        "offset": "0x450",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1138",
+        "offset": "0x458",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1130",
+        "offset": "0x460",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1128",
+        "offset": "0x468",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1120",
+        "offset": "0x470",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1118",
+        "offset": "0x478",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1110",
+        "offset": "0x480",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1108",
+        "offset": "0x488",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1100",
+        "offset": "0x490",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_10F8",
+        "offset": "0x498",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_10F0",
+        "offset": "0x4a0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_10E8",
+        "offset": "0x4a8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_10E0",
+        "offset": "0x4b0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_10D8",
+        "offset": "0x4b8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_10D0",
+        "offset": "0x4c0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_10C8",
+        "offset": "0x4c8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_10C0",
+        "offset": "0x4d0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_10B8",
+        "offset": "0x4d8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_10B0",
+        "offset": "0x4e0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_10A8",
+        "offset": "0x4e8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_10A0",
+        "offset": "0x4f0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1098",
+        "offset": "0x4f8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1090",
+        "offset": "0x500",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1088",
+        "offset": "0x508",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1080",
+        "offset": "0x510",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1078",
+        "offset": "0x518",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1070",
+        "offset": "0x520",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1068",
+        "offset": "0x528",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1060",
+        "offset": "0x530",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1058",
+        "offset": "0x538",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1050",
+        "offset": "0x540",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1048",
+        "offset": "0x548",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1040",
+        "offset": "0x550",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1038",
+        "offset": "0x558",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1030",
+        "offset": "0x560",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1028",
+        "offset": "0x568",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1020",
+        "offset": "0x570",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1018",
+        "offset": "0x578",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1010",
+        "offset": "0x580",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1008",
+        "offset": "0x588",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1000",
+        "offset": "0x590",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_FF8",
+        "offset": "0x598",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_FF0",
+        "offset": "0x5a0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_FE8",
+        "offset": "0x5a8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_FE0",
+        "offset": "0x5b0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_FD8",
+        "offset": "0x5b8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_FD0",
+        "offset": "0x5c0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_FC8",
+        "offset": "0x5c8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_FC0",
+        "offset": "0x5d0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_FB8",
+        "offset": "0x5d8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_FB0",
+        "offset": "0x5e0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_FA8",
+        "offset": "0x5e8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_FA0",
+        "offset": "0x5f0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_F98",
+        "offset": "0x5f8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_F90",
+        "offset": "0x600",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_F88",
+        "offset": "0x608",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_F80",
+        "offset": "0x610",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_F78",
+        "offset": "0x618",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_F70",
+        "offset": "0x620",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_F68",
+        "offset": "0x628",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_F60",
+        "offset": "0x630",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_F58",
+        "offset": "0x638",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_F50",
+        "offset": "0x640",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_F48",
+        "offset": "0x648",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_F40",
+        "offset": "0x650",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_F38",
+        "offset": "0x658",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_F30",
+        "offset": "0x660",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_F28",
+        "offset": "0x668",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_F20",
+        "offset": "0x670",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_F18",
+        "offset": "0x678",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_F10",
+        "offset": "0x680",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_F08",
+        "offset": "0x688",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_F00",
+        "offset": "0x690",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_EF8",
+        "offset": "0x698",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_EF0",
+        "offset": "0x6a0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_EE8",
+        "offset": "0x6a8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_EE0",
+        "offset": "0x6b0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_ED8",
+        "offset": "0x6b8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_ED0",
+        "offset": "0x6c0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_EC8",
+        "offset": "0x6c8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_EC0",
+        "offset": "0x6d0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_EB8",
+        "offset": "0x6d8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_EB0",
+        "offset": "0x6e0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_EA8",
+        "offset": "0x6e8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_EA0",
+        "offset": "0x6f0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_E98",
+        "offset": "0x6f8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_E90",
+        "offset": "0x700",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_E88",
+        "offset": "0x708",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_E80",
+        "offset": "0x710",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_E78",
+        "offset": "0x718",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_E70",
+        "offset": "0x720",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_E68",
+        "offset": "0x728",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_E60",
+        "offset": "0x730",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_E58",
+        "offset": "0x738",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_E50",
+        "offset": "0x740",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_E48",
+        "offset": "0x748",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_E40",
+        "offset": "0x750",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_E38",
+        "offset": "0x758",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_E30",
+        "offset": "0x760",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_E28",
+        "offset": "0x768",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_E20",
+        "offset": "0x770",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_E18",
+        "offset": "0x778",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_E10",
+        "offset": "0x780",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_E08",
+        "offset": "0x788",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_E00",
+        "offset": "0x790",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_DF8",
+        "offset": "0x798",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_DF0",
+        "offset": "0x7a0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_DE8",
+        "offset": "0x7a8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_DE0",
+        "offset": "0x7b0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_DD8",
+        "offset": "0x7b8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_DD0",
+        "offset": "0x7c0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_DC8",
+        "offset": "0x7c8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_DC0",
+        "offset": "0x7d0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_DB8",
+        "offset": "0x7d8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_DB0",
+        "offset": "0x7e0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_DA8",
+        "offset": "0x7e8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_DA0",
+        "offset": "0x7f0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_D98",
+        "offset": "0x7f8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_D90",
+        "offset": "0x800",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_D88",
+        "offset": "0x808",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_D80",
+        "offset": "0x810",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_D78",
+        "offset": "0x818",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_D70",
+        "offset": "0x820",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_D68",
+        "offset": "0x828",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_D60",
+        "offset": "0x830",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_D58",
+        "offset": "0x838",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_D50",
+        "offset": "0x840",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_D48",
+        "offset": "0x848",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_D40",
+        "offset": "0x850",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_D38",
+        "offset": "0x858",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_D30",
+        "offset": "0x860",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_D28",
+        "offset": "0x868",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_D20",
+        "offset": "0x870",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_D18",
+        "offset": "0x878",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_D10",
+        "offset": "0x880",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_D08",
+        "offset": "0x888",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_D00",
+        "offset": "0x890",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_CF8",
+        "offset": "0x898",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_CF0",
+        "offset": "0x8a0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_CE8",
+        "offset": "0x8a8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_CE0",
+        "offset": "0x8b0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_CD8",
+        "offset": "0x8b8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_CD0",
+        "offset": "0x8c0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_CC8",
+        "offset": "0x8c8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_CC0",
+        "offset": "0x8d0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_CB8",
+        "offset": "0x8d8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_CB0",
+        "offset": "0x8e0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_CA8",
+        "offset": "0x8e8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_CA0",
+        "offset": "0x8f0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_C98",
+        "offset": "0x8f8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_C90",
+        "offset": "0x900",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_C88",
+        "offset": "0x908",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_C80",
+        "offset": "0x910",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_C78",
+        "offset": "0x918",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_C70",
+        "offset": "0x920",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_C68",
+        "offset": "0x928",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_C60",
+        "offset": "0x930",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_C58",
+        "offset": "0x938",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_C50",
+        "offset": "0x940",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_C48",
+        "offset": "0x948",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_C40",
+        "offset": "0x950",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_C38",
+        "offset": "0x958",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_C30",
+        "offset": "0x960",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_C28",
+        "offset": "0x968",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_C20",
+        "offset": "0x970",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_C18",
+        "offset": "0x978",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_C10",
+        "offset": "0x980",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_C08",
+        "offset": "0x988",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_C00",
+        "offset": "0x990",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_BF8",
+        "offset": "0x998",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_BF0",
+        "offset": "0x9a0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_BE8",
+        "offset": "0x9a8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_BE0",
+        "offset": "0x9b0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_BD8",
+        "offset": "0x9b8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_BD0",
+        "offset": "0x9c0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_BC8",
+        "offset": "0x9c8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_BC0",
+        "offset": "0x9d0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_BB8",
+        "offset": "0x9d8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_BB0",
+        "offset": "0x9e0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_BA8",
+        "offset": "0x9e8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_BA0",
+        "offset": "0x9f0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_B98",
+        "offset": "0x9f8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_B90",
+        "offset": "0xa00",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_B88",
+        "offset": "0xa08",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_B80",
+        "offset": "0xa10",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_B78",
+        "offset": "0xa18",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_B70",
+        "offset": "0xa20",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_B68",
+        "offset": "0xa28",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_B60",
+        "offset": "0xa30",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_B58",
+        "offset": "0xa38",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_B50",
+        "offset": "0xa40",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_B48",
+        "offset": "0xa48",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_B40",
+        "offset": "0xa50",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_B38",
+        "offset": "0xa58",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_B30",
+        "offset": "0xa60",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_B28",
+        "offset": "0xa68",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_B20",
+        "offset": "0xa70",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_B18",
+        "offset": "0xa78",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_B10",
+        "offset": "0xa80",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_B08",
+        "offset": "0xa88",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_B00",
+        "offset": "0xa90",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_AF8",
+        "offset": "0xa98",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_AF0",
+        "offset": "0xaa0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_AE8",
+        "offset": "0xaa8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_AE0",
+        "offset": "0xab0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_AD8",
+        "offset": "0xab8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_AD0",
+        "offset": "0xac0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_AC8",
+        "offset": "0xac8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_AC0",
+        "offset": "0xad0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_AB8",
+        "offset": "0xad8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_AB0",
+        "offset": "0xae0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_AA8",
+        "offset": "0xae8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_AA0",
+        "offset": "0xaf0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_A98",
+        "offset": "0xaf8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_A90",
+        "offset": "0xb00",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_A88",
+        "offset": "0xb08",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_A80",
+        "offset": "0xb10",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_A78",
+        "offset": "0xb18",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_A70",
+        "offset": "0xb20",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_A68",
+        "offset": "0xb28",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_A60",
+        "offset": "0xb30",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_A58",
+        "offset": "0xb38",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_A50",
+        "offset": "0xb40",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_A48",
+        "offset": "0xb48",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_A40",
+        "offset": "0xb50",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_A38",
+        "offset": "0xb58",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_A30",
+        "offset": "0xb60",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_A28",
+        "offset": "0xb68",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_A20",
+        "offset": "0xb70",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_A18",
+        "offset": "0xb78",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_A10",
+        "offset": "0xb80",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_A08",
+        "offset": "0xb88",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_A00",
+        "offset": "0xb90",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_9F8",
+        "offset": "0xb98",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_9F0",
+        "offset": "0xba0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_9E8",
+        "offset": "0xba8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_9E0",
+        "offset": "0xbb0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_9D8",
+        "offset": "0xbb8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_9D0",
+        "offset": "0xbc0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_9C8",
+        "offset": "0xbc8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_9C0",
+        "offset": "0xbd0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_9B8",
+        "offset": "0xbd8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_9B0",
+        "offset": "0xbe0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_9A8",
+        "offset": "0xbe8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_9A0",
+        "offset": "0xbf0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_998",
+        "offset": "0xbf8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_990",
+        "offset": "0xc00",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_988",
+        "offset": "0xc08",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_980",
+        "offset": "0xc10",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_978",
+        "offset": "0xc18",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_970",
+        "offset": "0xc20",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_968",
+        "offset": "0xc28",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_960",
+        "offset": "0xc30",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_958",
+        "offset": "0xc38",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_950",
+        "offset": "0xc40",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_948",
+        "offset": "0xc48",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_940",
+        "offset": "0xc50",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_938",
+        "offset": "0xc58",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_930",
+        "offset": "0xc60",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_928",
+        "offset": "0xc68",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_920",
+        "offset": "0xc70",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_918",
+        "offset": "0xc78",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_910",
+        "offset": "0xc80",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_908",
+        "offset": "0xc88",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_900",
+        "offset": "0xc90",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_8F8",
+        "offset": "0xc98",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_8F0",
+        "offset": "0xca0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_8E8",
+        "offset": "0xca8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_8E0",
+        "offset": "0xcb0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_8D8",
+        "offset": "0xcb8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_8D0",
+        "offset": "0xcc0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_8C8",
+        "offset": "0xcc8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_8C0",
+        "offset": "0xcd0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_8B8",
+        "offset": "0xcd8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_8B0",
+        "offset": "0xce0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_8A8",
+        "offset": "0xce8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_8A0",
+        "offset": "0xcf0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_898",
+        "offset": "0xcf8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_890",
+        "offset": "0xd00",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_888",
+        "offset": "0xd08",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_880",
+        "offset": "0xd10",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_878",
+        "offset": "0xd18",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_870",
+        "offset": "0xd20",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_868",
+        "offset": "0xd28",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_860",
+        "offset": "0xd30",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_858",
+        "offset": "0xd38",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_850",
+        "offset": "0xd40",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_848",
+        "offset": "0xd48",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_840",
+        "offset": "0xd50",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_838",
+        "offset": "0xd58",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_830",
+        "offset": "0xd60",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_828",
+        "offset": "0xd68",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_820",
+        "offset": "0xd70",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_818",
+        "offset": "0xd78",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_810",
+        "offset": "0xd80",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_808",
+        "offset": "0xd88",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_800",
+        "offset": "0xd90",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_7F8",
+        "offset": "0xd98",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_7F0",
+        "offset": "0xda0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_7E8",
+        "offset": "0xda8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_7E0",
+        "offset": "0xdb0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_7D8",
+        "offset": "0xdb8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_7D0",
+        "offset": "0xdc0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_7C8",
+        "offset": "0xdc8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_7C0",
+        "offset": "0xdd0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_7B8",
+        "offset": "0xdd8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_7B0",
+        "offset": "0xde0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_7A8",
+        "offset": "0xde8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_7A0",
+        "offset": "0xdf0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_798",
+        "offset": "0xdf8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_790",
+        "offset": "0xe00",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_788",
+        "offset": "0xe08",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_780",
+        "offset": "0xe10",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_778",
+        "offset": "0xe18",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_770",
+        "offset": "0xe20",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_768",
+        "offset": "0xe28",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_760",
+        "offset": "0xe30",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_758",
+        "offset": "0xe38",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_750",
+        "offset": "0xe40",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_748",
+        "offset": "0xe48",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_740",
+        "offset": "0xe50",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_738",
+        "offset": "0xe58",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_730",
+        "offset": "0xe60",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_728",
+        "offset": "0xe68",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_720",
+        "offset": "0xe70",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_718",
+        "offset": "0xe78",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_710",
+        "offset": "0xe80",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_708",
+        "offset": "0xe88",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_700",
+        "offset": "0xe90",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_6F8",
+        "offset": "0xe98",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_6F0",
+        "offset": "0xea0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_6E8",
+        "offset": "0xea8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_6E0",
+        "offset": "0xeb0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_6D8",
+        "offset": "0xeb8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_6D0",
+        "offset": "0xec0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_6C8",
+        "offset": "0xec8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_6C0",
+        "offset": "0xed0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_6B8",
+        "offset": "0xed8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_6B0",
+        "offset": "0xee0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_6A8",
+        "offset": "0xee8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_6A0",
+        "offset": "0xef0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_698",
+        "offset": "0xef8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_690",
+        "offset": "0xf00",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_688",
+        "offset": "0xf08",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_680",
+        "offset": "0xf10",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_678",
+        "offset": "0xf18",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_670",
+        "offset": "0xf20",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_668",
+        "offset": "0xf28",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_660",
+        "offset": "0xf30",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_658",
+        "offset": "0xf38",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_650",
+        "offset": "0xf40",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_648",
+        "offset": "0xf48",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_640",
+        "offset": "0xf50",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_638",
+        "offset": "0xf58",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_630",
+        "offset": "0xf60",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_628",
+        "offset": "0xf68",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_620",
+        "offset": "0xf70",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_618",
+        "offset": "0xf78",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_610",
+        "offset": "0xf80",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_608",
+        "offset": "0xf88",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_600",
+        "offset": "0xf90",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_5F8",
+        "offset": "0xf98",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_5F0",
+        "offset": "0xfa0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_5E8",
+        "offset": "0xfa8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_5E0",
+        "offset": "0xfb0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_5D8",
+        "offset": "0xfb8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_5D0",
+        "offset": "0xfc0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_5C8",
+        "offset": "0xfc8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_5C0",
+        "offset": "0xfd0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_5B8",
+        "offset": "0xfd8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_5B0",
+        "offset": "0xfe0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_5A8",
+        "offset": "0xfe8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_5A0",
+        "offset": "0xff0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_598",
+        "offset": "0xff8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_590",
+        "offset": "0x1000",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_588",
+        "offset": "0x1008",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_580",
+        "offset": "0x1010",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_578",
+        "offset": "0x1018",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_570",
+        "offset": "0x1020",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_568",
+        "offset": "0x1028",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_560",
+        "offset": "0x1030",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_558",
+        "offset": "0x1038",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_550",
+        "offset": "0x1040",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_548",
+        "offset": "0x1048",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_540",
+        "offset": "0x1050",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_538",
+        "offset": "0x1058",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_530",
+        "offset": "0x1060",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_528",
+        "offset": "0x1068",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_520",
+        "offset": "0x1070",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_518",
+        "offset": "0x1078",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_510",
+        "offset": "0x1080",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_508",
+        "offset": "0x1088",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_500",
+        "offset": "0x1090",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_4F8",
+        "offset": "0x1098",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_4F0",
+        "offset": "0x10a0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_4E8",
+        "offset": "0x10a8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_4E0",
+        "offset": "0x10b0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_4D8",
+        "offset": "0x10b8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_4D0",
+        "offset": "0x10c0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_4C8",
+        "offset": "0x10c8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_4C0",
+        "offset": "0x10d0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_4B8",
+        "offset": "0x10d8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_4B0",
+        "offset": "0x10e0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_4A8",
+        "offset": "0x10e8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_4A0",
+        "offset": "0x10f0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_498",
+        "offset": "0x10f8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_490",
+        "offset": "0x1100",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_488",
+        "offset": "0x1108",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_480",
+        "offset": "0x1110",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_478",
+        "offset": "0x1118",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_470",
+        "offset": "0x1120",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_468",
+        "offset": "0x1128",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_460",
+        "offset": "0x1130",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_458",
+        "offset": "0x1138",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_450",
+        "offset": "0x1140",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_448",
+        "offset": "0x1148",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_440",
+        "offset": "0x1150",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_438",
+        "offset": "0x1158",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_430",
+        "offset": "0x1160",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_428",
+        "offset": "0x1168",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_420",
+        "offset": "0x1170",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_418",
+        "offset": "0x1178",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_410",
+        "offset": "0x1180",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_408",
+        "offset": "0x1188",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_400",
+        "offset": "0x1190",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_3F8",
+        "offset": "0x1198",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_3F0",
+        "offset": "0x11a0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_3E8",
+        "offset": "0x11a8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_3E0",
+        "offset": "0x11b0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_3D8",
+        "offset": "0x11b8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_3D0",
+        "offset": "0x11c0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_3C8",
+        "offset": "0x11c8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_3C0",
+        "offset": "0x11d0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_3B8",
+        "offset": "0x11d8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_3B0",
+        "offset": "0x11e0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_3A8",
+        "offset": "0x11e8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_3A0",
+        "offset": "0x11f0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_398",
+        "offset": "0x11f8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_390",
+        "offset": "0x1200",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_388",
+        "offset": "0x1208",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_380",
+        "offset": "0x1210",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_378",
+        "offset": "0x1218",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_370",
+        "offset": "0x1220",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_368",
+        "offset": "0x1228",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_360",
+        "offset": "0x1230",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_358",
+        "offset": "0x1238",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_350",
+        "offset": "0x1240",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_348",
+        "offset": "0x1248",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_340",
+        "offset": "0x1250",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_338",
+        "offset": "0x1258",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_330",
+        "offset": "0x1260",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_328",
+        "offset": "0x1268",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_320",
+        "offset": "0x1270",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_318",
+        "offset": "0x1278",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_310",
+        "offset": "0x1280",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_308",
+        "offset": "0x1288",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_300",
+        "offset": "0x1290",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_2F8",
+        "offset": "0x1298",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_2F0",
+        "offset": "0x12a0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_2E8",
+        "offset": "0x12a8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_2E0",
+        "offset": "0x12b0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_2D8",
+        "offset": "0x12b8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_2D0",
+        "offset": "0x12c0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_2C8",
+        "offset": "0x12c8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_2C0",
+        "offset": "0x12d0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_2B8",
+        "offset": "0x12d8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_2B0",
+        "offset": "0x12e0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_2A8",
+        "offset": "0x12e8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_2A0",
+        "offset": "0x12f0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_298",
+        "offset": "0x12f8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_290",
+        "offset": "0x1300",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_288",
+        "offset": "0x1308",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_280",
+        "offset": "0x1310",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_278",
+        "offset": "0x1318",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_270",
+        "offset": "0x1320",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_268",
+        "offset": "0x1328",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_260",
+        "offset": "0x1330",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_258",
+        "offset": "0x1338",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_250",
+        "offset": "0x1340",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_248",
+        "offset": "0x1348",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_240",
+        "offset": "0x1350",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_238",
+        "offset": "0x1358",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_230",
+        "offset": "0x1360",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_228",
+        "offset": "0x1368",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_220",
+        "offset": "0x1370",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_218",
+        "offset": "0x1378",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_210",
+        "offset": "0x1380",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_208",
+        "offset": "0x1388",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_200",
+        "offset": "0x1390",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1F8",
+        "offset": "0x1398",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1F0",
+        "offset": "0x13a0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1E8",
+        "offset": "0x13a8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1E0",
+        "offset": "0x13b0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1D8",
+        "offset": "0x13b8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1D0",
+        "offset": "0x13c0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1C8",
+        "offset": "0x13c8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1C0",
+        "offset": "0x13d0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1B8",
+        "offset": "0x13d8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1B0",
+        "offset": "0x13e0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1A8",
+        "offset": "0x13e8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_1A0",
+        "offset": "0x13f0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_198",
+        "offset": "0x13f8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_190",
+        "offset": "0x1400",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_188",
+        "offset": "0x1408",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_180",
+        "offset": "0x1410",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_178",
+        "offset": "0x1418",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_170",
+        "offset": "0x1420",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_168",
+        "offset": "0x1428",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_160",
+        "offset": "0x1430",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_158",
+        "offset": "0x1438",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_150",
+        "offset": "0x1440",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_148",
+        "offset": "0x1448",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_140",
+        "offset": "0x1450",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_138",
+        "offset": "0x1458",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_130",
+        "offset": "0x1460",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_128",
+        "offset": "0x1468",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_120",
+        "offset": "0x1470",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_118",
+        "offset": "0x1478",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_110",
+        "offset": "0x1480",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_108",
+        "offset": "0x1488",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_100",
+        "offset": "0x1490",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_F0",
+        "offset": "0x14a0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_E8",
+        "offset": "0x14a8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_D8",
+        "offset": "0x14b8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_D0",
+        "offset": "0x14c0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_C0",
+        "offset": "0x14d0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_B8",
+        "offset": "0x14d8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_A8",
+        "offset": "0x14e8",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_A0",
+        "offset": "0x14f0",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_90",
+        "offset": "0x1500",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_88",
+        "offset": "0x1508",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_78",
+        "offset": "0x1518",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_70",
+        "offset": "0x1520",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_60",
+        "offset": "0x1530",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_58",
+        "offset": "0x1538",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_50",
+        "offset": "0x1540",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_40",
+        "offset": "0x1550",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_30",
+        "offset": "0x1560",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_20",
+        "offset": "0x1570",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_10",
+        "offset": "0x1580",
+        "size": "0x8",
+        "type": "_QWORD"
+      },
+      {
+        "name": "var_s0",
+        "offset": "0x1590",
+        "size": "0x8",
+        "type": "_QWORD"
+      }
+    ],
+    "return_type": "__int64",
+    "arguments": [
+      {
+        "name": "arg0",
+        "type": "__int64"
+      },
+      {
+        "name": "arg1",
+        "type": "__int64"
+      },
+      {
+        "name": "arg2",
+        "type": "__int64"
+      },
+      {
+        "name": "arg3",
+        "type": "__int64"
+      },
+      {
+        "name": "arg4",
+        "type": "__int64"
+      }
+    ]
+  },
+  "instruction_count": 180,
+  "total_instructions": 2923,
+  "cursor": {
+    "next": 180
+  }
+}
