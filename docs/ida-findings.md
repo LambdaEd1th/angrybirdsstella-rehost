@@ -10207,3 +10207,62 @@ for `stella-app`,
 for `stella-headless`, and
 `fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
 for the unchanged `stella-tool`.
+
+### Stella timeout return to fixed-step flight
+
+The Stella-only hitch after a long held ability is not in the authored
+parkour tween. Unluac recovery of the shipped `StellaAbility.lua` shows that
+the timeout/activation path selects `@Ability`, advances each jump with
+`jumpTween.timer += jumpTween.speed * g_realDt`, and calls `setPosition` every
+display update. A deterministic Chapter01 L02 probe confirms consecutive
+positions during that action, including constant increments while the global
+time multiplier is `0.15`. The `Ability` root therefore must not receive the
+Poppy/Luca physics extrapolation.
+
+The discontinuity starts after that tween leaves the ability state and the
+bird returns to the exact authored `Stella_Flying` action. At this boundary,
+position and direction again come from the last Box2D solution. IDA's
+`sub_10005E898` shows the scaled frame delta entering the float32 accumulator
+and Box2D stepping only at `0x3D088889` (1/30 second). Hopper independently
+shows the same add/compare/repeated-subtract loop. The Flash draw member
+`sub_10006794C` then reads RenderObjectData `+0xA4/+0xA8` directly for the
+animation-root translation. On the fixed 60 Hz display link, the post-timeout
+Stella root consequently exposes the 30 Hz body sample while the camera,
+background and UI continue to update each display frame.
+
+The existing visual-only fixed-step sampler now also selects the exact
+`Stella_Flying` action. It evaluates `position + velocity * unsolvedTime` with
+the recovered float32 fused operation order. BirdAnimation derives the
+high-speed root angle from `atan2(velocityY, velocityX)`; the display sample
+therefore also advances the velocity by world gravity times the body's
+gravity scale and unsolved time before evaluating that same direction. At or
+below the shipped speed-squared threshold of four it retains the Lua-authored
+angle instead of predicting through the low-speed interpolation/collision
+path.
+
+Both corrections change only the submitted Flash root. The Box2D transform,
+Lua `objects.world` coordinates, collision order, forces and ability timing
+remain untouched. `Ability` is deliberately excluded because its original
+real-time `setPosition` path is already continuous. Regressions cover the new
+Stella position/direction sample, retain the Poppy/Luca samples, prove all
+underlying scene positions remain unchanged, and separately prove that
+`Ability` keeps its exact Lua-authored pose and angle.
+
+The complete workspace passes all 592 tests (82 app/audio/wgpu, 31 assets,
+one core and 478 script/physics); formatting, strict all-target/all-feature
+Clippy and the release build are clean. A fresh deterministic Chapter01 L02
+wgpu replay holds Stella's ability through its timeout and follows the return
+to `Stella_Flying`: the submitted root position changes on every 60 Hz frame,
+the high-speed direction sample advances between Box2D steps, and the shipped
+low-speed angle branch remains untouched. The run reports zero invoked
+fallbacks and zero remaining compatibility bindings. Its readback SHA-256 is
+`9e86c0b84636740207afbd9955990b575503cdc7b8eaf42c64ae35c010a51eb0`;
+this is execution evidence rather than a screenshot oracle.
+
+Current SHA-256 values are
+`df1dbd556acbbbd7d2922951ae010b790cf4a568bee14fddd8c5ea7ad7991822`
+for `stella-app`,
+`b57e68040102688bc51699c0ec0c2c5bc63849e496a3f86f228e9f1b20886994`
+for `stella-headless`, and
+`fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
+for the unchanged `stella-tool`.

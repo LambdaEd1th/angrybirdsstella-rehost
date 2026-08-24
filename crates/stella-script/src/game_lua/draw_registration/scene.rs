@@ -196,28 +196,34 @@ pub(super) fn install(
                     continue;
                 };
                 if object.flash_animation {
-                    // Poppy and Luca's held power poses are Flash actions
-                    // attached to 30 Hz Box2D bodies. Their shipped 0.1/0.05
-                    // aim multipliers otherwise repeat the raw body position
-                    // for roughly twenty/forty 60 Hz display frames. Select
-                    // the visual-only fixed-step sample by the exact authored
-                    // actions; other birds and ordinary actions keep the
-                    // native pose.
-                    let smooth_held_power_motion = animation_runtime
+                    // Poppy/Luca's held powers and Stella's post-timeout
+                    // flying pose are Flash actions attached to 30 Hz Box2D
+                    // bodies. Select the visual-only fixed-step sample by the
+                    // exact authored actions; other birds and ordinary
+                    // actions keep the solved native pose. Stella's authored
+                    // `Ability` action is deliberately absent because its
+                    // parkour root already moves every display frame through
+                    // the shipped real-time `setPosition` tween.
+                    let current_action = animation_runtime
                         .lock()
                         .expect("animation runtime lock poisoned")
                         .playback
                         .get(&name)
-                        .is_some_and(|playback| {
-                            matches!(
-                                playback.current_action.as_str(),
-                                "Poppy_Power" | "Luca_ability"
-                            )
-                        });
+                        .map(|playback| playback.current_action.clone())
+                        .unwrap_or_default();
+                    let sample_fixed_step_motion = matches!(
+                        current_action.as_str(),
+                        "Poppy_Power" | "Luca_ability" | "Stella_Flying"
+                    );
+                    let sample_stella_flight_angle = current_action == "Stella_Flying";
                     let transform = render
                         .lock()
                         .expect("render bridge lock poisoned")
-                        .flash_animation_transform(&object, smooth_held_power_motion);
+                        .flash_animation_transform(
+                            &object,
+                            sample_fixed_step_motion,
+                            sample_stella_flight_angle,
+                        );
                     let mut commands = {
                         let mut runtime = animation_runtime
                             .lock()

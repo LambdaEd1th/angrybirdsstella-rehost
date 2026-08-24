@@ -4,24 +4,45 @@ use super::SceneDrawObject;
 use crate::*;
 
 impl RenderBridge {
-    /// Produce the display pose used while a bird is holding a slow-motion
-    /// power aim.
+    /// Produce a continuous display pose for a Flash action whose root is
+    /// driven by the fixed-step physics body.
     ///
     /// Purple advances Box2D in fixed 1/30-second game-time steps. Poppy's
     /// aiming slow motion lowers the game-time multiplier to 0.1, so binding
     /// her Flash root directly to the last solved body pose repeats it for
     /// roughly twenty 60 Hz display frames; Luca's 0.05 multiplier repeats it
-    /// for roughly forty. The unsolved accumulator is already the exact
-    /// game-time distance to the next fixed step; advancing only the visual
-    /// pose by the current velocity fills those display samples without
-    /// changing the body, Lua object or collision timeline.
-    pub(crate) fn held_power_display_position(&self, object: &SceneDrawObject) -> (f64, f64) {
+    /// for roughly forty. Stella's timeout path is initially a smooth
+    /// real-time `setPosition` tween, but switches back to the same 30 Hz body
+    /// when `Stella_Flying` resumes. The unsolved accumulator is already the
+    /// exact game-time distance to the next fixed step; advancing only the
+    /// visual pose by the current velocity fills those display samples
+    /// without changing the body, Lua object or collision timeline.
+    pub(crate) fn fixed_step_display_position(&self, object: &SceneDrawObject) -> (f64, f64) {
         let residual = self
             .physics_accumulator
             .clamp(0.0, f32::from_bits(0x3D08_8889));
         let x = (object.velocity_x as f32).mul_add(residual, object.x as f32);
         let y = (object.velocity_y as f32).mul_add(residual, object.y as f32);
         (f64::from(x), f64::from(y))
+    }
+
+    /// Predict the high-speed direction used by BirdAnimation's
+    /// `Stella_Flying` state at the same unsolved display time.
+    pub(crate) fn fixed_step_stella_flight_angle(&self, object: &SceneDrawObject) -> f64 {
+        let residual = self
+            .physics_accumulator
+            .clamp(0.0, f32::from_bits(0x3D08_8889));
+        let gravity_scale = object.gravity_scale as f32;
+        let velocity_x = ((self.world_gravity_x as f32) * gravity_scale)
+            .mul_add(residual, object.velocity_x as f32);
+        let velocity_y = ((self.world_gravity_y as f32) * gravity_scale)
+            .mul_add(residual, object.velocity_y as f32);
+        let speed_squared = velocity_x.mul_add(velocity_x, velocity_y * velocity_y);
+        if speed_squared > 4.0_f32 {
+            f64::from(velocity_y.atan2(velocity_x))
+        } else {
+            object.angle
+        }
     }
 
     pub(crate) fn scene_object_scale(&self, object: &SceneDrawObject) -> (f32, f32, f32) {

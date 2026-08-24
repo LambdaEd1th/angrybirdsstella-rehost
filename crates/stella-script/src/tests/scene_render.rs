@@ -70,7 +70,7 @@ fn flash_animation_draws_same_named_animation_with_native_scene_transform() {
 }
 
 #[test]
-fn held_poppy_and_luca_powers_use_unsolved_physics_time_for_continuous_display_poses() {
+fn slow_motion_powers_and_stella_flight_use_continuous_fixed_step_display_poses() {
     let runtime = StellaLua::new("/tmp").unwrap();
     runtime
         .execute_source(
@@ -79,16 +79,22 @@ fn held_poppy_and_luca_powers_use_unsolved_physics_time_for_continuous_display_p
                 setFlashAnimation("poppy")
                 createNonPhysicsObject("luca", "RED_CROSS", 3, 4, 3)
                 setFlashAnimation("luca")
+                createNonPhysicsObject("stella", "RED_CROSS", 5, 6, 3)
+                setFlashAnimation("stella")
                 "#,
         )
         .unwrap();
     {
         let mut bridge = runtime.render.lock().unwrap();
         bridge.physics_accumulator = 1.0 / 60.0;
+        bridge.world_gravity_y = 2.0;
         let object = bridge.scene.get_mut("poppy").unwrap();
         object.velocity_x = 6.0;
         object.velocity_y = -3.0;
         let object = bridge.scene.get_mut("luca").unwrap();
+        object.velocity_x = 6.0;
+        object.velocity_y = -3.0;
+        let object = bridge.scene.get_mut("stella").unwrap();
         object.velocity_x = 6.0;
         object.velocity_y = -3.0;
     }
@@ -97,6 +103,7 @@ fn held_poppy_and_luca_powers_use_unsolved_physics_time_for_continuous_display_p
         for (tag, action_name, sprite) in [
             ("poppy", "Poppy_Power", "POPPY_BODY"),
             ("luca", "Luca_ability", "LUCA_BODY"),
+            ("stella", "Stella_Flying", "STELLA_BODY"),
         ] {
             let mut definition = AnimationDefinition::default();
             definition.slots.push("SLOT_BODY".to_owned());
@@ -119,9 +126,17 @@ fn held_poppy_and_luca_powers_use_unsolved_physics_time_for_continuous_display_p
 
     runtime.execute_source("drawGameNative()").unwrap();
 
-    let bridge = runtime.render.lock().unwrap();
-    assert_eq!(bridge.commands.len(), 2);
     let residual = 1.0_f32 / 60.0_f32;
+    let predicted_stella_velocity_y = 2.0_f32.mul_add(residual, -3.0_f32);
+    let expected_stella_angle = predicted_stella_velocity_y.atan2(6.0_f32);
+    assert_eq!(
+        runtime._animation_runtime.lock().unwrap().transforms["stella"]
+            .angle
+            .to_bits(),
+        f64::from(expected_stella_angle).to_bits()
+    );
+    let bridge = runtime.render.lock().unwrap();
+    assert_eq!(bridge.commands.len(), 3);
     let display_x = 6.0_f32.mul_add(residual, 1.0_f32);
     let display_y = (-3.0_f32).mul_add(residual, 2.0_f32);
     assert_eq!(bridge.commands[0].x, f64::from(display_x * 20.0_f32));
@@ -130,11 +145,75 @@ fn held_poppy_and_luca_powers_use_unsolved_physics_time_for_continuous_display_p
     let luca_display_y = (-3.0_f32).mul_add(residual, 4.0_f32);
     assert_eq!(bridge.commands[1].x, f64::from(luca_display_x * 20.0_f32));
     assert_eq!(bridge.commands[1].y, f64::from(luca_display_y * 20.0_f32));
+    let stella_display_x = 6.0_f32.mul_add(residual, 5.0_f32);
+    let stella_display_y = (-3.0_f32).mul_add(residual, 6.0_f32);
+    assert_eq!(bridge.commands[2].x, f64::from(stella_display_x * 20.0_f32));
+    assert_eq!(bridge.commands[2].y, f64::from(stella_display_y * 20.0_f32));
     assert_eq!(
         (bridge.scene["poppy"].x, bridge.scene["poppy"].y),
         (1.0, 2.0)
     );
     assert_eq!((bridge.scene["luca"].x, bridge.scene["luca"].y), (3.0, 4.0));
+    assert_eq!(
+        (bridge.scene["stella"].x, bridge.scene["stella"].y),
+        (5.0, 6.0)
+    );
+}
+
+#[test]
+fn scripted_stella_ability_keeps_its_exact_per_frame_lua_pose() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .execute_source(
+            r#"
+                createNonPhysicsObject("stella", "RED_CROSS", 1, 2, 3)
+                setFlashAnimation("stella")
+                "#,
+        )
+        .unwrap();
+    {
+        let mut bridge = runtime.render.lock().unwrap();
+        bridge.physics_accumulator = 1.0 / 60.0;
+        let object = bridge.scene.get_mut("stella").unwrap();
+        object.velocity_x = 6.0;
+        object.velocity_y = -3.0;
+        object.angle = 0.75;
+    }
+    {
+        let mut definition = AnimationDefinition::default();
+        definition.slots.push("SLOT_BODY".to_owned());
+        let mut action = AnimationAction::default();
+        action
+            .targets
+            .entry("SLOT_BODY".to_owned())
+            .or_default()
+            .sprite
+            .push((0.0, "STELLA_BODY".to_owned()));
+        definition.actions.insert("Ability".to_owned(), action);
+        let mut animation = runtime._animation_runtime.lock().unwrap();
+        animation
+            .definitions
+            .insert("stella".to_owned(), definition);
+        animation.playback.insert(
+            "stella".to_owned(),
+            AnimationPlayback::active("Ability".to_owned(), "repeat".to_owned(), 0.0, 1.0, 1.0),
+        );
+        bind_test_animation_sprites(&mut animation, "stella", &["STELLA_BODY"]);
+    }
+
+    runtime.execute_source("drawGameNative()").unwrap();
+
+    assert_eq!(
+        runtime._animation_runtime.lock().unwrap().transforms["stella"].angle,
+        0.75
+    );
+    let bridge = runtime.render.lock().unwrap();
+    assert_eq!(bridge.commands.len(), 1);
+    assert_eq!((bridge.commands[0].x, bridge.commands[0].y), (20.0, 40.0));
+    assert_eq!(
+        (bridge.scene["stella"].x, bridge.scene["stella"].y),
+        (1.0, 2.0)
+    );
 }
 
 #[test]
