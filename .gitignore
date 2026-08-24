@@ -1,6 +1,7 @@
 /target/
 /extracted/
 /build/
+/dist/
 *.log
 .DS_Store
 

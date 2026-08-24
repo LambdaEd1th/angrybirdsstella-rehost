@@ -86,6 +86,27 @@ cargo run -p stella-script --bin stella-headless -- \
   --data build/extracted/data --frames 3600 --dump-render
 ```
 
+## CI and releases
+
+`.github/workflows/ci.yml` checks formatting, strict Clippy, portable tests and
+compilation for macOS ARM64, Windows x86_64/ARM64 and Linux x86_64/ARM64. The
+complete local test suite additionally requires the locally extracted original
+game data, which is intentionally absent from GitHub Actions.
+
+Create a release by pushing a semantic version tag:
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The Release workflow can also be started manually with the same tag in the
+GitHub Actions interface. It builds the four workspace executables for all five
+targets, publishes `.tar.gz` archives for macOS/Linux and `.zip` archives for
+Windows, and attaches a shared `SHA256SUMS` file. Original game resources are
+not included; each archive contains extraction and runtime instructions in
+`RELEASE-README.md`.
+
 ## Workspace layout
 
 - `stella-app`: resizable desktop host and `wgpu` atlas/composite renderer.

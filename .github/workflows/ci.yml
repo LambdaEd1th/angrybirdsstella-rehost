@@ -1,0 +1,156 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  RUST_TOOLCHAIN: 1.93.0
+
+jobs:
+  quality:
+    name: Quality and portable tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            libasound2-dev \
+            libudev-dev \
+            libwayland-dev \
+            libx11-dev \
+            libx11-xcb-dev \
+            libxcb1-dev \
+            libxcursor-dev \
+            libxi-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            libxrandr-dev \
+            pkg-config
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" \
+            --profile minimal \
+            --component rustfmt \
+            --component clippy
+          rustup default "$RUST_TOOLCHAIN"
+
+      - name: Cache Cargo downloads
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-quality-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-quality-${{ runner.os }}-
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run strict Clippy
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+      - name: Compile every test target
+        run: cargo test --workspace --locked --no-run
+
+      # The complete local suite also checks the legally supplied Purple.app
+      # resources under build/extracted/data. Those proprietary files are not
+      # stored in GitHub, so CI runs the portable crates and the most important
+      # synthetic Lua/physics regressions instead.
+      - name: Run portable crate tests
+        run: cargo test --locked -p stella-assets -p stella-core
+
+      - name: Run native body binding regressions
+        run: "cargo test --locked -p stella-script --lib tests::body_bindings::"
+
+      - name: Run collision lifetime regressions
+        run: >-
+          cargo test --locked -p stella-script --lib
+          tests::collision_callbacks:: -- --skip shipped
+
+      - name: Run contact solver regressions
+        run: "cargo test --locked -p stella-script --lib tests::contact_solver::"
+
+  platform-check:
+    name: Check ${{ matrix.label }}
+    needs: quality
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: macOS ARM64
+            runner: macos-14
+            target: aarch64-apple-darwin
+          - label: Windows x86_64
+            runner: windows-2025
+            target: x86_64-pc-windows-msvc
+          - label: Windows ARM64
+            runner: windows-11-vs2026-arm
+            target: aarch64-pc-windows-msvc
+          - label: Linux x86_64
+            runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - label: Linux ARM64
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            libasound2-dev \
+            libudev-dev \
+            libwayland-dev \
+            libx11-dev \
+            libx11-xcb-dev \
+            libxcb1-dev \
+            libxcursor-dev \
+            libxi-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            libxrandr-dev \
+            pkg-config
+
+      - name: Install Rust target
+        run: |
+          rustup toolchain install ${{ env.RUST_TOOLCHAIN }} --profile minimal
+          rustup target add ${{ matrix.target }} --toolchain ${{ env.RUST_TOOLCHAIN }}
+          rustup default ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Cache Cargo downloads
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-check-${{ runner.os }}-${{ runner.arch }}-${{ matrix.target }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-check-${{ runner.os }}-${{ runner.arch }}-${{ matrix.target }}-
+
+      - name: Check workspace for target
+        env:
+          RUSTFLAGS: ${{ contains(matrix.target, 'windows-msvc') && '-C target-feature=+crt-static' || '' }}
+        run: cargo check --workspace --all-targets --locked --target ${{ matrix.target }}

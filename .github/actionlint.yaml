@@ -1,0 +1,5 @@
+# GitHub added this hosted runner label after actionlint 1.7.12's built-in
+# runner catalog. Register it until the catalog catches up.
+self-hosted-runner:
+  labels:
+    - windows-11-vs2026-arm
