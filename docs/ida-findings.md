@@ -1515,8 +1515,10 @@ unscaled frame delta as `v230`, multiplies it by the engine time multiplier into
 second. Reversing the second argument with elapsed time makes
 `gameCamera.cameraAnimation` multiply its spring by about 91 seconds after the
 first shot, causing the observed alternating `+/-` scale explosion and NaNs.
-The Rust host now reproduces the scaled/raw ABI and publishes the scaled value
-as `deltaTime` and `currentTimeStep`.
+The Rust host now reproduces the scaled/raw ABI. A later whole-function audit,
+recorded below, also establishes that these remain callback parameters: the
+native dispatcher does not manufacture `deltaTime` or `currentTimeStep`
+globals before the call.
 
 The same native dispatcher accumulates scaled time at engine offset `+1308`.
 For every accumulated `0.033333` seconds it calls Lua
@@ -11858,4 +11860,318 @@ it is not treated as a visual oracle. Current release SHA-256 values are
 `04fffb7bdbce6c0726a0c732ca5f6ae491811e9430cd5a9848c049032d9bf50f`
 for `stella-app` and
 `f72fbc824aa9dad70fbd5949a41c3653338875a047318965ce86fb4bd35d8f6e`
+for `stella-headless`.
+
+## Native BGM restart and forced termination persistence
+
+The main-menu music restart after a desktop focus cycle is not an audio
+decoder reset. IDA and Hopper independently show
+`-[AppController applicationWillResignActive:]` at `0x100404B74` clearing
+`m_allowUpdate` and entering `stopUpdate` at `0x100404E24`. `stopUpdate`
+invalidates the display link, calls the App/GameLua active member at virtual
+offset `+0x98` with false and then calls the audio-output member at `+0xB0`
+with false. The GameLua path resolves through
+`sub_100029BE8 -> sub_10005D4D4` and invokes the shipped `gamePaused`
+callback. The active transition invokes the matching `gameResumed` callback.
+
+Instrumenting those original shipped Lua functions confirms the remaining
+observable sequence. `gamePaused` stops the audio named by
+`previousMusicName`, clears that field and performs the playtime, settings,
+highscores and BI persistence pass. `gameResumed` calls `handleLevelMusic`;
+because the old name was cleared, `changeMusic` reaches `playAudio` with only
+the music resource name and no playback position. The decoder therefore
+starts from frame zero. Purple has no seek/resume handoff for this transition:
+the restart is the original iOS background/resume behavior exposed by the
+desktop host's focus-to-lifecycle mapping.
+
+The adjacent termination audit found a real host omission.
+`-[AppController applicationWillTerminate:]` at `0x1004047A8` clears
+`m_allowUpdate` and, on Purple's normal target branch, calls `stopUpdate`
+again even when an earlier resign-active notification already stopped the
+display link. It then resets the default `Configuration` through
+`sub_100401398` and destroys the controller. Because the GameLua active member
+itself does not deduplicate false transitions, that second `stopUpdate`
+delivers a final `gamePaused` and hence the final script-owned persistence
+pass. The previous Rust close path exited winit without this callback.
+
+The desktop host now routes winit's guaranteed `exiting` notification through
+a forced `application_will_terminate` boundary. Ordinary repeated focus-loss
+notifications remain deduplicated, while close, script-requested exit and
+fatal shutdown all deliver the native final pause/audio-stop ordering. An app
+regression boots the shipped scripts and proves one ordinary pause followed by
+one additional termination pause; the GameLua regression separately proves
+that two direct false dispatches remain observable and that both clear held
+input before the callback.
+
+The complete workspace passes 624 tests with one intentional ignored test (83
+app/audio/wgpu, 31 assets, one core and 509 passing plus one ignored
+script/physics test). Formatting, diff whitespace checks, strict
+all-target/all-feature Clippy and the release build are clean. A fresh
+180-frame release-wgpu upload, render and readback completed with 19 optional
+data probes, zero invoked fallbacks and zero remaining compatibility bindings.
+Its execution-evidence PNG SHA-256 is
+`ed626e4c19182f75407128c5ba721a43f1d070ae8fe6d01c691772618bcdf683`;
+the loading-frame image is not treated as a visual oracle. Current release
+SHA-256 values are
+`ec9c9c60c62f14e2fa4f33bfae888c95c5ac62aabfa492fef6ba3f77df584fb0`
+for `stella-app` and
+`f72fbc824aa9dad70fbd5949a41c3653338875a047318965ce86fb4bd35d8f6e`
+for `stella-headless`.
+
+## Native device information model publication
+
+The startup audit found one remaining host-authored value in an otherwise
+native-owned constructor path. Rust published the literal
+`Stella Rust rehost` as `deviceInfoModel`, but Purple never manufactures a
+product label there. In `sub_100026D2C`, instructions
+`0x1000270B8..0x100027100` allocate the 32-byte `pf::DeviceInfo` facade,
+construct it through `sub_10053B1E0`, obtain the model through
+`sub_10053B334` and publish the resulting `std::string` with
+`sub_10002BD74`. The independent `deviceModel` value remains the recovered
+platform literal `ios`.
+
+IDA resolves the virtual implementation to
+`pf::DeviceInfo::DeviceInfoImpl::getModel` at `0x10053B404`. Hopper confirms
+the same 224-byte procedure and eight basic blocks. The member first calls
+`sysctlbyname("hw.machine", null, &length, null, 0)`. A return value of `-1`
+or a zero length produces an empty string. Otherwise it allocates exactly
+that length, zeroes the buffer and repeats `sysctlbyname`; the same failure or
+zero-length branch frees the buffer and again returns empty. Only a successful
+second call constructs the returned C string and frees the temporary buffer.
+
+The recovered owner now lives in a separate `device_info` module instead of
+the GameLua registration coordinator. Apple targets reproduce the exact
+two-stage `hw.machine` query. Other Unix targets publish `uname.machine`, and
+Windows targets publish the Rust target machine name with `aarch64` normalized
+to `arm64`; these preserve the native hardware-identifier role without
+injecting rehost branding into the shipped scripts. Unit regressions cover
+both query stages, both failure/zero boundaries and NUL termination. A startup
+regression proves `deviceInfoModel` receives the platform query result, and an
+ARM64 MSVC metadata compile covers the non-Unix branch independently of the
+host's unavailable Windows C toolchain.
+
+The complete workspace passes 627 tests with one intentional ignored test (83
+app/audio/wgpu, 31 assets, one core and 512 passing plus one ignored
+script/physics test). Formatting, locked metadata, diff whitespace checks,
+strict all-target/all-feature Clippy and the locked release build are clean.
+The current macOS release publishes the queried `arm64` value. A fresh
+180-frame release-wgpu upload, render and readback completes with 19 optional
+data probes, zero invoked fallbacks and zero remaining compatibility bindings.
+Its execution-evidence PNG SHA-256 remains
+`ed626e4c19182f75407128c5ba721a43f1d070ae8fe6d01c691772618bcdf683`;
+the image is not treated as a visual oracle. Current release SHA-256 values are
+`5b04a56eea108dee6acbeb0e802fcb9ef1c74c2bdffc90bfc9c2825b417bcd0f`
+for `stella-app` and
+`5be691ed29cf7276651502f46f48a0df570b9548a0b526cd62677f192067505d`
+for `stella-headless`.
+
+## Script-owned physics and world scale publication
+
+The next startup-global comparison removed two values that Rust published too
+early. Neither IDA's complete string catalog nor Hopper's exact string search
+contains a native `physicsScale` or `worldScale` literal. Both disassemblers
+show the `sub_100026D2C` publication sequence at
+`0x100026FC8..0x100027100` containing `res`, the eight resource paths,
+`deviceModel` and `deviceInfoModel`; it then loads `starLimits.lua` and enters
+the shipped common `gamelogic.lua` through `sub_10005CD58` at
+`0x100027114..0x1000271B0`. There is no native scalar setter between those
+operations. The prior host-created `_G.physicsScale = 20` and
+`_G.worldScale = 1` were therefore visible at a point where Purple has no such
+globals.
+
+Instrumenting the original 1.1.6 bytecode with an environment `__newindex`
+observer establishes the positive owner and value. The common gamelogic chunk
+first creates `gamelua.physicsScale` with the binary64 value `0.05`; it does
+not create `worldScale`. The native post-chunk `updateValues` call preserves
+that value and still does not publish `worldScale`, and the complete shipped
+boot has the same raw state. `worldScale` appears only when the native
+`setWorldScale` member is subsequently called by the camera/gameplay path.
+The old `_G` fallbacks had hidden all three boundaries and even exposed the
+reciprocal value `20` before the original script wrote `0.05`.
+
+Rust no longer injects either scalar from the registration coordinator. A
+shipped-data regression proves both raw globals and both GameLua fields are nil
+before the common chunk, observes the bytecode's sole first-stage assignment,
+checks the post-`updateValues` and complete-boot states, and leaves
+`setWorldScale` as the only native publisher of the later world value. The
+complete all-level construction/update/draw regression also passes without
+the convenience fallbacks.
+
+The complete workspace passes 628 tests with one intentional ignored test (83
+app/audio/wgpu, 31 assets, one core and 513 passing plus one ignored
+script/physics test). Formatting, locked metadata, diff whitespace checks,
+strict all-target/all-feature Clippy and the locked release build are clean. A
+fresh 180-frame release-wgpu run asserts `physicsScale == 0.05`, raw
+`worldScale == nil`, then proves an explicit native `setWorldScale(1)` publishes
+the value. It completes with 19 optional data probes, zero invoked fallbacks
+and zero remaining compatibility bindings. Its execution-evidence PNG
+SHA-256 remains
+`ed626e4c19182f75407128c5ba721a43f1d070ae8fe6d01c691772618bcdf683`;
+the image is not treated as a visual oracle. Current release SHA-256 values are
+`a2672cbd70b8d99603fc883e6ff1685dbcad683358fb068883caf0708ff3934e`
+for `stella-app` and
+`01fcfef92f4b1145fffe416fa57e3ebbdcc682f8add7b2690ef875d72b9986c5`
+for `stella-headless`.
+
+## Script-owned clocks and parameter-only frame deltas
+
+Continuing the startup-global audit found five more values that Rust created
+before Purple would. IDA has no exact `deltaTime` or `playtimeCounter` native
+string. Its only exact `currentTimeStep` string is at `0x1009404C4`, and every
+xref belongs to `sub_100032970` or `sub_10004B8EC`, which read the live
+`objects.currentTimeStep` gameplay field for trajectory calculations. The
+apparent `g_time` hits are unreferenced suffixes inside unrelated longer
+strings such as `html5_endcard_loading_time`; byte inspection and both
+disassemblers find no standalone publisher. Hopper's exact string search
+independently returns only `time` and `currentTimeStep`, with neither attached
+to the GameLua constructor or frame callback as a global setter.
+
+The complete native frame path supplies the positive ABI. In
+`sub_10005E898`, `0x10005EC7C..0x10005EC88` retains the incoming float32
+delta, multiplies it once by GameLua's float32 time multiplier and stores the
+raw/scaled pair in stack locals. After the native physics, scene-export and
+service passes, `0x10006058C..0x1000605A0` calls
+`lua::LuaObject::call<float,float>("update", scaled, raw)` directly. There is
+no Lua-table setter for `g_time`, `deltaTime` or `currentTimeStep` anywhere
+between those operations. Hopper recovers the same direct two-float call and
+the same absence of an intervening field publication. The nearby native
+global publication is instead the explicitly named
+`g_physicsUpdateMillis` at `0x10005F228..0x10005F238`.
+
+Instrumenting the original 1.1.6 bytecode closes the ownership question. The
+common gamelogic chunk, its native `updateValues` continuation and a complete
+boot all leave raw `time`, `g_time`, `deltaTime`, `currentTimeStep` and
+`playtimeCounter` absent. On the first direct shipped `update(scaled, raw)`,
+the script creates only `time = 0` and `playtimeCounter = 0`; the second call
+adds the supplied frame delta to both. The other three fields remain absent.
+This also distinguishes the global name from the separately authored
+`objects.currentTimeStep` used by gameplay and the recovered trajectory
+members.
+
+Rust therefore no longer injects five zero-valued clock globals during
+bootstrap and no longer writes three convenience globals before every Lua
+update. The native host passes only the two float32-derived callback values;
+the shipped script owns its two persistent clocks and their first-frame
+creation boundary. Regressions observe the original bytecode assignments,
+prove the pre-chunk/post-`updateValues`/complete-boot raw state, and verify
+that a synthetic update receives the exact scaled/raw parameters without any
+host-created clock fields.
+
+## Native Assets service announcement and script facade
+
+Extending the real-flow run beyond the initial loading screen exposed a
+separate startup omission: a menu component eventually called
+`Assets.haveBeenDownloaded`, but the Rust host had announced only the native
+`social` cloud service. The function is intentionally absent from the native
+Assets constructor and is supplied later by the shipped cloud facade, so the
+1200-frame run stopped with a nil-function Lua error instead of entering the
+menu normally.
+
+IDA identifies the Assets vtable at `_ZTV6Assets` (`0x100A91080`), its RTTI at
+`_ZTI6Assets` (`0x100A910E0`) and the exact service-name string `"assets"` at
+`0x100942639`. The constructor `sub_1000AC118` registers only `loadFiles` at
+`0x1000AC1A0..0x1000AC1C0` and `createSpriteSheet` at
+`0x1000AC1CC..0x1000AC1EC`, then publishes the table as `Assets` at
+`0x1000AC1F4..0x1000AC204`. Its service-name members `sub_1000ACB34` and
+`sub_1000ACB60` both construct `"assets"`, while `sub_1000ACB18` invokes
+`onEnableService`. Hopper independently recovers the same two 44-byte
+service-name members, constructor publication and enable callback.
+
+The shipped `RovioCloudManager.lua` handles
+`EID_CLOUD_SERVICE_REGISTERED`, maps the `assets` name to
+`scripts_common/cloud/rovioid/Assets.lua` and loads that file only after the
+dispatcher exists. The facade defines `haveBeenDownloaded` and
+`getAssetFilename`; it is deliberately distinct from native `_G.Assets` and
+reaches native `loadFiles` through that explicit global table. Treating the
+two tables as one would hide the original wrapper/native ownership boundary.
+
+Startup now announces both native services in construction order (`social`,
+then `assets`) after the shipped dispatcher is ready. The common announcer
+first checks `RovioCloudManager.isServiceAvailable`, so replaying the boundary
+is idempotent. A regression proves both services become available before menu
+updates, the two Assets tables remain distinct, the native methods remain on
+`_G.Assets`, and the facade accepts the original filename-table argument to
+`haveBeenDownloaded`.
+
+The complete workspace passes 629 tests with one intentional long-duration
+test ignored (83 app/audio/wgpu, 31 assets, one core and 514 passing plus one
+ignored script/physics test). Formatting, locked metadata, diff whitespace
+checks, strict all-target/all-feature Clippy and the locked release build are
+clean. A final 1200-frame release-wgpu run loads Chapter01 L50 after frame 300,
+asserts the Assets facade and script-owned clock boundaries, and completes
+with 77 optional nil probes, zero invoked fallbacks and zero remaining
+compatibility bindings. The execution-evidence PNG SHA-256 is
+`51cda78d54a2f9c5f0b01c6840f93c3d97d4b70722e37e5436533443b7857b33`;
+the image is execution evidence rather than a visual oracle. Current release
+SHA-256 values are
+`865556232ea61f392a42859a7cd77c4e267baa8e90ecf91dbc6203b701bdfe09`
+for `stella-app` and
+`4fe5292e28d2df9c6cb650580b41118780c245abd4bc02a284b4ffba4941ab4d`
+for `stella-headless`.
+
+## Native input publication boundaries and script-owned screen
+
+The constructor-global audit found a final cluster of values that Rust made
+visible too early. IDA's `sub_10002C274` publication run shows
+`screenWidth`/`screenHeight` at `0x10002F364..0x10002F3A0`, followed directly
+by the retained `keyPressed`, `keyReleased`, `keyHold`, `cursor`,
+`multitouchSweep`, `multitouchZoom` and `clippedText` tables at
+`0x10002F3A4..0x10002F448`. The later native block republishes the two
+dimensions and creates `g_startingResolutionWidth/Height` at
+`0x10002F610..0x10002F6A4`. There is no constructor publication for a
+provisional `screen` table, `touches`, `touchcount`, or any standalone pointer
+event-name global between those instructions.
+
+The string inventories close the event-name boundary. Neither IDA nor Hopper
+contains exact native strings for `LPRESS`, `LHOLD`, `LRELEASE`, `RPRESS`,
+`RHOLD`, `RRELEASE`, `HOVER`, `PRESS`, `RELEASE`, or `WHEEL`. The only exact
+`LBUTTON` and `RBUTTON` strings are at `0x100986CDF` and `0x100986CEF`; IDA
+places their sole references in the static key-name data table at
+`0x100AA3748/0x100AA3758`, while Hopper reports no code xrefs. The shipped Lua
+chunks own the pointer-event strings as bytecode constants. Publishing all
+twelve as globals was a host convenience, not a Purple interface.
+
+Positive ownership for the other fields is equally explicit. The original
+common `gamelogic.lua` creates its raw `screen` table from the native
+dimensions; an environment observer sees `left`, `top`, `right` and `bottom`
+there while native `_G.screen` stays nil. The native frame member
+`sub_10005E898` constructs the current touch table, caps its vector traversal,
+publishes `touches` at `0x10005EC4C..0x10005EC5C`, converts the count to
+float32 and publishes `touchcount` at `0x10005EC60..0x10005EC78`, immediately
+before the scaled/raw delta path. Hopper independently recovers the same
+ordering and setters.
+
+The retained cursor also starts as an empty LuaObject. The actual native
+position member `sub_100029F8C` checks the GameLua pointer and writes only
+float32 `x` and `y` at `0x100029FB4..0x100029FE4`; Hopper's pseudocode matches
+the two fields and contains no `down` setter. Button edges remain in the
+native key tables. Rust now derives the prior primary-button state from the
+retained `keyHold.LBUTTON`, publishes only cursor `x/y`, and uses the native
+literal directly instead of performing a false Lua-global lookup.
+
+Rust therefore no longer creates the twelve event globals, a provisional
+native `screen`, constructor-time `touches/touchcount`, or cursor
+`x/y/down` defaults. Regressions prove all event globals and the native screen
+are nil at the relevant boundaries, the common bytecode owns screen creation,
+the cursor begins empty and never receives `down`, and every native frame
+replaces the touch table while preserving the two-touch cap, signed low-id
+format and float32 count.
+
+The complete workspace passes 630 tests with one intentional long-duration
+test ignored (83 app/audio/wgpu, 31 assets, one core and 515 passing plus one
+ignored script/physics test). Formatting, locked metadata, diff whitespace
+checks, strict all-target/all-feature Clippy and the locked release build are
+clean. A final 1200-frame release-wgpu run loads Chapter01 L50 at frame 300
+and injects a complete press/release at frame 1100. It asserts every removed
+event global, native `_G.screen`, frame-owned touches/count, script-owned
+screen, cursor `x/y` without `down`, released `keyHold.LBUTTON`, the Assets
+facade and the script-clock boundary. It completes with 80 optional nil
+probes, zero invoked fallbacks and zero remaining compatibility bindings. The
+execution-evidence PNG SHA-256 is
+`4ff2625b474421a237e130b4798908c242a18be4ce2011d1a568a8a235377239`;
+the image is execution evidence rather than a visual oracle. Current release
+SHA-256 values are
+`7cba7b2570aaa7a691798e714f4f52aee8fbb5049a7a7dd9524d85ef90a17416`
+for `stella-app` and
+`bb86a06a83d4bb38818dce0e7207e92292a915ee96df41d872c718132f11d5cb`
 for `stella-headless`.

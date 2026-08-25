@@ -134,6 +134,13 @@ impl ApplicationHandler for StellaApp {
         self.will_resign_active();
     }
 
+    fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        self.application_will_terminate();
+        if let Some(error) = self.fatal_error.take() {
+            eprintln!("runtime stopped during termination: {error}");
+        }
+    }
+
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         if self.active {
             self.advance();

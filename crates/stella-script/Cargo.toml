@@ -19,3 +19,6 @@ rodio.workspace = true
 serde_json.workspace = true
 stella-assets = { path = "../stella-assets" }
 thiserror.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true

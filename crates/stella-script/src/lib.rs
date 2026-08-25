@@ -2,6 +2,7 @@
 
 mod animation_wrapper;
 mod audio_types;
+mod device_info;
 mod game_lua;
 pub mod mpg123_compat;
 mod physics_world;
@@ -10,6 +11,7 @@ mod resource_manager;
 
 use animation_wrapper::*;
 pub use audio_types::{AudioAssetSource, AudioOutputClock, AudioOutputState, AudioPlaybackState};
+pub(crate) use device_info::native_device_info_model;
 pub use game_lua::StellaLua;
 use game_lua::*;
 use physics_world::*;

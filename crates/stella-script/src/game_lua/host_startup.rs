@@ -35,12 +35,12 @@ impl StellaLua {
         install_offline_game_server_facade(&self.lua)?;
         self.install_challenge_result_background_layout()?;
         install_input_queries(&self.lua)?;
-        // RovioCloudManager constructs/registers its native SocialManager
-        // before startup, but the service event is consumed only after the
-        // game scripts install the cloud dispatcher. Announcing it here loads
-        // the shipped script-side facade and preserves Purple's disconnected
-        // leaderboard presentation instead of leaving SocialBar spinning.
-        announce_social_service_registration(&self.lua)?;
+        // RovioCloudManager receives the native SocialManager and Assets
+        // services only after the scripts install its event dispatcher. The
+        // announcements load both shipped script facades before menus or
+        // level components can query them; the Assets facade deliberately
+        // calls the separately retained native `_G.Assets` table.
+        announce_cloud_service_registrations(&self.lua)?;
         if std::env::var_os("STELLA_TRACE_UI_INPUT").is_some() {
             self.execute_source(
                 r##"

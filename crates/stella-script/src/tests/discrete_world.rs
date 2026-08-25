@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn update_passes_scaled_and_unscaled_frame_deltas_in_native_order() {
+fn update_passes_only_scaled_and_unscaled_frame_deltas_in_native_order() {
     let runtime = unlocked_test_runtime();
     runtime
         .execute_source(
@@ -10,8 +10,9 @@ fn update_passes_scaled_and_unscaled_frame_deltas_in_native_order() {
                 update = function(scaled_delta, unscaled_delta)
                     captured_scaled_delta = scaled_delta
                     captured_unscaled_delta = unscaled_delta
-                    captured_delta_time = deltaTime
-                    captured_time_step = currentTimeStep
+                    captured_delta_time = rawget(gamelua, "deltaTime")
+                    captured_time_step = rawget(gamelua, "currentTimeStep")
+                    captured_g_time = rawget(gamelua, "g_time")
                 end
                 "##,
         )
@@ -29,14 +30,16 @@ fn update_passes_scaled_and_unscaled_frame_deltas_in_native_order() {
         environment.get::<f64>("captured_unscaled_delta").unwrap(),
         f64::from(raw)
     );
-    assert_eq!(
-        environment.get::<f64>("captured_delta_time").unwrap(),
-        f64::from(scaled)
-    );
-    assert_eq!(
-        environment.get::<f64>("captured_time_step").unwrap(),
-        f64::from(scaled)
-    );
+    for name in [
+        "captured_delta_time",
+        "captured_time_step",
+        "captured_g_time",
+    ] {
+        assert!(matches!(
+            environment.raw_get::<Value>(name).unwrap(),
+            Value::Nil
+        ));
+    }
 }
 
 #[test]

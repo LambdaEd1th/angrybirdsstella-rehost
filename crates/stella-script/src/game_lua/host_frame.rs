@@ -59,11 +59,6 @@ impl StellaLua {
             .expect("render bridge lock poisoned")
             .delta_time_multiplier;
         let scaled_delta = f64::from(multiplier * raw_delta);
-        let elapsed = environment.get::<f64>("time").unwrap_or(0.0) + scaled_delta;
-        environment.set("g_time", elapsed)?;
-        environment.set("deltaTime", scaled_delta)?;
-        environment.set("currentTimeStep", scaled_delta)?;
-
         // The first GameLua+0x6A8 read at 0x10005ECDC gates one complete
         // native phase: both ThemeManager layers, ThemeSpriteData, the fixed
         // Box2D loop, interpolation, and RenderObjectData destruction timers.
@@ -251,6 +246,7 @@ impl StellaLua {
                 if std::env::var_os("STELLA_TRACE_CAMERA").is_some()
                     && let Value::Table(camera) = environment.get::<Value>("gameCamera")?
                 {
+                    let elapsed = environment.get::<f64>("time").unwrap_or(0.0);
                     eprintln!(
                         "camera-state elapsed={elapsed:.6} delta={delta_seconds:.6} scaled_delta={scaled_delta:.6} spring={:?} spring_no_target={:?} slider={:?} target={:?} scale1={:?} scale2={:?} zoom={:?}",
                         environment.get::<Value>("g_cameraSpringForceConstant")?,

@@ -54,13 +54,14 @@ pub(crate) fn install_base_globals(
     globals.set("scriptPath", "scripts")?;
     globals.set("commonScriptPath", "scripts_common")?;
     globals.set("configPath", "config")?;
-    globals.set("physicsScale", 20.0_f64)?;
-    globals.set("worldScale", 1.0_f64)?;
+    // Purple does not publish physicsScale/worldScale from its native
+    // constructor. The shipped common gamelogic chunk owns both globals and
+    // initializes them in the retained GameLua environment.
     // The recovered 1.1.6 data set contains the `ios` camera profile. Keep
     // script-facing platform selection faithful even when the Rust host runs
     // on Windows, macOS, or Linux.
     globals.set("deviceModel", "ios")?;
-    globals.set("deviceInfoModel", "Stella Rust rehost")?;
+    globals.set("deviceInfoModel", native_device_info_model())?;
     // GameApp virtual slot +0xC8 publishes platform mouse availability. The
     // iOS 1.1.6 target has touch input but no platform mouse.
     globals.set("g_mouseAvailable", false)?;

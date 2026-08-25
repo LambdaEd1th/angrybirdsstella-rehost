@@ -1,6 +1,178 @@
 use super::*;
 
 #[test]
+fn shipped_gamelogic_owns_initial_screen_physics_scale_and_script_clocks() {
+    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data");
+    if !data_root.join("scripts_common/gamelogic.lua").is_file() {
+        return;
+    }
+    let runtime = StellaLua::new(data_root).unwrap();
+    let globals = runtime.lua().globals();
+    let environment = game_environment(runtime.lua()).unwrap();
+
+    assert!(matches!(
+        globals.raw_get::<Value>("screen").unwrap(),
+        Value::Nil
+    ));
+    assert!(matches!(
+        environment.raw_get::<Value>("screen").unwrap(),
+        Value::Nil
+    ));
+
+    let tracked_names = [
+        "physicsScale",
+        "worldScale",
+        "time",
+        "g_time",
+        "deltaTime",
+        "currentTimeStep",
+        "playtimeCounter",
+    ];
+    for name in tracked_names {
+        assert!(matches!(
+            globals.raw_get::<Value>(name).unwrap(),
+            Value::Nil
+        ));
+        assert!(matches!(
+            environment.raw_get::<Value>(name).unwrap(),
+            Value::Nil
+        ));
+    }
+
+    let assignments = Rc::new(RefCell::new(BTreeMap::<String, f64>::new()));
+    let captured = Rc::clone(&assignments);
+    let metatable = environment.metatable().unwrap();
+    metatable
+        .set(
+            "__newindex",
+            runtime
+                .lua()
+                .create_function(move |_, (table, key, value): (mlua::Table, Value, Value)| {
+                    if let Value::String(name) = &key {
+                        let name = name.to_string_lossy();
+                        if matches!(
+                            name.as_str(),
+                            "physicsScale"
+                                | "worldScale"
+                                | "time"
+                                | "g_time"
+                                | "deltaTime"
+                                | "currentTimeStep"
+                                | "playtimeCounter"
+                        ) {
+                            captured
+                                .borrow_mut()
+                                .insert(name, value_number(&value).unwrap());
+                        }
+                    }
+                    table.raw_set(key, value)
+                })
+                .unwrap(),
+        )
+        .unwrap();
+
+    runtime.execute("scripts_common/gamelogic.lua").unwrap();
+    let expected = BTreeMap::from([("physicsScale".to_owned(), 0.05)]);
+    assert_eq!(&*assignments.borrow(), &expected);
+    assert!(matches!(
+        globals.raw_get::<Value>("screen").unwrap(),
+        Value::Nil
+    ));
+    let screen = environment.raw_get::<mlua::Table>("screen").unwrap();
+    assert_eq!(screen.get::<f64>("left").unwrap(), 0.0);
+    assert_eq!(screen.get::<f64>("top").unwrap(), 0.0);
+    assert_eq!(screen.get::<f64>("right").unwrap(), 1024.0);
+    assert_eq!(screen.get::<f64>("bottom").unwrap(), 768.0);
+    assert!(matches!(
+        screen.raw_get::<Value>("width").unwrap(),
+        Value::Nil
+    ));
+    assert!(matches!(
+        screen.raw_get::<Value>("height").unwrap(),
+        Value::Nil
+    ));
+    assert_eq!(environment.raw_get::<f64>("physicsScale").unwrap(), 0.05);
+    assert!(matches!(
+        environment.raw_get::<Value>("worldScale").unwrap(),
+        Value::Nil
+    ));
+
+    runtime.finish_gamelogic_load().unwrap();
+    assert_eq!(environment.raw_get::<f64>("physicsScale").unwrap(), 0.05);
+    for name in &tracked_names[1..] {
+        assert!(matches!(
+            environment.raw_get::<Value>(*name).unwrap(),
+            Value::Nil
+        ));
+    }
+
+    let booted = StellaLua::new(runtime.data_root()).unwrap();
+    booted.boot("scripts/game.lua").unwrap();
+    let booted_environment = game_environment(booted.lua()).unwrap();
+    assert_eq!(
+        booted_environment.raw_get::<f64>("physicsScale").unwrap(),
+        0.05
+    );
+    for name in &tracked_names[1..] {
+        assert!(matches!(
+            booted_environment.raw_get::<Value>(*name).unwrap(),
+            Value::Nil
+        ));
+    }
+
+    let clock_assignments = Rc::new(RefCell::new(Vec::<(String, f64)>::new()));
+    let captured = Rc::clone(&clock_assignments);
+    booted_environment
+        .metatable()
+        .unwrap()
+        .set(
+            "__newindex",
+            booted
+                .lua()
+                .create_function(move |_, (table, key, value): (mlua::Table, Value, Value)| {
+                    if let Value::String(name) = &key {
+                        let name = name.to_string_lossy();
+                        if matches!(name.as_str(), "time" | "playtimeCounter") {
+                            captured
+                                .borrow_mut()
+                                .push((name, value_number(&value).unwrap()));
+                        }
+                    }
+                    table.raw_set(key, value)
+                })
+                .unwrap(),
+        )
+        .unwrap();
+    let update = booted_environment.get::<Function>("update").unwrap();
+    let frame_delta = f64::from(1.0_f32 / 60.0_f32);
+    update.call::<()>((frame_delta, frame_delta)).unwrap();
+    assert_eq!(
+        &*clock_assignments.borrow(),
+        &[
+            ("time".to_owned(), 0.0),
+            ("playtimeCounter".to_owned(), 0.0)
+        ]
+    );
+    update.call::<()>((frame_delta, frame_delta)).unwrap();
+    assert_eq!(
+        booted_environment.raw_get::<f64>("time").unwrap(),
+        frame_delta
+    );
+    assert_eq!(
+        booted_environment
+            .raw_get::<f64>("playtimeCounter")
+            .unwrap(),
+        frame_delta
+    );
+    for name in ["g_time", "deltaTime", "currentTimeStep"] {
+        assert!(matches!(
+            booted_environment.raw_get::<Value>(name).unwrap(),
+            Value::Nil
+        ));
+    }
+}
+
+#[test]
 fn host_draw_invokes_the_shipped_outer_callback_without_a_second_drawcalls_pass() {
     let runtime = StellaLua::new("/tmp").unwrap();
     runtime
@@ -245,6 +417,8 @@ fn game_lua_constructor_publishes_native_gesture_and_clip_tables() {
     let runtime = StellaLua::new("/tmp").unwrap();
     let environment = game_environment(runtime.lua()).unwrap();
 
+    let cursor = environment.get::<mlua::Table>("cursor").unwrap();
+    assert!(cursor.pairs::<Value, Value>().next().is_none());
     assert!(matches!(
         environment.get::<Value>("multitouchSweep").unwrap(),
         Value::Table(_)
@@ -273,6 +447,47 @@ fn game_lua_constructor_publishes_native_gesture_and_clip_tables() {
         .unwrap();
     assert!(environment.get::<bool>("nativeSweepRetained").unwrap());
     assert!(environment.get::<bool>("nativeZoomRetained").unwrap());
+}
+
+#[test]
+fn native_constructor_does_not_publish_script_pointer_event_literals() {
+    let sandbox = ShippedDataSandbox::new("script-pointer-event-literals");
+    let runtime = StellaLua::new(&sandbox.data_root).unwrap();
+    let globals = runtime.lua().globals();
+    let names = [
+        "LBUTTON", "RBUTTON", "LPRESS", "LHOLD", "LRELEASE", "RPRESS", "RHOLD", "RRELEASE",
+        "HOVER", "PRESS", "RELEASE", "WHEEL",
+    ];
+    for name in names {
+        assert!(matches!(
+            globals.raw_get::<Value>(name).unwrap(),
+            Value::Nil
+        ));
+    }
+
+    runtime.boot("scripts/game.lua").unwrap();
+    let environment = game_environment(runtime.lua()).unwrap();
+    for name in names {
+        assert!(matches!(
+            environment.raw_get::<Value>(name).unwrap(),
+            Value::Nil
+        ));
+    }
+
+    // The native touch bridge owns the LBUTTON key-table field directly and
+    // does not depend on a same-named Lua global.
+    runtime.set_cursor(12.0, 34.0, true).unwrap();
+    let key_pressed = environment.get::<mlua::Table>("keyPressed").unwrap();
+    let key_hold = environment.get::<mlua::Table>("keyHold").unwrap();
+    assert!(key_pressed.get::<bool>("LBUTTON").unwrap());
+    assert!(key_hold.get::<bool>("LBUTTON").unwrap());
+    let cursor = environment.get::<mlua::Table>("cursor").unwrap();
+    assert_eq!(cursor.get::<f64>("x").unwrap(), 12.0);
+    assert_eq!(cursor.get::<f64>("y").unwrap(), 34.0);
+    assert!(matches!(
+        cursor.raw_get::<Value>("down").unwrap(),
+        Value::Nil
+    ));
 }
 
 #[test]
@@ -360,10 +575,21 @@ fn game_lua_constructor_loads_the_three_native_persistent_tables() {
 #[test]
 fn native_touch_publication_replaces_the_table_caps_at_two_and_formats_ids() {
     let runtime = StellaLua::new("/tmp").unwrap();
-    runtime.execute_source("initialTouches = touches").unwrap();
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert!(matches!(
+        environment.raw_get::<Value>("touches").unwrap(),
+        Value::Nil
+    ));
+    assert!(matches!(
+        environment.raw_get::<Value>("touchcount").unwrap(),
+        Value::Nil
+    ));
     runtime
         .set_touches(&[(7, 12, 34), (u64::from(u32::MAX), -5, 81), (9, 1, 2)])
         .unwrap();
+    assert!(!runtime.update(0.0).unwrap());
+    let first_published = environment.get::<mlua::Table>("touches").unwrap();
+    environment.set("initialTouches", first_published).unwrap();
     assert!(!runtime.update(0.0).unwrap());
     runtime
         .execute_source(
@@ -374,7 +600,6 @@ fn native_touch_publication_replaces_the_table_caps_at_two_and_formats_ids() {
         )
         .unwrap();
 
-    let environment = game_environment(runtime.lua()).unwrap();
     assert!(environment.get::<bool>("touchesTableWasReplaced").unwrap());
     assert!(environment.get::<bool>("thirdTouchWasCapped").unwrap());
     assert_eq!(environment.get::<f64>("touchcount").unwrap(), 2.0);
@@ -516,6 +741,19 @@ fn application_activation_gates_callbacks_until_loaded_and_clears_input_first() 
     assert_eq!(resumed.get::<String>("name").unwrap(), "resumed");
     assert!(!resumed.get::<bool>("back").unwrap());
     assert!(!resumed.get::<bool>("button").unwrap());
+
+    // AppController does not deduplicate its native stopUpdate dispatch.
+    // applicationWillTerminate therefore delivers one final gamePaused even
+    // when applicationWillResignActive already stopped the display link.
+    runtime.set_application_active(false).unwrap();
+    runtime.set_application_active(false).unwrap();
+    assert_eq!(lifecycle.raw_len(), 4);
+    for index in [3, 4] {
+        let paused = lifecycle.raw_get::<mlua::Table>(index).unwrap();
+        assert_eq!(paused.get::<String>("name").unwrap(), "paused");
+        assert!(!paused.get::<bool>("back").unwrap());
+        assert!(!paused.get::<bool>("button").unwrap());
+    }
 
     assert!(!runtime.update(0.0).unwrap());
     assert_eq!(environment.get::<f64>("touchcount").unwrap(), 0.0);

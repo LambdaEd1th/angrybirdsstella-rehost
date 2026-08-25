@@ -3,6 +3,7 @@
 mod align;
 mod analytics;
 mod assets;
+mod cloud_service;
 mod force_update;
 mod game_server;
 mod gamer_services;
@@ -41,5 +42,5 @@ pub(crate) fn install(
     Ok(())
 }
 
+pub(crate) use cloud_service::announce_registrations as announce_cloud_service_registrations;
 pub(crate) use game_server::install_offline_facade as install_offline_game_server_facade;
-pub(crate) use social::announce_registration as announce_social_service_registration;

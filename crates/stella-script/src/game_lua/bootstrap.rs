@@ -10,13 +10,11 @@ pub(crate) fn install(
     data_root: &Path,
 ) -> LuaResult<()> {
     let cursor = lua.create_table()?;
-    cursor.set("x", 0.0)?;
-    cursor.set("y", 0.0)?;
-    cursor.set("down", false)?;
     globals.set("cursor", cursor.clone())?;
     retain_native_lua_object(lua, NativeLuaObject::Cursor, Some(&cursor))?;
-    globals.set("touches", lua.create_table()?)?;
-    globals.set("touchcount", 0)?;
+    // `touches` and `touchcount` are constructed and replaced by the native
+    // frame member immediately before each Lua update, not by GameLua's
+    // constructor.
     for (name, object) in [
         ("keyPressed", NativeLuaObject::KeyPressed),
         ("keyReleased", NativeLuaObject::KeyReleased),
@@ -53,17 +51,13 @@ pub(crate) fn install(
         };
         globals.set(name, table)?;
     }
-    for input_constant in [
-        "LBUTTON", "RBUTTON", "LPRESS", "LHOLD", "LRELEASE", "RPRESS", "RHOLD", "RRELEASE",
-        "HOVER", "PRESS", "RELEASE", "WHEEL",
-    ] {
-        globals.set(input_constant, input_constant)?;
-    }
-    globals.set("time", 0.0)?;
-    globals.set("g_time", 0.0)?;
-    globals.set("deltaTime", 0.0)?;
-    globals.set("currentTimeStep", 0.0)?;
-    globals.set("playtimeCounter", 0.0)?;
+    // Pointer/button event names are string constants owned by the shipped
+    // bytecode. GameLua publishes the three input-state tables above, but it
+    // does not mirror those event names into standalone Lua globals.
+    // Purple's native constructors do not publish script clock globals. The
+    // shipped gamelogic update owns `time` and `playtimeCounter`; the frame
+    // delta values remain callback parameters rather than host-created
+    // `g_time`, `deltaTime`, or `currentTimeStep` fields.
     let gamelua = lua.create_table()?;
     install_global_fallback(lua, &gamelua)?;
     let ui = lua.create_table()?;
@@ -75,14 +69,8 @@ pub(crate) fn install(
     globals.set("this", gamelua)?;
     globals.set("screenWidth", screen_width)?;
     globals.set("screenHeight", screen_height)?;
-    let screen = lua.create_table()?;
-    screen.set("left", 0.0_f64)?;
-    screen.set("top", 0.0_f64)?;
-    screen.set("right", f64::from(screen_width))?;
-    screen.set("bottom", f64::from(screen_height))?;
-    screen.set("width", f64::from(screen_width))?;
-    screen.set("height", f64::from(screen_height))?;
-    globals.set("screen", screen)?;
+    // The common gamelogic bytecode constructs `screen` from the two native
+    // dimensions. Purple publishes no provisional native table beforehand.
     globals.set("g_startingResolutionWidth", screen_width)?;
     globals.set("g_startingResolutionHeight", screen_height)?;
     Ok(())

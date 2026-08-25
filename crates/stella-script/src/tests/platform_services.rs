@@ -1645,6 +1645,19 @@ fn resolution_change_latches_old_corrected_camera_scale_before_callback() {
 }
 
 #[test]
+fn startup_device_info_model_comes_from_the_native_platform_query() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    assert_eq!(
+        runtime
+            .lua()
+            .globals()
+            .get::<String>("deviceInfoModel")
+            .unwrap(),
+        native_device_info_model()
+    );
+}
+
+#[test]
 fn safe_to_quit_is_lua_truthy_and_latched_before_script_update() {
     let runtime = StellaLua::new("/tmp").unwrap();
     assert!(
@@ -1862,6 +1875,79 @@ fn downloadable_assets_match_native_load_callbacks_and_sheet_abi() {
     );
 
     fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn boot_announces_native_social_and_assets_services_before_menu_updates() {
+    let sandbox = ShippedDataSandbox::new("cloud-service-announcement");
+    let runtime = StellaLua::new(&sandbox.data_root).unwrap();
+    let native_assets = runtime
+        .lua()
+        .globals()
+        .get::<mlua::Table>("Assets")
+        .unwrap();
+    assert!(matches!(
+        native_assets.get::<Value>("haveBeenDownloaded").unwrap(),
+        Value::Nil
+    ));
+
+    runtime.boot("scripts/game.lua").unwrap();
+    let booted_assets = game_environment(runtime.lua())
+        .unwrap()
+        .get::<mlua::Table>("Assets")
+        .unwrap();
+    assert_ne!(native_assets.to_pointer(), booted_assets.to_pointer());
+    for name in ["loadFiles", "createSpriteSheet"] {
+        assert!(native_assets.get::<Function>(name).is_ok(), "{name}");
+    }
+    runtime
+        .execute_source(
+            r#"
+                cloud_social_available =
+                    RovioCloudManager.isServiceAvailable("social")
+                cloud_assets_available =
+                    RovioCloudManager.isServiceAvailable("assets")
+                assets_have_been_downloaded_loaded =
+                    type(Assets.haveBeenDownloaded) == "function"
+                assets_filename_loaded =
+                    type(Assets.getAssetFilename) == "function"
+                assets_download_probe_callable, assets_download_probe_error = pcall(
+                    Assets.haveBeenDownloaded, { "telepod_configuration.dat" }
+                )
+            "#,
+        )
+        .unwrap();
+    let environment = game_environment(runtime.lua()).unwrap();
+    for name in [
+        "cloud_social_available",
+        "cloud_assets_available",
+        "assets_have_been_downloaded_loaded",
+        "assets_filename_loaded",
+    ] {
+        assert!(environment.get::<bool>(name).unwrap(), "{name}");
+    }
+    assert!(
+        environment
+            .get::<bool>("assets_download_probe_callable")
+            .unwrap(),
+        "{}",
+        environment
+            .get::<String>("assets_download_probe_error")
+            .unwrap()
+    );
+
+    // Native registration is a one-shot service-map insertion. Replaying the
+    // desktop boundary must therefore leave both script facades intact.
+    announce_cloud_service_registrations(runtime.lua()).unwrap();
+    runtime
+        .execute_source(
+            r#"
+                assert(RovioCloudManager.isServiceAvailable("social"))
+                assert(RovioCloudManager.isServiceAvailable("assets"))
+                assert(type(Assets.haveBeenDownloaded) == "function")
+            "#,
+        )
+        .unwrap();
 }
 
 #[test]

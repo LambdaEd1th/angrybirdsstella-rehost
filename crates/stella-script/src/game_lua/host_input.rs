@@ -273,15 +273,16 @@ impl StellaLua {
     pub fn set_cursor(&self, x: f64, y: f64, down: bool) -> Result<(), ScriptError> {
         let cursor = native_lua_object(&self.lua, NativeLuaObject::Cursor)?
             .ok_or_else(|| runtime_error("cursor is not a table"))?;
-        let was_down = cursor.get::<bool>("down").unwrap_or(false);
+        let was_down = native_lua_object(&self.lua, NativeLuaObject::KeyHold)?
+            .and_then(|table| table.raw_get::<bool>("LBUTTON").ok())
+            .unwrap_or(false);
         cursor.set("x", x)?;
         cursor.set("y", y)?;
-        cursor.set("down", down)?;
         let environment = game_environment(&self.lua)?;
-        let key = match environment.get::<Value>("LBUTTON")? {
-            Value::Nil => Value::String(self.lua.create_string("LBUTTON")?),
-            value => value,
-        };
+        // GameApp's static key-name table owns this literal. It is not looked
+        // up through Lua and therefore must not trigger the missing-global
+        // observer when publishing the native LBUTTON state.
+        let key = Value::String(self.lua.create_string("LBUTTON")?);
         for name in ["keyHold", "g_keyHold", "g_keyHoldNotBlocked"] {
             set_input_flag(&self.lua, &environment, name, key.clone(), down)?;
         }
