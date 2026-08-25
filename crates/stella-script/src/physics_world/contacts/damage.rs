@@ -37,23 +37,18 @@ pub(crate) fn native_collision_force_factors(
             factors.powerup_damage_multiplier = value;
         }
         let damage_factors = match entry.get::<Value>("damageFactors")? {
-            Value::String(name) => {
-                let environment = game_environment(lua)?;
-                match environment.get::<Value>("blockTable")? {
-                    Value::Table(block_table) => {
-                        match block_table.get::<Value>("damageFactors")? {
-                            Value::Table(definitions) => {
-                                match definitions.get::<Value>(name.to_string_lossy())? {
-                                    Value::Table(definition) => Some(definition),
-                                    _ => None,
-                                }
-                            }
+            Value::String(name) => match native_lua_object(lua, NativeLuaObject::BlockTable)? {
+                Some(block_table) => match block_table.get::<Value>("damageFactors")? {
+                    Value::Table(definitions) => {
+                        match definitions.get::<Value>(name.to_string_lossy())? {
+                            Value::Table(definition) => Some(definition),
                             _ => None,
                         }
                     }
                     _ => None,
-                }
-            }
+                },
+                _ => None,
+            },
             _ => None,
         };
         if let Some(damage_factors) = damage_factors {
@@ -75,8 +70,7 @@ pub(crate) fn native_collision_force_factors(
 }
 
 pub(crate) fn native_force_damage_multiplier(lua: &Lua) -> LuaResult<f64> {
-    let environment = game_environment(lua)?;
-    let Value::Table(world_attributes) = environment.get::<Value>("worldAttributes")? else {
+    let Some(world_attributes) = native_lua_object(lua, NativeLuaObject::WorldAttributes)? else {
         return Ok(1.0);
     };
     Ok(value_number(&world_attributes.get::<Value>("forceDamageMultiplier")?).unwrap_or(1.0))
@@ -101,12 +95,17 @@ pub(crate) fn native_queue_dead_block(lua: &Lua, name: &str, strength: f64) -> L
         return Ok(false);
     };
     entry.set("strength", strength)?;
-    let environment = game_environment(lua)?;
-    let dead_blocks = match environment.get::<Value>("deadBlocks")? {
-        Value::Table(table) => table,
-        _ => {
+    let dead_blocks = match native_lua_object(lua, NativeLuaObject::DeadBlocks)? {
+        Some(table) => table,
+        None => {
+            // Pre-boot/unit runtimes may invoke the native damage bridge
+            // without passing through loadLevelImpl. Preserve the previous
+            // safe bootstrap there, then retain the concrete identity exactly
+            // as a real level load would.
+            let environment = game_environment(lua)?;
             let table = lua.create_table()?;
             environment.set("deadBlocks", table.clone())?;
+            retain_native_lua_object(lua, NativeLuaObject::DeadBlocks, Some(&table))?;
             table
         }
     };
@@ -177,8 +176,8 @@ pub(crate) fn native_add_block_collision_score(lua: &Lua, score_damage: f64) -> 
         return Ok(());
     }
     let environment = game_environment(lua)?;
-    let multiplier = match environment.get::<Value>("worldAttributes")? {
-        Value::Table(attributes) => {
+    let multiplier = match native_lua_object(lua, NativeLuaObject::WorldAttributes)? {
+        Some(attributes) => {
             value_number(&attributes.get::<Value>("scoreDamageMultiplier")?).unwrap_or(1.0)
         }
         _ => value_number(&environment.get::<Value>("scoreDamageMultiplier")?).unwrap_or(1.0),

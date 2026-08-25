@@ -1,5 +1,18 @@
 use super::*;
 
+fn load_native_simulation_settings(
+    runtime: &StellaLua,
+    iterations: i32,
+    time_step_multiplier: f32,
+    point_sampler: i32,
+) {
+    runtime
+        .render
+        .lock()
+        .unwrap()
+        .load_native_simulation_settings(iterations, time_step_multiplier, point_sampler);
+}
+
 #[test]
 fn trajectory_draw_submission_retains_the_resolved_atlas_across_shadow_and_release() {
     let unique = std::time::SystemTime::now()
@@ -74,8 +87,9 @@ fn game_parameters_reads_only_the_native_stack_top_table() {
 }
 
 #[test]
-fn native_trajectory_uses_world_attribute_steps_sampling_and_f32_aiming_time() {
+fn native_trajectory_snapshots_steps_while_aiming_time_reads_live_iterations() {
     let runtime = unlocked_test_runtime();
+    load_native_simulation_settings(&runtime, 3, 2.0, 2);
     runtime
         .execute_source(
             r#"
@@ -84,7 +98,7 @@ fn native_trajectory_uses_world_attribute_steps_sampling_and_f32_aiming_time() {
                     simulationTimeStepMultiplier = 2,
                     simulationStorePointsSampler = 2
                 }
-                objects = { currentTimeStep = 0.25 }
+                objects = { currentTimeStep = "0.25" }
                 createCircle("BirdSimulation", "", 0, 0, 1, 1, 0, 0,
                     true, false, 1)
                 createCircle("selected", "", 10, 0, 1, 1, 0, 0,
@@ -96,6 +110,14 @@ fn native_trajectory_uses_world_attribute_steps_sampling_and_f32_aiming_time() {
                 updateBirdTrajectoryTable()
                 native_aiming_time = getAimingTime()
                 native_trajectory = getSimulationTrajectoryPoints()
+                worldAttributes.simulationIterations = 99
+                worldAttributes.simulationTimeStepMultiplier = 99
+                worldAttributes.simulationStorePointsSampler = 99
+                objects = { currentTimeStep = 4 }
+                worldAttributes = { simulationIterations = 7 }
+                updateBirdTrajectoryTable()
+                native_aiming_time_after_mutation = getAimingTime()
+                native_trajectory_after_mutation = getSimulationTrajectoryPoints()
                 "#,
         )
         .unwrap();
@@ -105,8 +127,18 @@ fn native_trajectory_uses_world_attribute_steps_sampling_and_f32_aiming_time() {
         environment.get::<f64>("native_aiming_time").unwrap(),
         f64::from(0.25_f32 * 3.0_f32)
     );
+    assert_eq!(
+        environment
+            .get::<f64>("native_aiming_time_after_mutation")
+            .unwrap(),
+        f64::from(0.25_f32 * 99.0_f32)
+    );
     let trajectory = environment.get::<mlua::Table>("native_trajectory").unwrap();
+    let trajectory_after_mutation = environment
+        .get::<mlua::Table>("native_trajectory_after_mutation")
+        .unwrap();
     assert_eq!(trajectory.raw_len(), 2);
+    assert_eq!(trajectory_after_mutation.raw_len(), 2);
     let first = trajectory.get::<mlua::Table>(1).unwrap();
     let second = trajectory.get::<mlua::Table>(2).unwrap();
     assert_eq!(first.get::<f64>("x").unwrap(), f64::from(0.05_f32));
@@ -124,6 +156,7 @@ fn native_trajectory_uses_world_attribute_steps_sampling_and_f32_aiming_time() {
 #[test]
 fn trajectory_additional_gravity_is_independent_from_water_color_blue() {
     let runtime = unlocked_test_runtime();
+    load_native_simulation_settings(&runtime, 1, 1.0, 1);
     runtime
         .execute_source(
             r#"
@@ -179,6 +212,7 @@ fn locked_world_preserves_the_selected_bird_and_previous_prediction() {
 #[test]
 fn native_trajectory_uses_custom_single_body_gravity_and_zero_sampler_remainder() {
     let runtime = unlocked_test_runtime();
+    load_native_simulation_settings(&runtime, 3, 1.0, 0);
     runtime
         .execute_source(
             r#"
@@ -242,6 +276,7 @@ fn native_trajectory_single_body_step_clamps_translation_and_rotation() {
 #[test]
 fn native_trajectory_applies_registered_overlapping_sensor_forces() {
     let runtime = unlocked_test_runtime();
+    load_native_simulation_settings(&runtime, 1, 1.0, 1);
     runtime
         .execute_source(
             r#"
@@ -281,6 +316,12 @@ fn native_trajectory_applies_registered_overlapping_sensor_forces() {
 #[test]
 fn native_aim_stream_populates_updates_and_draws_catmull_particles() {
     let runtime = unlocked_test_runtime();
+    load_native_simulation_settings(&runtime, 10, 1.0, 1);
+    runtime
+        .render
+        .lock()
+        .unwrap()
+        .load_native_aim_stream_settings(0.5, 2.0);
     runtime
         .execute_source(
             r#"
@@ -301,13 +342,19 @@ fn native_aim_stream_populates_updates_and_draws_catmull_particles() {
                 native_setAdditionalBirdGravity(0)
                 setVelocity("BirdSimulation", 1, 0)
                 updateBirdTrajectoryTable()
+                update = function() end
+                updatePhysics = function() end
+                "#,
+        )
+        .unwrap();
+    runtime
+        .execute_source(
+            r#"
                 setAimingAidSprite("TRAIL_AIM_STELLA")
                 populateAimingAid()
                 enable_type_ok = pcall(enableAimingAid, 1)
                 enableAimingAid(true)
                 native_drawSimulationTrajectory()
-                update = function() end
-                updatePhysics = function() end
                 "#,
         )
         .unwrap();
@@ -381,8 +428,9 @@ fn physics_lock_after_lua_update_freezes_native_aim_stream() {
         .unwrap();
     {
         let mut bridge = runtime.render.lock().unwrap();
+        bridge.load_native_aim_stream_settings(0.5, 2.0);
         bridge.aim_stream_control_points = (0..12).map(|x| (f64::from(x), 0.0)).collect();
-        bridge.populate_native_aim_stream(0.5, 2.0);
+        bridge.populate_native_aim_stream();
         bridge.aim_stream_active = true;
     }
     let before = {
@@ -401,8 +449,39 @@ fn physics_lock_after_lua_update_freezes_native_aim_stream() {
 }
 
 #[test]
+fn aim_stream_draw_applies_pending_enabled_state_only_after_points_are_valid() {
+    let runtime = unlocked_test_runtime();
+    runtime.execute_source("enableAimingAid(true)").unwrap();
+
+    // sub_10004C4CC returns before both draw and setActive when AimStream has
+    // fewer than four control points.
+    runtime
+        .execute_source("native_drawSimulationTrajectory()")
+        .unwrap();
+    assert!(!runtime.render.lock().unwrap().aim_stream_active);
+
+    // A valid stream reaches setActive even when its sprite name is empty;
+    // AimStream::draw emits the native warning but the wrapper still applies
+    // the pending enabled flag after the draw call.
+    runtime.render.lock().unwrap().aim_stream_control_points =
+        vec![(0.0, 0.0), (0.0, 0.0), (1.0, 0.0), (1.0, 0.0)];
+    runtime
+        .execute_source("native_drawSimulationTrajectory()")
+        .unwrap();
+    let bridge = runtime.render.lock().unwrap();
+    assert!(bridge.aim_stream_active);
+    assert!(bridge.commands.is_empty());
+}
+
+#[test]
 fn clear_aiming_aid_prunes_the_normalized_prefix_and_deactivates_the_stream() {
     let runtime = unlocked_test_runtime();
+    load_native_simulation_settings(&runtime, 10, 1.0, 1);
+    runtime
+        .render
+        .lock()
+        .unwrap()
+        .load_native_aim_stream_settings(0.5, 2.0);
     runtime
         .execute_source(
             r#"
@@ -420,6 +499,12 @@ fn clear_aiming_aid_prunes_the_normalized_prefix_and_deactivates_the_stream() {
                 native_setAdditionalBirdGravity(0)
                 setVelocity("BirdSimulation", 1, 0)
                 updateBirdTrajectoryTable()
+                "#,
+        )
+        .unwrap();
+    runtime
+        .execute_source(
+            r#"
                 populateAimingAid()
                 enableAimingAid(true)
                 clear_type_ok = pcall(clearAimingAid, true)
@@ -440,6 +525,7 @@ fn clear_aiming_aid_prunes_the_normalized_prefix_and_deactivates_the_stream() {
 #[test]
 fn clear_aiming_aid_one_removes_every_particle_without_erasing_the_path() {
     let runtime = unlocked_test_runtime();
+    load_native_simulation_settings(&runtime, 4, 1.0, 1);
     runtime
         .execute_source(
             r#"
@@ -471,6 +557,7 @@ fn clear_aiming_aid_one_removes_every_particle_without_erasing_the_path() {
 #[test]
 fn trajectory_and_textured_line_emit_render_commands() {
     let runtime = unlocked_test_runtime();
+    load_native_simulation_settings(&runtime, 4, 1.0, 1);
     register_test_sprite_sheet(&runtime, &["RUBBER"]);
     runtime
         .execute_source(
@@ -520,6 +607,7 @@ fn trajectory_and_textured_line_emit_render_commands() {
 #[test]
 fn native_flight_trajectory_is_strict_double_buffered_and_independent() {
     let runtime = unlocked_test_runtime();
+    load_native_simulation_settings(&runtime, 4, 1.0, 1);
     runtime
         .execute_source(
             r#"
@@ -672,6 +760,46 @@ fn textured_line_uses_native_context_geometry_and_strict_adapter() {
     );
     assert_eq!(line.state.alpha, 0.25);
     assert!(line.world_space);
+}
+
+#[test]
+fn line_sprite_generated_adapters_require_exact_tags_and_ignore_extras() {
+    let runtime = unlocked_test_runtime();
+    register_test_sprite_sheet(&runtime, &["RUBBER"]);
+    runtime
+        .execute_source(
+            r#"
+                textured_rejects_numeric_sprite = not pcall(
+                    drawTexturedLine2D, 123, 0, 0, 10, 0, 2, 1, 2, 3, 4)
+                textured_rejects_string_number = not pcall(
+                    drawTexturedLine2D, "RUBBER", "0", 0, 10, 0, 2, 1, 2, 3, 4)
+                textured_rejects_wrong_inert_slot = not pcall(
+                    drawTexturedLine2D, "RUBBER", 0, 0, 10, 0, 2, 1, 2, 3, "4")
+                textured_accepts_trailing = pcall(
+                    drawTexturedLine2D, "RUBBER", 0, 0, 10, 0, 2, 1, 2, 3, 4, "ignored")
+                rubber_rejects_string_number = not pcall(
+                    drawRubberband, "0", 10, 10, 10, 2, "RUBBER")
+                rubber_rejects_numeric_sprite = not pcall(
+                    drawRubberband, 0, 10, 10, 10, 2, 123)
+                rubber_accepts_trailing = pcall(
+                    drawRubberband, 0, 10, 10, 10, 2, "RUBBER", "ignored")
+                "#,
+        )
+        .unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    for name in [
+        "textured_rejects_numeric_sprite",
+        "textured_rejects_string_number",
+        "textured_rejects_wrong_inert_slot",
+        "textured_accepts_trailing",
+        "rubber_rejects_string_number",
+        "rubber_rejects_numeric_sprite",
+        "rubber_accepts_trailing",
+    ] {
+        assert!(environment.get::<bool>(name).unwrap(), "{name}");
+    }
+    assert_eq!(runtime.render.lock().unwrap().commands.len(), 2);
 }
 
 #[test]

@@ -11,7 +11,13 @@ impl StellaLua {
     pub fn set_application_active(&self, active: bool) -> Result<(), ScriptError> {
         self.set_touches(&[])?;
         let environment = game_environment(&self.lua)?;
-        for table_name in ["keyHold", "g_keyHold", "g_keyHoldNotBlocked"] {
+        if let Some(table) = native_lua_object(&self.lua, NativeLuaObject::KeyHold)? {
+            for key in NATIVE_FRAME_KEYS {
+                table.raw_set(key, false)?;
+            }
+            table.raw_set(1, Value::Nil)?;
+        }
+        for table_name in ["g_keyHold", "g_keyHoldNotBlocked"] {
             let Value::Table(table) = environment.get::<Value>(table_name)? else {
                 continue;
             };
@@ -38,17 +44,10 @@ impl StellaLua {
     /// suppresses output restart; an absent or differently typed value keeps
     /// Purple's default-enabled behavior. Audio input is independent.
     pub fn set_application_audio_active(&self, active: bool) -> Result<bool, ScriptError> {
-        let environment = game_environment(&self.lua)?;
-        let audio_enabled = match environment.get::<Value>("settings")? {
-            Value::Table(settings) => match settings.get::<Value>("root")? {
-                Value::Table(root) => match root.get::<Value>("audioEnabled")? {
-                    Value::Boolean(enabled) => enabled,
-                    _ => true,
-                },
-                _ => true,
-            },
-            _ => true,
-        };
+        // sub_100029C24 writes GameApp+0x520 before any Lua-table lookup or
+        // device operation. The frame-head recovery branch observes it.
+        self.application_audio_active.set(active);
+        let audio_enabled = self.native_audio_enabled_setting()?.unwrap_or(true);
 
         let mut resources = self
             .resource_runtime

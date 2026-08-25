@@ -13,6 +13,49 @@ pub(crate) struct DrawablePolygonState {
     pub(crate) color: [f64; 4],
 }
 
+/// The two 12-byte RenderObjectData pose slots at offsets `+0x00/+0x0c`.
+/// Box2D remains authoritative for gameplay; these float32 copies exist only
+/// for the native per-display-frame interpolation pass.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct NativeInterpolationPose {
+    pub(crate) x: f32,
+    pub(crate) y: f32,
+    pub(crate) angle: f32,
+}
+
+/// Rehost-side companion to Purple's two native pose slots. The shipped
+/// BirdAnimation update derives a flying bird's root rotation from the
+/// fixed-step b2Body velocity after the native pose interpolation has already
+/// run. Retaining the matching velocity samples lets the 60 Hz renderer
+/// submit that derived angle without changing the authoritative 30 Hz body or
+/// the Lua-visible velocity.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct DisplayInterpolationVelocity {
+    pub(crate) x: f32,
+    pub(crate) y: f32,
+}
+
+impl DisplayInterpolationVelocity {
+    pub(crate) const ZERO: Self = Self { x: 0.0, y: 0.0 };
+
+    pub(crate) fn new(x: f64, y: f64) -> Self {
+        Self {
+            x: x as f32,
+            y: y as f32,
+        }
+    }
+}
+
+impl NativeInterpolationPose {
+    pub(crate) fn new(x: f64, y: f64, angle: f64) -> Self {
+        Self {
+            x: x as f32,
+            y: y as f32,
+            angle: angle as f32,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct SceneObject {
     pub(crate) physics_creation_order: u64,
@@ -30,6 +73,14 @@ pub(crate) struct SceneObject {
     pub(crate) texture_scale: f64,
     pub(crate) x: f64,
     pub(crate) y: f64,
+    /// RenderObjectData `+0xA4/+0xA8/+0xAC`. These are interpolated from the
+    /// two native pose slots after the fixed Box2D loop and are the values
+    /// consumed by both ordinary and Flash scene submission.
+    pub(crate) render_x: f64,
+    pub(crate) render_y: f64,
+    pub(crate) render_angle: f64,
+    pub(crate) interpolation_poses: [NativeInterpolationPose; 2],
+    pub(crate) display_interpolation_velocities: [DisplayInterpolationVelocity; 2],
     // Purple keeps the b2Sweep centre separately from b2Transform::p.
     pub(crate) sweep_center_x: f32,
     pub(crate) sweep_center_y: f32,

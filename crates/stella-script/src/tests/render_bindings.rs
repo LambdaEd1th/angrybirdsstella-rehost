@@ -75,6 +75,98 @@ fn recovered_native_sprite_helpers_emit_every_requested_layer() {
 }
 
 #[test]
+fn textured_render_generated_adapters_require_exact_tags_and_ignore_extras() {
+    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data");
+    let runtime = StellaLua::new(data_root).unwrap();
+    runtime
+        .execute_source(
+            r#"
+                res.createBitmapFont("fonts/1024x768/FONT_CRIMSON_BASIC.dat")
+                res.useFont("FONT_CRIMSON_BASIC")
+
+                textured_rejects_numeric_name = not pcall(
+                    drawTexturedRect, 123, 0, 0, 1, 1, true
+                )
+                textured_rejects_string_number = not pcall(
+                    drawTexturedRect, "MISSING", "0", 0, 1, 1, true
+                )
+                textured_rejects_numeric_boolean = not pcall(
+                    drawTexturedRect, "MISSING", 0, 0, 1, 1, 1
+                )
+                textured_accepts_trailing = pcall(
+                    drawTexturedRect, "MISSING", 0, 0, 1, 1, true, "ignored"
+                )
+
+                selected_rejects_numeric_sprite = not pcall(
+                    drawSelectedTexturizedObject, 123, "MISSING", 0, 0, 1, 1
+                )
+                selected_rejects_numeric_texture = not pcall(
+                    drawSelectedTexturizedObject, "MISSING", 123, 0, 0, 1, 1
+                )
+                selected_rejects_string_number = not pcall(
+                    drawSelectedTexturizedObject, "MISSING", "MISSING", "0", 0, 1, 1
+                )
+                selected_accepts_trailing = pcall(
+                    drawSelectedTexturizedObject,
+                    "MISSING", "MISSING", 0, 0, 1, 1, "ignored"
+                )
+
+                masked_rejects_numeric_sprite = not pcall(
+                    renderMaskedImageNative, 123, 0, 0, 1, 0, 1, 1, 0, 1, 1
+                )
+                masked_rejects_string_number = not pcall(
+                    renderMaskedImageNative,
+                    "MISSING", "0", 0, 1, 0, 1, 1, 0, 1, 1
+                )
+                masked_accepts_trailing = pcall(
+                    renderMaskedImageNative,
+                    "MISSING", 0, 0, 1, 0, 1, 1, 0, 1, 1, "ignored"
+                )
+
+                string3d_rejects_numeric_group = not pcall(
+                    drawString3D, 123, "text", 0, 0, 1, 0, 1, 1, 1
+                )
+                string3d_rejects_numeric_key = not pcall(
+                    drawString3D, "MISSING_GROUP", 123, 0, 0, 1, 0, 1, 1, 1
+                )
+                string3d_rejects_string_number = not pcall(
+                    drawString3D, "MISSING_GROUP", "text", "0", 0, 1, 0, 1, 1, 1
+                )
+                string3d_accepts_trailing = pcall(
+                    drawString3D,
+                    "MISSING_GROUP", "text", 0, 0, 1, 0, 1, 1, 1, "ignored"
+                )
+                "#,
+        )
+        .unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    for name in [
+        "textured_rejects_numeric_name",
+        "textured_rejects_string_number",
+        "textured_rejects_numeric_boolean",
+        "textured_accepts_trailing",
+        "selected_rejects_numeric_sprite",
+        "selected_rejects_numeric_texture",
+        "selected_rejects_string_number",
+        "selected_accepts_trailing",
+        "masked_rejects_numeric_sprite",
+        "masked_rejects_string_number",
+        "masked_accepts_trailing",
+        "string3d_rejects_numeric_group",
+        "string3d_rejects_numeric_key",
+        "string3d_rejects_string_number",
+        "string3d_accepts_trailing",
+    ] {
+        assert!(environment.get::<bool>(name).unwrap(), "{name}");
+    }
+
+    let bridge = runtime.render.lock().unwrap();
+    assert_eq!(bridge.commands.len(), 2);
+    assert_eq!(bridge.text_commands.len(), 1);
+}
+
+#[test]
 fn string_3d_adapter_is_strict_and_does_not_replace_x_rotation_with_z_rotation() {
     let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data");
     let runtime = StellaLua::new(data_root).unwrap();
@@ -622,8 +714,8 @@ fn native_line_and_polygon_helpers_emit_recovered_meshes_and_outline() {
                 drawPolygon({ {x = 1, y = 2}, {x = 3, y = 2}, {x = 1, y = 4} },
                     3, 4, 0.1, 0.2, 0.3, 0.5)
                 missing_line_values_fail = pcall(drawLine2D, 0, 0, 1)
-                bad_polygon_point_fails = pcall(drawPolygon,
-                    { {x = 1}, {x = 2, y = 3}, {x = 4, y = 5} },
+                non_table_polygon_point_fails = pcall(drawPolygon,
+                    { {x = 1, y = 2}, 7, {x = 4, y = 5} },
                     0, 0, 1, 1, 1, 1)
                 "#,
         )
@@ -631,7 +723,11 @@ fn native_line_and_polygon_helpers_emit_recovered_meshes_and_outline() {
 
     let environment = game_environment(runtime.lua()).unwrap();
     assert!(!environment.get::<bool>("missing_line_values_fail").unwrap());
-    assert!(!environment.get::<bool>("bad_polygon_point_fails").unwrap());
+    assert!(
+        !environment
+            .get::<bool>("non_table_polygon_point_fails")
+            .unwrap()
+    );
     let bridge = runtime.render.lock().unwrap();
     assert_eq!(bridge.rect_commands.len(), 9);
     let line = &bridge.rect_commands[0];
@@ -662,6 +758,90 @@ fn native_line_and_polygon_helpers_emit_recovered_meshes_and_outline() {
         assert_eq!(outline.mesh_topology, ColorMeshTopology::TriangleStrip);
         assert_eq!(outline.order, 6 + index as u64);
     }
+}
+
+#[test]
+fn rectangle_and_polygon_adapters_match_native_tags_table_count_and_coercion() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .execute_source(
+            r#"
+                rect_rejects_string_number = not pcall(
+                    drawRect, "1", 1, 1, 1, 0, 0, 10, 10, true)
+                rect_accepts_trailing = pcall(
+                    drawRect, 1, 1, 1, 1, 0, 0, 10, 10, true, "ignored")
+
+                polygon_rejects_string_number = not pcall(
+                    drawPolygon,
+                    { {x = 0, y = 0}, {x = 1, y = 0}, {x = 0, y = 1} },
+                    "0", 0, 1, 1, 1, 1)
+                polygon_accepts_trailing = pcall(
+                    drawPolygon,
+                    { {x = 0, y = 0}, {x = 1, y = 0}, {x = 0, y = 1} },
+                    0, 0, 1, 1, 1, 1, "ignored")
+                polygon_fields_use_tonumber = pcall(
+                    drawPolygon,
+                    { {x = "1", y = true}, {x = 2}, {x = 1, y = 2} },
+                    0, 0, 1, 1, 1, 1)
+
+                local keyed = {
+                    {x = 0, y = 0}, {x = 1, y = 0}, {x = 0, y = 1}
+                }
+                keyed.extra = true
+                polygon_counts_hash_keys = not pcall(
+                    drawPolygon, keyed, 0, 0, 1, 1, 1, 1)
+                "#,
+        )
+        .unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    for name in [
+        "rect_rejects_string_number",
+        "rect_accepts_trailing",
+        "polygon_rejects_string_number",
+        "polygon_accepts_trailing",
+        "polygon_fields_use_tonumber",
+        "polygon_counts_hash_keys",
+    ] {
+        assert!(environment.get::<bool>(name).unwrap(), "{name}");
+    }
+    // One rectangle plus two triangle-and-three-edge polygons.
+    assert_eq!(runtime.render.lock().unwrap().rect_commands.len(), 9);
+}
+
+#[test]
+fn line_generated_adapters_require_exact_numbers_and_ignore_extras() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .execute_source(
+            r#"
+                line_rejects_string_number = not pcall(
+                    drawLine2D, "0", 0, 10, 0, 2, 255, 255, 255, 255)
+                rect_rejects_string_number = not pcall(
+                    drawRectLines, 0, 0, 10, 10, 2, 255, 255, "255", 255)
+                line_accepts_trailing = pcall(
+                    drawLine2D, 0, 0, 10, 0, 2, 255, 255, 255, 255, "ignored")
+                rect_accepts_trailing = pcall(
+                    drawRectLines, 0, 0, 10, 10, 2, 255, 255, 255, 255, "ignored")
+                "#,
+        )
+        .unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert!(
+        environment
+            .get::<bool>("line_rejects_string_number")
+            .unwrap()
+    );
+    assert!(
+        environment
+            .get::<bool>("rect_rejects_string_number")
+            .unwrap()
+    );
+    assert!(environment.get::<bool>("line_accepts_trailing").unwrap());
+    assert!(environment.get::<bool>("rect_accepts_trailing").unwrap());
+    let bridge = runtime.render.lock().unwrap();
+    assert_eq!(bridge.rect_commands.len(), 5);
 }
 
 #[test]
@@ -819,7 +999,7 @@ fn direct_sprite_helpers_match_native_lookup_fallback_and_independent_affine_mat
                     drawSpriteWithoutShader, "AB_STELLA_LOGO_MAINMENU", 0, 0)
                 non_table_shader_fails = not pcall(
                     drawSpriteWithShader, "AB_STELLA_LOGO_MAINMENU", "bad", 0, 0, 1, 1, 0)
-                is_compo_loaded = isCompoSprite("STELLALOGO")
+                is_compo_loaded = isCompoSprite("STELLALOGO", "ignored")
                 res.releaseCompoSpriteSet("images/1024x768/MENU_COMPOSPRITES.dat")
                 is_compo_after_release = isCompoSprite("STELLALOGO")
                 "#,
@@ -863,6 +1043,77 @@ fn direct_sprite_helpers_match_native_lookup_fallback_and_independent_affine_mat
         assert_eq!(actual, expected);
     }
     assert_eq!(bridge.commands[0].state.alpha, 0.5);
+}
+
+#[test]
+fn direct_sprite_generated_adapters_require_exact_lua_tags_and_ignore_extras() {
+    let runtime = StellaLua::new(std::env::temp_dir()).unwrap();
+    runtime
+        .execute_source(
+            r#"
+                plain_rejects_numeric_name = not pcall(
+                    drawSpriteWithoutShader, 123, 0, 0, 1, 1, 0
+                )
+                plain_rejects_string_number = not pcall(
+                    drawSpriteWithoutShader, "MISSING", "0", 0, 1, 1, 0
+                )
+                plain_accepts_trailing = pcall(
+                    drawSpriteWithoutShader, "MISSING", 0, 0, 1, 1, 0, "ignored"
+                )
+
+                shader_rejects_numeric_name = not pcall(
+                    drawSpriteWithShader, 123, { name = "", params = {} },
+                    0, 0, 1, 1, 0
+                )
+                shader_rejects_non_table = not pcall(
+                    drawSpriteWithShader, "MISSING", true, 0, 0, 1, 1, 0
+                )
+                shader_rejects_string_number = not pcall(
+                    drawSpriteWithShader, "MISSING", { name = "", params = {} },
+                    "0", 0, 1, 1, 0
+                )
+                shader_accepts_trailing = pcall(
+                    drawSpriteWithShader, "MISSING", { name = "", params = {} },
+                    0, 0, 1, 1, 0, "ignored"
+                )
+
+                compo_rejects_numeric_name = not pcall(
+                    drawCompoSprite, 123, 0, 0, 1, 1
+                )
+                compo_rejects_string_number = not pcall(
+                    drawCompoSprite, "MISSING", "0", 0, 1, 1
+                )
+                compo_accepts_trailing = pcall(
+                    drawCompoSprite, "MISSING", 0, 0, 1, 1, "ignored"
+                )
+                lookup_rejects_numeric_name = not pcall(
+                    isCompoSprite, 123, "MISSING"
+                )
+                lookup_accepts_trailing = pcall(
+                    isCompoSprite, "MISSING", 123
+                )
+                "#,
+        )
+        .unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    for name in [
+        "plain_rejects_numeric_name",
+        "plain_rejects_string_number",
+        "plain_accepts_trailing",
+        "shader_rejects_numeric_name",
+        "shader_rejects_non_table",
+        "shader_rejects_string_number",
+        "shader_accepts_trailing",
+        "compo_rejects_numeric_name",
+        "compo_rejects_string_number",
+        "compo_accepts_trailing",
+        "lookup_rejects_numeric_name",
+        "lookup_accepts_trailing",
+    ] {
+        assert!(environment.get::<bool>(name).unwrap(), "{name}");
+    }
+    assert!(runtime.take_render_commands().is_empty());
 }
 
 #[test]

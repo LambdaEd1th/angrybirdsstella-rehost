@@ -874,7 +874,10 @@ fn physics_scale_matches_native_fixture_rebuild_lifecycle_and_sources() {
                 createPolygon("compound", "", 30, 0, 10, 10, 1, 0.2, 0.3, true, false, 1)
                 objects.world.compound.width = 777
 
-                blocks = { circle_definition = { scale = 2 } }
+                -- GameLua+0x458 retains blockTable; the global `blocks`
+                -- namespace is the unrelated component system.
+                blockTable = { blocks = { circle_definition = { scale = 2 } } }
+                blocks = { circle_definition = { scale = 99 } }
                 createCircle("circle", "", 50, 0, 1, 1, 0.1, 0.2, true, false, 1)
                 objects.world.circle.definition = "circle_definition"
                 objects.world.circle.radius = 3
@@ -908,6 +911,9 @@ fn physics_scale_matches_native_fixture_rebuild_lifecycle_and_sources() {
                 setPhysicsScale("scaled", -2, 0.5)
                 setPhysicsScale("compound", -2, 0.5)
                 setPhysicsScale("circle", 4, 6)
+                -- Reassigning the global does not retarget GameLua+0x458.
+                blockTable = { blocks = { circle_definition = { scale = 100 } } }
+                setPhysicsScale("circle", 8, 10)
                 edge_resize_ok, edge_resize_error = pcall(setPhysicsScale, "edge", -3, 4)
                 edge_resize_error = tostring(edge_resize_error)
                 "#,
@@ -970,12 +976,12 @@ fn physics_scale_matches_native_fixture_rebuild_lifecycle_and_sources() {
     );
 
     let circle = &bridge.scene["circle"];
-    let expected_circle_scale = f64::from(2.0_f32 + 0.0001_f32);
+    let expected_circle_scale = f64::from(4.0_f32 + 0.0001_f32);
     assert_eq!(circle.physics_scale_x, expected_circle_scale);
     assert_eq!(circle.physics_scale_y, expected_circle_scale);
     assert_eq!(
         circle.native_shape_radius,
-        f64::from((2.0_f32 + 0.0001_f32) * 3.0_f32)
+        f64::from((4.0_f32 + 0.0001_f32) * 3.0_f32)
     );
     assert!(matches!(circle.collision_shape, CollisionShape::Circle { radius } if radius == 3.0));
 

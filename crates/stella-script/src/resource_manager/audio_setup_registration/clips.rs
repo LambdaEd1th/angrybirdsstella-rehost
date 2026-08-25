@@ -95,7 +95,9 @@ pub(super) fn install(
     let create_composite_audio_runtime = Arc::clone(&audio_runtime);
     resource_api.set(
         "createCompositeAudio",
-        lua.create_function(move |_, (name, parts): (String, mlua::Table)| {
+        lua.create_function(move |_, args: MultiValue| {
+            let name = native_required_string(&args, 0, "res.createCompositeAudio")?;
+            let parts = native_required_table(&args, 1, "res.createCompositeAudio")?;
             // sub_100447CBC walks the sequence from one until the first nil,
             // retaining only names that resolve to a live AudioClip.
             let available = create_composite_audio_resources
@@ -115,12 +117,14 @@ pub(super) fn install(
             let mut index = 1_i64;
             loop {
                 let value = parts.raw_get::<Value>(index)?;
-                if matches!(value, Value::Nil) {
+                // sub_10052811C is Lua 5.1's `lua_isstring`: numbers are
+                // accepted and converted by sub_100529FB4/lua_tolstring,
+                // while nil, booleans, tables and every other tag terminate
+                // the contiguous clip-name scan immediately.
+                let Some(part) = native_lua51_string(&value) else {
                     break;
-                }
-                if let Some(part) = value_string(&value)
-                    && available.contains(&part)
-                {
+                };
+                if available.contains(&part) {
                     if let Some(source) = available_sources.get(&part) {
                         sources.push(source.source.clone());
                         duration = duration

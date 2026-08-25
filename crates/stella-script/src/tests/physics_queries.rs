@@ -290,6 +290,95 @@ fn native_level_limits_reorder_corner_arguments_and_publish_out_of_bounds() {
 }
 
 #[test]
+fn native_out_of_bounds_reuses_table_and_interleaves_after_xy_before_velocity() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r##"
+                setLevelLimits(-10, -5, 10, 5)
+                g_outOfBoundariesObjects = setmetatable(
+                    { retained = true },
+                    { __newindex = function(table, key, value)
+                        boundary_key = key
+                        boundary_x = objects.world[key].x
+                        boundary_y = objects.world[key].y
+                        boundary_velocity = objects.world[key].velocity
+                        rawset(table, key, value)
+                    end }
+                )
+                retained_out_table = g_outOfBoundariesObjects
+                createCircle("outside", "", 0, 6, 1, 1, 0, 0, true, false, 1)
+                setWorldGravity(0, 0)
+                updatePhysics = function() end
+                update = function()
+                    out_table_identity =
+                        rawequal(retained_out_table, g_outOfBoundariesObjects)
+                end
+                "##,
+        )
+        .unwrap();
+
+    runtime.update(1.0 / 60.0).unwrap();
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert!(environment.get::<bool>("out_table_identity").unwrap());
+    assert_eq!(
+        environment.get::<String>("boundary_key").unwrap(),
+        "outside"
+    );
+    assert_eq!(environment.get::<f64>("boundary_x").unwrap(), 0.0);
+    assert_eq!(environment.get::<f64>("boundary_y").unwrap(), 6.0);
+    assert!(matches!(
+        environment.get::<Value>("boundary_velocity").unwrap(),
+        Value::Nil
+    ));
+    let out_table = environment
+        .get::<mlua::Table>("g_outOfBoundariesObjects")
+        .unwrap();
+    assert!(out_table.get::<bool>("retained").unwrap());
+    assert!(out_table.get::<bool>("outside").unwrap());
+    assert_eq!(
+        object_world(runtime.lua())
+            .unwrap()
+            .get::<mlua::Table>("outside")
+            .unwrap()
+            .get::<f64>("velocity")
+            .unwrap(),
+        0.0
+    );
+
+    runtime
+        .execute_source("setPosition('outside', 0, 0)")
+        .unwrap();
+    runtime.update(1.0 / 60.0).unwrap();
+    assert!(out_table.get::<bool>("outside").unwrap());
+    assert!(out_table.get::<bool>("retained").unwrap());
+}
+
+#[test]
+fn native_out_of_bounds_requires_table_only_for_a_nonempty_scene() {
+    let empty_runtime = unlocked_test_runtime();
+    empty_runtime
+        .execute_source(
+            "g_outOfBoundariesObjects = 7; updatePhysics = function() end; update = function() end",
+        )
+        .unwrap();
+    empty_runtime.update(0.01).unwrap();
+
+    let populated_runtime = unlocked_test_runtime();
+    populated_runtime
+        .execute_source(
+            r#"
+                g_outOfBoundariesObjects = 7
+                createNonPhysicsObject("visual", "", 0, 0, 1)
+                updatePhysics = function() end
+                update = function() end
+            "#,
+        )
+        .unwrap();
+    assert!(populated_runtime.update(0.01).is_err());
+}
+
+#[test]
 fn light_beam_object_plots_native_segment_path_and_disposes() {
     let runtime = unlocked_test_runtime();
     runtime

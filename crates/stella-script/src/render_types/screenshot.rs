@@ -6,7 +6,8 @@
 /// the platform share service.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScreenshotShareRequest {
-    pub sequence: u32,
+    /// Signed process-global counter streamed by Purple's `operator<<(int)`.
+    pub sequence: i32,
     pub filename: String,
     pub title: String,
 }

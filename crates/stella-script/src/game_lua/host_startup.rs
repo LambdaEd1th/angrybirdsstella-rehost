@@ -146,6 +146,10 @@ impl StellaLua {
         let environment = game_environment(&self.lua)?;
         let update_values = environment.get::<Function>("updateValues")?;
         update_values.call::<()>(())?;
+        // GameLua's constructor retains the objects and blockTable LuaObject
+        // identities after loading the common game chunk. Later assignment
+        // to fields with the same names does not retarget native members.
+        retain_constructor_lua_objects(&self.lua)?;
         self.gamelogic_loaded.set(true);
         Ok(())
     }
@@ -155,6 +159,13 @@ impl StellaLua {
     /// callback first and only then writes AudioManager tracks 1 through 5.
     pub(crate) fn initialize_startup_assets(&self) -> Result<(), ScriptError> {
         self.call_global("createStartUpAssets")?;
+        // sub_10005D44C reloads LuaResources' AudioOutputImpl pointer before
+        // each of the five direct AudioManager writes. A successful callback
+        // which did not construct an output has no independent limit table.
+        crate::resource_manager::require_audio_output(
+            &self.resource_runtime,
+            "initialize startup audio channel limits",
+        )?;
         let mut audio = self
             ._audio_runtime
             .lock()

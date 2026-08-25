@@ -12,7 +12,11 @@ pub(crate) fn install_selection(
     let load_locale_runtime = Arc::clone(&locale_runtime);
     resource_api.set(
         "loadLocale",
-        lua.create_function(move |_, (group, locale): (String, String)| {
+        lua.create_function(move |_, args: MultiValue| {
+            // LuaResources' std::string,std::string dispatcher reads two
+            // exact STRING slots and ignores additional stack values.
+            let group = native_required_string(&args, 0, "res.loadLocale")?;
+            let locale = native_required_string(&args, 1, "res.loadLocale")?;
             let table = {
                 let resources = resource_runtime
                     .lock()
@@ -58,7 +62,10 @@ pub(crate) fn install_selection(
     let use_locale_runtime = Arc::clone(&locale_runtime);
     resource_api.set(
         "useLocale",
-        lua.create_function(move |_, locale: String| {
+        lua.create_function(move |_, args: MultiValue| {
+            // Shared LuaResources std::string dispatcher requires exact
+            // STRING slot one and does not enforce an exact arity.
+            let locale = native_required_string(&args, 0, "res.useLocale")?;
             use_locale_runtime
                 .lock()
                 .expect("locale runtime lock poisoned")
@@ -182,7 +189,10 @@ pub(crate) fn install_metrics(
     let width_font_assets = Arc::clone(&bitmap_font_assets);
     resource_api.set(
         "getStringWidth",
-        lua.create_function(move |_, text: String| {
+        lua.create_function(move |_, args: MultiValue| {
+            // The float(std::string) dispatcher uses sub_1005285CC for slot
+            // one, ignores extras and publishes the member's float32 result.
+            let text = native_required_string(&args, 0, "res.getStringWidth")?;
             let resources = width_font_resources
                 .lock()
                 .expect("resource runtime lock poisoned");

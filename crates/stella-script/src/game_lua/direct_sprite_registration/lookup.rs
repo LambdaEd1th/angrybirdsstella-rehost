@@ -10,14 +10,14 @@ pub(super) fn install(
     globals.set(
         "isCompoSprite",
         lua.create_function(move |_, args: MultiValue| {
-            let name = args.iter().filter_map(value_string).next_back();
-            Ok(name.is_some_and(|name| {
-                resource_runtime
-                    .lock()
-                    .expect("resource runtime lock poisoned")
-                    .active_composite_parts(&name)
-                    .is_some()
-            }))
+            // Generated adapter sub_100088FD0 reads exact STRING slot one
+            // and ignores every trailing stack value.
+            let name = native_required_string(&args, 0, "isCompoSprite")?;
+            Ok(resource_runtime
+                .lock()
+                .expect("resource runtime lock poisoned")
+                .active_composite_parts(&name)
+                .is_some())
         })?,
     )
 }

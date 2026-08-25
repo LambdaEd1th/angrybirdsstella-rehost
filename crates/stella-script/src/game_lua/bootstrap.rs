@@ -13,19 +13,37 @@ pub(crate) fn install(
     cursor.set("x", 0.0)?;
     cursor.set("y", 0.0)?;
     cursor.set("down", false)?;
-    globals.set("cursor", cursor)?;
+    globals.set("cursor", cursor.clone())?;
+    retain_native_lua_object(lua, NativeLuaObject::Cursor, Some(&cursor))?;
     globals.set("touches", lua.create_table()?)?;
     globals.set("touchcount", 0)?;
-    globals.set("keyPressed", lua.create_table()?)?;
-    globals.set("keyReleased", lua.create_table()?)?;
-    globals.set("keyHold", lua.create_table()?)?;
-    globals.set("multitouchSweep", lua.create_table()?)?;
+    for (name, object) in [
+        ("keyPressed", NativeLuaObject::KeyPressed),
+        ("keyReleased", NativeLuaObject::KeyReleased),
+        ("keyHold", NativeLuaObject::KeyHold),
+    ] {
+        let table = lua.create_table()?;
+        globals.set(name, table.clone())?;
+        retain_native_lua_object(lua, object, Some(&table))?;
+    }
+    let multitouch_sweep = lua.create_table()?;
+    globals.set("multitouchSweep", multitouch_sweep.clone())?;
+    retain_native_lua_object(
+        lua,
+        NativeLuaObject::MultitouchSweep,
+        Some(&multitouch_sweep),
+    )?;
     let multitouch_zoom = lua.create_table()?;
     multitouch_zoom.set("zoomCoolingTime", -1.0_f64)?;
-    globals.set("multitouchZoom", multitouch_zoom)?;
+    globals.set("multitouchZoom", multitouch_zoom.clone())?;
+    retain_native_lua_object(lua, NativeLuaObject::MultitouchZoom, Some(&multitouch_zoom))?;
     // GameLua owns this table for its whole lifetime (`this + 0x430`).
     // `clipText` mutates the two result fields instead of replacing the table.
-    globals.set("clippedText", lua.create_table()?)?;
+    let clipped_text = lua.create_table()?;
+    globals.set("clippedText", clipped_text.clone())?;
+    // GameLua constructs this LuaObject directly at +0x430 before loading
+    // gamelogic. Native clipText keeps that identity for the host lifetime.
+    retain_native_lua_object(lua, NativeLuaObject::ClippedText, Some(&clipped_text))?;
     for name in ["highscores", "settings", "bi_data"] {
         let path = app_data_path(data_root, &format!("{name}.lua")).map_err(runtime_error)?;
         let table = if path.is_file() {

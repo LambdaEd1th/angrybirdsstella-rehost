@@ -12,14 +12,24 @@ pub(crate) fn install(
     resource_runtime: Arc<Mutex<ResourceRuntime>>,
     audio_runtime: Arc<Mutex<AudioRuntime>>,
 ) -> LuaResult<()> {
-    channel::install(lua, globals, Arc::clone(&audio_runtime))?; // 0x10002EE48
+    channel::install(
+        lua,
+        globals,
+        Arc::clone(&resource_runtime),
+        Arc::clone(&audio_runtime),
+    )?; // 0x10002EE48
     playback::install_play(
         lua,
         globals,
         Arc::clone(&resource_runtime),
         Arc::clone(&audio_runtime),
     )?; // 0x10002EE6C
-    volume::install(lua, globals, Arc::clone(&audio_runtime))?; // 0x10002EE8C
+    volume::install(
+        lua,
+        globals,
+        Arc::clone(&resource_runtime),
+        Arc::clone(&audio_runtime),
+    )?; // 0x10002EE8C
     playback::install_stop(lua, globals, resource_runtime, audio_runtime) // 0x10002EEAC
 }
 

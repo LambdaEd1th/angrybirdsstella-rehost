@@ -26,11 +26,23 @@ pub(super) fn install(lua: &Lua, globals: &mlua::Table) -> LuaResult<()> {
     }
     gamer_services.set(
         "postAchievement",
-        lua.create_function(|_, _: String| Ok(()))?,
+        lua.create_function(|_, args: MultiValue| {
+            // sub_1000CC2F4 uses the exact STRING-tag accessor
+            // sub_1005285CC for slot one before the unavailable backend's
+            // no-op member is invoked.
+            native_required_string(&args, 0, "FusionGamerServices.postAchievement")?;
+            Ok(())
+        })?,
     )?;
     gamer_services.set(
         "postScore",
-        lua.create_function(|_, _: (String, f64)| Ok(()))?,
+        lua.create_function(|_, args: MultiValue| {
+            // sub_1000CC0C4 pairs that STRING accessor with the generated
+            // exact NUMBER-tag accessor sub_10052859C for slot two.
+            native_required_string(&args, 0, "FusionGamerServices.postScore")?;
+            native_required_number(&args, 1, "FusionGamerServices.postScore")?;
+            Ok(())
+        })?,
     )?;
     globals.set("FusionGamerServices", gamer_services)?;
     Ok(())

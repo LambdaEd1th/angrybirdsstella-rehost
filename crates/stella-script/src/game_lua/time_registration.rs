@@ -30,13 +30,17 @@ pub(crate) fn install(lua: &Lua, globals: &mlua::Table) -> LuaResult<()> {
     globals.set("ServerTime", server_time)?;
     globals.set(
         "addDurationToTime",
-        lua.create_function(|lua, (source, duration): (mlua::Table, f32)| {
+        lua.create_function(|lua, args: MultiValue| {
+            let source = native_required_table(&args, 0, "addDurationToTime")?;
+            let duration = native_required_number(&args, 1, "addDurationToTime")? as f32;
             add_duration_to_time_table(lua, &source, duration)
         })?,
     )?;
     globals.set(
         "getTimeDifference",
-        lua.create_function(|lua, (first, second): (mlua::Table, mlua::Table)| {
+        lua.create_function(|lua, args: MultiValue| {
+            let first = native_required_table(&args, 0, "getTimeDifference")?;
+            let second = native_required_table(&args, 1, "getTimeDifference")?;
             let difference =
                 (time_table_seconds(lua, &first)? - time_table_seconds(lua, &second)?).abs() as u32;
             let result = lua.create_table()?;
@@ -49,7 +53,9 @@ pub(crate) fn install(lua: &Lua, globals: &mlua::Table) -> LuaResult<()> {
     )?;
     globals.set(
         "getTimeDifferenceInSeconds",
-        lua.create_function(|lua, (first, second): (mlua::Table, mlua::Table)| {
+        lua.create_function(|lua, args: MultiValue| {
+            let first = native_required_table(&args, 0, "getTimeDifferenceInSeconds")?;
+            let second = native_required_table(&args, 1, "getTimeDifferenceInSeconds")?;
             Ok((time_table_seconds(lua, &first)? - time_table_seconds(lua, &second)?) as f32)
         })?,
     )?;

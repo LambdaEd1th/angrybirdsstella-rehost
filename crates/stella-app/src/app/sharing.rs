@@ -51,7 +51,7 @@ mod tests {
 
     #[test]
     fn stages_native_filename_as_an_rgba_png() {
-        let sequence = std::process::id();
+        let sequence = i32::try_from(std::process::id()).unwrap();
         let filename = format!("Stella_Screenshot{sequence}.png");
         let request = ScreenshotShareRequest {
             sequence,

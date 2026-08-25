@@ -10,7 +10,7 @@ use stella_assets::ka3d::CompositePart;
 use super::{ResourceRuntime, SpriteResourceEntry, SpriteResourceKind};
 use crate::{
     BoundCompositePart, SpriteCatalogRegion, SpriteCatalogSnapshot,
-    resource_manager::SpriteGeometry,
+    resource_manager::{NativeSpriteMetrics, SpriteGeometry, native_composite_metrics},
 };
 
 impl ResourceRuntime {
@@ -278,6 +278,42 @@ impl ResourceRuntime {
 
     pub(crate) fn active_geometry(&self, name: &str) -> Option<SpriteGeometry> {
         self.resolve_active_geometry(name, &mut BTreeSet::new())
+    }
+
+    /// Return the concrete integer fields used by Purple's three native
+    /// Sprite queries (`getBoundsX/Y` and `getPivotX/Y`). AtlasSprite stores
+    /// these values directly, while CompoSprite rebuilds them with the
+    /// transformed-FCVTZS pass in `sub_100436D40`.
+    pub(crate) fn active_native_sprite_metrics(&self, name: &str) -> Option<NativeSpriteMetrics> {
+        let asset_name = name.split_once('#').map_or(name, |(base, _)| base);
+        let entry = self.active_sprite_entry(asset_name, None)?;
+        match entry.kind {
+            SpriteResourceKind::Atlas => {
+                let sprite = self
+                    .sprite_sheet_values
+                    .get(&entry.owner)?
+                    .sprites
+                    .iter()
+                    .find(|sprite| sprite.name == asset_name)?;
+                Some(NativeSpriteMetrics {
+                    width: i32::from(sprite.width),
+                    height: i32::from(sprite.height),
+                    pivot_x: i32::from(sprite.pivot_x),
+                    pivot_y: i32::from(sprite.pivot_y),
+                })
+            }
+            SpriteResourceKind::Composite => {
+                let parts = self.active_bound_composite(asset_name)?;
+                Some(
+                    native_composite_metrics(&parts).unwrap_or(NativeSpriteMetrics {
+                        width: 0,
+                        height: 0,
+                        pivot_x: 0,
+                        pivot_y: 0,
+                    }),
+                )
+            }
+        }
     }
 
     fn resolve_active_geometry(

@@ -9,3 +9,15 @@ pub(crate) fn native_fcvtzs_f32(value: f32) -> i32 {
         value.trunc() as i32
     }
 }
+
+/// Match AArch64 `FCVTZU Wd, Sn`: truncate finite in-range values, clamp
+/// negative/NaN inputs to zero, and saturate positive overflow to `u32::MAX`.
+pub(crate) fn native_fcvtzu_f32(value: f32) -> u32 {
+    if value.is_nan() || value <= 0.0 {
+        0
+    } else if value >= 4_294_967_296.0_f32 {
+        u32::MAX
+    } else {
+        value.trunc() as u32
+    }
+}

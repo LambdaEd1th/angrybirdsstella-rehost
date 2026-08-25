@@ -5,7 +5,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use mlua::{Lua, Result as LuaResult, Table, Value};
+use mlua::{Lua, MultiValue, Result as LuaResult, Table, Value};
 
 use crate::*;
 
@@ -33,7 +33,9 @@ pub(super) fn install_loads(
         };
         animation_native.set(
             method,
-            lua.create_function(move |_, (tag, filename): (String, String)| {
+            lua.create_function(move |_, args: MultiValue| {
+                let tag = native_required_string(&args, 0, method)?;
+                let filename = native_required_string(&args, 1, method)?;
                 let asset = {
                     let mut runtime = runtime.lock().expect("animation runtime lock poisoned");
                     let cached = if from_bundle {
@@ -94,7 +96,8 @@ pub(super) fn install_closing(
     let callbacks = animation_callbacks.clone();
     animation_native.set(
         "close",
-        lua.create_function(move |_, tag: String| {
+        lua.create_function(move |_, args: MultiValue| {
+            let tag = native_required_string(&args, 0, "close")?;
             let mut runtime = runtime.lock().expect("animation runtime lock poisoned");
             runtime.playback.remove(&tag);
             runtime.pending_events.remove(&tag);
@@ -117,7 +120,7 @@ pub(super) fn install_closing(
     let callbacks = animation_callbacks.clone();
     animation_native.set(
         "closeAll",
-        lua.create_function(move |_, ()| {
+        lua.create_function(move |_, _: MultiValue| {
             let mut runtime = runtime.lock().expect("animation runtime lock poisoned");
             runtime.playback.clear();
             runtime.pending_events.clear();
@@ -210,7 +213,7 @@ pub(super) fn install_cache(
     let runtime = Arc::clone(&animation_runtime);
     animation_native.set(
         "clearCache",
-        lua.create_function(move |_, ()| {
+        lua.create_function(move |_, _: MultiValue| {
             let mut runtime = runtime.lock().expect("animation runtime lock poisoned");
             // sub_1000E251C erases only the bundle/AppData JSON cache maps.
             // Loaded scenes and their active playback survive this call.
@@ -228,7 +231,8 @@ pub(super) fn install_cache(
         };
         animation_native.set(
             method,
-            lua.create_function(move |_, filename: String| {
+            lua.create_function(move |_, args: MultiValue| {
+                let filename = native_required_string(&args, 0, method)?;
                 let mut runtime = runtime.lock().expect("animation runtime lock poisoned");
                 let cache = if from_bundle {
                     &mut runtime.bundle_cache

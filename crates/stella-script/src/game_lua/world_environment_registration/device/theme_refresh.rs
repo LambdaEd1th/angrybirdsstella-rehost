@@ -15,6 +15,9 @@ pub(super) fn install(
         "native_refreshThemeSystem",
         lua.create_function(move |lua, _: MultiValue| {
             let environment = game_environment(lua)?;
+            // ThemeManager resolves `objects` by name from its owning GameLua
+            // table (`sub_1000985DC` -> `sub_100072DC0`), rather than reading
+            // GameLua's retained +0x408 LuaObject.
             let Value::Table(objects) = environment.get::<Value>("objects")? else {
                 return Ok(());
             };

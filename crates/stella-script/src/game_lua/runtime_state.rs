@@ -5,8 +5,8 @@ use mlua::Function;
 use std::collections::{BTreeMap, BTreeSet};
 use stella_assets::ka3d::CompositePart;
 
-/// GameApp's contiguous camera-input fields at `+0x4FC..+0x51C`, plus the
-/// process-global two-touch baseline used by `sub_1000293C8`.
+/// GameApp's contiguous camera-input fields at `+0x4FC..+0x51C`. Purple's
+/// separate process-global two-touch baseline lives beside `host_input`.
 #[derive(Debug)]
 pub(crate) struct NativeInputZoom {
     pub(crate) current: f32,
@@ -16,9 +16,6 @@ pub(crate) struct NativeInputZoom {
     pub(crate) smooth_elapsed: f32,
     pub(crate) smooth_duration: f32,
     pub(crate) wheel_pending: bool,
-    pub(crate) pinch_active: bool,
-    pub(crate) pinch_initial_distance: f32,
-    pub(crate) pinch_initial_scale: f32,
 }
 
 impl Default for NativeInputZoom {
@@ -31,9 +28,6 @@ impl Default for NativeInputZoom {
             smooth_elapsed: -1.0,
             smooth_duration: -1.0,
             wheel_pending: false,
-            pinch_active: false,
-            pinch_initial_distance: 0.0,
-            pinch_initial_scale: 1.0,
         }
     }
 }
@@ -103,6 +97,10 @@ pub(crate) struct RenderBridge {
     /// GameLua `+0x51c`; the fixed-step comparison and repeated subtraction
     /// are both single precision in `sub_10005E898`.
     pub(crate) physics_accumulator: f32,
+    /// GameLua `+0x23c`; each retained tail step flips this zero/one selector
+    /// before copying every awake body's transform into one of the two
+    /// RenderObjectData interpolation slots.
+    pub(crate) physics_interpolation_slot: usize,
     pub(crate) vertex_buffer: Vec<(f64, f64)>,
     pub(crate) active_contacts: BTreeMap<ContactKey, bool>,
     pub(crate) contact_creation_order: BTreeMap<ContactKey, u64>,
@@ -198,9 +196,6 @@ pub(crate) struct RenderBridge {
     pub(crate) requested_video: Option<String>,
     pub(crate) requested_url: Option<String>,
     pub(crate) requested_app_store_product: Option<(String, u32)>,
-    /// Process-global counter at `0x100C0FF8C`. The native member increments
-    /// it before formatting each `Stella_Screenshot<N>.png` temporary name.
-    pub(crate) screenshot_sequence: u32,
     pub(crate) screenshot_share_requests: Vec<ScreenshotShareRequest>,
     pub(crate) smooth_zooming: bool,
     pub(crate) input_zoom: NativeInputZoom,
@@ -216,7 +211,18 @@ pub(crate) struct RenderBridge {
     pub(crate) notification_callback: Option<String>,
     pub(crate) aiming_aid_enabled: bool,
     pub(crate) aiming_aid_sprite: String,
+    /// GameLua+0x4F8/+0x4FC/+0x500. `loadLevelImpl` snapshots these three
+    /// `worldAttributes` values once; only `objects.currentTimeStep` remains
+    /// a live Lua input to the native trajectory predictor.
+    pub(crate) simulation_iterations: i32,
+    pub(crate) simulation_time_step_multiplier: f32,
+    pub(crate) simulation_store_points_sampler: i32,
     pub(crate) aim_stream_active: bool,
+    /// AimStream+0x40/+0x48. `loadLevelImpl` snapshots the two
+    /// worldAttributes values once; later Lua table mutations do not alter
+    /// the already configured native stream.
+    pub(crate) aim_stream_spawn_time: f32,
+    pub(crate) aim_stream_speed: f32,
     pub(crate) aim_stream_spawn_timer: f32,
     pub(crate) aim_stream_particles: Vec<NativeAimParticle>,
     pub(crate) selected_simulation_bird: Option<String>,
@@ -281,6 +287,7 @@ impl Default for RenderBridge {
             // distinct just as Purple does.
             physics_simulation_scale: 1.0,
             physics_accumulator: 0.0,
+            physics_interpolation_slot: 0,
             vertex_buffer: Vec::new(),
             active_contacts: BTreeMap::new(),
             contact_creation_order: BTreeMap::new(),
@@ -344,7 +351,6 @@ impl Default for RenderBridge {
             requested_video: None,
             requested_url: None,
             requested_app_store_product: None,
-            screenshot_sequence: 0,
             screenshot_share_requests: Vec::new(),
             // GameApp::GameApp stores one at +0x514 after loading the native
             // game configuration; +0x50C/+0x510 begin at -1.0f.
@@ -357,7 +363,16 @@ impl Default for RenderBridge {
             notification_callback: None,
             aiming_aid_enabled: false,
             aiming_aid_sprite: String::new(),
+            // Native gameplay never consumes +0x4F8..+0x500 before the
+            // first loadLevelImpl write. Keep the host's pre-level state
+            // deterministic; every playable level replaces these values.
+            simulation_iterations: 0,
+            simulation_time_step_multiplier: 0.0,
+            simulation_store_points_sampler: 0,
             aim_stream_active: false,
+            // AimStream's constructor at sub_100007E1C stores 0.6f/4.0f.
+            aim_stream_spawn_time: 0.6_f32,
+            aim_stream_speed: 4.0_f32,
             aim_stream_spawn_timer: 0.0,
             aim_stream_particles: Vec::new(),
             selected_simulation_bird: None,

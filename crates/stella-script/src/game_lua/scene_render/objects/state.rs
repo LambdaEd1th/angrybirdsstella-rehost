@@ -4,45 +4,81 @@ use super::SceneDrawObject;
 use crate::*;
 
 impl RenderBridge {
-    /// Produce a continuous display pose for a Flash action whose root is
-    /// driven by the fixed-step physics body.
-    ///
-    /// Purple advances Box2D in fixed 1/30-second game-time steps. Poppy's
-    /// aiming slow motion lowers the game-time multiplier to 0.1, so binding
-    /// her Flash root directly to the last solved body pose repeats it for
-    /// roughly twenty 60 Hz display frames; Luca's 0.05 multiplier repeats it
-    /// for roughly forty. Stella's timeout path is initially a smooth
-    /// real-time `setPosition` tween, but switches back to the same 30 Hz body
-    /// when `Stella_Flying` resumes. The unsolved accumulator is already the
-    /// exact game-time distance to the next fixed step; advancing only the
-    /// visual pose by the current velocity fills those display samples
-    /// without changing the body, Lua object or collision timeline.
-    pub(crate) fn fixed_step_display_position(&self, object: &SceneDrawObject) -> (f64, f64) {
-        let residual = self
-            .physics_accumulator
-            .clamp(0.0, f32::from_bits(0x3D08_8889));
-        let x = (object.velocity_x as f32).mul_add(residual, object.x as f32);
-        let y = (object.velocity_y as f32).mul_add(residual, object.y as f32);
-        (f64::from(x), f64::from(y))
-    }
-
-    /// Predict the high-speed direction used by BirdAnimation's
-    /// `Stella_Flying` state at the same unsolved display time.
-    pub(crate) fn fixed_step_stella_flight_angle(&self, object: &SceneDrawObject) -> f64 {
-        let residual = self
-            .physics_accumulator
-            .clamp(0.0, f32::from_bits(0x3D08_8889));
-        let gravity_scale = object.gravity_scale as f32;
-        let velocity_x = ((self.world_gravity_x as f32) * gravity_scale)
-            .mul_add(residual, object.velocity_x as f32);
-        let velocity_y = ((self.world_gravity_y as f32) * gravity_scale)
-            .mul_add(residual, object.velocity_y as f32);
-        let speed_squared = velocity_x.mul_add(velocity_x, velocity_y * velocity_y);
-        if speed_squared > 4.0_f32 {
-            f64::from(velocity_y.atan2(velocity_x))
-        } else {
-            object.angle
+    /// BirdAnimation.lua's recovered `inFlight.update` maps b2Body velocity to
+    /// the root rotation after Purple has already interpolated the body pose.
+    /// On a 60 Hz display that late `setRotation` otherwise replaces +0xAC
+    /// with a 30 Hz value (and with a much lower apparent cadence in ability
+    /// slow motion). Re-evaluate the recovered high-speed and low-speed
+    /// `angleLerp` branches from the interpolated velocity; authored non-flying
+    /// ability actions remain byte-for-byte observable through `object.angle`.
+    pub(crate) fn interpolated_flying_bird_angle(
+        &self,
+        object: &SceneDrawObject,
+        current_action: &str,
+    ) -> Option<f64> {
+        if !object.has_physics_body
+            || !matches!(
+                current_action,
+                "Stella_Flying"
+                    | "Poppy_Flying"
+                    | "Luca_Flying"
+                    | "Willow_Flying"
+                    | "Dahlia_Flying"
+            )
+        {
+            return None;
         }
+
+        let alpha = self.physics_accumulator * f32::from_bits(0x41EF_FFFF);
+        let previous_weight = 1.0_f32 - alpha;
+        let current_slot = self.physics_interpolation_slot;
+        let previous_slot = usize::from(current_slot == 0);
+        let current = object.display_interpolation_velocities[current_slot];
+        let previous = object.display_interpolation_velocities[previous_slot];
+        let velocity_x = f64::from(alpha.mul_add(current.x, previous_weight * previous.x));
+        let velocity_y = f64::from(alpha.mul_add(current.y, previous_weight * previous.y));
+        let target_angle = velocity_y.atan2(velocity_x);
+        let speed = (velocity_x * velocity_x + velocity_y * velocity_y).sqrt();
+
+        let flight_angle = if speed > 2.0 {
+            target_angle
+        } else {
+            // BirdAnimation.lua calls angleLerp(PI,target,speed*0.5) while
+            // flipped and angleLerp(0,target,speed*0.5) otherwise. utils.lua's
+            // angleDiff performs exactly one +/-2PI wrap.
+            let start_angle = if object.horizontal_flip {
+                std::f64::consts::PI
+            } else {
+                0.0
+            };
+            let mut difference = start_angle - target_angle;
+            if difference < -std::f64::consts::PI {
+                difference += std::f64::consts::TAU;
+            } else if difference > std::f64::consts::PI {
+                difference -= std::f64::consts::TAU;
+            }
+            start_angle - difference * (0.5 * speed)
+        };
+
+        // setRotation first narrows and normalizes the in-flight result.
+        // AnimationPriorityStateMachine then calls BirdAnimation's recovered
+        // onStateUpdated hook. For a flipped bird it rebuilds the direction
+        // with vec2FromAngle/atan2 and conditionally subtracts PI before the
+        // final setAngle normalization. Replaying this second writer avoids a
+        // PI-shifted visual root while still smoothing its velocity input.
+        let normalized_flight = normalize_native_lua_angle(flight_angle);
+        if !object.horizontal_flip {
+            return Some(normalized_flight);
+        }
+        let vector_angle = normalized_flight.sin().atan2(normalized_flight.cos());
+        let adjusted = if normalized_flight > std::f64::consts::FRAC_PI_2
+            && normalized_flight < std::f64::consts::PI * 1.5
+        {
+            vector_angle - std::f64::consts::PI
+        } else {
+            vector_angle
+        };
+        Some(normalize_native_lua_angle(adjusted))
     }
 
     pub(crate) fn scene_object_scale(&self, object: &SceneDrawObject) -> (f32, f32, f32) {
@@ -149,4 +185,13 @@ impl RenderBridge {
     pub(crate) fn finish_scene_object_draw(&mut self, previous: RenderState) {
         self.state = previous;
     }
+}
+
+fn normalize_native_lua_angle(angle: f64) -> f64 {
+    let tau = std::f32::consts::PI + std::f32::consts::PI;
+    let mut native_angle = angle as f32 % tau;
+    if native_angle < 0.0 {
+        native_angle += tau;
+    }
+    f64::from(native_angle)
 }

@@ -102,10 +102,28 @@ fn publish_loaded_level(
     game.set("loadedObjects", environment.clone())?;
     lua.globals().set("loadedObjects", environment.clone())?;
 
+    let dead_blocks = match game.get::<Value>("deadBlocks")? {
+        Value::Table(table) => Some(table),
+        _ => None,
+    };
+    // loadLevelImpl resolves `deadBlocks` by name and copies that LuaObject
+    // into GameLua+0x4A8 at 0x100065DEC..0x100065E14. Native collision and
+    // delayed-destruction paths subsequently write through the retained
+    // object even if Lua replaces the same-name global.
+    retain_native_lua_object(lua, NativeLuaObject::DeadBlocks, dead_blocks.as_ref())?;
     let world_attributes = match game.get::<Value>("worldAttributes")? {
         Value::Table(table) => Some(table),
         _ => None,
     };
+    // loadLevelImpl resolves and replaces GameLua+0x4D0's LuaObject before
+    // reading the five simulation/AimStream attributes.
+    retain_native_lua_object(
+        lua,
+        NativeLuaObject::WorldAttributes,
+        world_attributes.as_ref(),
+    )?;
+    let (iterations, time_step_multiplier, point_sampler, aim_spawn_time, aim_speed) =
+        native_trajectory_level_settings(lua)?;
     let level_number = |field: &str, default_field: &str| -> Option<f64> {
         environment
             .get::<Value>(field)
@@ -128,9 +146,10 @@ fn publish_loaded_level(
     if let Some(value) = level_number("waterForceMultiplier", "defaultWaterForceMultiplier") {
         bridge.water_force_multiplier = value;
     }
-    // loadLevelImpl resets/deactivates AimStream after copying the level
-    // force multipliers. This prevents a prediction stream from the previous
-    // attempt leaking through retry or result-to-level transitions.
-    bridge.reset_native_aim_stream_for_level_load();
+    // loadLevelImpl copies the three BirdSimulation scalars to GameLua and
+    // both AimStream scalars to the stream before resetting/deactivating it.
+    // Later Lua mutations must not reconfigure the already loaded level.
+    bridge.load_native_simulation_settings(iterations, time_step_multiplier, point_sampler);
+    bridge.load_native_aim_stream_settings(aim_spawn_time, aim_speed);
     Ok(())
 }

@@ -14,12 +14,15 @@ pub(crate) const NATIVE_FRAME_KEYS: [&str; 5] = [
     "VOLUME_DOWN",
 ];
 
-/// `sub_10005E898` writes all five entries on every frame, including false
+/// `sub_1000293C8` writes all five entries on every frame, including false
 /// entries for keys whose platform bytes are clear.
 pub(crate) fn publish_native_key_state(lua: &Lua) -> LuaResult<()> {
-    let environment = game_environment(lua)?;
-    for name in ["keyPressed", "keyReleased", "keyHold"] {
-        let Value::Table(table) = environment.get::<Value>(name)? else {
+    for object in [
+        NativeLuaObject::KeyPressed,
+        NativeLuaObject::KeyReleased,
+        NativeLuaObject::KeyHold,
+    ] {
+        let Some(table) = native_lua_object(lua, object)? else {
             continue;
         };
         for key in NATIVE_FRAME_KEYS {
@@ -88,9 +91,21 @@ pub(crate) fn set_input_flag(
     key: Value,
     value: bool,
 ) -> LuaResult<()> {
-    let table = match environment.get::<Value>(name)? {
-        Value::Table(table) => table,
-        _ => lua.create_table()?,
+    let native_object = match name {
+        "keyPressed" => Some(NativeLuaObject::KeyPressed),
+        "keyReleased" => Some(NativeLuaObject::KeyReleased),
+        "keyHold" => Some(NativeLuaObject::KeyHold),
+        _ => None,
+    };
+    let table = match native_object {
+        Some(object) => match native_lua_object(lua, object)? {
+            Some(table) => table,
+            None => lua.create_table()?,
+        },
+        None => match environment.get::<Value>(name)? {
+            Value::Table(table) => table,
+            _ => lua.create_table()?,
+        },
     };
     table.raw_set(key.clone(), value)?;
     // Only native `g_*` buffers carry the compact event list. Publishing its
@@ -105,15 +120,19 @@ pub(crate) fn set_input_flag(
     } else {
         table.raw_set(1, Value::Nil)?;
     }
-    environment.set(name, table.clone())?;
-    lua.globals().set(name, table)?;
+    if let Some(object) = native_object {
+        retain_native_lua_object(lua, object, Some(&table))?;
+    } else {
+        environment.set(name, table.clone())?;
+        lua.globals().set(name, table)?;
+    }
     Ok(())
 }
 
 pub(crate) fn clear_input_edges(lua: &Lua) -> LuaResult<()> {
     let environment = game_environment(lua)?;
-    for name in ["keyPressed", "keyReleased"] {
-        let Value::Table(table) = environment.get::<Value>(name)? else {
+    for object in [NativeLuaObject::KeyPressed, NativeLuaObject::KeyReleased] {
+        let Some(table) = native_lua_object(lua, object)? else {
             continue;
         };
         let keys = table

@@ -8,7 +8,9 @@ use super::{
     chunks::execute_script_in,
     environment::{game_environment, install_table_fallback},
 };
-use crate::{describe_value, value_string};
+use crate::{
+    NativeLuaObject, describe_value, native_lua_object, retain_native_lua_object, value_string,
+};
 
 pub(crate) fn make_script_loader(lua: &Lua, root: Arc<PathBuf>) -> LuaResult<Function> {
     lua.create_function(move |lua, args: MultiValue| {
@@ -35,9 +37,18 @@ pub(crate) fn make_script_loader(lua: &Lua, root: Arc<PathBuf>) -> LuaResult<Fun
                     // its persistent blockTable object, not to gamelua[name].
                     // The ordinary form below is the one that publishes a
                     // child environment directly on gamelua.
-                    let block_table = match parent.raw_get::<Value>("blockTable")? {
-                        Value::Table(table) => table,
-                        _ => lua.create_table()?,
+                    let block_table = match native_lua_object(lua, NativeLuaObject::BlockTable)? {
+                        Some(table) => table,
+                        None => {
+                            let table = lua.create_table()?;
+                            parent.raw_set("blockTable", table.clone())?;
+                            retain_native_lua_object(
+                                lua,
+                                NativeLuaObject::BlockTable,
+                                Some(&table),
+                            )?;
+                            table
+                        }
                     };
                     install_table_fallback(lua, &block_table, parent.clone())?;
                     let incoming = lua.create_table()?;
@@ -63,7 +74,6 @@ pub(crate) fn make_script_loader(lua: &Lua, root: Arc<PathBuf>) -> LuaResult<Fun
                         // therefore replace the previous pack wholesale.
                         block_table.raw_set(name, incoming)?;
                     }
-                    parent.raw_set("blockTable", block_table)?;
                 } else {
                     let child = lua.create_table()?;
                     install_table_fallback(lua, &child, parent.clone())?;

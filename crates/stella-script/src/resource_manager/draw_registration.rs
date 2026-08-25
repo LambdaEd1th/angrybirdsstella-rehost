@@ -7,6 +7,7 @@ mod text;
 use crate::*;
 
 pub(crate) use capture::{install_capture, install_open_url_and_publish};
+pub(crate) use sprite::native_resource_sprite_command;
 
 pub(crate) fn install_draw(
     lua: &Lua,

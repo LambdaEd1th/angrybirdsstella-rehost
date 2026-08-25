@@ -11,8 +11,7 @@ pub(in crate::game_lua::trajectory_registration) fn install_draw(
 ) -> LuaResult<()> {
     globals.set(
         "native_drawSimulationTrajectory",
-        lua.create_function(move |lua, _: MultiValue| {
-            let (spawn_time, speed) = native_aim_stream_settings(lua)?;
+        lua.create_function(move |_, _: MultiValue| {
             let resources = resources.lock().expect("resource runtime lock poisoned");
             let mut bridge = render.lock().expect("render bridge lock poisoned");
             // This member draws only the global AimStream, never either
@@ -75,7 +74,7 @@ pub(in crate::game_lua::trajectory_registration) fn install_draw(
             // The enabled flag is copied to the AimStream only after this
             // frame's draw; a false-to-true edge repopulates the next frame.
             let enabled = bridge.aiming_aid_enabled;
-            bridge.set_native_aim_stream_active(enabled, spawn_time, speed);
+            bridge.set_native_aim_stream_active(enabled);
             Ok(())
         })?,
     )

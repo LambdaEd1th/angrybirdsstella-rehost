@@ -22,9 +22,15 @@ pub(crate) fn install_extensions(
 ) -> LuaResult<()> {
     install_track_joint_bindings(lua, globals, Arc::clone(&render))?;
     install_object_extension_bindings(lua, globals, Arc::clone(&render))?;
-    install_native_block_bindings(lua, globals, Arc::clone(&render), resources, data_root)?;
+    install_native_block_bindings(
+        lua,
+        globals,
+        Arc::clone(&render),
+        Arc::clone(&resources),
+        Arc::clone(&data_root),
+    )?;
     polygon::install(lua, globals)?;
     ray::install(lua, globals, &render)?;
     light_beam::install(lua, globals, &render)?;
-    gravity_visuals::install(lua, globals, &render)
+    gravity_visuals::install(lua, globals, &render, resources, data_root)
 }

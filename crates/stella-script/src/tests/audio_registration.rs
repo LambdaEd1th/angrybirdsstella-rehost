@@ -174,6 +174,7 @@ fn startup_assets_callback_precedes_native_stella_channel_limits() {
     runtime
         .execute_source(
             r#"
+                res.createAudioOutput(1, 16, 16000)
                 createStartUpAssets = function()
                     setChannelCountLimit(1, 99)
                     startup_callback_observed = true
@@ -194,6 +195,29 @@ fn startup_assets_callback_precedes_native_stella_channel_limits() {
         runtime._audio_runtime.lock().unwrap().channel_limits,
         [-1, 4, 6, 3, 5, 5, -1, -1]
     );
+
+    let missing_output = StellaLua::new("/tmp").unwrap();
+    missing_output
+        .execute_source(
+            r#"
+                createStartUpAssets = function()
+                    startup_callback_observed = true
+                end
+            "#,
+        )
+        .unwrap();
+    let error = missing_output.initialize_startup_assets().unwrap_err();
+    assert!(error.to_string().contains("no audio output"));
+    assert!(
+        game_environment(missing_output.lua())
+            .unwrap()
+            .get::<bool>("startup_callback_observed")
+            .unwrap()
+    );
+    assert_eq!(
+        missing_output._audio_runtime.lock().unwrap().channel_limits,
+        [-1; 8]
+    );
 }
 
 #[test]
@@ -202,6 +226,7 @@ fn failed_startup_assets_callback_skips_native_channel_limits() {
     runtime
         .execute_source(
             r#"
+                res.createAudioOutput(1, 16, 16000)
                 createStartUpAssets = function()
                     setChannelCountLimit(1, 99)
                     error("startup asset failure")
@@ -235,12 +260,45 @@ fn resource_audio_playback_matches_native_name_handle_and_output_lifecycle() {
                 fails_without_output = not pcall(function()
                     res.playAudio("CLIP")
                 end)
+                fractional_stop_pre_output_rejected = not pcall(
+                    res.stopAudio, 0.5
+                )
+                fractional_query_pre_output_rejected = not pcall(
+                    res.isAudioPlaying, 0.5
+                )
+                boolean_stop_pre_output_ignored = pcall(
+                    res.stopAudio, false
+                )
+                boolean_query_pre_output_false = not res.isAudioPlaying(false)
+                named_stop_pre_output_rejected = not pcall(
+                    res.stopAudio, "CLIP"
+                )
+                named_query_pre_output_false = not res.isAudioPlaying("CLIP")
+                handle_stop_pre_output_rejected = not pcall(
+                    res.stopAudio, 1
+                )
+                handle_query_pre_output_false = not res.isAudioPlaying(1)
                 res.createAudioOutput(2, 16, 44100)
                 missing_handle = res.playAudio("MISSING")
                 res.createAudio("clip.wav", "CLIP", false)
                 stopped_handle = res.playAudio("CLIP")
                 res.startAudioOutput()
                 handle = res.playAudio("CLIP", 0.25, true, 3.9)
+                missing_invalid_channel = res.playAudio(
+                    "MISSING", 1, false, 8
+                )
+                invalid_low_channel_ok, invalid_low_channel_error = pcall(
+                    res.playAudio, "CLIP", 1, false, -1
+                )
+                invalid_low_channel_error = tostring(
+                    invalid_low_channel_error
+                )
+                invalid_high_channel_rejected = not pcall(
+                    res.playAudio, "CLIP", 1, false, 8
+                )
+                invalid_game_channel_rejected = not pcall(
+                    playAudioReturnUniqueHandle, "CLIP", 1, false, 8
+                )
                 explicit_nil_volume_rejected = not pcall(function()
                     res.playAudio("CLIP", nil)
                 end)
@@ -250,23 +308,70 @@ fn resource_audio_playback_matches_native_name_handle_and_output_lifecycle() {
                 wrong_channel_type_rejected = not pcall(function()
                     res.playAudio("CLIP", 1, false, "3")
                 end)
-                playing_by_name = res.isAudioPlaying("CLIP")
-                playing_by_handle = res.isAudioPlaying(handle)
-                res.stopAudio(handle + 0.5)
+                playing_by_name = res.isAudioPlaying("CLIP", "ignored")
+                playing_by_handle = res.isAudioPlaying(handle, "ignored")
+                fractional_stop_rejected = not pcall(
+                    res.stopAudio, handle + 0.5
+                )
+                fractional_query_rejected = not pcall(
+                    res.isAudioPlaying, handle + 0.5
+                )
                 fractional_handle_ignored = res.isAudioPlaying(handle)
-                res.stopAudio("CLIP")
+                res.stopAudio(false)
+                boolean_selector_ignored = (
+                    res.isAudioPlaying(handle) and
+                    not res.isAudioPlaying(false)
+                )
+                res.stopAudio("CLIP", "ignored")
                 stopped_by_name = not res.isAudioPlaying(handle)
                 second_handle = res.playAudio("CLIP")
                 res.stopAllAudio()
                 stopped_all = not res.isAudioPlaying(second_handle)
+                res.stopAudioOutput()
+                stopped_invalid_channel = res.playAudio(
+                    "CLIP", 1, false, 8
+                )
                 "#,
         )
         .unwrap();
     let environment = game_environment(runtime.lua()).unwrap();
     assert!(environment.get::<bool>("fails_without_output").unwrap());
+    for name in [
+        "fractional_stop_pre_output_rejected",
+        "fractional_query_pre_output_rejected",
+        "boolean_stop_pre_output_ignored",
+        "boolean_query_pre_output_false",
+        "named_stop_pre_output_rejected",
+        "named_query_pre_output_false",
+        "handle_stop_pre_output_rejected",
+        "handle_query_pre_output_false",
+    ] {
+        assert!(environment.get::<bool>(name).unwrap(), "{name}");
+    }
     assert_eq!(environment.get::<i64>("missing_handle").unwrap(), -1);
     assert_eq!(environment.get::<i64>("stopped_handle").unwrap(), -1);
     assert_eq!(environment.get::<i64>("handle").unwrap(), 0);
+    assert_eq!(
+        environment.get::<i64>("missing_invalid_channel").unwrap(),
+        -1
+    );
+    assert!(!environment.get::<bool>("invalid_low_channel_ok").unwrap());
+    assert!(
+        environment
+            .get::<String>("invalid_low_channel_error")
+            .unwrap()
+            .contains("Track -1 out of bounds! Range [0-7]")
+    );
+    assert!(
+        environment
+            .get::<bool>("invalid_high_channel_rejected")
+            .unwrap()
+    );
+    assert!(
+        environment
+            .get::<bool>("invalid_game_channel_rejected")
+            .unwrap()
+    );
     assert!(
         environment
             .get::<bool>("explicit_nil_volume_rejected")
@@ -280,13 +385,25 @@ fn resource_audio_playback_matches_native_name_handle_and_output_lifecycle() {
     );
     assert!(environment.get::<bool>("playing_by_name").unwrap());
     assert!(environment.get::<bool>("playing_by_handle").unwrap());
+    assert!(environment.get::<bool>("fractional_stop_rejected").unwrap());
+    assert!(
+        environment
+            .get::<bool>("fractional_query_rejected")
+            .unwrap()
+    );
     assert!(
         environment
             .get::<bool>("fractional_handle_ignored")
             .unwrap()
     );
+    assert!(environment.get::<bool>("boolean_selector_ignored").unwrap());
     assert!(environment.get::<bool>("stopped_by_name").unwrap());
     assert!(environment.get::<bool>("stopped_all").unwrap());
+    assert_eq!(environment.get::<i64>("second_handle").unwrap(), 1);
+    assert_eq!(
+        environment.get::<i64>("stopped_invalid_channel").unwrap(),
+        -1
+    );
     let _ = fs::remove_dir_all(root);
 }
 
@@ -523,9 +640,19 @@ fn composite_audio_copies_resolved_sequence_until_first_nil() {
             r#"
                 res.createAudio("a.wav", "A", false)
                 res.createAudio("c.wav", "C", false)
+                res.createAudio("a.wav", "123", false)
                 res.createCompositeAudio("SEQUENCE", {
                     "A", "MISSING", "C", [5] = "A"
+                }, "ignored")
+                res.createCompositeAudio("COERCED_STOP", {
+                    "A", 123, false, "C"
                 })
+                bad_composite_name = pcall(
+                    res.createCompositeAudio, 123, { "A" }
+                )
+                bad_composite_parts = pcall(
+                    res.createCompositeAudio, "BAD", 123
+                )
             "#,
         )
         .unwrap();
@@ -534,6 +661,13 @@ fn composite_audio_copies_resolved_sequence_until_first_nil() {
         runtime._audio_runtime.lock().unwrap().composite_clips["SEQUENCE"].parts,
         ["A", "C"]
     );
+    assert_eq!(
+        runtime._audio_runtime.lock().unwrap().composite_clips["COERCED_STOP"].parts,
+        ["A", "123"]
+    );
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert!(!environment.get::<bool>("bad_composite_name").unwrap());
+    assert!(!environment.get::<bool>("bad_composite_parts").unwrap());
     assert!(
         runtime
             .resource_runtime
@@ -1210,9 +1344,22 @@ fn resource_track_volume_uses_native_float_truncation_clamping_and_bounds() {
     runtime
         .execute_source(
             r#"
-                default_volume = res.getTrackVolume(2.9)
-                res.setTrackVolume(1.75, 2.9)
-                high_volume = res.getTrackVolume(2)
+                pre_output_get_rejected = not pcall(
+                    res.getTrackVolume, 2
+                )
+                pre_output_set_rejected = not pcall(
+                    res.setTrackVolume, 0.5, 2
+                )
+                pre_output_wrong_get_tag_rejected = not pcall(
+                    res.getTrackVolume, "2"
+                )
+                pre_output_wrong_set_tag_rejected = not pcall(
+                    res.setTrackVolume, "0.5", 2
+                )
+                res.createAudioOutput(2, 16, 44100)
+                default_volume = res.getTrackVolume(2.9, "ignored")
+                res.setTrackVolume(1.75, 2.9, "ignored")
+                high_volume = res.getTrackVolume(2, "ignored")
                 res.setTrackVolume(-0.5, 3)
                 low_volume = res.getTrackVolume(3)
                 bounds_ok = not pcall(function() res.getTrackVolume(8) end)
@@ -1229,6 +1376,14 @@ fn resource_track_volume_uses_native_float_truncation_clamping_and_bounds() {
     assert_eq!(environment.get::<f64>("default_volume").unwrap(), 1.0);
     assert_eq!(environment.get::<f64>("high_volume").unwrap(), 1.0);
     assert_eq!(environment.get::<f64>("low_volume").unwrap(), 0.0);
+    for name in [
+        "pre_output_get_rejected",
+        "pre_output_set_rejected",
+        "pre_output_wrong_get_tag_rejected",
+        "pre_output_wrong_set_tag_rejected",
+    ] {
+        assert!(environment.get::<bool>(name).unwrap(), "{name}");
+    }
     assert!(environment.get::<bool>("bounds_ok").unwrap());
     assert!(environment.get::<bool>("string_volume_rejected").unwrap());
     assert!(environment.get::<bool>("string_track_rejected").unwrap());

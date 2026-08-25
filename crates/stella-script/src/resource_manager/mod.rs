@@ -15,6 +15,7 @@ mod registration;
 mod runtime;
 
 pub(crate) use audio_playback_registration::{native_play_audio, require_audio_output};
+pub(crate) use draw_registration::native_resource_sprite_command;
 pub(super) use lifecycle_registration::load_sprite_sheet_path;
 pub(crate) use locale_font_registration::resolve_localized_string;
 #[cfg(test)]
@@ -30,7 +31,8 @@ pub(super) use fonts::{
 #[cfg(test)]
 pub(crate) use geometry::load_sprite_geometry;
 pub(super) use geometry::{
-    NativeSpriteMetrics, NativeSpritePlacement, SpriteGeometry, composite_part_lua_table,
+    NativeSpriteMetrics, NativeSpritePlacement, ParsedSpriteDraw, SpriteGeometry,
+    SpriteHorizontalAnchor, SpriteVerticalAnchor, composite_part_lua_table,
     native_composite_metrics, parse_draw_sprite_args, sprite_draw_anchor_offset_from_geometry,
     update_composite_part_from_lua,
 };

@@ -10,6 +10,11 @@ use mlua::{Function, Lua, MultiValue, Result as LuaResult, Table, Value};
 
 use crate::{RenderBridge, ScreenshotShareRequest, native_required_string, runtime_error};
 
+// Purple stores this signed 32-bit sequence beside the process-global unique
+// shader counter, not in GameLua or RenderBridge. The value is incremented
+// before formatting and streamed through ostream's signed-int overload.
+static SCREENSHOT_SEQUENCE: Mutex<i32> = Mutex::new(0);
+
 pub(super) fn install_screenshot(
     lua: &Lua,
     globals: &Table,
@@ -20,9 +25,14 @@ pub(super) fn install_screenshot(
         "native_shareScreenShot",
         lua.create_function(move |_, args: MultiValue| {
             let title = native_required_string(&args, 0, "native_shareScreenShot")?;
+            let sequence = {
+                let mut sequence = SCREENSHOT_SEQUENCE
+                    .lock()
+                    .expect("screenshot sequence lock poisoned");
+                *sequence = sequence.wrapping_add(1);
+                *sequence
+            };
             let mut bridge = share_bridge.lock().expect("render bridge lock poisoned");
-            bridge.screenshot_sequence = bridge.screenshot_sequence.wrapping_add(1);
-            let sequence = bridge.screenshot_sequence;
             bridge
                 .screenshot_share_requests
                 .push(ScreenshotShareRequest {
@@ -35,6 +45,13 @@ pub(super) fn install_screenshot(
     )?;
 
     Ok(())
+}
+
+#[cfg(test)]
+pub(crate) fn set_screenshot_sequence_for_test(sequence: i32) {
+    *SCREENSHOT_SEQUENCE
+        .lock()
+        .expect("screenshot sequence lock poisoned") = sequence;
 }
 
 pub(super) fn install_url(

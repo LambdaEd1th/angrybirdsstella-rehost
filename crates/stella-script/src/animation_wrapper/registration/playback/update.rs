@@ -442,7 +442,8 @@ fn install_update_inner(
     let callbacks = animation_callbacks.clone();
     animation_native.set(
         "update",
-        lua.create_function(move |_, delta_time: f64| {
+        lua.create_function(move |_, args: MultiValue| {
+            let delta_time = f64::from(native_required_number(&args, 0, "update")? as f32);
             let event_groups;
             {
                 let resources = resources

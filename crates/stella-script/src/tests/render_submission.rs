@@ -151,8 +151,13 @@ fn resource_clip_rect_is_truncated_and_captured_by_draw_submission() {
     runtime
         .execute_source(
             r#"
-                res.setClipRect(10.9, 20.9, 30.5, 40.5)
-                clip_x, clip_y, clip_width, clip_height = res.getClipRect()
+                res.setClipRect(10.9, 20.9, 30.5, 40.5, "ignored")
+                clip_x, clip_y, clip_width, clip_height =
+                    res.getClipRect("ignored")
+                bad_clip_x = pcall(res.setClipRect, "10", 20, 30, 40)
+                bad_clip_y = pcall(res.setClipRect, 10, "20", 30, 40)
+                bad_clip_width = pcall(res.setClipRect, 10, 20, "30", 40)
+                bad_clip_height = pcall(res.setClipRect, 10, 20, 30, "40")
                 setRenderState(1, 2, 3, 4, 5, 6, 7, 0.5)
                 drawRect(255, 128, 64, 0.75, 0, 0, 100, 100, true)
                 res.setClipRect(16777216, 0, 1, 1)
@@ -166,6 +171,14 @@ fn resource_clip_rect_is_truncated_and_captured_by_draw_submission() {
     assert_eq!(environment.get::<f64>("clip_y").unwrap(), 20.0);
     assert_eq!(environment.get::<f64>("clip_width").unwrap(), 31.0);
     assert_eq!(environment.get::<f64>("clip_height").unwrap(), 41.0);
+    for name in [
+        "bad_clip_x",
+        "bad_clip_y",
+        "bad_clip_width",
+        "bad_clip_height",
+    ] {
+        assert!(!environment.get::<bool>(name).unwrap(), "{name}");
+    }
     // The member adds the already narrowed float32 arguments; +1 is lost at
     // 2^24 instead of being summed in Lua-double precision.
     assert_eq!(environment.get::<f64>("wide_clip_x").unwrap(), 16_777_216.0);

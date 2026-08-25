@@ -114,7 +114,16 @@ fn block_editor_loader_uses_recovered_script_path_and_module_names() {
     fs::create_dir_all(root.join("editor-defs")).unwrap();
     fs::write(
         root.join("editor-defs/blocks_wood.lua"),
-        b"marker = 'wood-loaded'",
+        br#"
+            marker = 'wood-loaded'
+            gamelua.retainedEditor = blockEditorTable
+            gamelua.blockEditorTable = { shadow = true }
+        "#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("editor-defs/groups.lua"),
+        b"marker = 'groups-loaded'",
     )
     .unwrap();
 
@@ -124,7 +133,11 @@ fn block_editor_loader_uses_recovered_script_path_and_module_names() {
             r#"
                 scriptPath = "editor-defs"
                 loadBlocksForEditing()
-                editor_marker = blockEditorTable.blocks_wood.marker
+                editor_marker = retainedEditor.blocks_wood.marker
+                editor_group_marker = retainedEditor.groups.marker
+                editor_shadow_untouched = blockEditorTable.shadow == true
+                    and blockEditorTable.blocks_wood == nil
+                    and blockEditorTable.groups == nil
                 "#,
         )
         .unwrap();
@@ -133,6 +146,11 @@ fn block_editor_loader_uses_recovered_script_path_and_module_names() {
         environment.get::<String>("editor_marker").unwrap(),
         "wood-loaded"
     );
+    assert_eq!(
+        environment.get::<String>("editor_group_marker").unwrap(),
+        "groups-loaded"
+    );
+    assert!(environment.get::<bool>("editor_shadow_untouched").unwrap());
     drop(runtime);
     fs::remove_dir_all(root).unwrap();
 }
@@ -296,8 +314,9 @@ fn app_data_lua_serializer_and_loaders_round_trip_native_table_shape() {
                 assert(select('#', saveLuaFile(
                     "roundtrip.lua", "persisted", false
                 )) == 0)
-                assert(fileExistsInAppData("roundtrip.lua"))
+                assert(fileExistsInAppData("roundtrip.lua", "ignored"))
                 assert(not fileExistsInAppData("bundle-only.lua"))
+                assert(not pcall(fileExistsInAppData, 123))
 
                 persisted = nil
                 assert(select('#', loadTableFromFile(

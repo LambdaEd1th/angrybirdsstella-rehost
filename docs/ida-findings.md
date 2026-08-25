@@ -325,7 +325,7 @@ head, a compound polygon's fixture order reverses after every rebuild. Density,
 friction and restitution are snapshotted from the live Lua object before the
 synchronous `EndContact` callbacks and applied to every replacement fixture.
 A circle remains circular and rebuilds one fixture with
-`(abs(min(scaleX,scaleY)/blocks[definition].scale)+0.0001) * radius`, taking
+`(abs(min(scaleX,scaleY)/blockTable.blocks[definition].scale)+0.0001) * radius`, taking
 `radius` and its coefficients from the live Lua object. The original sensor
 flag is restored after replacement, which wakes a previously sleeping body
 only when that flag was true. Edge/line shapes throw the native unsupported
@@ -10266,3 +10266,1596 @@ for `stella-app`,
 for `stella-headless`, and
 `fec875edb8a6a8a5b10635f1ed35004476733ec2ca68b0f7854849d338632a4e`
 for the unchanged `stella-tool`.
+
+### Willow held-power fixed-step display sampling
+
+The remaining held-power hitch belongs to Willow's exact authored
+`@Willow_Spinning` action. Unluac recovery of the shipped
+`WillowAbility.lua` shows that the held aim path passes `aimSlowmo` (`0.3`) to
+`updateAbilityAimProgress`. It reconstructs real time as the scaled Lua delta
+divided by the current multiplier, advances the spin angle on every display
+update, and writes that angle back to the bird while its root translation
+continues to come from the moving Box2D body. The release and cancel paths
+restore the multiplier to one.
+
+IDA's `sub_10005E898` and Hopper's independent assembly agree that the
+multiplied float32 delta enters the same fixed `0x3D088889` (1/30 second)
+Box2D accumulator used by the other bird powers. On a fixed 60 Hz display
+link, `0.3` game time produces about nine body solutions per wall-clock second,
+so Willow's rotation can advance every frame while the directly bound root
+position repeats for roughly six or seven frames.
+
+The visual-only fixed-step sampler now selects `Willow_Spinning` in addition
+to the already recovered Poppy, Luca and Stella actions. It samples only the
+root translation at the unsolved accumulator time. Willow's Lua-authored
+angle, Box2D transform, Lua object position, collision ordering, forces and
+ability timing remain untouched. A focused regression exercises the exact
+held action and proves its submitted position advances without mutating the
+scene object; a second regression proves an ordinary Willow action retains
+both its solved physics pose and authored angle.
+
+The complete workspace passes all 594 tests (82 app/audio/wgpu, 31 assets,
+one core and 480 script/physics); formatting and strict
+all-target/all-feature Clippy are clean.
+
+### Held-power release boundary
+
+The first exact-action sampler still covered one state that the original game
+does not render as slow-motion physics. Recovered `PoppyAbility.lua` restores
+the global delta-time multiplier to `1` as soon as the held power is released,
+but deliberately retains `@Poppy_Power` during the short pre-attack phase. In
+that phase, its per-frame update writes `poppyStartX/Y` back to the bird until
+the drill starts. Selecting the display sample from the action name alone
+therefore extrapolated the retained incoming velocity away from a root that Lua
+had just pinned; each fixed-step accumulator wrap appeared as a small release
+hitch.
+
+IDA's `sub_10005E898` confirms that the float32 multiplier is the same native
+state used to scale the fixed-step accumulator. The rehost now requires both
+the exact recovered action and a multiplier below `1` before applying the
+visual-only unsolved-time sample. This keeps the held Poppy, Luca, Willow and
+post-timeout Stella paths continuous, then returns immediately to the exact
+Lua/native solved pose when their scripts restore normal time. A release-state
+regression leaves Poppy on `Poppy_Power` with retained velocity and proves that
+the normal-time pinned position is submitted without extrapolation.
+
+### Native two-slot physics-to-render interpolation
+
+The three preceding fixed-step sampling sections record the interim diagnosis
+and are superseded by a later complete recovery of `sub_10005E898`. The
+original executable does not extrapolate selected bird actions from velocity.
+It performs one global interpolation pass for every awake Box2D-backed
+RenderObjectData, so ordinary sprites and Flash birds share exactly the same
+display pose path.
+
+IDA and Hopper independently expose the complete implementation at
+`0x10005EFD8..0x10005F168`. GameLua `+0x23c` is a zero/one pose-slot selector;
+each RenderObjectData begins with two 12-byte `(x, y, angle)` float32 slots at
+`+0x00` and `+0x0c`. After a retained physics step the selector flips, the
+awake body's `b2Transform::p` is copied into the selected slot, and its
+rotation is normalized with `atan2f(q.s, q.c)`. The comparison against
+`0x3D888889` skips snapshots only while more than two fixed steps remain on a
+catch-up frame. Consequently the last two consecutive solved poses survive
+even when one display update runs several `0x3D088889` Box2D steps.
+
+After the fixed-step loop, Purple forms
+`alpha = accumulator * f32::from_bits(0x41efffff)` and
+`previousWeight = 1 - alpha`. Positions use the recovered float32 FMUL/FMADD
+order. Rotation first moves the previous angle by plus or minus two-pi when
+the slot delta crosses `f32::from_bits(0x40490fdb)`, then performs the same
+blend across the shortest arc. The results are stored at RenderObjectData
+`+0xa4/+0xa8/+0xac`; ordinary draw and Flash member `sub_10006794C` both read
+these fields. This is interpolation between solved transforms with the
+native one-step display latency, not prediction beyond the newest solution.
+
+The explicit pose members confirm the other half of the contract.
+`sub_10003FA60` writes a new position to the b2Body, the live render fields and
+both interpolation slots; `sub_10003FB78` does the same for rotation. Thus
+Lua-authored per-frame poses such as Stella's parkour tween, Dahlia's pinned
+aim root and Poppy's release boundary cannot smear across stale physics
+slots. The Rust rehost now implements these writes, the two pose buffers,
+tail-step capture, float32 position/short-angle blend and shared ordinary/
+Flash consumption. All action-name and velocity-extrapolation special cases
+for Poppy, Luca, Willow, Stella and Dahlia have been removed. Gameplay body
+state, Lua coordinates, collision order, forces and ability timing remain
+authoritative and unchanged.
+
+Regressions cover half-step position/angle blending, the two-pi shortest-arc
+branch, explicit pose reset of both slots, action-independent Flash
+submission, and a 0.1-second catch-up frame retaining its final two
+consecutive solutions. The complete workspace passes all 597 tests (82
+app/audio/wgpu, 31 assets, one core and 483 script/physics); formatting and
+strict all-target/all-feature Clippy are clean. A fresh isolated-AppData
+16,500-frame wgpu replay traverses L01, enters `Chapter01_L02`, holds the
+Stella tutorial ability through its slow-motion section and returns the
+multiplier to one. It completes without a Lua error, invoked compatibility
+fallback or remaining compatibility binding. The readback SHA-256 is
+`a00e6ee502840c80f103b58ac4236bca61af7387d507f3eb5786d156c2649753`;
+this remains execution evidence rather than a screenshot oracle.
+
+### Frame-head AudioOutput recovery and pre-zoom quit latch
+
+Continuing the complete `sub_10005E898` audit past its physics section exposed
+two earlier orchestration branches that were still narrower in the rehost.
+IDA's `0x10005E8E4..0x10005EAB4` and Hopper's independent assembly first read
+GameApp `+0x520`, test whether LuaResources owns an AudioOutput, then read the
+actual output-running byte through `sub_1005796F8` (`AudioOutputImpl+0x158`).
+When the application is audio-active and the output has stopped, Purple walks
+`settings.root.audioEnabled` and calls `sub_10045D634` before publishing input
+or invoking any Lua frame callback—but only when that nested value exists and
+is exactly Boolean `true`.
+
+This last condition deliberately differs from activation member
+`sub_100029C24`. The activation member writes GameApp `+0x520` before its Lua
+lookups and defaults a missing/wrong-typed setting to enabled; the per-frame
+repair path does not. The Rust host now retains the active byte separately,
+shares a three-state nested-setting reader, preserves activation's default,
+and implements the stricter frame-head recovery. It reloads the retained
+output state before starting so a replacement during the lookup cannot revive
+a stale device. Audio input remains outside this recovery path, matching both
+disassemblers.
+
+Immediately afterward, `0x10005EAC8..0x10005EB14` applies Lua 5.1 truthiness
+to `g_safeToQuit` and stores GameLua `+0x6ac`. Only then does
+`0x10005EB18..0x10005EB58` compare the zoom slots and call `applyUserZoom`.
+The prior Rust ordering latched the quit byte after that callback, allowing a
+zoom handler to change native quit behavior one frame too early. The frame
+facade now follows the recovered order. Focused regressions prove output
+recovery for exact true, rejection of false/string/nil and inactive frames,
+the distinct activation default, and a zoom callback whose Lua mutation is
+not visible to the native quit latch until the following frame.
+
+The complete workspace passes all 599 tests (82 app/audio/wgpu, 31 assets,
+one core and 485 script/physics); formatting, strict all-target/all-feature
+Clippy and the release build are clean. A fresh isolated-AppData 16,500-frame
+wgpu route again completes L01, enters live `Chapter01_L02`, holds the tutorial
+ability through slow motion and returns the multiplier to one. It reports no
+Lua error, invoked compatibility fallback or remaining compatibility binding.
+The readback SHA-256 is
+`b8d780fa42694e051ad4271d7211b7c03d362dc67e971656259634a3b29fb3f6`;
+the release application is
+`d90435d1e3e629b41df8735fd879cb79cc52196f1c0e54f594aa7f85cafcd112`.
+
+### Per-display-frame interpolated body export to Lua
+
+The remaining slow-motion hitch was not another draw-only interpolation
+case. The body bridge was publishing solved physics state to
+`objects.world` at the wrong point in the frame. In Purple,
+`sub_10005E898` calls `updatePhysics`, runs `b2World::Step`, clears forces,
+invokes `removeBlocks` and consumes the collision-velocity replacement map
+inside the repeated fixed-step loop at `0x10005EDB8..0x10005EFC8`. There is
+no body-table setter in that loop. `clearLuaForceFunctions` and the complete
+two-slot interpolation pass follow at `0x10005F064..0x10005F168`; only after
+the second physics-lock read does the native code acquire `objects.world` at
+`0x10005F278` and start the once-per-display-frame export.
+
+The exported position is also specifically the interpolated RenderObjectData
+pair at `+0xA4/+0xA8`, loaded at `0x10005F3AC` and `0x10005F3C8`. It is not
+the newest Box2D transform. The full motion record is emitted only when the
+body was awake on the preceding display pass or is awake now, and when its
+inverse mass is positive or its type is kinematic
+(`0x10005F384..0x10005F3A8`). `velocity` uses the exact float32
+`y*y` followed by `FMADD x*x` and `FSQRT` sequence at
+`0x10005F604..0x10005F610`. Component fields `xVel`, `yVel` and the
+interpolated-angle write are conditional on the controllable byte `+0x140`
+or record-velocity byte `+0x12D` at `0x10005F62C..0x10005F688`. Every body
+then receives the normalized transform angle through `atan2f(q.s,q.c)` and
+the inverse awake flag as `sleeping` at `0x10005F74C..0x10005F798`.
+
+The former Rust loop wrote the newest Box2D `x/y` and velocity fields after
+every catch-up step. With a slow-motion multiplier, a single display frame
+can execute zero, one or multiple fixed steps; later `updatePhysics` calls in
+the same frame therefore observed an intermediate pose, while rendering used
+the separately interpolated pose. Bird ability scripts that read their own
+Lua record could consequently advance the bird root in discontinuous chunks
+even though the rest of the scene remained smooth.
+
+The rehost now keeps collision-driven velocity replacement inside each fixed
+step but moves body-to-Lua publication into a dedicated frame-export module
+after interpolation. Lua `x/y`, out-of-bound reporting, float32 velocity
+magnitude, conditional component fields, normalized angle, sleeping state and
+the previous-awake predicate follow the recovered native pass. A focused
+0.1-second regression executes two fixed steps, proves that both
+`updatePhysics` calls still see the preceding display pose, and then proves
+that the frame tail publishes the interpolated pose exactly. Older collision
+and joint tests now distinguish authoritative Box2D state from the deliberately
+one-step-latent Lua display state.
+
+The complete workspace passes all 600 tests (82 app/audio/wgpu, 31 assets,
+one core and 486 script/physics); formatting, strict all-target/all-feature
+Clippy and the release build are clean. A fresh isolated-AppData 16,500-frame
+wgpu route traverses L01, enters live `Chapter01_L02`, holds the Stella
+tutorial ability through slow motion, restores the multiplier to one and
+reports 94 optional data probes, zero invoked fallbacks and zero remaining
+compatibility bindings. Its readback SHA-256 is
+`ff4b11c05116681e7c4ecfa03023c03430b328a7143d861c543118516d0ccb53`;
+the image is execution evidence and was not used as a visual oracle. The
+final release application SHA-256 is
+`969b49f1e8aab8482e6f03b922113540bca16ffd0675d1353034941b228ceabf`.
+
+### Persistent out-of-boundary table and native setter order
+
+The continuation of Purple's once-per-display-frame body export also fixes a
+Lua table lifetime and ordering mismatch. IDA's decompilation of
+`sub_10006FC0C`, checked independently against Hopper's complete procedure,
+shows that the executable retrieves the existing global
+`g_outOfBoundariesObjects` and requires it to be a table. It neither creates a
+replacement nor clears old keys during this pass. The shipped `game_init.lua`
+initializes that table once. GameLua `+0x308`, tested at `0x10005F260`, is the
+ordered scene-map node count, so an empty scene skips both the world-table and
+out-of-boundary-table lookups; a nonempty scene resolves `objects.world` first
+at `0x10005F278` and the global table second at `0x10005F28C`.
+
+For a dynamic body whose interpolated render position is outside the native
+world limits, Purple writes the marker with `lua_settable`. The write therefore
+honours `__newindex`, retains table identity, and occurs after the object's
+interpolated `x/y` setters but before its velocity setter. The Rust frame export
+now follows the same lifetime, scene-count gate, lookup order and setter
+interleaving. It only marks records that have physics motion and positive
+inverse mass, while leaving existing marker keys untouched exactly as the
+native pass does.
+
+Two regressions preserve this contract. One installs a metatable observer and
+proves that `x/y` are already visible while velocity is still absent when the
+marker is inserted; it also proves identity and key persistence after the body
+returns in bounds. The other proves that an invalid global is ignored for an
+empty scene but raises the native-style table error as soon as the scene owns
+one object.
+
+The complete workspace now passes all 602 tests (82 app/audio/wgpu, 31 assets,
+one core and 488 script/physics); formatting, strict all-target/all-feature
+Clippy and the release build are clean. The isolated-AppData 16,500-frame wgpu
+route again traverses L01, enters live `Chapter01_L02`, exercises the tutorial
+slow-motion hold, restores the multiplier to one and reports 94 optional data
+probes, zero invoked fallbacks and zero remaining compatibility bindings. Its
+readback SHA-256 is
+`3645829cbc189f4c896795c471a024d11deb4b9610cf0c78548f7b955cb203fa`;
+the release application SHA-256 is
+`b64946c70762e83f7ec6fa81dff71394d5a48b3d46a2d29040a1eb295af97f49`.
+
+### BirdAnimation rotation after native pose interpolation
+
+The remaining held-ability hitch was isolated to the moving bird root: body
+translation and every other scene object were already continuous. Completing
+the tail of IDA's `sub_10005E898` explains that split. Purple finishes the
+fixed-step loop and the two-slot RenderObjectData interpolation, exports the
+interpolated body records to Lua, and only later reaches the main Lua
+`update(float, float)` call at `0x10006058C..0x1000605A0`. BirdAnimation's
+per-display-frame update therefore runs after the native angle blend.
+
+The recovered shipped `BirdAnimation.lua` derives the flying root from the
+current body velocity. Above speed two it calls `setRotation` with
+`atan2(yVel, xVel)`. At or below speed two it calls the shipped `angleLerp`
+with a start of zero, or pi for a horizontally flipped bird, and weight
+`speed * 0.5`. Its state-updated hook then performs a second write for flipped
+birds: it rebuilds the direction with `vec2FromAngle`/`atan2`, conditionally
+subtracts pi for the middle half-plane, and calls `setAngle`.
+
+IDA confirms that `setRotation` and `setAngle` are aliases of
+`sub_10003FB78`. That member writes the Box2D angle, Lua angle,
+RenderObjectData `+0xAC` and both native interpolation-angle slots. The late
+BirdAnimation writer consequently replaces the already interpolated draw
+angle with a value derived from the latest 30 Hz Box2D velocity. In ability
+slow motion, velocity changes arrive even less often in wall-clock time, so
+only the bird visibly repeats orientation while its interpolated translation,
+camera, background and UI remain smooth.
+
+The rehost now keeps a companion velocity pair beside the two recovered pose
+slots and blends it with the identical selector, accumulator alpha and
+float32 FMADD order. At Flash submission time, only the exact shipped flying
+actions (`Stella_Flying`, `Poppy_Flying`, `Luca_Flying`, `Willow_Flying` and
+`Dahlia_Flying`) replay BirdAnimation's high-speed, low-speed and flipped
+second-writer formulas from that interpolated velocity. Explicit
+`setVelocity` and impulse changes reset both visual samples, matching the
+coherency rule already recovered for explicit pose changes. This is a
+high-refresh rehost compatibility layer, not a claim that Purple stores extra
+velocity slots: Box2D state, Lua `objects.world`, collisions, ability timing
+and the native two-slot pose implementation remain unchanged.
+
+Regressions cover the high-speed overwritten angle, the low-speed
+`angleLerp` and flipped second-writer path, and explicit velocity-slot reset.
+The complete workspace passes all 604 tests (82 app/audio/wgpu, 31 assets,
+one core and 490 script/physics); formatting, strict all-target/all-feature
+Clippy and the release build are clean. A 16,600-frame release-wgpu replay
+traverses L01, enters live `Chapter01_L02`, holds Stella's ability through
+timeout and follows its return to flight. Both the high-speed and low-speed
+root angles advance on every display frame, the multiplier returns to one,
+and the run completes with zero invoked fallbacks and zero remaining
+compatibility bindings. Its readback SHA-256 is
+`fd0371059050d13153b604cab126fbda9052f571dc5c10fea22c0fcb14660744`;
+the image is execution evidence and was not used as a visual oracle. Current
+release SHA-256 values are
+`e8f582d5af2d5e4b5d07d7ca80b612e835c0bebad03ed57326d6d0599f338d46`
+for `stella-app` and
+`08e7bc93ae3f0af731b0d6a1df3f2765a6470b46891e6b12cab1553607a6def6`
+for `stella-headless`.
+
+### L44 pulley fixture scale source and persistent drift
+
+The floating pulley report in `Chapter02_L44` exposed a source-table
+distinction inside the already recovered circle branch of
+`setPhysicsScale` (`sub_10004050C`). IDA shows that the branch reads the
+object definition from GameLua `+0x458`, then indexes its `blocks` member and
+the definition name before reading `scale`. GameLua's actual constructor
+`sub_10002C274` publishes `blockTable` at `0x10002F5D0..0x10002F5E0`, then
+publishes its `blocks` child at `0x10002F5E4..0x10002F5F4`; IDA and Hopper's
+`Purple` procedure agree on that sequence. `sub_10001F98C` is instead the
+DirtMechanics constructor: it resolves `blockTable` dynamically for its own
+material snapshot and is not evidence for the GameLua member lifetime. The
+circle path is therefore `blockTable.blocks`, not the unrelated global
+`blocks` namespace that owns `BlockComponentManager`.
+
+The former Rust lookup used global `blocks`. Every shipped definition missed,
+so the circle branch silently used its native default definition scale of one.
+For `PULLEY_7`, Lua has radius `0.0484416`, visual scale `0.0242208`, and the
+`PULLEY` definition has scale `0.1`. The wrong lookup rebuilt the fixture with
+scale `0.0243208`, producing radius `0.0011781` and mass `0.0000436`. The
+native lookup uses scale `0.242308`, producing radius `0.0117378` and mass
+`0.0043283`. The almost hundredfold mass error let the five-hertz pull joint
+kick the wheel every fixed step while its weld joint repeatedly corrected the
+pose, which appeared as continuous floating and also let the hanging rope
+links travel far from their authored mechanism.
+
+`circle_definition_scale` now follows the retained
+`blockTable.blocks[definition]` path. A conflicting-table regression proves
+that a similarly named entry in global `blocks` cannot affect fixture size.
+A shipped-data L44 regression initializes the original event system, runs the
+real `Pulley` and `Rope` components for 600 display frames, verifies the exact
+native radii/masses for `PULLEY_7/PULLEY_8`, bounds their settled speed and
+welded-pose drift, and confirms that the terminal rope links remain tethered
+to both wheels.
+
+The complete workspace passes all 605 tests (82 app/audio/wgpu, 31 assets,
+one core and 491 script/physics); formatting, strict all-target/all-feature
+Clippy and the release build are clean. A fresh isolated-AppData 2,201-frame
+wgpu route enters the shipped file through its real Chapter02 pack index 46,
+captures both pulley poses at frame 1,200 and asserts at the end that each
+drifts less than `0.003` physics units and has speed below `0.01`. The route
+reports zero invoked fallbacks and zero remaining compatibility bindings. Its
+readback SHA-256 is
+`40a1570c3330d743aa727338021f857be7bb63eb8efa47964238094ffd852e0a`;
+the image is execution evidence rather than a visual oracle. Current release
+SHA-256 values are
+`1d00f4fb514376dd0d65e969c90aa7de5fab6e38aa94c29ecebdbce828fc83ad`
+for `stella-app` and
+`7c2d5df1ac268251880c6bb522fa3bcefd40749cd0828`
+for `stella-headless`.
+
+### BirdSimulation/AimStream settings are level-load snapshots
+
+Continuing from the held-ability audit exposed one remaining lifetime mismatch
+in the trajectory predictor. IDA's `loadLevelImpl` (`sub_100065D3C`) converts
+`worldAttributes.simulationIterations` at `0x1000669B4`, retains
+`simulationTimeStepMultiplier` at `0x100066A0C`, converts
+`simulationStorePointsSampler` at `0x100066A68`, and stores the results at
+GameLua `+0x4F8/+0x4FC/+0x500`. It then retains
+`simulationAimSpawnTime/simulationAimSpeed` at `+0x504/+0x508`, copies those
+last two values into AimStream `+0x40/+0x48`, calls reset
+(`sub_1000086CC`) and deactivates the stream. Hopper independently shows the
+same five reads and contiguous store order.
+
+The predictor (`sub_100032970`) consumes the three retained GameLua fields and
+uses `objects.currentTimeStep` as its only live Lua scalar. `getAimingTime`
+(`sub_10004B8EC`) is a deliberate exception: IDA and Hopper both show it
+resolving GameLua `+0x4D0/+0x4E8`, reading the current
+`worldAttributes.simulationIterations`, applying `FCVTZS`, and multiplying it
+by the live time step while excluding the time-step multiplier. The native
+number paths use Lua 5.1 conversion, so numeric strings are accepted while
+absent or nonnumeric values become zero.
+
+The Rust bridge now mirrors those three native fields and snapshots all five
+settings during `loadLevel`. Prediction retains only `objects.currentTimeStep`
+as a live input, while aiming time also observes the live iteration field.
+Regressions load numeric-string settings, mutate all five Lua fields afterward
+and prove that trajectory sampling and AimStream population keep their loaded
+values while `getAimingTime` changes immediately; a subsequent level load then
+adopts the mutations for prediction too. AimStream reset still clears only
+particles, control points and the active flag, preserving its native spawn
+timer across the boundary. A wrapper-order regression also preserves
+`sub_10004C4CC`: fewer than four control points skip both drawing and the
+pending enabled-state write, whereas a valid path applies `setActive` even if
+the sprite name is empty.
+
+The complete workspace now passes 606 tests (82 app/audio/wgpu, 31 assets,
+one core and 492 script/physics); formatting, strict
+all-target/all-feature Clippy and the release build are clean. A fresh
+isolated-AppData 1,200-frame release-wgpu route enters Chapter02 L44, creates
+an isolated BirdSimulation body outside the authored world, mutates the three
+predictor fields at frame 800, proves the sampled trajectory length is
+unchanged, and simultaneously proves `getAimingTime` observes the new live
+iteration count. The route completes with 79 optional data
+probes, zero invoked fallbacks and zero remaining compatibility bindings. Its
+readback SHA-256 is
+`a94f2e9fbbfc8edbab882b43fef9ee1cb90e472c55859243e068a72dee324ee9`;
+the image is execution evidence rather than a visual oracle. Current release
+SHA-256 values are
+`77dd66c9f842ee5efb8c1d2d848fbaafe33c39ed1690502025f48bb687711e18`
+for `stella-app` and
+`47c9fc7978747fc606070a9572a86b6efbba9867b80360364c6a70c190632110`
+for `stella-headless`.
+
+### Retained GameLua LuaObject identities
+
+The pulley source-table correction exposed a broader identity rule that is
+easy to lose in a Rust/Lua rehost. GameLua does not resolve all of its native
+tables through their current script-visible names. IDA places the real
+GameLua constructor at `sub_10002C274`: `0x10002F44C..0x10002F45C`
+publishes the constructor's `objects` LuaObject, while
+`0x10002F5D0..0x10002F5E0` publishes `blockTable` and
+`0x10002F5E4..0x10002F5F4` installs its `blocks` child. Hopper's complete
+`Purple` procedure independently shows the same strings, arguments and call
+order. Later native users reach the retained members at GameLua `+0x408` and
+`+0x458`; replacing `gamelua.objects` or `gamelua.blockTable` therefore does
+not retarget them.
+
+The constructor also creates and publishes its clipping result table before
+any game scripts run. IDA shows `sub_10002C274` initializing the LuaObject at
+GameLua `+0x430` (`0x10002C510`) and publishing it as `clippedText` at
+`0x10002F438..0x10002F448`. Hopper shows the same member offset and store.
+`clipText` (`sub_10004F630`) writes `widestLine` and `lines` through that
+retained member at its tail, rather than resolving the current global. This
+identity is consequently captured at constructor/bootstrap time; waiting for
+the later game-logic load would incorrectly allow an intervening script
+replacement to become the native result object.
+
+Four earlier constructor members follow the same identity rule. The
+constructor publishes `keyPressed`, `keyReleased`, `keyHold` and `cursor` from
+GameLua `+0xF0/+0x118/+0x140/+0x168`. IDA's GameApp frame member
+`sub_1000293C8` writes the five fixed platform keys directly through the first
+three offsets at `0x1000295E8..0x100029644`, then clears the native press and
+release bytes. Its wheel-frame tail writes `wheelTriggered` through `+0x168`.
+The wheel callback `sub_100029FF8` likewise writes `wheel` and
+`wheelTriggered` through the retained cursor at
+`0x10002A1B4..0x10002A204`. Hopper independently shows the identical four
+offsets and write order. The script-owned compact `g_*` event tables are a
+separate dynamic representation and do not become constructor members.
+
+The two adjacent gesture objects are constructor-owned too. IDA initializes
+GameLua `+0x1A0/+0x1C8` at `0x10002C3A0..0x10002C3B4`, publishes them as
+`multitouchSweep`/`multitouchZoom` at
+`0x10002F3F4..0x10002F418`, and writes the latter's
+`zoomCoolingTime = -1.0f` through the member. Those names have no other string
+xrefs in either IDA or Hopper, but replacing the public names cannot release
+the two LuaObjects while GameLua remains alive. `blockEditorTable` has a
+separate rebind boundary: `sub_100044F90` resolves a new table into GameLua
+`+0x480` before the module sequence, and `sub_100067A40` writes every named
+module through that member. A definition script that shadows the public name
+therefore cannot redirect the remaining loads; the next editor-load call
+rebinds the member again.
+
+`worldAttributes` has a different boundary. `loadLevelImpl`
+(`sub_100065D3C`) resolves the current level table and replaces the LuaObject
+at GameLua `+0x4D0/+0x4E8` on each successful level load. Collision force and
+score code then reads that retained object; for example
+`sub_100062520` loads `+0x4D0` at `0x100062558`, follows `+0x4E8`, and reads
+`forceDamageMultiplier`. A same-name global replacement between level loads
+must not affect those paths, but the next load must rebind them.
+
+The same loader has a second retained level object. IDA and Hopper both show
+`0x100065DEC..0x100065E14` resolving `deadBlocks` by name and assigning it to
+GameLua `+0x4A8`. The delayed-destruction pass stores that member on the stack
+at `0x10005F094` and passes it to the table setter at
+`0x10005F1EC..0x10005F1F4`; it does not look up the current global again.
+Collision damage shares the same native queue helper. Thus a same-name
+replacement is ignored within the current level and adopted at the next
+successful load, exactly like the retained pointer in Purple.
+
+The rule is per native owner rather than per string. ThemeManager construction
+(`sub_1000985DC -> sub_100072DC0`) still resolves `objects` dynamically by
+name, while its theme definitions come from GameLua `+0x458`. DirtMechanics
+constructor `sub_10001F98C` also resolves `blockTable` dynamically and then
+snapshots its material fields. Those two routes deliberately remain dynamic
+in the rehost.
+
+The host now retains the twelve concrete `mlua::Table` identities in the Lua
+registry. Bootstrap captures constructor-created `keyPressed`, `keyReleased`,
+`keyHold`, `cursor`, both multitouch tables and `clippedText` immediately;
+game-logic constructor completion captures `objects` and `blockTable`; every
+successful level load replaces the retained `worldAttributes` and
+`deadBlocks`; every editor-definition load replaces `blockEditorTable`.
+Native input and cursor publication, scene/world access, definition merges,
+fixture scaling, joint descriptors, level save, theme selection, collision
+damage, scoring, delayed destruction, editor modules and clipped-text output
+now consume the corresponding retained object. A separate bound marker
+distinguishes an explicitly retained nil from a pre-boot object that has never
+been captured. Pre-boot unit runtimes lazily capture the first concrete table
+so their lifetime matches the first native use without inventing a separate
+script-visible owner.
+
+Regressions replace each same-name global after capture and prove that circle
+fixture scale, definition-pack merges, trajectory time step, joint/world
+access, collision multipliers, the native dead-block queue, `clipText`, native
+key states and cursor/wheel publication continue to use the retained table.
+The input regression verifies press, hold, pointer, wheel and frame-tail clear
+behavior while all four same-name shadows remain untouched. The clipping
+regression likewise verifies that the retained `lines` table is replaced per
+call while its shadow remains untouched. Weak-reference coverage proves both
+multitouch objects survive public-name replacement and two full collections.
+The editor regression shadows `blockEditorTable` from its first available
+module and proves the later `groups` module still enters the retained table.
+A later successful level load is separately proved to rebind both level-owned
+tables and snapshot the new BirdSimulation/AimStream settings. Dynamic
+ThemeManager and DirtMechanics paths retain their own focused coverage.
+
+The complete workspace now passes all 607 tests (82 app/audio/wgpu, 31
+assets, one core and 493 script/physics); formatting, strict
+all-target/all-feature Clippy and the release build are clean. A fresh
+isolated-AppData 1,200-frame release-wgpu run loads the real Chapter02 L44
+content, records both pulley poses after entry and asserts at the end that
+each drifted less than `0.003` physics units. It reports 76 optional data
+probes, zero invoked fallbacks and zero remaining compatibility bindings. The
+readback SHA-256 is
+`79c81aeb69323533f9e436fc726819f617eb3465ba8bd1d64e0ec5e74b4cd700`;
+the image is execution evidence rather than a visual oracle. Current release
+SHA-256 values are
+`ffd56fa6b4d2016de110d399d4f54dc44432053af9a82ad93a77292eaf5c10bc`
+for `stella-app` and
+`1c7afc28f4e6fa5dd0852cf0b78c61c181e821a73611cd16d5f17c793813076f`
+for `stella-headless`.
+
+## BirdRun L09 wheel mounts and Chapter01 L61 gold submission
+
+The map save's current event resolves to `BirdRun_L09`. Purple interprets its
+stored variant seed `1725440811` numerically and selects group variants
+`{1, 1, 5, 6, 8, 5, 8, 4}`. Group five, variant eight contains the four
+reported circles `BLOCK_ROCK_ROUND_2X2_1_19` through `_22`. They use the
+authored `BLOCK_ROCK_ROUND_2X2_1` radius `0.1`, density-backed dynamic bodies
+and the ordinary stone sprite; the native circle constructor
+`sub_100034FB0` in both IDA and Hopper copies that radius and chooses body type
+two when density is nonzero. There is no wheel-specific anti-gravity or
+floating branch.
+
+The complete runtime joint table corrects the misleading result of looking
+only at a partial level-object list. These four circles are intentionally
+mounted by six physical type-two revolute joints. `_19` is joined to wood
+block `_97`, `_21` to `_96`, `_20` to `_95` and the glass triangle, and `_22`
+to `_98` and the same triangle. The wood joints for `_20` and `_22` are
+breakable at authored force `2`; the remaining four mounts are not
+breakable. Their visible suspension is therefore authored behavior, not the
+Chapter02 L44 pulley fixture-scale defect. Forcing gravity-only motion or
+deleting the mounts would diverge from Purple.
+
+A deterministic ten-second native fixed-step replay now pins the exact eight
+variant choices and all six mount descriptors. All four circles remain alive,
+settle below `0.01` speed, enter Box2D sleep, stay within `0.05` physics units
+of their loaded poses and leave score at zero. A separate 3,000-display-frame
+run through the actual save/map entry also leaves score at zero and reports no
+moving objects. Thus delayed collapse is not an unconditional idle defect.
+
+A later fixed-step audit repeats the exact saved variant layout six times:
+three independent runs idle for 60 simulated seconds and three for 120. The
+first ten seconds are treated as the normal settling window. Every run retains
+all 90 ordinary dynamic building blocks and all 33 level joints, removes or
+adds no blocks, breaks no joints, leaves those buildings asleep and keeps score
+at zero. The largest post-window position and angle changes are respectively
+`0.004058409` physics units and `0.019947529` radians, identically reproduced
+in all six runs and below the structural-drift audit threshold.
+
+Full 60 Hz host update/draw comparison adds an important distinction. Depending
+on the run's authored actor state, the lower chainsaw vehicle can remain posed
+for a while and then move between the 10- and 120-second captures. A live
+object audit identifies the complete moving set as
+`BLOCK_JUNGLE_CHAINSAW_21/22`, its two round wheels, eight attached platform
+blocks and `pig_medium_15/18`. No object is removed. The ordinary upper and
+right-hand towers remain unchanged; the visible difference is coherent
+movement/rotation of this mobile pig contraption, not an idle building collapse.
+Screenshots are retained only as navigation evidence; this classification comes
+from the queried object identities and poses.
+
+The exact retail descriptors also establish that this motion is passive rather
+than a hidden timed demolition. The vehicle's wood wheels
+`BLOCK_WOOD_ROUND_4X4_1_10/11` are dynamic circle bodies attached to
+`BLOCK_ROCK_1X10_1_27` by non-breakable type-three revolute joints. Both
+descriptors explicitly contain `motor=false`, `motorSpeed=0` and `limit=false`;
+their retained `backAndForth=true` metadata therefore has no enabled motor or
+limit to drive. The two `BLOCK_JUNGLE_CHAINSAW_21/22` bodies are fixed to the
+frame by non-breakable type-two weld joints, while `pig_medium_15/18` are
+ordinary dynamic payloads and are not joint endpoints. IDA's `createJoint`
+path at `sub_100037374` reads `motor`, `motorSpeed`, `limit` and
+`backAndForth` independently before inserting the selected Box2D joint through
+`sub_10086E470`; Hopper independently shows the same reads at
+`0x100038A94`, `0x100038B54`, `0x100038E58` and `0x100039380`. Neither
+disassembler exposes a timer or force application on the motor-disabled path.
+Thus whole-cart settling, rolling or rotation under gravity/contact is authored
+behavior. Unassisted removal of parts or collapse of one of the separate towers
+is not: the repeated fixed-step audit above observes neither.
+
+The supplied before/after captures already show scores `10` and `6190`, so
+some collision/destruction path ran in that session; because this event uses
+dynamic structures, autonomous actors and two deliberately breakable wheel
+mounts, a later partial collapse after such interaction is consistent with
+the authored level. The captures are navigation evidence, not a substitute
+for the deterministic physics trace.
+
+Chapter01 L61 exposed an independent native scene-submission omission. The
+shipped `GaleSlice` raycast calls the gameplay gate `makeGolden(object)`, which
+creates a live Lua shader named `2d-sprite-gold` with
+`DIFFUSEC={1,0.6000000238,0}`, `LIGHTNESS=0.400000006` and `HIGHLIGHT=0.5`, then
+changes material and scoring.
+Both disassemblers show ordinary/composite scene draw member
+`sub_10006D5B4` looking up the retained Lua object's `shader` field at
+`0x10006D6D8..0x10006D744` after its pre-draw callback, resolving the cached
+shader and passing the same pointer into the sprite submission. The Rust
+ordinary-object path previously submitted `shader: None`, so gameplay state
+became gold while wgpu could not display the coloration.
+
+Scene submission now performs that live per-draw lookup and supplies the
+recovered `SpriteShader` to the ordinary sprite command. One focused
+regression proves removal of the Lua field removes the effect on the next
+draw; a shipped-data regression boots the real Chapter01 L61, runs its actual
+`makeGolden` gameplay gate on a wood building block and observes exactly one
+gold shader reaching native scene submission with all three recovered
+parameters.
+
+The complete workspace now passes all 610 tests (82 app/audio/wgpu, 31
+assets, one core and 496 script/physics); formatting, strict
+all-target/all-feature Clippy, diff whitespace validation and the release
+build are clean. A fresh release-wgpu map-to-event run reaches the exact
+`BirdRun_L09` scene after 1,500 deterministic display frames with score zero;
+its readback SHA-256 is
+`f944378a2ff4ec92196ac42dff6b6ecacca5db9bcb236e03fcc7a5b50d414340`.
+A second run binds `2d-sprite-gold` to a real mounted wood block and produces
+a different deterministic readback from the otherwise identical baseline;
+these images are execution evidence, not visual oracles. Both runs report
+zero invoked fallbacks and zero remaining compatibility bindings. Current
+release SHA-256 values are
+`01d090d2dc886cc6cf1171350c2dcaeee34da69d6f606c0fff3ad6aa83c8fb32`
+for `stella-app` and
+`2f39428d1e24deeab785292b96ae40e006fb0e217acc7671021456becc330923`
+for `stella-headless`.
+
+## Authored gravity-sensor visuals
+
+The `renderGravityVisualsNative` registration at `0x10002CDCC` points to the
+hand-written GameLua member `sub_100032DC4`; Hopper independently resolves the
+same constructor adapter and procedure. The member does not enumerate physics
+sensors or draw their AABBs. It gates on the authored object table
+(`sensorType`, `addVisualTimer`, `active`, `definition`), resolves
+`blockTable.blocks[definition].type`, and supports only `circle` and `box`
+definitions.
+
+Circle definitions draw every authored `gravityVisuals` sprite eight times:
+four quarter turns plus four diagonal quarter turns. Scale uses two float32
+products followed by the binary64 `0.019` constant; the live GL translation,
+scale, angle and sprite pivot are overwritten before every immediate draw.
+Arguments two through four use the generated exact NUMBER-tag adapter, while
+the type gates and authored fields retain their distinct Lua 5.1
+`lua_isstring`/`lua_isnumber` and `lua_tostring`/`lua_tonumber` coercions.
+
+Box definitions normalize by the **height** returned for
+`THEME_1_GRAVITY_SLICE_BOX_FADED`, retain that sprite's pivot, rotate the
+context by `angle + 3.1416f/2`, and place every authored slice along the
+rotated height with the FMADD/FNMSUB sequence at `0x1000335A8`. Assembly at
+`0x1000335B0..0x1000335C8` confirms the sine-derived value is ResourceManager
+argument S0/X and the cosine-derived value is S1/Y.
+
+The Rust/wgpu adapter now shares the ResourceManager immediate-sprite path,
+including atlas/composite pointer capture and HPIVOT/VPIVOT anchoring. Sprite
+bounds and pivots also use the concrete integer AtlasSprite/CompoSprite fields
+queried by `sub_10045CD60`, `sub_10045CDAC` and `sub_10045CDF8`. The former
+translucent AABB-cross approximation and its now-unused software-line shim
+have been removed.
+
+The complete workspace now passes all 614 tests (82 app/audio/wgpu, 31
+assets, one core and 500 script/physics); formatting, diff whitespace checks,
+strict all-target/all-feature Clippy and the release build are clean. A copy of
+the supplied AppData completed a 180-frame release-wgpu upload, render and
+readback with zero invoked fallbacks and zero remaining compatibility
+bindings. Its execution-evidence PNG SHA-256 is
+`ed626e4c19182f75407128c5ba721a43f1d070ae8fe6d01c691772618bcdf683`;
+the image is not treated as a visual oracle. Current release SHA-256 values are
+`139b3568714f686efc30174671fec10afe92b2c7dd86c15ba61071688bf88d85`
+for `stella-app` and
+`4ffc56627949a9099e9dceb48da6d98f544824d76a882abb94f030f64ce9f7df`
+for `stella-headless`.
+
+## Exact Lua tags for late particle, sensor and service adapters
+
+The adjacent `setMenuParticlesScale` constructor publication at
+`0x10002E004` selects generated adapter `sub_100088D24`. IDA and Hopper both
+show its only argument passing through `sub_10052859C`, followed by a virtual
+call through `GameLua+0xE8`. That object is the `Particles` instance built by
+`sub_10008E160`; vtable slot `+0x10` resolves to the two-instruction
+`sub_10008E51C`, which stores S0 directly at `Particles+0x38`. The Rust adapter
+now requires the exact Lua NUMBER tag, ignores trailing slots and performs the
+same float32 narrowing before the store.
+
+`native_applySensorForces` is instead the hand-written GameLua member
+`sub_10005B570`, published at `0x10002F330`. Its two names are both read by
+`sub_1005285CC`, whose `sub_1005281F8(..., 4)` check requires the exact Lua
+STRING tag before lookup and `sub_10005DE90` dispatch. The former Rust tuple
+used mlua's ordinary number-to-string coercion. It now applies the two exact
+string slots and preserves Purple's ignored trailing-stack behavior.
+
+The same coercion audit reached two offline platform services. Generated
+FusionGamerServices adapters `sub_1000CC2F4` and `sub_1000CC0C4` require,
+respectively, `(STRING)` and `(STRING, NUMBER)` for `postAchievement` and
+`postScore`. Assets adapter `sub_1000ACDE8 -> sub_1000ACE50` reads all three
+`createSpriteSheet` arguments with `sub_1005285CC`. These bindings no longer
+accept numeric values through mlua's convenient string conversion; their
+offline/no-result behavior and successful sprite-sheet transaction remain
+unchanged. Focused regressions cover missing, wrong-tag and trailing-slot
+cases for every corrected boundary.
+
+The complete workspace now passes all 616 tests (82 app/audio/wgpu, 31
+assets, one core and 502 script/physics); formatting, diff whitespace checks,
+strict all-target/all-feature Clippy and the release build are clean. A copied
+AppData 180-frame release-wgpu run again completes with zero invoked fallbacks
+and zero remaining compatibility bindings. The unchanged deterministic
+readback SHA-256 is
+`ed626e4c19182f75407128c5ba721a43f1d070ae8fe6d01c691772618bcdf683`;
+it is execution evidence rather than a visual oracle. Current release SHA-256
+values are
+`2582905de2b03dd813eb17d470b21525d25e75212a7b8544ff558d249e8575ec`
+for `stella-app` and
+`8e5067cfbd0cdb5c7a8f66bbf4134a57e86c34d91bbd9edb96e03f4c1dc4e1e7`
+for `stella-headless`.
+
+## Exact Lua tags for direct GameLua sprite draws
+
+The direct-render family at `0x10002E354..0x10002E40C` publishes four
+separate generated adapters. IDA resolves `drawCompoSprite` to
+`sub_100085BB4 -> sub_100085C1C`, `drawSpriteWithShader` to
+`sub_1000845C0 -> sub_100084628`, and `drawSpriteWithoutShader` to
+`sub_100084330 -> sub_100084398`. The final `isCompoSprite` binding reaches
+`sub_100088F68 -> sub_100088FD0`; Hopper independently reports all four
+registration targets and adapter procedures.
+
+All three adapters read the sprite name with `sub_1005285CC`, whose
+`sub_1005281F8(..., 4)` gate requires an exact Lua STRING. Composite draw then
+reads slots two through five with exact NUMBER helper `sub_10052859C`. The
+plain atlas draw reads slots two through six the same way. Shader draw first
+converts slot two through `sub_1005286CC`, whose type-five gate requires an
+exact TABLE, then reads slots three through seven with `sub_10052859C`.
+Neither disassembler shows a stack-top equality check, so extra trailing Lua
+values remain intentionally ignored. The adapters move the complete returned
+floating registers into the member call without an additional conversion;
+the already recovered member/render paths retain their own float32 boundaries.
+`sub_100088FD0` likewise reads only exact STRING slot one and pushes exactly
+one boolean result.
+
+The former mlua `String`/`f64` tuples accepted convenient number-to-string and
+numeric-string conversions that Purple rejects. The three Rust bindings now
+decode `MultiValue` through the exact native STRING/TABLE/NUMBER helpers while
+leaving lookup, shader-cache, composite fallback and affine behavior
+unchanged. The former lookup shim also incorrectly scanned backward for the
+last string argument; it now requires slot one and ignores the rest. A focused
+regression rejects numeric sprite names, string-valued coordinates and a
+non-table shader for all applicable functions, and proves that each generated
+adapter still accepts a trailing ignored slot without changing lookup.
+
+The complete workspace now passes all 617 tests (82 app/audio/wgpu, 31
+assets, one core and 503 script/physics); formatting, diff whitespace checks,
+strict all-target/all-feature Clippy and the release build are clean. An
+isolated copy of the supplied AppData completed a 180-frame release-wgpu
+upload, render and readback with zero invoked fallbacks and zero remaining
+compatibility bindings. Its deterministic execution-evidence SHA-256 is
+`ed626e4c19182f75407128c5ba721a43f1d070ae8fe6d01c691772618bcdf683`;
+it is not treated as a visual oracle. Current release SHA-256 values are
+`5e6d2c0e8ae2d6b867ccda0c375d09e05908d7111785d4a91ba213aae88ccc1e`
+for `stella-app` and
+`2a036cc4ae56c18fe1303cbe1b4229e31ebc9ac903aa3208ee9dfc3c4de44973`
+for `stella-headless`.
+
+## Exact Lua tags for textured, masked, selected and 3D-text draws
+
+The adjacent GameLua registration spans expose four more generated adapters.
+At `0x10002CF3C..0x10002CF94`, `renderMaskedImageNative` publishes
+`sub_1000343CC` through `sub_100087F58 -> sub_100087FC0`, followed by
+`drawString3D` publishing `sub_10003457C` through
+`sub_100087B4C -> sub_100087BB4`. At `0x10002D9B4..0x10002DA3C`,
+`drawSelectedTexturizedObject` uses `sub_1000855CC -> sub_100085634`, while
+`drawTexturedRect` uses `sub_1000851C8 -> sub_100085230`. IDA and Hopper
+independently resolve the same registration targets and conversion helpers.
+
+`sub_100087FC0` requires exact STRING slot one and exact NUMBER slots two
+through ten. It then narrows every number to float32, applies `FCVTZS` only to
+the first eight coordinates, and leaves slot ten as the float32 UV factor.
+`sub_100087BB4` requires exact STRING slots one/two and exact NUMBER slots
+three through nine before the member installs its 3D projection.
+`sub_100085634` similarly requires two exact strings and four exact numbers.
+Finally, `sub_100085230` reads one exact string, four exact numbers and exact
+BOOLEAN slot six through `sub_1005281BC`; that helper proves the boolean gate
+is `sub_1005281F8(..., 1)`. None of the four adapters compares the Lua stack
+top, so trailing values are deliberately ignored.
+
+The Rust members already reproduced the recovered float32, integer-conversion,
+state-reset, resource-pointer and projection behavior, but their mlua tuple
+decoders still admitted numeric resource names and numeric strings. All four
+bindings now decode `MultiValue` through the exact native helpers without
+changing member-side math. A focused regression covers wrong tags in every
+string/number/boolean position, ignored trailing slots, and successful
+selected/masked/text submission after the stricter boundary.
+
+The complete workspace now passes all 618 tests (82 app/audio/wgpu, 31
+assets, one core and 504 script/physics); formatting, diff whitespace checks,
+strict all-target/all-feature Clippy and the release build are clean. An
+isolated copy of the supplied AppData completed a 180-frame release-wgpu
+upload, render and readback with zero invoked fallbacks and zero remaining
+compatibility bindings. Its deterministic execution-evidence SHA-256 remains
+`ed626e4c19182f75407128c5ba721a43f1d070ae8fe6d01c691772618bcdf683`;
+it is not treated as a visual oracle. Current release SHA-256 values are
+`c48aebc74fb24d3ef45c87a351f96ce348ce9b7fd71411a309f6b7f8556761ad`
+for `stella-app` and
+`8572dd3d6d565049f17971e884ca8933f5c29ad9a75d92e524f646e37557d083`
+for `stella-headless`.
+
+## Exact Lua tags for primitive, textured and rubber-band lines
+
+The line registration family resolves to three generated adapter shapes.
+`drawRubberband` is published at `0x10002C86C` through wrapper
+`sub_10008973C`, whose generated body `sub_1000897A4` calls member
+`sub_100030EB0`. The nearby GameLua registrations publish
+`drawTexturedLine2D` at `0x10002E2D4` through
+`sub_100084A34 -> sub_100084A9C` and member `sub_10004DB90`, then publish
+`drawLine2D` and `drawRectLines` at `0x10002E304`/`0x10002E334` through the
+shared `sub_1000848B0 -> sub_100084918` adapter and members
+`sub_10004DC44`/`sub_10004DC8C`. Hopper independently identifies the same
+wrappers, helpers and members; its instruction labels are four bytes after
+the IDA string-reference labels where it names the following instruction.
+
+`sub_100084918` reads exactly nine NUMBER slots with `sub_10052859C` for
+both primitive line members. `sub_100084A9C` first reads an exact STRING with
+`sub_1005285CC`, then nine exact NUMBER slots. Although the textured-line
+member consumes only the first five numbers, the generated adapter still
+validates the remaining four before dispatch. `sub_1000897A4` reads five
+exact NUMBER slots followed by one exact STRING. None of these bodies compares
+the current Lua stack top, so valid calls may carry ignored trailing values.
+All numeric return registers cross the recovered float32 ABI before member
+math; primitive positions and width then retain their separate `FCVTZS`
+boundary.
+
+The former mlua tuples reproduced arity but admitted Lua 5.1 convenience
+coercions and rejected harmless extra arguments. All four Rust bindings now
+use the exact native STRING/NUMBER slot readers while preserving the already
+recovered signed-width, one-pixel cutoff, endpoint quantization, color packing,
+UV order and mixed-precision rubber-band geometry. Focused regressions reject
+numeric sprite names, numeric strings and a wrong type in an otherwise unused
+textured-line slot, while proving that every adapter accepts an extra trailing
+value.
+
+The complete workspace now passes all 620 tests (82 app/audio/wgpu, 31
+assets, one core and 506 script/physics); formatting, diff whitespace checks,
+strict all-target/all-feature Clippy and the release build are clean. An
+isolated copy of the supplied AppData completed a 180-frame release-wgpu
+upload, render and readback with zero invoked fallbacks and zero remaining
+compatibility bindings. Its deterministic execution-evidence SHA-256 remains
+`ed626e4c19182f75407128c5ba721a43f1d070ae8fe6d01c691772618bcdf683`;
+it is not treated as a visual oracle. Current release SHA-256 values are
+`a71589bdfc74cb48312e130ddd41cf94e1a6029665d98b7ed2721c0a50725482`
+for `stella-app` and
+`57a1d242e38adbcfd4420ad4761131d66eb4dc5d9fd7816d9c883d096452aa08`
+for `stella-headless`.
+
+## Exact rectangle adapter and direct polygon table traversal
+
+The preceding primitive pair uses two different publication mechanisms.
+IDA's `drawRect` string reference at `0x10002D9F4` and Hopper's following
+instruction label at `0x10002D9F8` publish member `sub_100043C14` through
+`sub_100085450 -> sub_1000854B8`. That generated helper reads exact NUMBER
+slots one through eight with `sub_10052859C`, then exact BOOLEAN slot nine
+with `sub_1005281BC`. It does not compare the Lua stack top, so trailing
+values are ignored. The member's existing float32 color multiplication,
+`FCVTZS` geometry, low-byte packing and optional complete state reset remain
+unchanged; only the Lua boundary now rejects numeric strings and accepts
+additional arguments exactly like Purple.
+
+`drawPolygon` is instead published directly at the IDA/Hopper string-reference
+pair `0x10002DA44`/`0x10002DA48` as LuaState member `sub_100043F28`, without a
+generated adapter. Its first argument passes through `sub_100527F10`, whose
+`sub_1005281F8(..., 5)` gate proves the exact TABLE requirement; slots two
+through seven use the exact NUMBER helper. The member then calls
+`sub_10052B324`, which uses `lua_next` to count every key/value entry rather
+than applying the Lua length operator or `ipairs`. It fetches raw integer
+indices `1..count` through `sub_100070444 -> sub_100528978`, and every fetched
+value must itself be a table. A hash key therefore increases the required
+contiguous integer range, while an array hole or non-table value raises an
+error instead of ending or being skipped.
+
+Point fields deliberately use a different coercion boundary. The member
+performs ordinary `lua_gettable` access for `x` and `y`, then calls
+`sub_10052A014`/`lua_tonumber`. Numeric strings convert; missing, boolean and
+other nonnumeric fields become zero, and the result is retained as float32.
+The former Rust `sequence_values::<Value>` implementation stopped at holes,
+ignored non-table entries and made missing point coordinates an mlua error.
+It now reproduces the complete count/raw-index/table-check/field-coercion
+sequence. Focused regressions cover strict outer slots, ignored trailing
+values, numeric-string and zero coordinate conversion, non-table entries and
+the otherwise surprising extra-hash-key failure.
+
+The complete workspace now passes all 621 tests (82 app/audio/wgpu, 31
+assets, one core and 507 script/physics); formatting, diff whitespace checks,
+strict all-target/all-feature Clippy and the release build are clean. An
+isolated copy of the supplied AppData completed a 180-frame release-wgpu
+upload, render and readback with zero invoked fallbacks and zero remaining
+compatibility bindings. Its deterministic execution-evidence SHA-256 remains
+`ed626e4c19182f75407128c5ba721a43f1d070ae8fe6d01c691772618bcdf683`;
+it is not treated as a visual oracle. Current release SHA-256 values are
+`55f0e68bffcc20767a2a86be0c53626cb9bf4e83edb5bb77e307791679c4695f`
+for `stella-app` and
+`316b07fa0cdc579cedf8876199024efb98ff8e99ec0463329f501d0c35ea63b1`
+for `stella-headless`.
+
+## Exact notification adapter tags and ignored trailing values
+
+The four adjacent notification registrations are visible at IDA string
+references `0x10002CDFC`, `0x10002CE2C`, `0x10002CE5C` and `0x10002CE8C`;
+Hopper labels the following instructions four bytes later. The enabled-state
+member `sub_100034038` is published through `sub_10008962C`, which reads exact
+BOOLEAN slot one with `sub_1005281BC`. Add member `sub_100034070` is published
+through `sub_100088348 -> sub_1000883B0`; its helper reads exact STRING,
+NUMBER and STRING slots with `sub_1005285CC`, `sub_10052859C` and
+`sub_1005285CC`, narrows the delay through the float32 calling convention and
+pushes the platform result as one boolean. Keyed removal member
+`sub_100034398` uses shared `sub_100088F68 -> sub_100088FD0`, which requires
+one exact STRING and returns one boolean. Cancel-all member `sub_1000343A0`
+uses zero-argument/zero-result wrapper `sub_10008A07C`.
+
+None of these generated wrappers compares the Lua stack top. The former Rust
+typed tuples therefore had two observable mismatches: they accepted mlua's
+number/string coercions and rejected harmless trailing values. The offline
+notification map and enabled-state mirror are unchanged, including float32
+delay storage, keyed result booleans, disabled addition and cancel-all. Their
+Lua boundaries now use the exact native helpers. The notification regression
+now rejects numeric identifiers/messages, numeric-string delays and numeric
+booleans, while proving that add, keyed remove, enable and cancel-all all
+accept extra trailing arguments.
+
+The complete workspace still passes all 621 tests (82 app/audio/wgpu, 31
+assets, one core and 507 script/physics); formatting, diff whitespace checks,
+strict all-target/all-feature Clippy and the release build are clean. An
+isolated copy of the supplied AppData completed a 180-frame release-wgpu
+upload, render and readback with zero invoked fallbacks and zero remaining
+compatibility bindings. Its deterministic execution-evidence SHA-256 remains
+`ed626e4c19182f75407128c5ba721a43f1d070ae8fe6d01c691772618bcdf683`;
+it is not treated as a visual oracle. Current release SHA-256 values are
+`e7457e712ed670a670663f14db2243e00ff33a66ab8ca3562b6c074e60579ad4`
+for `stella-app` and
+`fc988ff7f0d40e453a057fbad296d2b81b483b9c79e8e512afc2c920ae5ec576`
+for `stella-headless`.
+
+## Exact LuaResources locale and string-width dispatcher tags
+
+The LuaResources constructor publishes `loadLocale`, `useLocale` and
+`getStringWidth` at IDA string references `0x100446858`, `0x100446884` and
+`0x100446B2C`; Hopper again labels the following instructions four bytes
+later. These are reusable templated dispatchers rather than the GameLua
+generated-adapter family. `loadLocale` uses dispatcher `0x10044BDC4` and
+`ReturnValue<void>::callMethod<std::string,std::string>` at `0x10044BE2C`.
+That body reads exact STRING slots one/two with `sub_1005285CC` before calling
+`sub_1004482B8`/`sub_10045B7AC`. `useLocale` uses dispatcher `0x10044C4D8`
+and callMethod body `0x10044C540`, which reads one exact STRING before member
+`sub_1004482C0`/`sub_10045BBF8`. Neither void dispatcher inspects the stack
+top, so both deliberately ignore extra values.
+
+`getStringWidth` publishes thunk `sub_10044A998` through float/string
+dispatcher `0x10044B5A0` and callMethod body `0x10044B608`. It likewise reads
+exact STRING slot one with `sub_1005285CC`, ignores later slots, calls the
+current IFont member and pushes the returned float32 through
+`sub_1005287FC`. The Rust bitmap/system font paths already returned their
+native f32 result widened to Lua's number representation. The three bindings
+now use strict slot readers instead of mlua `String` tuples, eliminating
+number-to-string coercion and exact-arity rejection without changing locale
+lifecycle or font metric behavior. A focused regression covers wrong tags,
+ignored trailing arguments and the unchanged shipped bitmap width.
+
+The complete workspace now passes all 622 tests (82 app/audio/wgpu, 31
+assets, one core and 508 script/physics); formatting, diff whitespace checks,
+strict all-target/all-feature Clippy and the release build are clean. An
+isolated copy of the supplied AppData completed a 180-frame release-wgpu
+upload, render and readback with zero invoked fallbacks and zero remaining
+compatibility bindings. Its deterministic execution-evidence SHA-256 remains
+`ed626e4c19182f75407128c5ba721a43f1d070ae8fe6d01c691772618bcdf683`;
+it is not treated as a visual oracle. Current release SHA-256 values are
+`7d4977b9bbc28bd1afe92b359a4568985abac457e43745cc15c489492a85b0a7`
+for `stella-app` and
+`ceea36818a120b89fbf28c5f8a587cc2a467c18c535b1131e1d99d8087e5d59c`
+for `stella-headless`.
+
+## Exact AnimationWrapper dispatcher tags across resources, playback and scene queries
+
+The complete constructor span at `sub_10000EC80` exposes the remaining
+generated AnimationWrapper adapter families. Resource loads at
+`0x10000ED90`/`0x10000EDBC`, stop and skin dispatch through the shared
+two-string wrapper `sub_10001D43C -> sub_10001D4A4`; close, pause, resume,
+draw and both preload methods use one-string wrapper
+`sub_10001D22C -> sub_10001D294`; close-all, stop-all and cache-clear use
+zero-slot wrapper `sub_10001D1B4`. Playback start uses the three-string
+wrapper `sub_10001CAF0 -> sub_10001CB58`, while is-playing uses the
+one-string/boolean wrapper `sub_10001CF94 -> sub_10001CFFC`. Translation and
+scale use `sub_10001C67C -> sub_10001C6E4` (STRING, NUMBER, NUMBER), and
+rotation, speed and seek use `sub_10001C8C0 -> sub_10001C928` (STRING,
+NUMBER). IDA and Hopper independently show `sub_1005285CC` for every string
+slot and `sub_10052859C` for every number slot. None of these template bodies
+checks the stack top, so later values are ignored; numeric arguments cross
+the native float32 ABI before member logic.
+
+The adjacent nontrivial entries follow the same tag contract. Contains-entity
+uses boolean two-string adapter `sub_10001C014 -> sub_10001C07C`.
+Set-playback-event uses `sub_10001C380 -> sub_10001C3E8`, whose first slot is
+an exact string and whose second slot passes exact FUNCTION gate
+`sub_100528760 -> sub_1005281F8(..., 6)`. Update wrapper `sub_10001C5F4`
+reads one exact NUMBER, narrows it to float32 and ignores extras. Direct
+members `sub_100015AB8`, `sub_100015C78`, `sub_100015E38`,
+`sub_100015FF8`, `sub_10000F46C` and `sub_1000161B8` each read exact STRING
+tag/entity pairs before producing their two-, five/six- or four-value query
+results. Get-actions uses one-string/table adapter
+`sub_10001BD5C -> sub_10001BDC4`. Finally, direct set-shader member
+`sub_10000FC30` requires exact STRING slot one, then constructs a shader only
+when the Lua stack top is exactly two and slot two is a table; every other
+arity/type clears the scene shader.
+
+The Rust registrations now read `MultiValue` with those exact slot helpers
+instead of mlua typed strings/numbers. This removes number-to-string and
+numeric-string coercion while retaining native ignored tails, float32
+quantization, return counts and the set-shader exact-top exception. The
+existing end-to-end AnimationWrapper lifecycle regression now exercises every
+resource, playback, transform, draw, callback, entity-query, action-query and
+shader tag boundary, including invalid values and harmless extra arguments.
+
+The complete workspace still passes all 622 tests (82 app/audio/wgpu, 31
+assets, one core and 508 script/physics); formatting, diff whitespace checks,
+strict all-target/all-feature Clippy and the release build are clean. An
+isolated copy of the supplied AppData completed a 180-frame release-wgpu
+upload, render and readback with zero invoked fallbacks and zero remaining
+compatibility bindings. Its deterministic execution-evidence SHA-256 remains
+`ed626e4c19182f75407128c5ba721a43f1d070ae8fe6d01c691772618bcdf683`;
+it is not treated as a visual oracle. Current release SHA-256 values are
+`5378ab5c00632ce6ab0d0d8e9c8f55a3296f1ebe47675f4c46cacf64e05354ea`
+for `stella-app` and
+`932898bd1333cf180cda933bda47d6b212596e73d595a5adf3c2d0dd8bc9b846`
+for `stella-headless`.
+
+## Exact resource clip, legacy sheet and composite-audio adapters
+
+The LuaResources constructor publishes `setClipRect` at string reference
+`0x100446968` through raw `ffff` dispatcher `0x10044BC28`. IDA and Hopper
+independently show four exact NUMBER reads through `sub_10052859C`, float32
+argument passage and no stack-top comparison. `getClipRect` is the adjacent
+direct member `sub_1004489EC`; it reads no arguments and therefore also
+ignores extras. The Rust setter now uses the same strict slots instead of
+mlua numeric coercion while retaining its already recovered float32 additions
+and independent `FCVTZS` edge conversions.
+
+The older ResourceManager registrations at `0x1000939B8` and `0x1000939E4`
+publish `native_createSpriteSheet`/`native_releaseSpriteSheet` through shared
+wrapper `sub_100094A94 -> sub_100094AFC`. That helper reads one exact STRING
+with `sub_1005285CC`, ignores every later value and returns zero results. Both
+Rust calls now expose that exact adapter while preserving the common
+LuaResources sheet pointer, legacy byte-accounting map and release-to-zero
+node behavior.
+
+`createCompositeAudio` is published at `0x10044673C` through dispatcher
+`0x10044C124`, whose instantiated call method requires exact STRING and TABLE
+slots and ignores extras. Its member `sub_100447CBC` has a separate Lua 5.1
+element contract: each raw integer index is first tested by
+`sub_10052811C`, which is `lua_isstring` rather than truthiness or an exact
+string check. Strings and numbers therefore continue; the number is converted
+by `sub_100529FB4 -> sub_100508E38`/`lua_tolstring`. Nil, boolean, table and
+every other tag terminate the contiguous scan immediately. Resolved clip
+pointers are retained and missing names are skipped. The Rust loop previously
+stopped only at nil and silently skipped all other non-string values; it now
+coerces numeric names and stops at the first non-string-convertible value in
+the recovered order.
+
+Focused regressions cover every clip rectangle NUMBER slot, ignored tails,
+strict legacy sheet names, strict composite outer slots, numeric clip names
+and boolean sequence termination. The complete workspace still passes all
+622 tests (82 app/audio/wgpu, 31 assets, one core and 508 script/physics);
+formatting, diff whitespace checks, strict all-target/all-feature Clippy and
+the release build are clean. An isolated copy of the supplied AppData again
+completed a 180-frame release-wgpu upload, render and readback with zero
+invoked fallbacks and zero remaining compatibility bindings. Its deterministic
+execution-evidence SHA-256 remains
+`ed626e4c19182f75407128c5ba721a43f1d070ae8fe6d01c691772618bcdf683`;
+it is not treated as a visual oracle. Current release SHA-256 values are
+`4bb498ff34b1f79fea307e28262cdee014ff9eab759f57b305a11f1f16e0106f`
+for `stella-app` and
+`dd788b5b8fff1aa7ea13cc1482efd68131495ca6ce885ef587e0e203af28ce22`
+for `stella-headless`.
+
+## Exact audio stop/query selector order
+
+`stopAudio` and `isAudioPlaying` are handwritten direct Lua members rather
+than generated overloads. The constructor registers them at
+`0x1004469F4 -> sub_100448C2C` and
+`0x100446A40 -> sub_100448D68`. IDA and Hopper independently recover the
+same order in both members: first test Purple's private INTEGER tag with
+`sub_10052817C`, otherwise test Lua 5.1 string convertibility with
+`sub_10052811C`, and only then enter the selected `LuaResources` member.
+The string-convertible NUMBER case immediately passes through exact STRING
+extractor `sub_1005285CC`, so a fractional number raises a type error instead
+of being ignored. Boolean, table, nil and other tags select no member;
+`stopAudio` returns silently and `isAudioPlaying` pushes false.
+
+This selector order precedes AudioOutput lifetime handling. Handle member
+`sub_10045C93C` and name member `sub_10045C714` throw when no output exists,
+whereas query members `sub_10045CCEC`/`sub_10045CBBC` return false. Therefore
+`stopAudio(false)` remains a no-op even before output construction, a valid
+name or handle reports the missing output, and an invalid fractional number
+reports its tag error first. The Rust implementation previously checked the
+output before dispatch and silently ignored fractional numbers. It now uses
+one shared selector parser before the member-specific lifetime branch. The
+stock-Lua integral-number compatibility path remains restricted to finite,
+exactly integral values returned for Purple handles.
+
+Focused coverage now includes pre-output names, handles, fractional numbers,
+booleans, ignored trailing values and post-start name/handle stopping. The
+complete workspace still passes all 622 tests (82 app/audio/wgpu, 31 assets,
+one core and 508 script/physics); formatting, diff whitespace checks, strict
+all-target/all-feature Clippy and the release build are clean. An isolated
+copy of the supplied AppData completed a 180-frame release-wgpu upload,
+render and readback with zero invoked fallbacks and zero remaining
+compatibility bindings. Its deterministic execution-evidence SHA-256 remains
+`ed626e4c19182f75407128c5ba721a43f1d070ae8fe6d01c691772618bcdf683`;
+it is not treated as a visual oracle. Current release SHA-256 values are
+`43cc2c373667723e2eb14c38074de565f3a9dac1143300f155d8eed652c3ce00`
+for `stella-app` and
+`454131246f9e003648db5760265899954e51a98dbdec62ebaeb1573afc5298ba`
+for `stella-headless`.
+
+## AudioOutput-owned track, channel-limit and instance-volume state
+
+The LuaResources tail registers `setTrackVolume` and `getTrackVolume` through
+generated strict float dispatchers at `0x100446D40` and `0x100446D6C`.
+Their members `sub_10044AAA0`/`sub_10044AAD0` both first call
+`sub_10045D8D4`, which is a raw load of the AudioOutput pointer at
+`LuaResources+0x38`. They then follow `AudioOutputImpl+0x18` to the embedded
+AudioManager before `sub_100572BE0` clamps/writes a track or
+`sub_100573030` reads it. IDA and Hopper independently expose this pointer
+chain and no null branch. Track gains therefore do not exist independently
+before an AudioOutput has been constructed. The Rust adapters previously
+read and wrote their detached AudioRuntime defaults in that state; they now
+validate all generated Lua NUMBER slots first, require the live output owner,
+then perform native float32 `FCVTZS`, bounds and clamping behavior.
+
+The same ownership applies to GameLua's adjacent native audio façade.
+`setChannelCountLimit` reaches
+`sub_100058FFC -> sub_10045D8D4 -> sub_1005796C8`; the latter dereferences
+the output and enters the same embedded AudioManager before its track bounds
+check. `setAudioClipVolume` direct adapter `sub_10005920C` first extracts an
+exact INTEGER handle and NUMBER volume, then follows the output pointer for
+both `sub_100579630` handle liveness and `sub_1005796D4` volume update.
+Neither operation owns pre-output state. Their Rust installers now receive
+the ResourceRuntime owner explicitly and preserve this adapter-then-owner-
+then-member order. Startup tests construct the output before exercising the
+callback, as Purple's shipped `createStartUpAssets` does; the later five
+hard-coded Stella limits remain a direct AudioManager write rather than a
+second Lua call.
+
+Focused regressions cover all four pre-output operations, generated wrong-tag
+ordering, ignored trailing values, post-construction track defaults/clamping,
+channel limiting and live-handle volume updates. The complete workspace still
+passes all 622 tests (82 app/audio/wgpu, 31 assets, one core and 508
+script/physics); formatting, diff whitespace checks, strict
+all-target/all-feature Clippy and the release build are clean. An isolated
+copy of the supplied AppData completed a 180-frame release-wgpu upload,
+render and readback with zero invoked fallbacks and zero remaining
+compatibility bindings. Its deterministic execution-evidence SHA-256 remains
+`ed626e4c19182f75407128c5ba721a43f1d070ae8fe6d01c691772618bcdf683`;
+it is not treated as a visual oracle. Current release SHA-256 values are
+`ca5db1a6699042371c8fd99f02f911652890bd430d019f2f37a873127f019fd7`
+for `stella-app` and
+`eff332d641ea2f0cb0bf04bef29665b5e54b59a8b658a4ef6c9f3d44d6248969`
+for `stella-headless`.
+
+## Startup audio callback and direct channel-limit ownership
+
+IDA and Hopper independently show that GameLua's handwritten
+`playAudioReturnUniqueHandle` adapter `sub_10005902C` first reads the current
+stack top, requires an exact STRING in slot one, and supplies native defaults
+only for absent or explicit-nil optional slots: volume `1.0`, looping false
+and channel zero. Present values must respectively be exact NUMBER, BOOLEAN
+and NUMBER tags; the channel NUMBER is narrowed to float32 before `FCVTZS`.
+Extra arguments are ignored. The call then reaches `sub_10045C4BC`, which
+requires the live AudioOutput before resource lookup and playback, and pushes
+the returned integer handle. This complete branch order already matches the
+Rust optional adapters, so no compatibility path was added.
+
+The deeper startup member `sub_10005D44C` first invokes the Lua global
+`createStartUpAssets`. After the callback returns, it reloads the
+LuaResources AudioOutput pointer through `sub_10045D8D4` before each of five
+direct `sub_1005796C8` AudioManager writes: `(1,4)`, `(2,6)`, `(3,3)`,
+`(4,5)` and `(5,5)`. There is no independent startup-owned limit array and no
+null-output branch. The Rust host previously wrote those limits to detached
+runtime state even when a replacement callback returned without constructing
+an output. It now requires the live output after the callback and before the
+first hard-coded write. Invalid embedding order becomes a recoverable host
+error instead of leaving pseudo-state; the shipped callback still follows the
+recovered construction order.
+
+Focused coverage verifies that a callback is observed before the native
+limits, and that a callback which creates no output leaves every limit at its
+uninitialized value. The complete workspace still passes all 622 tests (82
+app/audio/wgpu, 31 assets, one core and 508 script/physics); formatting, diff
+whitespace checks, strict all-target/all-feature Clippy and the release build
+are clean. An isolated copy of the supplied AppData completed a 180-frame
+release-wgpu upload, render and readback with zero invoked fallbacks and zero
+remaining compatibility bindings. Its deterministic execution-evidence
+SHA-256 remains
+`ed626e4c19182f75407128c5ba721a43f1d070ae8fe6d01c691772618bcdf683`;
+it is not treated as a visual oracle. Current release SHA-256 values are
+`3c702ec89ccf69bf21c5846afdb3823427e66d6507d38106245d73cc6fd5cc73`
+for `stella-app` and
+`82334920fda603925d846997238364f25f7f116ac35f6da03465c94cbd6c9631`
+for `stella-headless`.
+
+## Audio device controls and active-channel range exceptions
+
+The final LuaResources constructor block publishes `startAudioOutput` at
+`0x100446C64` through the generated zero-argument Boolean dispatcher, followed
+by three zero-result control dispatchers for `stopAudioOutput`,
+`startAudioInput` and `stopAudioInput` at
+`0x100446C90/0x100446CBC/0x100446CE8`. IDA and Hopper independently recover
+the same wrappers `sub_10044AA78..sub_10044AA90`. Output start requires the
+pointer and returns true even when its worker is already active; output stop
+is a no-op without the pointer. Input start requires its pointer but the
+underlying two-instruction `sub_10057AB98` merely returns one, which its void
+Lua dispatcher discards; input stop reaches `nullsub_288`. The existing Rust
+control ABI already has these exact return counts, repeat behavior and
+lifetime branches.
+
+Following output start into playback exposed a separate range discrepancy.
+`sub_10045C4BC` first requires the AudioOutput and resolves the clip name. A
+missing resource returns unsigned `0xffffffff`. Only a resolved clip reaches
+`sub_100579600 -> sub_100572208`, which first checks the manager active byte
+and returns the same sentinel while stopped. On an active manager it calls
+`sub_1005724A8` before loading the channel-limit slot. Both disassemblers show
+that helper comparing the signed channel as an unsigned value against eight;
+negative values and values at least eight actively throw
+`Track {0} out of bounds! Range [0-{1}]`. This is therefore a defined
+exception boundary, not behavior inferred from the later indexed load.
+
+The Rust playback bridge previously returned `-1` for every invalid channel.
+It now preserves the recovered sequence: output owner, clip lookup, active
+gate, then channel validation and instance allocation. Consequently an
+invalid channel still returns `-1` for a missing clip or stopped output, but
+throws for an existing clip on an active output. The error path neither
+consumes the wrapping handle counter nor reaches the legacy ResourceManager's
+post-play count increment. Focused Lua regressions cover negative/eight
+channels through `res.playAudio`, `playAudioReturnUniqueHandle` and
+`ResourceManager.native_playAudio`, plus the missing-resource and stopped-
+output precedence cases.
+
+The complete workspace still passes all 622 tests (82 app/audio/wgpu, 31
+assets, one core and 508 script/physics); formatting, diff whitespace checks,
+strict all-target/all-feature Clippy and the release build are clean. An
+isolated copy of the supplied AppData completed a 180-frame release-wgpu
+upload, render and readback with zero invoked fallbacks and zero remaining
+compatibility bindings. Its deterministic execution-evidence SHA-256 remains
+`ed626e4c19182f75407128c5ba721a43f1d070ae8fe6d01c691772618bcdf683`;
+it is not treated as a visual oracle. Current release SHA-256 values are
+`ccc746811bd9753eb592bcc73b89913548e33ab3c9959b8b61221ea061666928`
+for `stella-app` and
+`ca0e1b22aa50cbed480a0869fd0e8f971342ff2f162d2ef522c09ea4e6835b51`
+for `stella-headless`.
+
+## Strict object, calendar and SimpleRandom argument boundaries
+
+The remaining typed-tuple audit found three places where mlua's convenient
+conversions were broader than Purple's Lua ABI. `setSpriteRotation` and
+`multiplyVelocity`, registered at `0x10002D484` and `0x10002D7C4`, both enter
+the generated `sub_100086690 -> sub_1000866F8` adapter. IDA and Hopper show
+slot one being read by `sub_1005285CC` as an exact STRING and slot two by
+`sub_10052859C` as an exact NUMBER; trailing stack values are never examined.
+The members still retain their distinct effects: `sub_10003FC88` narrows to
+float32, normalizes the sprite angle with `fmodf` and writes the visual angle,
+while `sub_100041A44` multiplies both float32 body-velocity components and
+wakes only a non-static body with a non-zero result. The Rust adapters now
+reject number-to-string and numeric-string coercions before touching either
+native or Lua state while continuing to ignore extra arguments.
+
+`addDurationToTime` is the hand-written `sub_100056D68`, published at
+`0x10002ECB0`. It similarly requires an exact TABLE in slot one and exact
+NUMBER in slot two before reading the six mandatory calendar fields. The
+duration remains narrowed to float32 before the recovered `mktime` arithmetic;
+only the argument boundary changed. A numeric string can therefore no longer
+silently advance a date, and an extra third value remains harmless.
+
+The complete `SimpleRandomNative` registration at `sub_100094D34` uses
+individual hand-written members rather than one common generated signature.
+`newSeedFromString` (`sub_100094EC8`) requires STRING and streams it into an
+unsigned integer; failed parsing returns zero Lua results.
+`newSeedFromNumber` (`sub_100095228`) requires NUMBER, narrows it to float32,
+then executes `FCVTZU W1, S0`. `random` (`sub_100095260`) requires INTEGER,
+NUMBER, NUMBER in that order, performs the recovered MSVC LCG correction, and
+applies separate `FCVTZU` operations to both bounds before its unsigned
+remainder. `seedToString` (`sub_10009530C`) requires INTEGER but explicitly
+masks it to 32 bits before unsigned decimal formatting. No-argument seed
+members and every hand-written member ignore trailing values.
+
+Rust now has a shared AArch64 `FCVTZU W,S` helper: finite in-range values
+truncate, negative/NaN inputs produce zero and positive overflow saturates to
+`u32::MAX`. The random bindings consume `MultiValue` with Purple's exact tag
+helpers, preserving lower-32-bit integer behavior and the existing CMWC/LCG
+sequence. Regressions cover every rejected wrong tag, ignored trailing slot,
+parse failure, overflow/negative conversion and unchanged state/value result.
+
+The complete workspace passes all 622 tests (82 app/audio/wgpu, 31 assets,
+one core and 508 script/physics); formatting, diff whitespace checks, strict
+all-target/all-feature Clippy and the release build are clean. An isolated
+copy of the supplied AppData completed a 180-frame release-wgpu upload,
+render and readback with 19 optional data probes, zero invoked fallbacks and
+zero remaining compatibility bindings. Its execution-evidence SHA-256 remains
+`ed626e4c19182f75407128c5ba721a43f1d070ae8fe6d01c691772618bcdf683`;
+it is not treated as a visual oracle. Current release SHA-256 values are
+`f122acf448fe896e10ae85ad017ef5134e9afc9b3e0676fc37d4bbe3793f8937`
+for `stella-app` and
+`621f86f841aed0957ea6b5523f85e6b2185ce2b6d11ce228c6b2c9d33a68f92d`
+for `stella-headless`.
+
+## Process-global unique shaders and strict file probes
+
+The late service audit found that `createUniqueShaders` is not one of the
+generated tuple adapters. Its constructor publication at `0x10002E454`
+installs handwritten member `sub_10004E720`. IDA and Hopper independently
+show an exact STRING in slot one and exact NUMBER in slot two, followed by a
+float32 narrowing and signed `FCVTZS W,S`. Trailing values are ignored. A
+positive count produces a return table whose names concatenate the supplied
+base with signed decimal values from process-global `dword_100C0FF88`; the
+32-bit counter wraps and is not reset with a GameLua instance. The shader map
+itself remains owned by that GameLua instance.
+
+`destroyUniqueShaders`, published at `0x10002E484`, enters generated table
+adapter `sub_100084204 -> sub_10008426C` before member `sub_10004EC88`. The
+adapter requires an exact TABLE and ignores trailing arguments. The member
+counts every key with `lua_next`, returns without work when the count is below
+two, then raw-fetches integer indices `1..count-1`. Each fetched value follows
+`lua_tolstring` semantics: strings and numbers become names, while other
+values become the empty string. This unusual exclusive upper bound is
+observable in the shipped `BlockHighlighter.lua`, which passes the complete
+shader-name table rather than variadic strings. The former Rust variadic
+binding consequently destroyed the wrong set and kept a per-runtime counter;
+both lifetimes and the table traversal now match Purple.
+
+The adjacent file probes use the shared generated Boolean/string adapter.
+`checkForLuaFile` at `0x10002E778` reaches member `sub_1000504C0`, while
+`fileExistsInAppData` at `0x10002F194` reaches `sub_10005A290`. Both require
+an exact STRING in slot one, ignore trailing values and return one Boolean.
+Their Rust bindings no longer admit mlua's numeric-to-string coercion.
+
+Focused regressions cover fractional, negative, NaN and infinite shader
+counts, contiguous signed names, the process-global counter across two
+GameLua owners, strict table/string tags, ignored trailing arguments and the
+native destroy traversal. The complete workspace passes all 622 tests (82
+app/audio/wgpu, 31 assets, one core and 508 script/physics); formatting, diff
+whitespace checks, strict all-target/all-feature Clippy and the release build
+are clean. An isolated copy of the supplied AppData completed a 180-frame
+release-wgpu upload, render and readback with 19 optional data probes, zero
+invoked fallbacks and zero remaining compatibility bindings. Its unchanged
+execution-evidence SHA-256 is
+`ed626e4c19182f75407128c5ba721a43f1d070ae8fe6d01c691772618bcdf683`;
+it is not treated as a visual oracle. Current release SHA-256 values are
+`888f482687b7af4897cac9deef74a4a0169747b31b565b7b8e40b8d46fc276e7`
+for `stella-app` and
+`05b015a26b5bd067f7f54e47178facc508343228afc645b81b3438489b8a5132`
+for `stella-headless`.
+
+## Hand-written time differences and stack-top joint parameters
+
+The GameLua constructor publishes `getTimeDifference` and
+`getTimeDifferenceInSeconds` at `0x10002EC70` and `0x10002EC90` as direct
+members `sub_100056AB0` and `sub_100056C98`, not generated tuple dispatchers.
+IDA and Hopper independently show both members extracting exact TABLE values
+from slots one and two with `sub_100527F10`, without inspecting the remaining
+stack. They feed both tables through the shared `sub_10005D700` calendar
+converter before local `mktime`/`difftime`; the first member takes the
+absolute difference and publishes four float32 components, while the second
+publishes the signed float32 result. The Rust members now preserve the exact
+two table tags while ignoring trailing values instead of rejecting them at
+mlua tuple decoding.
+
+`setJointParameters` is also registered directly, at `0x10002D30C`, as
+hand-written member `sub_10003E890`. Its first operation is
+`sub_100527F10(..., -1)`: the descriptor is the current Lua stack top. Earlier
+arguments are ignored, an absent/non-table top fails, and this is observably
+different from a generated slot-one adapter. The `name` field then follows
+`lua_isstring`/`lua_tolstring`, accepting both strings and numbers. Optional
+numeric joint fields first use `lua_isnumber` and therefore accept numeric
+strings before `lua_tonumber` and float32 storage; optional Boolean fields
+retain their exact Boolean-tag test. The Rust binding now follows this
+stack-top and field-coercion sequence before its existing concrete joint-type
+dispatch and Lua descriptor mirroring.
+
+The neighboring LuaResources `getAvailableSystemFonts` and `getLocale`
+registrations at `0x1004468DC` and `0x100446C38` use the generated no-argument
+table/string dispatchers. Both disassemblers show no stack-count gate. The
+existing Rust unit decoders were verified to ignore trailing values already,
+so no member-side compatibility branch was needed.
+
+Regressions cover strict time-table tags, ignored time tail values, missing
+and non-table joint tops, ignored leading joint values, numeric joint names,
+numeric-string scalar fields and ignored arguments on both no-argument
+resource queries. The complete workspace still passes all 622 tests (82
+app/audio/wgpu, 31 assets, one core and 508 script/physics); formatting, diff
+whitespace checks, strict all-target/all-feature Clippy and the release build
+are clean. An isolated copy of the supplied AppData completed a 180-frame
+release-wgpu upload, render and readback with 19 optional data probes, zero
+invoked fallbacks and zero remaining compatibility bindings. Its unchanged
+execution-evidence SHA-256 is
+`ed626e4c19182f75407128c5ba721a43f1d070ae8fe6d01c691772618bcdf683`;
+it is not treated as a visual oracle. Current release SHA-256 values are
+`b33b113ec22d41f3ea9094f37c28dba66776c8fe082be6750aa6241fae47dac1`
+for `stella-app` and
+`62986eaaed8074edda536062cd02f23c1f581eca368e85b7d94b545ff735444f`
+for `stella-headless`.
+
+## Assets native/script ownership and strict clipping/loading adapters
+
+The Assets constructor at `sub_1000AC118` has a deliberately small native
+surface. IDA and Hopper independently show `loadFiles` being installed at
+`0x1000AC1A8` through wrapper `sub_1000AD28C` and member `sub_1000AC25C`,
+followed by `createSpriteSheet` at `0x1000AC1D4`. The binary contains the
+corresponding strings at `0x1009425FC` and `0x100942606`, but contains no
+`haveBeenDownloaded` or `getAssetFilename` registration strings. Those two
+helpers are instead defined by the shipped
+`scripts_common/cloud/rovioid/Assets.lua` after native publication. The Rust
+constructor no longer preinstalls competing native implementations, so the
+same ownership and boot-time replacement order now applies.
+
+`sub_1000AD28C -> sub_1000AD2F4` requires an exact TABLE in slot one and does
+not inspect trailing stack values. Member `sub_1000AC25C` pushes nil and
+traverses the table with `lua_next`; every current value is extracted through
+the exact STRING helper before the value is popped and the key retained. Thus
+all entries participate regardless of key shape, and a number, Boolean or
+other non-string value fails rather than being coerced. `Assets.loadFiles`
+now mirrors that adapter instead of relying on mlua's typed-closure decoder.
+
+The global `clipText` registration enters `sub_100086070 -> sub_1000860D8`
+and member `sub_10004F630`. Both disassemblers show exact STRING values in
+slots one and two, an exact NUMBER in slot three, float32 narrowing of the
+width, no stack-count equality check and zero returned Lua values. Its Rust
+adapter now performs those same indexed tag checks, ignores tail arguments
+and preserves the existing native wrapping member behavior.
+
+Focused regressions cover the pre-script Assets surface, script-owned helper
+publication, exact load-table and entry-value tags, ignored load tail values,
+exact clipping group/key/width tags and ignored clipping tail values. The
+complete workspace passes all 622 tests (82 app/audio/wgpu, 31 assets, one
+core and 508 script/physics); formatting, diff whitespace checks, strict
+all-target/all-feature Clippy and the release build are clean. An isolated
+copy of the supplied AppData completed a 180-frame release-wgpu upload,
+render and readback with 19 optional data probes, zero invoked fallbacks and
+zero remaining compatibility bindings. Its unchanged execution-evidence
+SHA-256 is
+`ed626e4c19182f75407128c5ba721a43f1d070ae8fe6d01c691772618bcdf683`;
+it is not treated as a visual oracle. Current release SHA-256 values are
+`51be2a548eee7e3ce71cf8e52ccfeff5149f60cdc0f25d78d8da8f50773ca653`
+for `stella-app` and
+`ad6ef6b0b22aa573802e5490ea92ed355d96b55256258a0a9cadd290a362df9f`
+for `stella-headless`.
+
+## Align stack ABI, scale-derived position ratios and disconnected social adapters
+
+The remaining typed native tuple audit identified `Align.getPositionAndScale`
+as the only original GameLua member still relying on mlua's coercive tuple
+decoder. Purple's Align constructor at `sub_1000E0A6C` publishes direct wrapper
+`sub_1000E0B70`, which calls member `sub_1000E0CB0` and returns four values.
+IDA and Hopper independently show an exact TABLE in slot one followed by exact
+NUMBER values in slots two through five. Each number is narrowed to float32;
+the wrapper does not inspect trailing stack values. Numeric strings are
+therefore rejected at the outer boundary even though numeric fields inside the
+layout table retain the native Lua 5.1 number coercion.
+
+`InitFunc_16` at `0x1000E1EDC` confirms all comparison literals and their
+storage order: `LEFT`, `RIGHT`, `TOP`, `BOTTOM`, `CENTER`, `NORMAL`, `SQRT`,
+`SQR`, `NORMAL_SQRT`, `TRUE`, `UP`, `DOWN`, `FALSE`, `FREE`, `FIXED`, `UP` and
+`PRODUCT`. The member hardcodes `FIXED` scale combination and `NORMAL`
+post-processing. It first applies the independent TRUE/UP/DOWN scale
+permissions, chooses the smaller permitted axis ratio, and multiplies each
+authored scale by that ratio.
+
+A second, observable step had been missing from the Rust port: the position
+pass recomputes each ratio as `output_scale / authored_scale` instead of
+reusing the viewport ratio. This normally yields the same value but preserves
+the original rounding and produces NaN for a zero authored scale. The anchor
+helper at `sub_1000E19C8` also exposes exact ARM64 staging. LEFT/TOP use one
+`FMUL`; RIGHT/BOTTOM use `FSUB` then `FMADD`; CENTER uses `FMADD` for
+`position + (-reference * 0.5)`, a separate `FMUL` by the ratio, then another
+`FMADD` for `target * 0.5 + offset`. The Rust implementation now follows that
+instruction order with float32 `mul_add` only at the two actual fused sites.
+
+The adjacent SocialManager audit confirms that its existing disconnected
+backend is intentional. `sub_1000C032C` reports connected only when the active
+provider pointer at `+0xA0` is non-null; the offline host has none.
+`native_connectToSocialNetwork`, `native_getFriendsProgress` and
+`native_unloadAllAvatars` use the generated no-argument adapter and ignore all
+stack values. Score, leaderboard, progress and avatar members enforce their
+recovered indexed STRING/NUMBER tags while ignoring tails. Disconnected friend
+and local IDs are empty strings, and `sub_1000C2E98` returns a newly allocated
+empty friends table. No compatibility behavior was required, but regressions
+now lock every strict and no-argument boundary.
+
+Focused tests cover the five exact Align tags, ignored tail values, all anchor
+modes, fixed-scale permissions and zero-scale NaN behavior, together with the
+complete disconnected SocialManager surface. The complete workspace passes
+all 622 tests (82 app/audio/wgpu, 31 assets, one core and 508 script/physics);
+formatting, diff whitespace checks, strict all-target Clippy and the release
+build are clean. An isolated copy of the supplied AppData completed a
+180-frame release-wgpu upload, render and readback with 19 optional data
+probes, zero invoked fallbacks and zero remaining compatibility bindings. Its
+unchanged execution-evidence SHA-256 is
+`ed626e4c19182f75407128c5ba721a43f1d070ae8fe6d01c691772618bcdf683`;
+it is not treated as a visual oracle. Current release SHA-256 values are
+`11a62ee69162840989ad27efdb28d36e42e5c9a48424f3169e0d3b0bd85cc499`
+for `stella-app` and
+`3bffea67a8bc0d3988cdb700a20e5b24498b2df8af146ec412bddba75842b25e`
+for `stella-headless`.
+
+## Process-global signed screenshot sequence
+
+The screenshot lifecycle audit had recovered the right native address but the
+Rust state owner still contradicted it. Both IDA and Hopper show
+`sub_10005ADD4` addressing `dword_100C0FF8C` directly at
+`0x10005ADF4..0x10005AE04`: it loads one 32-bit process-global value,
+increments it with a wrapping W-register `ADD`, and stores it before touching
+the current GameLua or renderer. Reconstructing a GameLua/RenderBridge must
+therefore not reset screenshot numbering.
+
+The formatting signedness is observable too. At `0x10005AE1C..0x10005AE20`
+Purple reloads the same W value and calls `std::ostream::operator<<(int)`
+(`__ZNSolsEi`), not the unsigned overload. The successor of `INT_MAX` is
+formatted as `-2147483648`; the successor of bit pattern `0xFFFFFFFF` becomes
+zero. The existing per-RenderBridge `u32` field produced a positive large
+filename and allowed a second runtime in the same process to overwrite
+`Stella_Screenshot1.png`.
+
+Rust now owns one process-global signed 32-bit sequence, applies the native
+pre-format wrapping increment, and keeps only the already-numbered pending
+requests in each renderer. `ScreenshotShareRequest.sequence` is signed to
+match the filename and native stream input. Regressions lock strict STRING
+title validation, ignored trailing Lua values, consecutive numbering across
+two `StellaLua` instances, the `INT_MAX -> INT_MIN` filename and the
+`-1 -> 0` wrap.
+
+The complete workspace still passes all 622 tests (82 app/audio/wgpu, 31
+assets, one core and 508 script/physics); formatting, diff whitespace checks,
+strict all-target Clippy and the release build are clean. A fresh isolated
+copy of the supplied AppData completed a 180-frame release-wgpu upload,
+render and readback with 19 optional data probes, zero invoked fallbacks and
+zero remaining compatibility bindings. Its unchanged execution-evidence
+SHA-256 is
+`ed626e4c19182f75407128c5ba721a43f1d070ae8fe6d01c691772618bcdf683`;
+it is not treated as a visual oracle. Current release SHA-256 values are
+`a9a9be1eb6bffc8a251f03693919bc0b26808bec96629bfff201e13a14f34308`
+for `stella-app` and
+`ee4f142778d55b5801a3416fe5cde629c3ecd0e85603be26064af20c3863c725`
+for `stella-headless`.
+
+## Process-global pinch baseline and current level verification
+
+The input audit found one remaining state-ownership mismatch in
+`sub_1000293C8`. IDA and Hopper independently show the two-touch active byte at
+`byte_100C0FF20` and its initial distance/scale at `dword_100C0FF24` and
+`dword_100C0FF28`; none of those fields belongs to GameApp. The
+current and previous zoom values remain GameApp fields at `+0x4FC` and
+`+0x51C`. With exactly two touches, Purple initializes the three process
+globals once, computes the live distance ratio in float32, copies current to
+previous and writes the new scale. Leaving the exact-two-touch state clears the
+static active byte and copies current to previous. Rust now preserves that
+split ownership and the cross-runtime lifetime of an unfinished native pinch.
+Parallel unit tests model each test thread as its own one-GameApp process so
+unrelated synthetic runtimes cannot clear another test's static gesture.
+
+The BirdRun L09 wheel and Chapter01 L61 pollen conclusions above were rechecked
+against the supplied save and the shipped gameplay gate. The six authored
+revolute mounts remain intact: deleting them or forcing the four circles to
+fall would be a behavioral regression. The deterministic idle replay remains
+settled with zero score, while the supplied before/after captures contain a
+score increase and therefore do not demonstrate an unconditional idle
+collapse. For pollen, the shipped L61 regression now calls `makeGolden` itself,
+not the lower-level shader helper, and proves the resulting live
+`2d-sprite-gold` table reaches ordinary native scene submission.
+
+The complete workspace passes all 622 tests (82 app/audio/wgpu, 31 assets, one
+core and 508 script/physics); formatting, diff whitespace checks, strict
+all-target/all-feature Clippy and the release build are clean. An isolated copy
+of the supplied AppData completed a 180-frame release-wgpu upload, render and
+readback with 19 optional data probes, zero invoked fallbacks and zero remaining
+compatibility bindings. Its unchanged execution-evidence SHA-256 is
+`ed626e4c19182f75407128c5ba721a43f1d070ae8fe6d01c691772618bcdf683`;
+it is not treated as a visual oracle. Current release SHA-256 values are
+`04fffb7bdbce6c0726a0c732ca5f6ae491811e9430cd5a9848c049032d9bf50f`
+for `stella-app` and
+`f72fbc824aa9dad70fbd5949a41c3653338875a047318965ce86fb4bd35d8f6e`
+for `stella-headless`.

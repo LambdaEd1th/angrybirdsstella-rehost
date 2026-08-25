@@ -1,13 +1,14 @@
 use super::*;
 
 #[test]
-fn native_collision_force_reads_world_attributes_not_shadow_global() {
+fn native_collision_force_reads_retained_world_attributes_not_shadow_global() {
     let runtime = unlocked_test_runtime();
     runtime
         .execute_source(
             r#"
                 forceDamageMultiplier = 99
                 worldAttributes = { forceDamageMultiplier = 2250 }
+                retainedWorldAttributes = worldAttributes
                 "#,
         )
         .unwrap();
@@ -16,8 +17,10 @@ fn native_collision_force_reads_world_attributes_not_shadow_global() {
         2250.0
     );
 
-    runtime.execute_source("worldAttributes = nil").unwrap();
-    assert_eq!(native_force_damage_multiplier(runtime.lua()).unwrap(), 1.0);
+    runtime
+        .execute_source("worldAttributes = nil; retainedWorldAttributes.forceDamageMultiplier = 2")
+        .unwrap();
+    assert_eq!(native_force_damage_multiplier(runtime.lua()).unwrap(), 2.0);
 }
 
 #[test]
@@ -382,15 +385,14 @@ fn contact_listener_lua_velocity_mutation_reaches_same_island_step() {
 
     runtime.update(1.0 / 30.0).unwrap();
     let environment = game_environment(runtime.lua()).unwrap();
-    let world = object_world(runtime.lua()).unwrap();
-    let body: mlua::Table = world.get("body").unwrap();
     assert_eq!(environment.get::<i64>("enter_count").unwrap(), 1);
     let expected_x = f64::from((1.0_f64 / 30.0_f64) as f32 * 3.0_f32);
+    let bridge = runtime.render.lock().unwrap();
     assert!(
-        (body.get::<f64>("x").unwrap() - expected_x).abs() < 1.0e-9,
+        (bridge.scene["body"].x - expected_x).abs() < 1.0e-9,
         "BeginContact must run before the current island integrates positions"
     );
-    assert_eq!(body.get::<f64>("xVel").unwrap(), 3.0);
+    assert_eq!(bridge.scene["body"].velocity_x, 3.0);
 }
 
 #[test]

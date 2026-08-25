@@ -79,6 +79,79 @@ fn native_frame_quantizes_before_the_fixed_step_threshold_and_subtracts_in_f32()
 }
 
 #[test]
+fn catch_up_frame_retains_the_final_two_consecutive_solved_poses() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r##"
+                createCircle("body", "", 0, 0, 1, 1, 0, 0, true, false, 1)
+                setWorldGravity(0, 0)
+                setVelocity("body", 1, 0)
+                updatePhysics = function() end
+                update = function() end
+            "##,
+        )
+        .unwrap();
+
+    runtime.update(0.1).unwrap();
+
+    let bridge = runtime.render.lock().unwrap();
+    let body = &bridge.scene["body"];
+    let current_slot = bridge.physics_interpolation_slot;
+    let previous_slot = usize::from(current_slot == 0);
+    let current = body.interpolation_poses[current_slot];
+    let previous = body.interpolation_poses[previous_slot];
+    let step = f32::from_bits(0x3D08_8889);
+    assert_eq!(current.x, body.x as f32);
+    assert_eq!(previous.x, step);
+    assert_eq!(current.x, step + step);
+    assert_eq!((current.y, previous.y), (0.0, 0.0));
+}
+
+#[test]
+fn catch_up_steps_do_not_publish_intermediate_body_poses_to_lua() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r##"
+                createCircle("body", "", 0, 0, 1, 1, 0, 0, true, true, 1)
+                setActive("body", true)
+                setWorldGravity(0, 0)
+                setVelocity("body", 1, 0)
+                physics_pose_reads = {}
+                updatePhysics = function()
+                    table.insert(physics_pose_reads, objects.world.body.x)
+                end
+                update = function() end
+            "##,
+        )
+        .unwrap();
+
+    // The float32 accumulator executes two fixed steps. Purple leaves the
+    // preceding display-frame pose visible to both updatePhysics callbacks,
+    // then publishes the interpolated display pose once after the loop.
+    runtime.update(0.1).unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    let reads = environment
+        .get::<mlua::Table>("physics_pose_reads")
+        .unwrap();
+    assert_eq!(reads.raw_len(), 2);
+    assert_eq!(reads.raw_get::<f64>(1).unwrap(), 0.0);
+    assert_eq!(reads.raw_get::<f64>(2).unwrap(), 0.0);
+
+    let world = object_world(runtime.lua()).unwrap();
+    let lua_x = world
+        .get::<mlua::Table>("body")
+        .unwrap()
+        .get::<f64>("x")
+        .unwrap();
+    let bridge = runtime.render.lock().unwrap();
+    assert_eq!(lua_x, f64::from(bridge.scene["body"].render_x as f32));
+    assert!(lua_x > 0.0);
+}
+
+#[test]
 fn native_fixed_step_runs_without_bodies_and_publishes_box2d_timing() {
     let runtime = unlocked_test_runtime();
     runtime
@@ -103,6 +176,82 @@ fn native_fixed_step_runs_without_bodies_and_publishes_box2d_timing() {
     let update_millis = environment.get::<f64>("g_physicsUpdateMillis").unwrap();
     assert!(update_millis.is_finite() && update_millis >= 0.0);
     assert_eq!(update_millis, f64::from(update_millis as f32));
+}
+
+#[test]
+fn native_render_pose_interpolation_uses_two_slots_and_short_angle_arc() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r##"
+                createCircle("body", "", 0, 0, 1, 1, 0, 0, true, false, 1)
+                update = function() end
+            "##,
+        )
+        .unwrap();
+    {
+        let mut bridge = runtime.render.lock().unwrap();
+        bridge.physics_interpolation_slot = 1;
+        bridge.physics_accumulator = 1.0_f32 / 60.0_f32;
+        let body = bridge.scene.get_mut("body").unwrap();
+        body.interpolation_poses[0] = NativeInterpolationPose {
+            x: 2.0,
+            y: 4.0,
+            angle: 6.2,
+        };
+        body.interpolation_poses[1] = NativeInterpolationPose {
+            x: 6.0,
+            y: 8.0,
+            angle: 0.1,
+        };
+        bridge.interpolate_native_scene_poses();
+    }
+
+    let bridge = runtime.render.lock().unwrap();
+    let body = &bridge.scene["body"];
+    let alpha = (1.0_f32 / 60.0_f32) * f32::from_bits(0x41EF_FFFF);
+    let previous_weight = 1.0_f32 - alpha;
+    let expected_x = alpha.mul_add(6.0, previous_weight * 2.0);
+    let expected_y = alpha.mul_add(8.0, previous_weight * 4.0);
+    let adjusted_previous_angle = 6.2_f32 - (f32::from_bits(0x4049_0FDB) * 2.0);
+    let expected_angle = alpha.mul_add(0.1, previous_weight * adjusted_previous_angle);
+    assert_eq!(body.render_x.to_bits(), f64::from(expected_x).to_bits());
+    assert_eq!(body.render_y.to_bits(), f64::from(expected_y).to_bits());
+    assert_eq!(
+        body.render_angle.to_bits(),
+        f64::from(expected_angle).to_bits()
+    );
+}
+
+#[test]
+fn explicit_pose_setters_reset_render_pose_and_both_native_slots() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r##"
+                createCircle("body", "", 0, 0, 1, 1, 0, 0, true, false, 1)
+                setPosition("body", 3.25, -4.5)
+                setRotation("body", 6.4)
+                setVelocity("body", 2.5, -3.5)
+            "##,
+        )
+        .unwrap();
+
+    let bridge = runtime.render.lock().unwrap();
+    let body = &bridge.scene["body"];
+    let x = 3.25_f32;
+    let y = -4.5_f32;
+    let tau = std::f32::consts::PI + std::f32::consts::PI;
+    let angle = 6.4_f32 % tau;
+    assert_eq!(body.render_x, f64::from(x));
+    assert_eq!(body.render_y, f64::from(y));
+    assert_eq!(body.render_angle, f64::from(angle));
+    for pose in body.interpolation_poses {
+        assert_eq!((pose.x, pose.y, pose.angle), (x, y, angle));
+    }
+    for velocity in body.display_interpolation_velocities {
+        assert_eq!((velocity.x, velocity.y), (2.5, -3.5));
+    }
 }
 
 #[test]
@@ -200,6 +349,7 @@ fn fixed_physics_step_applies_impulse_and_writes_body_state_back_to_lua() {
             r##"
                 createCircle("bird", "", 10, 20, 1, 1, 0, 0, true, false, 1)
                 setWorldGravity(0, 0)
+                setRecordVelocity("bird", true)
                 applyImpulse("bird", 3, 0, 10, 20)
                 update = function() end
                 updatePhysics = function(step) captured_physics_step = step end
@@ -211,8 +361,14 @@ fn fixed_physics_step_applies_impulse_and_writes_body_state_back_to_lua() {
     let environment = game_environment(runtime.lua()).unwrap();
     let world = object_world(runtime.lua()).unwrap();
     let bird: mlua::Table = world.get("bird").unwrap();
-    assert!(bird.get::<f64>("x").unwrap() > 10.0);
+    let bridge = runtime.render.lock().unwrap();
+    assert!(bridge.scene["bird"].x > 10.0);
+    assert_eq!(
+        bird.get::<f64>("x").unwrap(),
+        f64::from(bridge.scene["bird"].render_x as f32)
+    );
     assert!(bird.get::<f64>("xVel").unwrap() > 0.0);
+    drop(bridge);
     assert_eq!(
         environment.get::<f64>("captured_physics_step").unwrap(),
         f64::from(f32::from_bits(0x3D08_8889))

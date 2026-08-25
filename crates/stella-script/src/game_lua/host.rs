@@ -19,6 +19,10 @@ pub struct StellaLua {
     /// GameLua+0x513. The gamelogic loader sets this only after executing the
     /// decoded chunk and successfully invoking its `updateValues` callback.
     pub(crate) gamelogic_loaded: Cell<bool>,
+    /// GameApp+0x520. The audio-activation virtual stores this byte before
+    /// touching either native audio device; GameLua rereads it at the head of
+    /// every `sub_10005E898` frame.
+    pub(crate) application_audio_active: Cell<bool>,
 }
 
 impl StellaLua {
@@ -81,6 +85,7 @@ impl StellaLua {
             draw_callbacks,
             touches,
             gamelogic_loaded: Cell::new(false),
+            application_audio_active: Cell::new(false),
         })
     }
 

@@ -90,6 +90,46 @@ fn bitmap_font_metrics_spacing_and_baseline_match_native_font_records() {
 }
 
 #[test]
+fn locale_and_width_dispatchers_require_exact_strings_and_ignore_extras() {
+    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data");
+    let runtime = StellaLua::new(data_root).unwrap();
+    runtime
+        .execute_source(
+            r#"
+                res.createBitmapFont("fonts/1024x768/FONT_CRIMSON_BASIC.dat")
+                res.useFont("FONT_CRIMSON_BASIC")
+                load_numeric_group_rejected = not pcall(
+                    res.loadLocale, 1, "en_EN")
+                load_numeric_locale_rejected = not pcall(
+                    res.loadLocale, "ABSENT_GROUP", 1)
+                load_trailing_accepted = pcall(
+                    res.loadLocale, "ABSENT_GROUP", "en_EN", "ignored")
+                use_numeric_rejected = not pcall(res.useLocale, 1)
+                use_trailing_accepted = pcall(
+                    res.useLocale, "en_EN", "ignored")
+                width_numeric_rejected = not pcall(res.getStringWidth, 123)
+                width_trailing_accepted, width_trailing = pcall(
+                    res.getStringWidth, "ABC", "ignored")
+                "#,
+        )
+        .unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    for name in [
+        "load_numeric_group_rejected",
+        "load_numeric_locale_rejected",
+        "load_trailing_accepted",
+        "use_numeric_rejected",
+        "use_trailing_accepted",
+        "width_numeric_rejected",
+        "width_trailing_accepted",
+    ] {
+        assert!(environment.get::<bool>(name).unwrap(), "{name}");
+    }
+    assert_eq!(environment.get::<f64>("width_trailing").unwrap(), 110.0);
+}
+
+#[test]
 fn clip_text_uses_localized_font_width_break_set_and_forced_split_contract() {
     let (fixed_lines, fixed_widest) = native_clip_text_lines("one two-three\nfour", 7.0, |line| {
         line.chars().count() as i32
@@ -109,13 +149,16 @@ fn clip_text_uses_localized_font_width_break_set_and_forced_split_contract() {
                 res.useFont("CLIP_FONT")
                 wrapped_expected_width = res.getStringWidth("three")
                 clippedText.identityMarker = "preserved"
+                retainedClippedText = clippedText
+                clippedText = { shadowMarker = true }
                 clipText("TEXTS_BASIC", "one two-three\nfour", 7)
-                wrapped = clippedText
+                wrapped = retainedClippedText
                 wrapped_lines = wrapped.lines
                 wrapped_widest = wrapped.widestLine
                 clipText("TEXTS_BASIC", "abcdefgh", 3)
-                forced = clippedText
+                forced = retainedClippedText
                 clipped_text_identity_preserved = rawequal(wrapped, forced)
+                clipped_text_shadow_untouched = clippedText.lines == nil
                 wrapped_lines_replaced = not rawequal(wrapped_lines, forced.lines)
                 forced_lines = forced.lines
                 forced_widest = forced.widestLine
@@ -126,10 +169,22 @@ fn clip_text_uses_localized_font_width_break_set_and_forced_split_contract() {
                         forced_measured_widest, res.getStringWidth(line)
                     )
                 end
+                clip_trailing_accepted = pcall(
+                    clipText, "TEXTS_BASIC", "text", 7, false
+                )
                 clipText("TEXTS_BASIC", "", 7)
-                empty = clippedText
+                empty = retainedClippedText
                 bad_clip_arity_fails = not pcall(
                     clipText, "TEXTS_BASIC", "text"
+                )
+                bad_clip_group_fails = not pcall(
+                    clipText, 1, "text", 7
+                )
+                bad_clip_key_fails = not pcall(
+                    clipText, "TEXTS_BASIC", 2, 7
+                )
+                bad_clip_width_fails = not pcall(
+                    clipText, "TEXTS_BASIC", "text", "7"
                 )
                 "#,
         )
@@ -152,6 +207,11 @@ fn clip_text_uses_localized_font_width_break_set_and_forced_split_contract() {
             .get::<bool>("clipped_text_identity_preserved")
             .unwrap()
     );
+    assert!(
+        environment
+            .get::<bool>("clipped_text_shadow_untouched")
+            .unwrap()
+    );
     assert!(environment.get::<bool>("wrapped_lines_replaced").unwrap());
 
     let forced_lines: mlua::Table = environment.get("forced_lines").unwrap();
@@ -170,6 +230,14 @@ fn clip_text_uses_localized_font_width_break_set_and_forced_split_contract() {
     assert_eq!(empty.get::<f64>("widestLine").unwrap(), 0.0);
     assert_eq!(empty.get::<String>("identityMarker").unwrap(), "preserved");
     assert!(environment.get::<bool>("bad_clip_arity_fails").unwrap());
+    for name in [
+        "bad_clip_group_fails",
+        "bad_clip_key_fails",
+        "bad_clip_width_fails",
+        "clip_trailing_accepted",
+    ] {
+        assert!(environment.get::<bool>(name).unwrap(), "{name}");
+    }
 }
 
 #[test]
@@ -186,6 +254,73 @@ fn game_lua_constructor_publishes_native_gesture_and_clip_tables() {
     let clipped_text = environment.get::<mlua::Table>("clippedText").unwrap();
     assert_eq!(clipped_text.raw_len(), 0);
     assert!(clipped_text.pairs::<Value, Value>().next().is_none());
+
+    runtime
+        .execute_source(
+            r#"
+                nativeGestureWeak = setmetatable(
+                    { multitouchSweep, multitouchZoom },
+                    { __mode = "v" }
+                )
+                multitouchSweep = { shadow = true }
+                multitouchZoom = { shadow = true }
+                collectgarbage("collect")
+                collectgarbage("collect")
+                nativeSweepRetained = nativeGestureWeak[1] ~= nil
+                nativeZoomRetained = nativeGestureWeak[2] ~= nil
+            "#,
+        )
+        .unwrap();
+    assert!(environment.get::<bool>("nativeSweepRetained").unwrap());
+    assert!(environment.get::<bool>("nativeZoomRetained").unwrap());
+}
+
+#[test]
+fn constructor_input_tables_keep_native_identity_after_shadowing() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime.execute_source("function update() end").unwrap();
+    let environment = game_environment(runtime.lua()).unwrap();
+    let native_pressed = environment.get::<mlua::Table>("keyPressed").unwrap();
+    let native_released = environment.get::<mlua::Table>("keyReleased").unwrap();
+    let native_hold = environment.get::<mlua::Table>("keyHold").unwrap();
+    let native_cursor = environment.get::<mlua::Table>("cursor").unwrap();
+
+    runtime
+        .execute_source(
+            r#"
+                keyPressed = { shadow = true }
+                keyReleased = { shadow = true }
+                keyHold = { shadow = true }
+                cursor = { shadow = true }
+            "#,
+        )
+        .unwrap();
+
+    runtime.set_key("KEY_BACK", true).unwrap();
+    runtime.set_cursor(12.0, 34.0, true).unwrap();
+    runtime.mouse_wheel(1, false, false).unwrap();
+    assert!(native_pressed.get::<bool>("KEY_BACK").unwrap());
+    assert!(native_hold.get::<bool>("KEY_BACK").unwrap());
+    assert!(native_pressed.get::<bool>("LBUTTON").unwrap());
+    assert!(native_hold.get::<bool>("LBUTTON").unwrap());
+    assert_eq!(native_cursor.get::<f64>("x").unwrap(), 12.0);
+    assert_eq!(native_cursor.get::<f64>("y").unwrap(), 34.0);
+    assert_eq!(native_cursor.get::<f64>("wheel").unwrap(), 1.0);
+    assert!(native_cursor.get::<bool>("wheelTriggered").unwrap());
+
+    for name in ["keyPressed", "keyReleased", "keyHold", "cursor"] {
+        let shadow = environment.get::<mlua::Table>(name).unwrap();
+        assert!(shadow.get::<bool>("shadow").unwrap());
+        assert!(shadow.get::<Option<Value>>("KEY_BACK").unwrap().is_none());
+        assert!(shadow.get::<Option<Value>>("LBUTTON").unwrap().is_none());
+        assert!(shadow.get::<Option<Value>>("wheel").unwrap().is_none());
+    }
+
+    assert!(runtime.update(0.0).unwrap());
+    assert!(!native_pressed.get::<bool>("KEY_BACK").unwrap());
+    assert!(!native_pressed.get::<bool>("LBUTTON").unwrap());
+    assert!(!native_released.get::<bool>("KEY_BACK").unwrap());
+    assert!(!native_cursor.get::<bool>("wheelTriggered").unwrap());
 }
 
 #[test]
@@ -439,7 +574,77 @@ fn application_audio_activation_honours_nested_setting_and_device_lifetime() {
 }
 
 #[test]
+fn active_frame_recovers_stopped_output_only_for_exact_true_setting() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .execute_source(
+            r#"
+                settings.root = { audioEnabled = true }
+                update = function() end
+            "#,
+        )
+        .unwrap();
+    {
+        let mut resources = runtime
+            .resource_runtime
+            .lock()
+            .expect("resource runtime lock poisoned");
+        resources.audio_output_created = true;
+        resources.audio_output_started = false;
+        resources.master_volume = -1.0;
+    }
+
+    // Activation starts the output immediately. Stop it behind GameApp's
+    // back, then prove the next native frame repairs that actual device byte.
+    runtime.set_application_audio_active(true).unwrap();
+    {
+        let mut resources = runtime.resource_runtime.lock().unwrap();
+        resources.audio_output_started = false;
+        resources.master_volume = -1.0;
+    }
+    runtime.update(0.0).unwrap();
+    {
+        let resources = runtime.resource_runtime.lock().unwrap();
+        assert!(resources.audio_output_started);
+        assert_eq!(resources.master_volume, 1.0);
+    }
+
+    for setting in ["false", "'not-a-boolean'", "nil"] {
+        runtime
+            .execute_source(&format!("settings.root.audioEnabled = {setting}"))
+            .unwrap();
+        runtime
+            .resource_runtime
+            .lock()
+            .unwrap()
+            .audio_output_started = false;
+        runtime.update(0.0).unwrap();
+        assert!(
+            !runtime
+                .resource_runtime
+                .lock()
+                .unwrap()
+                .audio_output_started
+        );
+    }
+
+    runtime
+        .execute_source("settings.root.audioEnabled = true")
+        .unwrap();
+    runtime.set_application_audio_active(false).unwrap();
+    runtime.update(0.0).unwrap();
+    assert!(
+        !runtime
+            .resource_runtime
+            .lock()
+            .unwrap()
+            .audio_output_started
+    );
+}
+
+#[test]
 fn native_two_touch_distance_drives_half_delta_user_zoom() {
+    let _pinch_guard = lock_native_pinch_for_test();
     let runtime = StellaLua::new("/tmp").unwrap();
     runtime
         .execute_source(
@@ -476,6 +681,34 @@ fn native_two_touch_distance_drives_half_delta_user_zoom() {
     runtime.set_touches(&[(1, 0, 0), (2, 18, 24)]).unwrap();
     assert!(!runtime.update(0.0).unwrap());
     assert_eq!(deltas.raw_len(), 2);
+
+    // Purple keeps the active flag and both gesture baselines in three
+    // process globals (`byte_100C0FF20`, `dword_100C0FF24/+28`), not in
+    // GameApp. A second runtime therefore inherits an unfinished gesture.
+    let second_runtime = StellaLua::new("/tmp").unwrap();
+    second_runtime
+        .execute_source(
+            r#"
+                inheritedZoomDeltas = {}
+                function applyUserZoom(delta)
+                    table.insert(inheritedZoomDeltas, delta)
+                end
+            "#,
+        )
+        .unwrap();
+    second_runtime
+        .set_touches(&[(11, 0, 0), (12, 36, 48)])
+        .unwrap();
+    assert!(!second_runtime.update(0.0).unwrap());
+    let inherited = game_environment(second_runtime.lua())
+        .unwrap()
+        .get::<mlua::Table>("inheritedZoomDeltas")
+        .unwrap();
+    assert_eq!(inherited.raw_len(), 1);
+    assert_eq!(inherited.raw_get::<f64>(1).unwrap(), 1.5);
+
+    second_runtime.set_touches(&[]).unwrap();
+    assert!(!second_runtime.update(0.0).unwrap());
 }
 
 #[test]

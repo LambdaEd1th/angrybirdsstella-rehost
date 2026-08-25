@@ -3,5 +3,6 @@
 mod body_type;
 mod bounce;
 mod forces;
+mod interpolation;
 mod sweep;
 mod transform;

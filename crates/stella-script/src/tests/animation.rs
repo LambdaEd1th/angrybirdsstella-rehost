@@ -1124,11 +1124,22 @@ fn animation_native_lifecycle_preserves_void_abi_cache_and_active_scene() {
             r##"
                 res.createSpriteSheet("images/SHEET.dat")
                 preload_count = select("#", AnimationWrapperNative.preloadFromBundle(
-                    "animations/test.anim.json"
+                    "animations/test.anim.json", "ignored"
                 ))
                 load_count = select("#", AnimationWrapperNative.loadFromBundle(
-                    "scene", "animations/test.anim.json"
+                    "scene", "animations/test.anim.json", "ignored"
                 ))
+                bad_preload_filename = pcall(
+                    AnimationWrapperNative.preloadFromBundle, 123
+                )
+                bad_load_tag = pcall(
+                    AnimationWrapperNative.loadFromBundle,
+                    123, "animations/test.anim.json"
+                )
+                bad_load_filename = pcall(
+                    AnimationWrapperNative.loadFromBundle, "scene", 123
+                )
+                bad_close_tag = pcall(AnimationWrapperNative.close, 123)
                 prestart_local_x, prestart_local_y =
                     AnimationWrapperNative.getEntityPosition("scene", "JOINT")
                 prestart_transform_count = select("#",
@@ -1136,7 +1147,10 @@ fn animation_native_lifecycle_preserves_void_abi_cache_and_active_scene() {
                 )
                 _, _, _, _, _, prestart_has_sprite =
                     AnimationWrapperNative.getEntityWorldTransform("scene", "SLOT_TEST")
-                prestart_is_playing = AnimationWrapperNative.isPlaying("scene")
+                prestart_is_playing = AnimationWrapperNative.isPlaying(
+                    "scene", "ignored"
+                )
+                bad_is_playing_tag = pcall(AnimationWrapperNative.isPlaying, 123)
                 AnimationWrapperNative.setSpeed("scene", 0.25)
                 AnimationWrapperNative.seek("scene", 0.75)
                 AnimationWrapperNative.pause("scene")
@@ -1155,12 +1169,28 @@ fn animation_native_lifecycle_preserves_void_abi_cache_and_active_scene() {
                         number = number,
                         text = text
                     })
-                end)
+                end, "ignored")
+                bad_playback_event_tag = pcall(
+                    AnimationWrapperNative.setPlaybackEvent, 123, function() end
+                )
+                bad_playback_event_callback = pcall(
+                    AnimationWrapperNative.setPlaybackEvent, "scene", 123
+                )
                 start_count = select("#", AnimationWrapperNative.start(
-                    "scene", "idle", "once"
+                    "scene", "idle", "once", "ignored"
                 ))
-                AnimationWrapperNative.update(0.6)
+                bad_start_tag = pcall(
+                    AnimationWrapperNative.start, 123, "idle", "once"
+                )
+                bad_start_action = pcall(
+                    AnimationWrapperNative.start, "scene", 123, "once"
+                )
+                bad_start_mode = pcall(
+                    AnimationWrapperNative.start, "scene", "idle", 123
+                )
+                AnimationWrapperNative.update(0.6, "ignored")
                 AnimationWrapperNative.update(0.4)
+                bad_update_delta = pcall(AnimationWrapperNative.update, "0.1")
                 timeline_event_count = #timeline_events
                 AnimationWrapperNative.start("scene", "idle", "repeat")
                 speed_count = select("#", AnimationWrapperNative.setSpeed(
@@ -1179,25 +1209,57 @@ fn animation_native_lifecycle_preserves_void_abi_cache_and_active_scene() {
                     AnimationWrapperNative.seek, {}, 0.5
                 )
                 skin_count = select("#", AnimationWrapperNative.setSkin(
-                    "scene", "missing"
+                    "scene", "missing", "ignored"
                 ))
+                bad_skin_tag = pcall(
+                    AnimationWrapperNative.setSkin, 123, "missing"
+                )
+                bad_skin_name = pcall(
+                    AnimationWrapperNative.setSkin, "scene", 123
+                )
                 AnimationWrapperNative.setTranslation(
-                    "scene", 500.123456789, 600.987654321
+                    "scene", 500.123456789, 600.987654321, "ignored"
+                )
+                bad_translation_tag = pcall(
+                    AnimationWrapperNative.setTranslation, 123, 1, 2
+                )
+                bad_translation_x = pcall(
+                    AnimationWrapperNative.setTranslation, "scene", "1", 2
+                )
+                bad_translation_y = pcall(
+                    AnimationWrapperNative.setTranslation, "scene", 1, "2"
                 )
                 AnimationWrapperNative.setScale("scene", 10, 20)
-                AnimationWrapperNative.setRotation("scene", 0.123456789)
+                AnimationWrapperNative.setRotation(
+                    "scene", 0.123456789, "ignored"
+                )
+                bad_rotation_tag = pcall(
+                    AnimationWrapperNative.setRotation, 123, 1
+                )
+                bad_rotation_angle = pcall(
+                    AnimationWrapperNative.setRotation, "scene", "1"
+                )
                 AnimationWrapperNative.setScale(
-                    "scene", 10.123456789, 20.987654321
+                    "scene", 10.123456789, 20.987654321, "ignored"
+                )
+                bad_scale_tag = pcall(
+                    AnimationWrapperNative.setScale, 123, 1, 2
+                )
+                bad_scale_x = pcall(
+                    AnimationWrapperNative.setScale, "scene", "1", 2
+                )
+                bad_scale_y = pcall(
+                    AnimationWrapperNative.setScale, "scene", 1, "2"
                 )
                 AnimationWrapperNative.setTranslation("missing_scene", 1, 2)
                 AnimationWrapperNative.setRotation("missing_scene", 3)
                 AnimationWrapperNative.setScale("missing_scene", 4, 5)
 
                 local_x, local_y = AnimationWrapperNative.getEntityPosition(
-                    "scene", "JOINT"
+                    "scene", "JOINT", "ignored"
                 )
                 world_x, world_y = AnimationWrapperNative.getEntityWorldPosition(
-                    "scene", "SLOT_TEST"
+                    "scene", "SLOT_TEST", "ignored"
                 )
                 transform_count = select("#",
                     AnimationWrapperNative.getEntityWorldTransform("scene", "SLOT_TEST")
@@ -1211,21 +1273,64 @@ fn animation_native_lifecycle_preserves_void_abi_cache_and_active_scene() {
                     AnimationWrapperNative.getEntityWorldBounds("scene", "SLOT_TEST")
                 )
                 bounds_left, bounds_top, bounds_right, bounds_bottom =
-                    AnimationWrapperNative.getEntityWorldBounds("scene", "SLOT_TEST")
+                    AnimationWrapperNative.getEntityWorldBounds(
+                        "scene", "SLOT_TEST", "ignored"
+                    )
+                bad_contains_tag = pcall(
+                    AnimationWrapperNative.containsEntity, 123, "SLOT_TEST"
+                )
+                bad_contains_entity = pcall(
+                    AnimationWrapperNative.containsEntity, "scene", 123
+                )
+                bad_position_tag = pcall(
+                    AnimationWrapperNative.getEntityPosition, 123, "JOINT"
+                )
+                bad_position_entity = pcall(
+                    AnimationWrapperNative.getEntityPosition, "scene", 123
+                )
+                bad_world_position_tag = pcall(
+                    AnimationWrapperNative.getEntityWorldPosition, 123, "JOINT"
+                )
+                bad_scale_entity = pcall(
+                    AnimationWrapperNative.getEntityScale, "scene", 123
+                )
+                bad_world_scale_tag = pcall(
+                    AnimationWrapperNative.getEntityWorldScale, 123, "JOINT"
+                )
+                bad_transform_entity = pcall(
+                    AnimationWrapperNative.getEntityWorldTransform, "scene", 123
+                )
+                bad_bounds_tag = pcall(
+                    AnimationWrapperNative.getEntityWorldBounds, 123, "JOINT"
+                )
+                actions = AnimationWrapperNative.getActions("scene", "ignored")
+                bad_actions_tag = pcall(AnimationWrapperNative.getActions, 123)
+                bad_shader_tag = pcall(AnimationWrapperNative.setShader, 123, nil)
                 res.releaseSpriteSheet("images/SHEET.dat", false)
                 released_left, released_top, released_right, released_bottom =
                     AnimationWrapperNative.getEntityWorldBounds("scene", "SLOT_TEST")
-                AnimationWrapperNative.draw("scene")
+                AnimationWrapperNative.draw("scene", "ignored")
+                bad_draw_tag = pcall(AnimationWrapperNative.draw, 123)
 
-                AnimationWrapperNative.pause("scene")
+                AnimationWrapperNative.pause("scene", "ignored")
+                bad_pause_tag = pcall(AnimationWrapperNative.pause, 123)
                 paused_is_playing = AnimationWrapperNative.isPlaying("scene")
-                AnimationWrapperNative.resume("scene")
+                AnimationWrapperNative.resume("scene", "ignored")
+                bad_resume_tag = pcall(AnimationWrapperNative.resume, 123)
                 resumed_is_playing = AnimationWrapperNative.isPlaying("scene")
-                AnimationWrapperNative.clearCache()
+                AnimationWrapperNative.clearCache("ignored")
                 survives_clear_cache = AnimationWrapperNative.containsEntity(
                     "scene", "SLOT_TEST"
                 )
-                stop_count = select("#", AnimationWrapperNative.stop("scene", "idle"))
+                stop_count = select("#", AnimationWrapperNative.stop(
+                    "scene", "idle", "ignored"
+                ))
+                bad_stop_tag = pcall(
+                    AnimationWrapperNative.stop, 123, "idle"
+                )
+                bad_stop_action = pcall(
+                    AnimationWrapperNative.stop, "scene", 123
+                )
                 stopped_is_playing = AnimationWrapperNative.isPlaying("scene")
                 unknown_start_count = select("#", AnimationWrapperNative.start(
                     "scene", "missing", "repeat"
@@ -1329,6 +1434,55 @@ fn animation_native_lifecycle_preserves_void_abi_cache_and_active_scene() {
     assert!(!environment.get::<bool>("bad_speed_type").unwrap());
     assert!(!environment.get::<bool>("bad_seek_slot").unwrap());
     assert!(!environment.get::<bool>("bad_seek_tag").unwrap());
+    for name in [
+        "bad_preload_filename",
+        "bad_load_tag",
+        "bad_load_filename",
+        "bad_close_tag",
+        "bad_is_playing_tag",
+        "bad_start_tag",
+        "bad_start_action",
+        "bad_start_mode",
+        "bad_skin_tag",
+        "bad_skin_name",
+        "bad_translation_tag",
+        "bad_translation_x",
+        "bad_translation_y",
+        "bad_rotation_tag",
+        "bad_rotation_angle",
+        "bad_scale_tag",
+        "bad_scale_x",
+        "bad_scale_y",
+        "bad_draw_tag",
+        "bad_pause_tag",
+        "bad_resume_tag",
+        "bad_stop_tag",
+        "bad_stop_action",
+        "bad_playback_event_tag",
+        "bad_playback_event_callback",
+        "bad_update_delta",
+        "bad_contains_tag",
+        "bad_contains_entity",
+        "bad_position_tag",
+        "bad_position_entity",
+        "bad_world_position_tag",
+        "bad_scale_entity",
+        "bad_world_scale_tag",
+        "bad_transform_entity",
+        "bad_bounds_tag",
+        "bad_actions_tag",
+        "bad_shader_tag",
+    ] {
+        assert!(!environment.get::<bool>(name).unwrap(), "{name}");
+    }
+    assert_eq!(
+        environment
+            .get::<mlua::Table>("actions")
+            .unwrap()
+            .len()
+            .unwrap(),
+        1
+    );
     {
         let animation = runtime
             ._animation_runtime

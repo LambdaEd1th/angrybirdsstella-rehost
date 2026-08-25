@@ -1,5 +1,6 @@
 //! Native per-frame stages, split along their recovered member boundaries.
 
+mod interpolation;
 mod joint_export;
 mod particle_render;
 mod particle_update;

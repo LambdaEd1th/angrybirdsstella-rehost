@@ -18,13 +18,14 @@ pub use render_types::*;
 use resource_manager::load_sprite_geometry;
 use resource_manager::{
     AudioAssetState, AudioIoConfiguration, AudioRuntime, CompositeAudioState, FontMetric,
-    LocaleRuntime, NativeSpriteMetrics, NativeSpritePlacement, ResourceRuntime, SpriteGeometry,
-    bitmap_font_metric, bitmap_font_string_width, composite_part_lua_table,
-    create_system_font_state, load_bitmap_fonts, load_localized_strings, load_sprite_sheet_path,
+    LocaleRuntime, NativeSpriteMetrics, NativeSpritePlacement, ParsedSpriteDraw, ResourceRuntime,
+    SpriteGeometry, SpriteHorizontalAnchor, SpriteVerticalAnchor, bitmap_font_metric,
+    bitmap_font_string_width, composite_part_lua_table, create_system_font_state,
+    load_bitmap_fonts, load_localized_strings, load_sprite_sheet_path,
     localization_table_has_locale, localized_string_groups_from_table, native_clip_text_lines,
-    native_composite_metrics, parse_draw_sprite_args, platform_system_font_names,
-    resolve_localized_string, resource_double_file_stem, resource_file_extension,
-    resource_file_stem, resource_join_path, resource_normalized_path,
+    native_composite_metrics, native_resource_sprite_command, parse_draw_sprite_args,
+    platform_system_font_names, resolve_localized_string, resource_double_file_stem,
+    resource_file_extension, resource_file_stem, resource_join_path, resource_normalized_path,
     sprite_draw_anchor_offset_from_geometry, system_font_metric, system_font_string_width,
     update_composite_part_from_lua,
 };

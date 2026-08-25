@@ -9,7 +9,13 @@ pub(super) fn install_sensor_force(
 ) -> LuaResult<()> {
     globals.set(
         "native_applySensorForces",
-        lua.create_function(move |_, (sensor_name, object_name): (String, String)| {
+        lua.create_function(move |_, args: MultiValue| {
+            // Hand-written member sub_10005B570 calls the exact STRING-tag
+            // accessor sub_1005285CC for slots one and two. Numeric values
+            // must not receive mlua's normal string coercion; later slots are
+            // left untouched and therefore ignored.
+            let sensor_name = native_required_string(&args, 0, "native_applySensorForces")?;
+            let object_name = native_required_string(&args, 1, "native_applySensorForces")?;
             let mut bridge = render.lock().expect("render bridge lock poisoned");
             apply_native_sensor_forces(&mut bridge, &sensor_name, &object_name);
             Ok(())
@@ -115,12 +121,17 @@ pub(super) fn install_menu_particle_scale(
 ) -> LuaResult<()> {
     globals.set(
         "setMenuParticlesScale",
-        lua.create_function(move |_, scale: f64| {
+        lua.create_function(move |_, args: MultiValue| {
+            // Generated adapter sub_100088D24 reads stack slot one through
+            // sub_10052859C: the value must have the exact Lua NUMBER tag,
+            // extra slots are ignored, and the call narrows to float32 before
+            // the Particles virtual setter stores it at +0x38.
+            let scale = native_required_number(&args, 0, "setMenuParticlesScale")? as f32;
             render
                 .lock()
                 .expect("render bridge lock poisoned")
                 .particle_system
-                .scale = scale as f32;
+                .scale = scale;
             Ok(())
         })?,
     )?;

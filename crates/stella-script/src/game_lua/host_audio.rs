@@ -10,6 +10,58 @@ const ROLLING_AUDIO: [(&str, usize); 3] = [
 ];
 
 impl StellaLua {
+    /// Return the exact nested Boolean stored at
+    /// `settings.root.audioEnabled`. The activation virtual treats absence or
+    /// a different type as enabled, while GameLua's frame-head recovery path
+    /// requires an explicit `true`, so retain the three-state result here.
+    pub(super) fn native_audio_enabled_setting(&self) -> Result<Option<bool>, ScriptError> {
+        let environment = game_environment(&self.lua)?;
+        let Value::Table(settings) = environment.get::<Value>("settings")? else {
+            return Ok(None);
+        };
+        let Value::Table(root) = settings.get::<Value>("root")? else {
+            return Ok(None);
+        };
+        Ok(match root.get::<Value>("audioEnabled")? {
+            Value::Boolean(enabled) => Some(enabled),
+            _ => None,
+        })
+    }
+
+    /// `0x10005E8E4..0x10005EAB4` repairs a stopped AudioOutput before any
+    /// input publication or Lua frame callback. Unlike activation, this path
+    /// runs only while GameApp+0x520 is set and only for exact Boolean true.
+    pub(super) fn recover_native_audio_output(&self) -> Result<(), ScriptError> {
+        if !self.application_audio_active.get() {
+            return Ok(());
+        }
+        let needs_recovery = {
+            let resources = self
+                .resource_runtime
+                .lock()
+                .expect("resource runtime lock poisoned");
+            resources.audio_output_created && !resources.audio_output_started
+        };
+        if !needs_recovery || self.native_audio_enabled_setting()? != Some(true) {
+            return Ok(());
+        }
+
+        // Purple reloads the LuaResources output pointer immediately before
+        // calling startAudioOutput, so a replacement/removal during the
+        // nested setting lookup cannot start a stale instance.
+        let mut resources = self
+            .resource_runtime
+            .lock()
+            .expect("resource runtime lock poisoned");
+        if resources.audio_output_created && !resources.audio_output_started {
+            if resources.master_volume == -1.0 {
+                resources.master_volume = 1.0;
+            }
+            resources.audio_output_started = true;
+        }
+        Ok(())
+    }
+
     pub(super) fn update_native_rolling_audio(&self, levels: [f32; 3]) -> Result<(), ScriptError> {
         let resources = self
             .resource_runtime

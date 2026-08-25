@@ -2,6 +2,8 @@
 
 use crate::*;
 
+static UNIQUE_SHADER_COUNTER: Mutex<i32> = Mutex::new(0);
+
 pub(super) fn install(
     lua: &Lua,
     globals: &mlua::Table,
@@ -68,7 +70,10 @@ pub(super) fn install(
         "fileExistsInAppData",
         lua.create_function({
             let root = Arc::clone(&data_root);
-            move |_, path: String| {
+            move |_, args: MultiValue| {
+                // Shared generated boolean/string wrapper sub_100088F68
+                // requires an exact STRING in slot one and ignores extras.
+                let path = native_required_string(&args, 0, "fileExistsInAppData")?;
                 Ok(app_data_path(&root, &path)
                     .map(|path| path.is_file())
                     .unwrap_or(false))
@@ -79,7 +84,10 @@ pub(super) fn install(
         "checkForLuaFile",
         lua.create_function({
             let root = Arc::clone(&data_root);
-            move |_, path: String| Ok(resolve_script(&root, &path).is_ok())
+            move |_, args: MultiValue| {
+                let path = native_required_string(&args, 0, "checkForLuaFile")?;
+                Ok(resolve_script(&root, &path).is_ok())
+            }
         })?,
     )?;
 
@@ -102,23 +110,25 @@ pub(super) fn install(
 }
 
 fn install_unique_shaders(lua: &Lua, globals: &mlua::Table) -> LuaResult<()> {
-    let unique_shader_counter = Arc::new(Mutex::new(0_u32));
     let unique_shaders = Arc::new(Mutex::new(BTreeSet::<String>::new()));
-    let create_shader_counter = Arc::clone(&unique_shader_counter);
     let create_shader_set = Arc::clone(&unique_shaders);
     globals.set(
         "createUniqueShaders",
-        lua.create_function(move |lua, (base, count): (String, u32)| {
+        lua.create_function(move |lua, args: MultiValue| {
+            // Hand-written sub_10004E720 reads exact STRING/NUMBER slots,
+            // narrows the count through float32 and FCVTZS, and ignores the
+            // remaining Lua stack. dword_100C0FF88 is process-global.
+            let base = native_required_string(&args, 0, "createUniqueShaders")?;
+            let count =
+                native_fcvtzs_f32(native_required_number(&args, 1, "createUniqueShaders")? as f32);
             let shaders = lua.create_table()?;
-            let mut counter = create_shader_counter
+            let mut counter = UNIQUE_SHADER_COUNTER
                 .lock()
                 .expect("unique shader counter lock poisoned");
             let mut live = create_shader_set
                 .lock()
                 .expect("unique shader set lock poisoned");
             for index in 1..=count {
-                // sub_10004E720 appends a process-global decimal counter and
-                // advances it across separate calls.
                 let name = format!("{base}{}", *counter);
                 *counter = counter.wrapping_add(1);
                 live.insert(name.clone());
@@ -131,11 +141,25 @@ fn install_unique_shaders(lua: &Lua, globals: &mlua::Table) -> LuaResult<()> {
     globals.set(
         "destroyUniqueShaders",
         lua.create_function(move |_, args: MultiValue| {
+            // Generated sub_10008426C requires one exact TABLE. Member
+            // sub_10004EC88 counts every key with lua_next, then (only when
+            // count >= 2) visits raw integer indices [1, count), converting
+            // each value with lua_tolstring and using an empty string when
+            // that conversion fails.
+            let shaders = native_required_table(&args, 0, "destroyUniqueShaders")?;
+            let count = shaders
+                .clone()
+                .pairs::<Value, Value>()
+                .try_fold(0_u32, |count, pair| pair.map(|_| count.wrapping_add(1)))?;
             let mut live = destroy_shader_set
                 .lock()
                 .expect("unique shader set lock poisoned");
-            for name in args.iter().filter_map(value_string) {
-                live.remove(&name);
+            if count >= 2 {
+                for index in 1..count {
+                    let value = shaders.raw_get::<Value>(i64::from(index))?;
+                    let name = native_lua51_string(&value).unwrap_or_default();
+                    live.remove(&name);
+                }
             }
             Ok(())
         })?,

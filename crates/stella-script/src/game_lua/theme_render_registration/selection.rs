@@ -13,8 +13,7 @@ pub(super) fn install(
         "setTheme",
         lua.create_function(move |lua, args: MultiValue| {
             let theme_name = native_required_string(&args, 0, "setTheme")?;
-            let environment = game_environment(lua)?;
-            let Value::Table(block_table) = environment.get::<Value>("blockTable")? else {
+            let Some(block_table) = native_lua_object(lua, NativeLuaObject::BlockTable)? else {
                 return Ok(());
             };
             let Value::Table(themes) = block_table.get::<Value>("themes")? else {

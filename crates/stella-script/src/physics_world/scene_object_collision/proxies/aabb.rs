@@ -3,6 +3,7 @@
 use crate::*;
 
 impl SceneObject {
+    #[cfg(test)]
     pub(crate) fn collision_aabb(&self) -> Option<(f64, f64, f64, f64)> {
         if ![
             self.x,
@@ -74,6 +75,7 @@ fn native_fixture_aabb(vertices: &[(f64, f64)], radius: f32) -> Option<(f32, f32
     Some((left - radius, down - radius, right + radius, up + radius))
 }
 
+#[cfg(test)]
 fn tuple_f64(bounds: (f32, f32, f32, f32)) -> (f64, f64, f64, f64) {
     (
         f64::from(bounds.0),

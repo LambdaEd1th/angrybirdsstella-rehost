@@ -49,6 +49,7 @@ impl SceneObject {
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn collision_vertices(&self) -> Vec<(f64, f64)> {
         self.collision_local_vertices()
             .into_iter()

@@ -17,7 +17,9 @@ static NEXT_TEST_SPRITE_SHEET_ID: AtomicU64 = AtomicU64::new(0);
 /// native unnamed physics lock explicitly for those fixtures.
 fn unlocked_test_runtime() -> StellaLua {
     let runtime = StellaLua::new("/tmp").unwrap();
-    runtime.execute_source("setPhysicsEnabled(true)").unwrap();
+    runtime
+        .execute_source("g_outOfBoundariesObjects = {}; setPhysicsEnabled(true)")
+        .unwrap();
     runtime
 }
 
@@ -102,16 +104,23 @@ fn test_textured_sprite_sheet_with_names(texture: &str, entries: &[(&str, u16, u
 }
 
 fn register_test_sprite_sheet(runtime: &StellaLua, names: &[&str]) -> String {
-    let unique = NEXT_TEST_SPRITE_SHEET_ID.fetch_add(1, Ordering::Relaxed);
-    let file_name = format!("stella-test-sheet-{}-{unique}.dat", std::process::id());
-    let path = runtime.data_root().join(&file_name);
     let entries = names
         .iter()
         .map(|name| (*name, 1_u16, 1_u16))
         .collect::<Vec<_>>();
+    register_test_sprite_sheet_with_sizes(runtime, &entries)
+}
+
+fn register_test_sprite_sheet_with_sizes(
+    runtime: &StellaLua,
+    entries: &[(&str, u16, u16)],
+) -> String {
+    let unique = NEXT_TEST_SPRITE_SHEET_ID.fetch_add(1, Ordering::Relaxed);
+    let file_name = format!("stella-test-sheet-{}-{unique}.dat", std::process::id());
+    let path = runtime.data_root().join(&file_name);
     fs::write(
         &path,
-        test_textured_sprite_sheet_with_names("stella-test-texture.pvr", &entries),
+        test_textured_sprite_sheet_with_names("stella-test-texture.pvr", entries),
     )
     .unwrap();
     let environment = game_environment(runtime.lua()).unwrap();
@@ -243,6 +252,7 @@ impl Drop for ShippedDataSandbox {
 
 mod animation;
 mod audio_registration;
+mod bird_run;
 mod body_bindings;
 mod broad_phase;
 mod collision_callbacks;
@@ -254,6 +264,7 @@ mod definitions;
 mod dirt;
 mod discrete_world;
 mod global_render_state;
+mod gravity_visuals;
 mod joint_construction;
 mod math_random;
 mod narrow_phase;
@@ -264,6 +275,7 @@ mod physics_queries;
 mod platform_services;
 mod position_constraints;
 mod prismatic_joints;
+mod pulley;
 mod render_bindings;
 mod render_submission;
 mod resources;

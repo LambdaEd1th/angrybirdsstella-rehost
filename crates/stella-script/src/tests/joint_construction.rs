@@ -61,8 +61,14 @@ fn joint_batch_builds_and_solves_weld_constraint() {
     runtime.update(1.0 / 30.0).unwrap();
     let world = object_world(runtime.lua()).unwrap();
     let second: mlua::Table = world.get("second").unwrap();
-    assert!(second.get::<f64>("x").unwrap() > 2.0);
-    assert_eq!(runtime.render.lock().unwrap().joints.len(), 1);
+    let bridge = runtime.render.lock().unwrap();
+    assert!(bridge.scene["second"].x > 2.0);
+    assert_eq!(
+        second.get::<f64>("x").unwrap(),
+        f64::from(bridge.scene["second"].render_x as f32)
+    );
+    assert_eq!(bridge.joints.len(), 1);
+    drop(bridge);
     let environment = game_environment(runtime.lua()).unwrap();
     let objects = environment.get::<mlua::Table>("objects").unwrap();
     let descriptors = objects.get::<mlua::Table>("joints").unwrap();

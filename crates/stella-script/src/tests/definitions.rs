@@ -99,20 +99,25 @@ fn script_loader_routes_definition_packs_into_native_block_table_shape() {
                 assert(rawget(gamelua, "themes") == nil)
                 assert(blockTable.themes.old == 1)
 
+                nativeBlockTable = blockTable
+                blockTable = { replacement = true }
+
                 assert(select('#', loadLuaFile(
                     "themes-two.lua", "themes", true, false
                 )) == 0)
-                assert(blockTable.themes.fresh == 2)
-                assert(blockTable.themes.shared == 20)
-                assert(rawget(blockTable.themes, "old") == nil)
+                assert(nativeBlockTable.themes.fresh == 2)
+                assert(nativeBlockTable.themes.shared == 20)
+                assert(rawget(nativeBlockTable.themes, "old") == nil)
+                assert(blockTable.replacement == true)
+                assert(rawget(blockTable, "themes") == nil)
 
                 assert(select('#', loadLuaFile(
                     "birds.lua", "blockTable", true, true
                 )) == 0)
-                assert(blockTable.blocks.TestBird.marker == 33)
-                assert(blockTable.blocks.TestBird.index == 1)
-                assert(blockTable.blocks.TestBird.group == "birds")
-                assert(rawget(blockTable, "birds") == nil)
+                assert(nativeBlockTable.blocks.TestBird.marker == 33)
+                assert(nativeBlockTable.blocks.TestBird.index == 1)
+                assert(nativeBlockTable.blocks.TestBird.group == "birds")
+                assert(rawget(nativeBlockTable, "birds") == nil)
 
                 inheritsBlock = function(base, ignore_components)
                     return function(definition)
@@ -124,8 +129,8 @@ fn script_loader_routes_definition_packs_into_native_block_table_shape() {
                 assert(select('#', loadLuaFile(
                     "inherited.lua", "blockTable", true, true
                 )) == 0)
-                assert(blockTable.blocks.DerivedBird.__inheritedFrom == "TestBird")
-                assert(blockTable.blocks.DerivedBird.__ignoreComponents == true)
+                assert(nativeBlockTable.blocks.DerivedBird.__inheritedFrom == "TestBird")
+                assert(nativeBlockTable.blocks.DerivedBird.__ignoreComponents == true)
                 assert(rawget(gamelua, "IGNORE_COMPONENTS") == nil)
                 "#,
         )
@@ -228,7 +233,7 @@ fn json_import_populates_the_existing_named_table_with_void_abi() {
 }
 
 #[test]
-fn level_loader_applies_native_force_multipliers_and_world_defaults() {
+fn level_loader_snapshots_native_force_and_aim_stream_world_attributes() {
     let unique = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -253,10 +258,13 @@ fn level_loader_applies_native_force_multipliers_and_world_defaults() {
                 worldAttributes = {
                     defaultGravityForceMultiplier = "2.5",
                     defaultWaterForceMultiplier = "0x2",
-                    simulationIterations = 4,
-                    simulationTimeStepMultiplier = 1,
-                    simulationStorePointsSampler = 1
+                    simulationIterations = "4",
+                    simulationTimeStepMultiplier = "1",
+                    simulationStorePointsSampler = "1",
+                    simulationAimSpawnTime = 0.25,
+                    simulationAimSpeed = 3
                 }
+                deadBlocks = { generation = 1 }
                 objects = { currentTimeStep = 0.1 }
                 createCircle("BirdSimulation", "", 0, 0, 1, 1, 0, 0,
                     true, false, 1)
@@ -269,6 +277,7 @@ fn level_loader_applies_native_force_multipliers_and_world_defaults() {
                 startNewTrajectory()
                 addToTrajectory(0, 12, 34)
                 assert(select('#', loadLevel("explicit")) == 0)
+                nativeDeadBlocks = deadBlocks
                 "#,
         )
         .unwrap();
@@ -276,7 +285,12 @@ fn level_loader_applies_native_force_multipliers_and_world_defaults() {
         let bridge = runtime.render.lock().unwrap();
         assert_eq!(bridge.gravity_force_multiplier, 3.25);
         assert_eq!(bridge.water_force_multiplier, 10.0);
+        assert_eq!(bridge.simulation_iterations, 4);
+        assert_eq!(bridge.simulation_time_step_multiplier, 1.0);
+        assert_eq!(bridge.simulation_store_points_sampler, 1);
         assert!(!bridge.aim_stream_active);
+        assert_eq!(bridge.aim_stream_spawn_time, 0.25);
+        assert_eq!(bridge.aim_stream_speed, 3.0);
         assert!(bridge.aim_stream_control_points.is_empty());
         assert!(bridge.aim_stream_particles.is_empty());
         assert_eq!(bridge.trajectory_stream_index, 0);
@@ -286,13 +300,90 @@ fn level_loader_applies_native_force_multipliers_and_world_defaults() {
         assert!(bridge.trajectory_streams[1].normal_sprite.is_empty());
     }
 
+    {
+        let mut bridge = runtime.render.lock().unwrap();
+        bridge.aim_stream_control_points = (0..12).map(|x| (f64::from(x), 0.0)).collect();
+    }
     runtime
-        .execute_source(r#"assert(select('#', loadLevel("defaults")) == 0)"#)
+        .execute_source(
+            r#"
+                worldAttributes.simulationAimSpawnTime = 9
+                worldAttributes.simulationAimSpeed = 9
+                worldAttributes.simulationIterations = 90
+                worldAttributes.simulationTimeStepMultiplier = 90
+                worldAttributes.simulationStorePointsSampler = 90
+                deadBlocks = { generation = 2 }
+                shadowDeadBlocks = deadBlocks
+                populateAimingAid()
+            "#,
+        )
+        .unwrap();
+    {
+        let bridge = runtime.render.lock().unwrap();
+        assert_eq!(bridge.aim_stream_spawn_time, 0.25);
+        assert_eq!(bridge.aim_stream_speed, 3.0);
+        assert_eq!(bridge.simulation_iterations, 4);
+        assert_eq!(bridge.simulation_time_step_multiplier, 1.0);
+        assert_eq!(bridge.simulation_store_points_sampler, 1);
+        assert_eq!(bridge.aim_stream_spawn_timer, 0.25);
+        assert_eq!(bridge.aim_stream_particles.len(), 12);
+    }
+    assert!(native_queue_dead_block(runtime.lua(), "BirdSimulation", 0.0).unwrap());
+    {
+        let environment = game_environment(runtime.lua()).unwrap();
+        let retained = environment.get::<mlua::Table>("nativeDeadBlocks").unwrap();
+        let shadow = environment.get::<mlua::Table>("shadowDeadBlocks").unwrap();
+        assert!(matches!(
+            retained.raw_get::<Value>("BirdSimulation").unwrap(),
+            Value::Table(_)
+        ));
+        assert!(matches!(
+            shadow.raw_get::<Value>("BirdSimulation").unwrap(),
+            Value::Nil
+        ));
+    }
+
+    runtime
+        .execute_source(
+            r#"
+                local aimingBeforeReplacement = getAimingTime()
+                worldAttributes = {
+                    defaultGravityForceMultiplier = "2.5",
+                    defaultWaterForceMultiplier = "0x2",
+                    simulationIterations = 7,
+                    simulationTimeStepMultiplier = 2,
+                    simulationStorePointsSampler = 3,
+                    simulationAimSpawnTime = 8,
+                    simulationAimSpeed = 6
+                }
+                -- GameLua+0x4D0 still owns the preceding table until the
+                -- next successful loadLevelImpl replacement.
+                assert(getAimingTime() == aimingBeforeReplacement)
+                assert(select('#', loadLevel("defaults")) == 0)
+            "#,
+        )
         .unwrap();
     {
         let bridge = runtime.render.lock().unwrap();
         assert_eq!(bridge.gravity_force_multiplier, 2.5);
         assert_eq!(bridge.water_force_multiplier, 2.0);
+        assert_eq!(bridge.aim_stream_spawn_time, 8.0);
+        assert_eq!(bridge.aim_stream_speed, 6.0);
+        assert_eq!(bridge.simulation_iterations, 7);
+        assert_eq!(bridge.simulation_time_step_multiplier, 2.0);
+        assert_eq!(bridge.simulation_store_points_sampler, 3);
+        assert_eq!(bridge.aim_stream_spawn_timer, 0.25);
+        assert!(bridge.aim_stream_control_points.is_empty());
+        assert!(bridge.aim_stream_particles.is_empty());
+    }
+    assert!(native_queue_dead_block(runtime.lua(), "BirdSimulation", 0.0).unwrap());
+    {
+        let environment = game_environment(runtime.lua()).unwrap();
+        let shadow = environment.get::<mlua::Table>("shadowDeadBlocks").unwrap();
+        assert!(matches!(
+            shadow.raw_get::<Value>("BirdSimulation").unwrap(),
+            Value::Table(_)
+        ));
     }
     runtime
         .execute_source(

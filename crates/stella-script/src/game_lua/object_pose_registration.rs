@@ -26,6 +26,9 @@ pub(crate) fn install(
                 object.x = x;
                 object.y = y;
                 object.sync_native_sweep_from_transform();
+                // sub_10003FA60 writes RenderObjectData +0xA4/+0xA8 and both
+                // interpolation slots in the same call.
+                object.reset_native_interpolation_position(x as f32, y as f32);
                 // b2Body::SetTransform synchronizes this body's fixture
                 // proxies and then immediately drains the move buffer.
                 bridge.sync_native_body_broad_phase(&name);
@@ -65,6 +68,7 @@ pub(crate) fn install(
                         .ok_or_else(|| runtime_error(format!("Missing object: {name}")))?;
                     object.angle = angle;
                     object.sync_native_sweep_from_transform();
+                    object.reset_native_interpolation_angle(native_angle);
                     bridge.sync_native_body_broad_phase(&name);
                 }
                 if let Value::Table(entry) = object_world(lua)?.raw_get::<Value>(name.as_str())? {

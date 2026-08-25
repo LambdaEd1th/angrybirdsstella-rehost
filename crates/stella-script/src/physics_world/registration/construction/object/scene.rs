@@ -2,7 +2,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use crate::{RenderBridge, SceneObject};
+use crate::{DisplayInterpolationVelocity, NativeInterpolationPose, RenderBridge, SceneObject};
 
 use super::super::{ConstructorKind, PreparedConstruction};
 
@@ -35,6 +35,7 @@ pub(super) fn insert(render: &Arc<Mutex<RenderBridge>>, prepared: PreparedConstr
         .kind
         .has_body()
         .then(|| bridge.allocate_body_allocation_slot());
+    let initial_pose = NativeInterpolationPose::new(request.x, request.y, 0.0);
     let mut scene_object = SceneObject {
         physics_creation_order,
         body_allocation_slot,
@@ -48,6 +49,11 @@ pub(super) fn insert(render: &Arc<Mutex<RenderBridge>>, prepared: PreparedConstr
         texture_scale: 1.0,
         x: request.x,
         y: request.y,
+        render_x: request.x,
+        render_y: request.y,
+        render_angle: 0.0,
+        interpolation_poses: [initial_pose; 2],
+        display_interpolation_velocities: [DisplayInterpolationVelocity::ZERO; 2],
         sweep_center_x: request.x as f32,
         sweep_center_y: request.y as f32,
         collision_shape,

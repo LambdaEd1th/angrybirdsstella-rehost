@@ -104,7 +104,9 @@ pub(super) fn install_sprite_rotation(
 ) -> LuaResult<()> {
     globals.set(
         "setSpriteRotation",
-        lua.create_function(move |lua, (name, angle): (String, f64)| {
+        lua.create_function(move |lua, args: MultiValue| {
+            let name = native_required_string(&args, 0, "setSpriteRotation")?;
+            let angle = native_required_number(&args, 1, "setSpriteRotation")?;
             // sub_10003FC88 receives the generated adapter's float32 value,
             // then runs fmodf and conditionally adds the float32 two-pi value.
             let angle = angle as f32;
@@ -138,7 +140,9 @@ pub(super) fn install_velocity_multiplier(
 ) -> LuaResult<()> {
     globals.set(
         "multiplyVelocity",
-        lua.create_function(move |_, (name, multiplier): (String, f64)| {
+        lua.create_function(move |_, args: MultiValue| {
+            let name = native_required_string(&args, 0, "multiplyVelocity")?;
+            let multiplier = native_required_number(&args, 1, "multiplyVelocity")?;
             if let Some(object) = render
                 .lock()
                 .expect("render bridge lock poisoned")

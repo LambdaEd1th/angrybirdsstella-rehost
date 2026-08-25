@@ -74,7 +74,8 @@ fn install_controls_inner(
     let runtime = Arc::clone(&animation_runtime);
     animation_native.set(
         "isPlaying",
-        lua.create_function(move |_, tag: String| {
+        lua.create_function(move |_, args: MultiValue| {
+            let tag = native_required_string(&args, 0, "isPlaying")?;
             Ok(runtime
                 .lock()
                 .expect("animation runtime lock poisoned")
@@ -89,7 +90,10 @@ fn install_controls_inner(
     let sprite_data_root = data_root.clone();
     animation_native.set(
         "start",
-        lua.create_function(move |_, (tag, action, mode): (String, String, String)| {
+        lua.create_function(move |_, args: MultiValue| {
+            let tag = native_required_string(&args, 0, "start")?;
+            let action = native_required_string(&args, 1, "start")?;
+            let mode = native_required_string(&args, 2, "start")?;
             let resources = resources
                 .as_ref()
                 .map(|resources| resources.lock().expect("resource runtime lock poisoned"));
@@ -180,7 +184,9 @@ fn install_controls_inner(
     let sprite_data_root = data_root.clone();
     animation_native.set(
         "stop",
-        lua.create_function(move |_, (tag, action): (String, String)| {
+        lua.create_function(move |_, args: MultiValue| {
+            let tag = native_required_string(&args, 0, "stop")?;
+            let action = native_required_string(&args, 1, "stop")?;
             let resources = resources
                 .as_ref()
                 .map(|resources| resources.lock().expect("resource runtime lock poisoned"));
@@ -252,7 +258,7 @@ fn install_controls_inner(
     let sprite_data_root = data_root.clone();
     animation_native.set(
         "stopAll",
-        lua.create_function(move |_, ()| {
+        lua.create_function(move |_, _: MultiValue| {
             let resources = resources
                 .as_ref()
                 .map(|resources| resources.lock().expect("resource runtime lock poisoned"));
@@ -287,7 +293,8 @@ fn install_controls_inner(
         let runtime = Arc::clone(&animation_runtime);
         animation_native.set(
             method,
-            lua.create_function(move |_, tag: String| {
+            lua.create_function(move |_, args: MultiValue| {
+                let tag = native_required_string(&args, 0, method)?;
                 if let Some(playback) = runtime
                     .lock()
                     .expect("animation runtime lock poisoned")

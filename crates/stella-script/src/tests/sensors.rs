@@ -1,6 +1,32 @@
 use super::*;
 
 #[test]
+fn sensor_force_member_preserves_exact_string_slots_and_ignores_trailing_values() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .execute_source(
+            r#"
+                createBox("sensor", "", 0, 0, 2, 2, 0, 0, 0, true, false, 1)
+                createBox("target", "", 0, 0, 2, 2, 1, 0, 0, true, false, 1)
+                missing_fails = not pcall(native_applySensorForces, "sensor")
+                sensor_number_fails = not pcall(
+                    native_applySensorForces, 1, "target")
+                target_number_fails = not pcall(
+                    native_applySensorForces, "sensor", 2)
+                trailing_ok = pcall(
+                    native_applySensorForces, "sensor", "target", false)
+            "#,
+        )
+        .unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert!(environment.get::<bool>("missing_fails").unwrap());
+    assert!(environment.get::<bool>("sensor_number_fails").unwrap());
+    assert!(environment.get::<bool>("target_number_fails").unwrap());
+    assert!(environment.get::<bool>("trailing_ok").unwrap());
+}
+
+#[test]
 fn recovered_completion_bindings_update_native_physics_and_render_state() {
     let runtime = StellaLua::new("/tmp").unwrap();
     runtime
@@ -80,7 +106,9 @@ fn recovered_object_extension_members_keep_native_float_and_lua_mirror_boundarie
 
                 native_setTimeSinceCollision("body", 0.123456789)
                 setRevertGravityWithMultiplier("body", true, 0.123456789, 9.87654321)
-                setSpriteRotation("body", 123456.7890123)
+                setSpriteRotation("body", 123456.7890123, "ignored")
+                setVelocity("body", 2, 3)
+                multiplyVelocity("body", 2, "ignored")
 
                 mirror_collision_time = objects.world.body.timeSinceCollision
                 mirror_revert_mode = objects.world.body.revertGravityWithMultiplier
@@ -92,6 +120,10 @@ fn recovered_object_extension_members_keep_native_float_and_lua_mirror_boundarie
                 bad_collision_value = pcall(native_setTimeSinceCollision, "body", false)
                 bad_revert_flag = pcall(setRevertGravityWithMultiplier, "body", 1, 2, 3)
                 bad_revert_force = pcall(setRevertGravityWithMultiplier, "body", true, false, 3)
+                bad_sprite_name = pcall(setSpriteRotation, false, 1)
+                bad_sprite_angle = pcall(setSpriteRotation, "body", "1")
+                bad_velocity_name = pcall(multiplyVelocity, false, 1)
+                bad_velocity_multiplier = pcall(multiplyVelocity, "body", "2")
             "#,
         )
         .unwrap();
@@ -111,6 +143,10 @@ fn recovered_object_extension_members_keep_native_float_and_lua_mirror_boundarie
     assert!(!environment.get::<bool>("bad_collision_value").unwrap());
     assert!(!environment.get::<bool>("bad_revert_flag").unwrap());
     assert!(!environment.get::<bool>("bad_revert_force").unwrap());
+    assert!(!environment.get::<bool>("bad_sprite_name").unwrap());
+    assert!(!environment.get::<bool>("bad_sprite_angle").unwrap());
+    assert!(!environment.get::<bool>("bad_velocity_name").unwrap());
+    assert!(!environment.get::<bool>("bad_velocity_multiplier").unwrap());
 
     let expected_angle = {
         let angle = 123456.7890123_f64 as f32;
@@ -134,6 +170,7 @@ fn recovered_object_extension_members_keep_native_float_and_lua_mirror_boundarie
         f64::from(9.87654321_f64 as f32)
     );
     assert_eq!(body.sprite_rotation, expected_angle);
+    assert_eq!((body.velocity_x, body.velocity_y), (4.0, 6.0));
 }
 
 #[test]

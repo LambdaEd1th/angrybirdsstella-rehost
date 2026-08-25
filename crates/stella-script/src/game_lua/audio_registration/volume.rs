@@ -1,10 +1,12 @@
 //! `setAudioClipVolume`, registered between play and stop at `0x10002EE8C`.
 
+use crate::resource_manager::require_audio_output;
 use crate::*;
 
 pub(super) fn install(
     lua: &Lua,
     globals: &mlua::Table,
+    resource_runtime: Arc<Mutex<ResourceRuntime>>,
     audio_runtime: Arc<Mutex<AudioRuntime>>,
 ) -> LuaResult<()> {
     globals.set(
@@ -16,6 +18,10 @@ pub(super) fn install(
                 "setAudioClipVolume",
             )?);
             let volume = native_required_number(&args, 1, "setAudioClipVolume")? as f32;
+            // sub_10005920C validates both Lua slots first, then follows the
+            // live AudioOutputImpl pointer for both the handle query and the
+            // volume write. Preserve that ownership/order safely.
+            require_audio_output(&resource_runtime, "set audio clip volume")?;
             if let Some(clip) = audio_runtime
                 .lock()
                 .expect("audio runtime lock poisoned")

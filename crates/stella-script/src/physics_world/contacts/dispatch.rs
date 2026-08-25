@@ -11,8 +11,7 @@ pub(crate) fn remove_lua_joint_descriptors(lua: &Lua, names: &BTreeSet<String>) 
     if names.is_empty() {
         return Ok(());
     }
-    let environment = game_environment(lua)?;
-    let Value::Table(objects) = environment.get::<Value>("objects")? else {
+    let Some(objects) = native_lua_object(lua, NativeLuaObject::Objects)? else {
         return Ok(());
     };
     let Value::Table(joints) = objects.get::<Value>("joints")? else {
@@ -53,8 +52,8 @@ pub(crate) fn dispatch_native_joint_removal_callbacks(lua: &Lua, name: &str) -> 
 
     // Purple performs this lookup after lua_onBeforeJointRemove returns, so a
     // callback mutation of isDrawn is immediately observable.
-    let is_drawn = match environment.get::<Value>("objects")? {
-        Value::Table(objects) => match objects.get::<Value>("joints")? {
+    let is_drawn = match native_lua_object(lua, NativeLuaObject::Objects)? {
+        Some(objects) => match objects.get::<Value>("joints")? {
             Value::Table(joints) => match joints.raw_get::<Value>(name)? {
                 Value::Table(descriptor) => !matches!(
                     descriptor.raw_get::<Value>("isDrawn")?,

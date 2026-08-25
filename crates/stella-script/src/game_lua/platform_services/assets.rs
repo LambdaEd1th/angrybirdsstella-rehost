@@ -10,49 +10,17 @@ pub(super) fn install(
 ) -> LuaResult<()> {
     let downloadable_assets = lua.create_table()?;
     let downloaded_asset_names = Arc::new(Mutex::new(BTreeMap::<String, String>::new()));
-    let downloaded_query_root = Arc::clone(&data_root);
-    let downloaded_query_names = Arc::clone(&downloaded_asset_names);
-    downloadable_assets.set(
-        "haveBeenDownloaded",
-        lua.create_function(move |_, args: MultiValue| {
-            if args.is_empty() {
-                return Ok(false);
-            }
-            let names = downloaded_query_names
-                .lock()
-                .expect("downloaded asset map lock poisoned");
-            Ok(args.iter().all(|value| {
-                value_string(value).is_some_and(|requested| {
-                    names.contains_key(&requested)
-                        || app_data_path(&downloaded_query_root, &requested)
-                            .is_ok_and(|path| path.is_file())
-                })
-            }))
-        })?,
-    )?;
-    let downloaded_filename_root = Arc::clone(&data_root);
-    let downloaded_filename_names = Arc::clone(&downloaded_asset_names);
-    downloadable_assets.set(
-        "getAssetFilename",
-        lua.create_function(move |_, requested: String| {
-            if let Some(filename) = downloaded_filename_names
-                .lock()
-                .expect("downloaded asset map lock poisoned")
-                .get(&requested)
-                .cloned()
-            {
-                return Ok(Some(filename));
-            }
-            Ok(app_data_path(&downloaded_filename_root, &requested)
-                .is_ok_and(|path| path.is_file())
-                .then_some(requested))
-        })?,
-    )?;
+    // Purple's Assets constructor sub_1000AC118 publishes only loadFiles and
+    // createSpriteSheet. getAssetFilename/haveBeenDownloaded are defined by
+    // scripts_common/cloud/rovioid/Assets.lua after the native table exists.
     let load_asset_root = Arc::clone(&data_root);
     let load_asset_names = Arc::clone(&downloaded_asset_names);
     downloadable_assets.set(
         "loadFiles",
-        lua.create_function(move |lua, requested: mlua::Table| {
+        lua.create_function(move |lua, args: MultiValue| {
+            // Generated adapter sub_1000AD28C -> sub_1000AD2F4 requires an
+            // exact table in slot one and never checks the remaining stack.
+            let requested = native_required_table(&args, 0, "Assets.loadFiles")?;
             // Assets::loadFiles (sub_1000AC25C) traverses every table value,
             // starts the asynchronous RCS request and later calls exactly one
             // of onLoadSuccess(table) or onLoadError(array, code, message).
@@ -114,35 +82,39 @@ pub(super) fn install(
     let downloadable_sheet_root = Arc::clone(&data_root);
     downloadable_assets.set(
         "createSpriteSheet",
-        lua.create_function(
-            move |_, (name, descriptor, texture): (String, String, String)| {
-                // sub_1000AC660 constructs the sheet from the descriptor and
-                // texture paths completely before sub_100457724 transactionally
-                // replaces the shared Resources map entry under `name`.
-                let descriptor_path = app_data_path(&downloadable_sheet_root, &descriptor)
-                    .ok()
-                    .filter(|path| path.is_file())
-                    .or_else(|| resolve_data_file(&downloadable_sheet_root, &descriptor).ok())
-                    .ok_or_else(|| runtime_error(format!("asset was not found: {descriptor}")))?;
-                let mut sheet = load_sprite_sheet_path(&descriptor_path, &descriptor)?;
-                sheet.textures.clear();
-                sheet.textures.push(texture);
-                sheet.sprite_texture_indices.fill(0);
-                let mut resources = downloadable_sheet_resources
-                    .lock()
-                    .expect("resource runtime lock poisoned");
-                resources.replace_sprite_sheet_value(&name, sheet);
-                resources.sprite_sheets.insert(name.clone());
-                resources
-                    .sprite_sheet_paths
-                    .insert(name.clone(), descriptor);
-                resources
-                    .sprite_sheet_descriptor_paths
-                    .insert(name.clone(), descriptor_path);
-                resources.cache_sprite_sheet_host_bindings(&name, &downloadable_sheet_root);
-                Ok(())
-            },
-        )?,
+        lua.create_function(move |_, args: MultiValue| {
+            // Generated adapter sub_1000ACDE8 delegates to sub_1000ACE50,
+            // which reads all three slots through the exact STRING-tag
+            // accessor sub_1005285CC and ignores later stack values.
+            let name = native_required_string(&args, 0, "Assets.createSpriteSheet")?;
+            let descriptor = native_required_string(&args, 1, "Assets.createSpriteSheet")?;
+            let texture = native_required_string(&args, 2, "Assets.createSpriteSheet")?;
+            // sub_1000AC660 constructs the sheet from the descriptor and
+            // texture paths completely before sub_100457724 transactionally
+            // replaces the shared Resources map entry under `name`.
+            let descriptor_path = app_data_path(&downloadable_sheet_root, &descriptor)
+                .ok()
+                .filter(|path| path.is_file())
+                .or_else(|| resolve_data_file(&downloadable_sheet_root, &descriptor).ok())
+                .ok_or_else(|| runtime_error(format!("asset was not found: {descriptor}")))?;
+            let mut sheet = load_sprite_sheet_path(&descriptor_path, &descriptor)?;
+            sheet.textures.clear();
+            sheet.textures.push(texture);
+            sheet.sprite_texture_indices.fill(0);
+            let mut resources = downloadable_sheet_resources
+                .lock()
+                .expect("resource runtime lock poisoned");
+            resources.replace_sprite_sheet_value(&name, sheet);
+            resources.sprite_sheets.insert(name.clone());
+            resources
+                .sprite_sheet_paths
+                .insert(name.clone(), descriptor);
+            resources
+                .sprite_sheet_descriptor_paths
+                .insert(name.clone(), descriptor_path);
+            resources.cache_sprite_sheet_host_bindings(&name, &downloadable_sheet_root);
+            Ok(())
+        })?,
     )?;
     globals.set("Assets", downloadable_assets)?;
     Ok(())

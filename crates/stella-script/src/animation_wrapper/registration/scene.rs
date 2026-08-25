@@ -14,7 +14,10 @@ pub(super) fn install_transforms(
     let runtime = Arc::clone(&animation_runtime);
     animation_native.set(
         "setTranslation",
-        lua.create_function(move |_, (tag, x, y): (String, f64, f64)| {
+        lua.create_function(move |_, args: MultiValue| {
+            let tag = native_required_string(&args, 0, "setTranslation")?;
+            let x = native_required_number(&args, 1, "setTranslation")?;
+            let y = native_required_number(&args, 2, "setTranslation")?;
             let mut runtime = runtime.lock().expect("animation runtime lock poisoned");
             // sub_1000145FC resolves an existing scene and writes two float
             // members. Unknown tags only produce the native warning.
@@ -31,7 +34,9 @@ pub(super) fn install_transforms(
     let runtime = Arc::clone(&animation_runtime);
     animation_native.set(
         "setRotation",
-        lua.create_function(move |_, (tag, angle): (String, f64)| {
+        lua.create_function(move |_, args: MultiValue| {
+            let tag = native_required_string(&args, 0, "setRotation")?;
+            let angle = native_required_number(&args, 1, "setRotation")?;
             let mut runtime = runtime.lock().expect("animation runtime lock poisoned");
             if let Some(transform) = runtime.transforms.get_mut(&tag) {
                 transform.angle = f64::from(angle as f32);
@@ -47,7 +52,10 @@ pub(super) fn install_transforms(
     let runtime = Arc::clone(&animation_runtime);
     animation_native.set(
         "setScale",
-        lua.create_function(move |_, (tag, scale_x, scale_y): (String, f64, f64)| {
+        lua.create_function(move |_, args: MultiValue| {
+            let tag = native_required_string(&args, 0, "setScale")?;
+            let scale_x = native_required_number(&args, 1, "setScale")?;
+            let scale_y = native_required_number(&args, 2, "setScale")?;
             let mut runtime = runtime.lock().expect("animation runtime lock poisoned");
             if let Some(transform) = runtime.transforms.get_mut(&tag) {
                 transform.scale_x = f64::from(scale_x as f32);
@@ -82,7 +90,8 @@ pub(super) fn install_draw(
     let animation_draw_bridge = Arc::clone(&render);
     animation_native.set(
         "draw",
-        lua.create_function(move |_, tag: String| {
+        lua.create_function(move |_, args: MultiValue| {
+            let tag = native_required_string(&args, 0, "draw")?;
             let mut commands = {
                 let runtime = runtime.lock().expect("animation runtime lock poisoned");
                 animation_render_commands(&runtime, &tag)
@@ -109,7 +118,9 @@ pub(super) fn install_skin(
     let runtime = Arc::clone(&animation_runtime);
     animation_native.set(
         "setSkin",
-        lua.create_function(move |_, (tag, skin): (String, String)| {
+        lua.create_function(move |_, args: MultiValue| {
+            let tag = native_required_string(&args, 0, "setSkin")?;
+            let skin = native_required_string(&args, 1, "setSkin")?;
             let mut runtime = runtime.lock().expect("animation runtime lock poisoned");
             let supported = runtime
                 .definitions
@@ -145,9 +156,7 @@ pub(super) fn install_shader(
     animation_native.set(
         "setShader",
         lua.create_function(move |_, args: MultiValue| {
-            let Some(tag) = args.front().and_then(value_string) else {
-                return Ok(());
-            };
+            let tag = native_required_string(&args, 0, "setShader")?;
             let shader = if args.len() == 2 {
                 match args.get(1) {
                     Some(Value::Table(table)) => {

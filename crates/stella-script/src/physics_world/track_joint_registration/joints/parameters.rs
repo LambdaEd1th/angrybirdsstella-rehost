@@ -9,8 +9,13 @@ pub(super) fn install(
 ) -> LuaResult<()> {
     globals.set(
         "setJointParameters",
-        lua.create_function(move |lua, table: mlua::Table| {
-            let name = table.get::<String>("name").unwrap_or_default();
+        lua.create_function(move |lua, args: MultiValue| {
+            // The hand-written member asks LuaState for index -1, so the
+            // parameter descriptor is the current stack top rather than a
+            // generated slot-one argument. Earlier values are ignored.
+            let top = args.len().saturating_sub(1);
+            let table = native_required_table(&args, top, "setJointParameters")?;
+            let name = native_lua51_string(&table.get::<Value>("name")?).unwrap_or_default();
             let optional_bool = |field: &str| -> LuaResult<Option<bool>> {
                 match table.raw_get::<Value>(field)? {
                     Value::Boolean(value) => Ok(Some(value)),
@@ -19,7 +24,7 @@ pub(super) fn install(
             };
             let optional_number = |field: &str| -> LuaResult<Option<f64>> {
                 let value = table.raw_get::<Value>(field)?;
-                Ok(value_number(&value).map(|value| f64::from(value as f32)))
+                Ok(native_lua51_number(&value).map(|value| f64::from(value as f32)))
             };
 
             let mut bridge = render.lock().expect("render bridge lock poisoned");
@@ -155,8 +160,7 @@ pub(super) fn install(
 }
 
 fn joint_descriptor(lua: &Lua, name: &str) -> LuaResult<Option<mlua::Table>> {
-    let environment = game_environment(lua)?;
-    let Value::Table(objects) = environment.get::<Value>("objects")? else {
+    let Some(objects) = native_lua_object(lua, NativeLuaObject::Objects)? else {
         return Ok(None);
     };
     let Value::Table(joints) = objects.get::<Value>("joints")? else {

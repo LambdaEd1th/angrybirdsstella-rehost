@@ -7,7 +7,6 @@ mod color;
 mod line;
 mod polygon;
 mod rect;
-mod software;
 mod sprite;
 mod transform;
 
@@ -15,6 +14,5 @@ pub(crate) use color::*;
 pub(crate) use line::*;
 pub(crate) use polygon::*;
 pub(crate) use rect::*;
-pub(crate) use software::*;
 pub(crate) use sprite::*;
 pub(crate) use transform::*;

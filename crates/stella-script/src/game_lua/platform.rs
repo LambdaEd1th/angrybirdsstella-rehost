@@ -33,3 +33,5 @@ pub(crate) fn install(
 
 #[cfg(test)]
 pub(crate) use sha1::sha1_upper_hex;
+#[cfg(test)]
+pub(crate) use sharing::set_screenshot_sequence_for_test;

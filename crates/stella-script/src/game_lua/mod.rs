@@ -28,6 +28,7 @@ mod level_save_schema;
 mod level_table_clone;
 mod loader_registration;
 mod math_random;
+mod native_lua_objects;
 mod object_api;
 mod object_body_registration;
 mod object_decoration_registration;
@@ -89,6 +90,8 @@ pub(crate) use direct_sprite_registration::install as install_direct_sprite_bind
 pub(crate) use draw_registration::install as install_draw_bindings;
 pub use host::StellaLua;
 #[cfg(test)]
+pub(crate) use host_input::lock_native_pinch_for_test;
+#[cfg(test)]
 pub(crate) use input::NATIVE_FRAME_KEYS;
 pub(crate) use input::{
     clear_input_edges, install_input_queries, publish_native_key_state, set_input_flag,
@@ -98,6 +101,9 @@ pub(super) use level_files::install as install_level_files;
 pub(crate) use loader_registration::install as install_loader_bindings;
 pub(crate) use math_random::NativeLibcRandom;
 pub(crate) use math_random::install as install_math_random;
+pub(crate) use native_lua_objects::{
+    NativeLuaObject, native_lua_object, retain_constructor_lua_objects, retain_native_lua_object,
+};
 pub(super) use object_api::install as install_object_api;
 pub(crate) use object_api::object_world;
 pub(crate) use object_body_registration::install as install_object_body_bindings;
@@ -118,6 +124,8 @@ pub(super) use persistence::{
     write_saved_lua_table,
 };
 pub(super) use platform::install as install_platform;
+#[cfg(test)]
+pub(crate) use platform::set_screenshot_sequence_for_test;
 #[cfg(test)]
 pub(crate) use platform::sha1_upper_hex;
 pub(crate) use platform_services::announce_social_service_registration;

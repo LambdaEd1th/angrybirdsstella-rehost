@@ -2,15 +2,25 @@ use super::*;
 
 #[test]
 fn screenshot_share_queues_native_temp_names_titles_and_wrap_order() {
+    set_screenshot_sequence_for_test(0);
     let runtime = StellaLua::new("/tmp").unwrap();
     runtime
         .execute_source(
             r#"
                 native_shareScreenShot("first title")
-                native_shareScreenShot("second title")
+                native_shareScreenShot("second title", "ignored")
+                screenshot_bad_title_fails = not pcall(
+                    native_shareScreenShot, 123
+                )
             "#,
         )
         .unwrap();
+    assert!(
+        game_environment(runtime.lua())
+            .unwrap()
+            .get::<bool>("screenshot_bad_title_fails")
+            .unwrap()
+    );
 
     assert_eq!(
         runtime.take_screenshot_share_requests(),
@@ -29,16 +39,42 @@ fn screenshot_share_queues_native_temp_names_titles_and_wrap_order() {
     );
     assert!(runtime.take_screenshot_share_requests().is_empty());
 
-    runtime.render.lock().unwrap().screenshot_sequence = u32::MAX;
+    let second_runtime = StellaLua::new("/tmp").unwrap();
+    second_runtime
+        .execute_source(r#"native_shareScreenShot("next runtime")"#)
+        .unwrap();
+    assert_eq!(
+        second_runtime.take_screenshot_share_requests(),
+        vec![ScreenshotShareRequest {
+            sequence: 3,
+            filename: "Stella_Screenshot3.png".to_owned(),
+            title: "next runtime".to_owned(),
+        }]
+    );
+
+    set_screenshot_sequence_for_test(i32::MAX);
     runtime
-        .execute_source(r#"native_shareScreenShot("wrapped")"#)
+        .execute_source(r#"native_shareScreenShot("signed wrapped")"#)
+        .unwrap();
+    assert_eq!(
+        runtime.take_screenshot_share_requests(),
+        vec![ScreenshotShareRequest {
+            sequence: i32::MIN,
+            filename: "Stella_Screenshot-2147483648.png".to_owned(),
+            title: "signed wrapped".to_owned(),
+        }]
+    );
+
+    set_screenshot_sequence_for_test(-1);
+    runtime
+        .execute_source(r#"native_shareScreenShot("zero wrapped")"#)
         .unwrap();
     assert_eq!(
         runtime.take_screenshot_share_requests(),
         vec![ScreenshotShareRequest {
             sequence: 0,
             filename: "Stella_Screenshot0.png".to_owned(),
-            title: "wrapped".to_owned(),
+            title: "zero wrapped".to_owned(),
         }]
     );
 }
@@ -83,11 +119,20 @@ fn native_calendar_bindings_follow_local_mktime_and_float32_contracts() {
                     hour = 1, minutes = 1, seconds = 1,
                 }
                 decomposed_difference = getTimeDifference(later, midnight)
+                decomposed_difference_with_extra = getTimeDifference(
+                    later, midnight, "ignored by native member"
+                )
                 signed_forward_difference = getTimeDifferenceInSeconds(
-                    later, midnight
+                    later, midnight, "ignored by native member"
                 )
                 signed_reverse_difference = getTimeDifferenceInSeconds(
                     midnight, later
+                )
+                difference_first_tag_fails = not pcall(
+                    getTimeDifference, false, midnight
+                )
+                difference_second_tag_fails = not pcall(
+                    getTimeDifferenceInSeconds, midnight, false
                 )
 
                 duration_fraction = addDurationToTime({
@@ -98,6 +143,15 @@ fn native_calendar_bindings_follow_local_mktime_and_float32_contracts() {
                     addDurationToTime,
                     { year = 2024, month = 1, day = 1 },
                     1
+                )
+                duration_source_tag_fails = not pcall(
+                    addDurationToTime, "2024-01-01", 1
+                )
+                duration_numeric_string_fails = not pcall(
+                    addDurationToTime, midnight, "1"
+                )
+                duration_ignores_extra = addDurationToTime(
+                    midnight, 1, "ignored by native member"
                 )
 
                 local long_first = {
@@ -138,6 +192,8 @@ fn native_calendar_bindings_follow_local_mktime_and_float32_contracts() {
     );
 
     let difference: mlua::Table = environment.get("decomposed_difference").unwrap();
+    let difference_with_extra: mlua::Table =
+        environment.get("decomposed_difference_with_extra").unwrap();
     for (field, expected) in [
         ("days", 1.0),
         ("hours", 1.0),
@@ -145,7 +201,22 @@ fn native_calendar_bindings_follow_local_mktime_and_float32_contracts() {
         ("seconds", 1.0),
     ] {
         assert_eq!(difference.get::<f64>(field).unwrap(), expected, "{field}");
+        assert_eq!(
+            difference_with_extra.get::<f64>(field).unwrap(),
+            expected,
+            "extra {field}"
+        );
     }
+    assert!(
+        environment
+            .get::<bool>("difference_first_tag_fails")
+            .unwrap()
+    );
+    assert!(
+        environment
+            .get::<bool>("difference_second_tag_fails")
+            .unwrap()
+    );
     assert_eq!(
         environment.get::<f64>("signed_forward_difference").unwrap(),
         90_061.0
@@ -167,6 +238,18 @@ fn native_calendar_bindings_follow_local_mktime_and_float32_contracts() {
             .get::<bool>("duration_missing_field_fails")
             .unwrap()
     );
+    assert!(
+        environment
+            .get::<bool>("duration_source_tag_fails")
+            .unwrap()
+    );
+    assert!(
+        environment
+            .get::<bool>("duration_numeric_string_fails")
+            .unwrap()
+    );
+    let duration_extra: mlua::Table = environment.get("duration_ignores_extra").unwrap();
+    assert_eq!(duration_extra.get::<f64>("seconds").unwrap(), 1.0);
 
     let long_difference = environment.get::<f64>("long_difference").unwrap();
     let exact_long_difference = environment.get::<f64>("exact_long_difference").unwrap();
@@ -314,11 +397,14 @@ fn native_lua_probe_and_bundle_copy_use_strict_paths_and_void_copy_abi() {
     runtime
         .execute_source(
             r##"
-                direct_lua_exists = checkForLuaFile("scripts/probe.lua")
+                direct_lua_exists = checkForLuaFile(
+                    "scripts/probe.lua", "ignored"
+                )
                 prefixed_lua_exists = checkForLuaFile("probe.lua")
                 missing_lua_exists = checkForLuaFile("missing.lua")
                 lua_probe_missing_fails = not pcall(checkForLuaFile)
                 lua_probe_type_fails = not pcall(checkForLuaFile, false)
+                lua_probe_numeric_fails = not pcall(checkForLuaFile, 123)
                 bundle_copy_results = select(
                     "#",
                     copyFileFromBundleToAppData(
@@ -341,6 +427,7 @@ fn native_lua_probe_and_bundle_copy_use_strict_paths_and_void_copy_abi() {
     assert!(!environment.get::<bool>("missing_lua_exists").unwrap());
     assert!(environment.get::<bool>("lua_probe_missing_fails").unwrap());
     assert!(environment.get::<bool>("lua_probe_type_fails").unwrap());
+    assert!(environment.get::<bool>("lua_probe_numeric_fails").unwrap());
     assert_eq!(environment.get::<i64>("bundle_copy_results").unwrap(), 0);
     assert!(environment.get::<bool>("bundle_copy_short_fails").unwrap());
     assert!(environment.get::<bool>("bundle_copy_type_fails").unwrap());
@@ -549,8 +636,26 @@ fn recovered_platform_and_render_utilities_preserve_native_contracts() {
                 orientation = native_getDeviceOrientation()
                 device_id = uniqueDeviceId()
                 first_shaders = createUniqueShaders("FX_", 2)
-                destroyUniqueShaders(first_shaders[1], first_shaders[2])
+                destroy_shader_results = select("#", destroyUniqueShaders(
+                    { first_shaders[1], first_shaders[2] }, "ignored"
+                ))
+                destroy_shader_tag_fails = not pcall(
+                    destroyUniqueShaders, first_shaders[1]
+                )
+                destroy_shader_stringification_ok = pcall(
+                    destroyUniqueShaders, { 123, false, "ignored tail" }
+                )
                 second_shaders = createUniqueShaders("FX_", 1)
+                fractional_shaders = createUniqueShaders("FRAC_", 2.9, false)
+                negative_shaders = createUniqueShaders("NEG_", -1)
+                nan_shaders = createUniqueShaders("NAN_", 0 / 0)
+                infinite_shaders = createUniqueShaders("INF_", math.huge)
+                shader_base_tag_fails = not pcall(
+                    createUniqueShaders, 7, 1
+                )
+                shader_count_tag_fails = not pcall(
+                    createUniqueShaders, "BAD_", "1"
+                )
                 drawRubberband(0, 0, 10, 0, 2, "BAND")
                 gamer_backend = FusionGamerServices.getBackendName()
                 gamer_supported = FusionGamerServices.isSupported()
@@ -600,8 +705,16 @@ fn recovered_platform_and_render_utilities_preserve_native_contracts() {
                 twitter_supported = isTwitterSupported()
                 bad_achievement_fails = pcall(
                     FusionGamerServices.postAchievement, {})
+                numeric_achievement_fails = pcall(
+                    FusionGamerServices.postAchievement, 7)
                 bad_score_fails = pcall(
                     FusionGamerServices.postScore, "SCORE_TEST", {})
+                numeric_score_name_fails = pcall(
+                    FusionGamerServices.postScore, 7, 42)
+                string_score_fails = pcall(
+                    FusionGamerServices.postScore, "SCORE_TEST", "42")
+                trailing_score_ok = pcall(
+                    FusionGamerServices.postScore, "SCORE_TEST", 42, false)
                 requestExit()
                 "##,
         )
@@ -613,11 +726,41 @@ fn recovered_platform_and_render_utilities_preserve_native_contracts() {
         environment.get::<String>("device_id").unwrap(),
         "unavailable"
     );
+    let shader_suffix =
+        |name: &str, prefix: &str| name.strip_prefix(prefix).unwrap().parse::<i32>().unwrap();
     let first: mlua::Table = environment.get("first_shaders").unwrap();
-    assert_eq!(first.raw_get::<String>(1).unwrap(), "FX_0");
-    assert_eq!(first.raw_get::<String>(2).unwrap(), "FX_1");
+    let first_name = first.raw_get::<String>(1).unwrap();
+    let first_second_name = first.raw_get::<String>(2).unwrap();
+    let first_suffix = shader_suffix(&first_name, "FX_");
+    let first_second_suffix = shader_suffix(&first_second_name, "FX_");
+    assert_eq!(first_second_suffix, first_suffix.wrapping_add(1));
     let second: mlua::Table = environment.get("second_shaders").unwrap();
-    assert_eq!(second.raw_get::<String>(1).unwrap(), "FX_2");
+    let second_name = second.raw_get::<String>(1).unwrap();
+    let second_suffix = shader_suffix(&second_name, "FX_");
+    assert!(second_suffix > first_second_suffix);
+    let fractional: mlua::Table = environment.get("fractional_shaders").unwrap();
+    let fractional_name = fractional.raw_get::<String>(1).unwrap();
+    let fractional_second_name = fractional.raw_get::<String>(2).unwrap();
+    let fractional_suffix = shader_suffix(&fractional_name, "FRAC_");
+    let fractional_second_suffix = shader_suffix(&fractional_second_name, "FRAC_");
+    assert!(fractional_suffix > second_suffix);
+    assert_eq!(fractional_second_suffix, fractional_suffix.wrapping_add(1));
+    for name in ["negative_shaders", "nan_shaders", "infinite_shaders"] {
+        assert_eq!(
+            environment.get::<mlua::Table>(name).unwrap().raw_len(),
+            0,
+            "{name}"
+        );
+    }
+    assert_eq!(environment.get::<i64>("destroy_shader_results").unwrap(), 0);
+    assert!(environment.get::<bool>("destroy_shader_tag_fails").unwrap());
+    assert!(
+        environment
+            .get::<bool>("destroy_shader_stringification_ok")
+            .unwrap()
+    );
+    assert!(environment.get::<bool>("shader_base_tag_fails").unwrap());
+    assert!(environment.get::<bool>("shader_count_tag_fails").unwrap());
     assert_eq!(
         environment.get::<String>("gamer_backend").unwrap(),
         "gamecenter"
@@ -691,8 +834,26 @@ fn recovered_platform_and_render_utilities_preserve_native_contracts() {
     );
     assert!(!environment.get::<bool>("twitter_supported").unwrap());
     assert!(!environment.get::<bool>("bad_achievement_fails").unwrap());
+    assert!(
+        !environment
+            .get::<bool>("numeric_achievement_fails")
+            .unwrap()
+    );
     assert!(!environment.get::<bool>("bad_score_fails").unwrap());
+    assert!(!environment.get::<bool>("numeric_score_name_fails").unwrap());
+    assert!(!environment.get::<bool>("string_score_fails").unwrap());
+    assert!(environment.get::<bool>("trailing_score_ok").unwrap());
     assert!(runtime.exit_requested());
+
+    let second_runtime = StellaLua::new("/tmp").unwrap();
+    second_runtime
+        .execute_source(r#"cross_runtime_shader = createUniqueShaders("OTHER_", 1)[1]"#)
+        .unwrap();
+    let cross_runtime_name = game_environment(second_runtime.lua())
+        .unwrap()
+        .get::<String>("cross_runtime_shader")
+        .unwrap();
+    assert!(shader_suffix(&cross_runtime_name, "OTHER_") > fractional_second_suffix);
 
     let commands = runtime.take_render_commands();
     assert_eq!(commands.len(), 1);
@@ -725,6 +886,33 @@ fn social_manager_preserves_native_table_and_disconnected_abi() {
                     _G.SocialManager.native_postScores, "Level1", {}, "1")
                 native_social_bad_friend = pcall(
                     _G.SocialManager.native_getFriendAccountId, {})
+                native_social_noarg_tail = pcall(function()
+                    _G.SocialManager.native_connectToSocialNetwork({}, "ignored")
+                    _G.SocialManager.native_getFriendsProgress({}, "ignored")
+                    _G.SocialManager.native_unloadAllAvatars({}, "ignored")
+                    _G.SocialManager.native_isConnectedToSocialNetwork({}, "ignored")
+                    _G.SocialManager.native_getSocialNetworkName({}, "ignored")
+                    _G.SocialManager.native_getLocalUserAccountId({}, "ignored")
+                    _G.SocialManager.native_getFriends({}, "ignored")
+                end)
+                native_social_strict_tails = pcall(function()
+                    _G.SocialManager.native_postScores("Level1", 42, "1", "ignored")
+                    _G.SocialManager.native_fetchLeaderboard("Level1", "2", "ignored")
+                    _G.SocialManager.native_setProgress("progress", "ignored")
+                    _G.SocialManager.native_loadAvatar("friend", "ignored")
+                    _G.SocialManager.native_unloadAvatar("friend", "ignored")
+                    _G.SocialManager.native_getFriendAccountId("friend", "ignored")
+                end)
+                native_social_string_tags_strict =
+                    not pcall(_G.SocialManager.native_postScores, 1, 42, "1") and
+                    not pcall(_G.SocialManager.native_postScores, "Level1", 42, 1) and
+                    not pcall(_G.SocialManager.native_fetchLeaderboard, 1, "2") and
+                    not pcall(_G.SocialManager.native_fetchLeaderboard, "Level1", 2) and
+                    not pcall(_G.SocialManager.native_setProgress, 1) and
+                    not pcall(_G.SocialManager.native_loadAvatar, 1) and
+                    not pcall(_G.SocialManager.native_unloadAvatar, 1)
+                native_social_number_tag_strict = not pcall(
+                    _G.SocialManager.native_postScores, "Level1", "42", "1")
                 "##,
         )
         .unwrap();
@@ -765,6 +953,14 @@ fn social_manager_preserves_native_table_and_disconnected_abi() {
     );
     assert!(!environment.get::<bool>("native_social_bad_post").unwrap());
     assert!(!environment.get::<bool>("native_social_bad_friend").unwrap());
+    for name in [
+        "native_social_noarg_tail",
+        "native_social_strict_tails",
+        "native_social_string_tags_strict",
+        "native_social_number_tag_strict",
+    ] {
+        assert!(environment.get::<bool>(name).unwrap(), "{name}");
+    }
 }
 
 #[test]
@@ -1476,6 +1672,40 @@ fn safe_to_quit_is_lua_truthy_and_latched_before_script_update() {
 }
 
 #[test]
+fn safe_to_quit_is_latched_before_the_zoom_callback() {
+    let _pinch_guard = lock_native_pinch_for_test();
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .execute_source(
+            r#"
+                g_safeToQuit = false
+                applyUserZoom = function()
+                    g_safeToQuit = true
+                end
+                setWorldScale(2)
+            "#,
+        )
+        .unwrap();
+
+    runtime.set_touches(&[(1, 0, 0), (2, 3, 4)]).unwrap();
+    runtime.update(0.0).unwrap();
+    runtime.set_touches(&[(1, 0, 0), (2, 6, 8)]).unwrap();
+    runtime.update(0.0).unwrap();
+    // applyUserZoom has already made the Lua value true, but the native byte
+    // was captured at 0x10005EAC8..0x10005EB14 before that callback.
+    assert!(
+        game_environment(runtime.lua())
+            .unwrap()
+            .get::<bool>("g_safeToQuit")
+            .unwrap()
+    );
+    assert!(!runtime.safe_to_quit());
+
+    runtime.update(0.0).unwrap();
+    assert!(runtime.safe_to_quit());
+}
+
+#[test]
 fn drawable_resize_preserves_an_explicit_resource_clip() {
     let runtime = StellaLua::new_with_resolution("/tmp", 1024, 768).unwrap();
     runtime
@@ -1522,6 +1752,9 @@ fn downloadable_assets_match_native_load_callbacks_and_sheet_abi() {
     runtime
         .execute_source(
             r##"
+                native_asset_helpers_absent =
+                    Assets.getAssetFilename == nil and
+                    Assets.haveBeenDownloaded == nil
                 Assets.onLoadSuccess = function(files)
                     load_success = files["cached.json"]
                 end
@@ -1532,8 +1765,14 @@ fn downloadable_assets_match_native_load_callbacks_and_sheet_abi() {
                 end
                 load_success_results = select("#",
                     Assets.loadFiles({ [4] = "cached.json" }))
-                cached_downloaded = Assets.haveBeenDownloaded("cached.json")
-                cached_filename = Assets.getAssetFilename("cached.json")
+                trailing_load_ok = pcall(
+                    Assets.loadFiles, { [4] = "cached.json" }, false
+                )
+                missing_load_table_fails = not pcall(Assets.loadFiles)
+                non_table_load_fails = not pcall(Assets.loadFiles, false)
+                numeric_load_value_fails = not pcall(
+                    Assets.loadFiles, { [4] = 123 }
+                )
                 load_error_results = select("#",
                     Assets.loadFiles({ "missing.dat" }))
                 sheet_results = select("#",
@@ -1547,18 +1786,31 @@ fn downloadable_assets_match_native_load_callbacks_and_sheet_abi() {
                     res.getSpriteBounds("DYNAMIC_SPRITE")
                 bad_sheet_fails = pcall(
                     Assets.createSpriteSheet, "DYNAMIC", "cached.json")
+                numeric_sheet_name_fails = pcall(
+                    Assets.createSpriteSheet, 1, "cached.json", "cached.pvr")
+                numeric_sheet_descriptor_fails = pcall(
+                    Assets.createSpriteSheet, "DYNAMIC", 2, "cached.pvr")
+                numeric_sheet_texture_fails = pcall(
+                    Assets.createSpriteSheet, "DYNAMIC", "cached.json", 3)
+                trailing_sheet_ok = pcall(
+                    Assets.createSpriteSheet,
+                    "DYNAMIC", "cached.json", "cached.pvr", false)
                 "##,
         )
         .unwrap();
     let environment = game_environment(runtime.lua()).unwrap();
+    assert!(
+        environment
+            .get::<bool>("native_asset_helpers_absent")
+            .unwrap()
+    );
     assert_eq!(environment.get::<i64>("load_success_results").unwrap(), 0);
+    assert!(environment.get::<bool>("trailing_load_ok").unwrap());
+    assert!(environment.get::<bool>("missing_load_table_fails").unwrap());
+    assert!(environment.get::<bool>("non_table_load_fails").unwrap());
+    assert!(environment.get::<bool>("numeric_load_value_fails").unwrap());
     assert_eq!(
         environment.get::<String>("load_success").unwrap(),
-        "cached.json"
-    );
-    assert!(environment.get::<bool>("cached_downloaded").unwrap());
-    assert_eq!(
-        environment.get::<String>("cached_filename").unwrap(),
         "cached.json"
     );
     assert_eq!(environment.get::<i64>("load_error_results").unwrap(), 0);
@@ -1588,6 +1840,18 @@ fn downloadable_assets_match_native_load_callbacks_and_sheet_abi() {
         6.0
     );
     assert!(!environment.get::<bool>("bad_sheet_fails").unwrap());
+    assert!(!environment.get::<bool>("numeric_sheet_name_fails").unwrap());
+    assert!(
+        !environment
+            .get::<bool>("numeric_sheet_descriptor_fails")
+            .unwrap()
+    );
+    assert!(
+        !environment
+            .get::<bool>("numeric_sheet_texture_fails")
+            .unwrap()
+    );
+    assert!(environment.get::<bool>("trailing_sheet_ok").unwrap());
     assert!(
         runtime
             .resource_runtime
@@ -1620,12 +1884,43 @@ fn simple_random_native_matches_cmwc_seed_and_msvc_lcg_contracts() {
                 )
                 numeric_seed = SimpleRandomNative.newSeedFromNumber(4294967296)
                 negative_seed = SimpleRandomNative.newSeedFromNumber(-10)
+                nan_seed = SimpleRandomNative.newSeedFromNumber(0 / 0)
+                infinite_seed = SimpleRandomNative.newSeedFromNumber(math.huge)
                 seed_text = SimpleRandomNative.seedToString(4294967295)
                 random_seed, random_value = SimpleRandomNative.random(1, 3, 9)
                 corrected_seed, corrected_value = SimpleRandomNative.random(
                     3887973612, 0, 10
                 )
                 generated_seed_text = SimpleRandomNative.newSeedString()
+                generated_calls_ignore_extra =
+                    pcall(SimpleRandomNative.newSeed, "ignored") and
+                    pcall(SimpleRandomNative.newSeedString, "ignored")
+                parsed_extra = SimpleRandomNative.newSeedFromString(
+                    "77", "ignored"
+                )
+                numeric_extra = SimpleRandomNative.newSeedFromNumber(
+                    88, "ignored"
+                )
+                random_extra_seed, random_extra_value =
+                    SimpleRandomNative.random(1, 3, 9, "ignored")
+                seed_text_extra = SimpleRandomNative.seedToString(
+                    4294967295, "ignored"
+                )
+                string_tag_fails = not pcall(
+                    SimpleRandomNative.newSeedFromString, 123
+                )
+                number_tag_fails = not pcall(
+                    SimpleRandomNative.newSeedFromNumber, "123"
+                )
+                random_seed_tag_fails = not pcall(
+                    SimpleRandomNative.random, 1.5, 3, 9
+                )
+                random_bound_tag_fails = not pcall(
+                    SimpleRandomNative.random, 1, "3", 9
+                )
+                seed_to_string_tag_fails = not pcall(
+                    SimpleRandomNative.seedToString, 1.5
+                )
                 "##,
         )
         .unwrap();
@@ -1635,6 +1930,8 @@ fn simple_random_native_matches_cmwc_seed_and_msvc_lcg_contracts() {
     assert_eq!(environment.get::<i64>("overflow_seed_count").unwrap(), 0);
     assert_eq!(environment.get::<u32>("numeric_seed").unwrap(), u32::MAX);
     assert_eq!(environment.get::<u32>("negative_seed").unwrap(), 0);
+    assert_eq!(environment.get::<u32>("nan_seed").unwrap(), 0);
+    assert_eq!(environment.get::<u32>("infinite_seed").unwrap(), u32::MAX);
     assert_eq!(
         environment.get::<String>("seed_text").unwrap(),
         u32::MAX.to_string()
@@ -1643,6 +1940,31 @@ fn simple_random_native_matches_cmwc_seed_and_msvc_lcg_contracts() {
     assert_eq!(environment.get::<f64>("random_value").unwrap(), 9.0);
     assert_eq!(environment.get::<u32>("corrected_seed").unwrap(), 0);
     assert_eq!(environment.get::<f64>("corrected_value").unwrap(), 0.0);
+    assert!(
+        environment
+            .get::<bool>("generated_calls_ignore_extra")
+            .unwrap()
+    );
+    assert_eq!(environment.get::<u32>("parsed_extra").unwrap(), 77);
+    assert_eq!(environment.get::<u32>("numeric_extra").unwrap(), 88);
+    assert_eq!(
+        environment.get::<u32>("random_extra_seed").unwrap(),
+        2_745_024
+    );
+    assert_eq!(environment.get::<f64>("random_extra_value").unwrap(), 9.0);
+    assert_eq!(
+        environment.get::<String>("seed_text_extra").unwrap(),
+        u32::MAX.to_string()
+    );
+    for name in [
+        "string_tag_fails",
+        "number_tag_fails",
+        "random_seed_tag_fails",
+        "random_bound_tag_fails",
+        "seed_to_string_tag_fails",
+    ] {
+        assert!(environment.get::<bool>(name).unwrap(), "{name}");
+    }
     environment
         .get::<String>("generated_seed_text")
         .unwrap()
@@ -1660,7 +1982,7 @@ fn align_utility_matches_fixed_aspect_scale_permissions_and_anchor_math() {
                     alignH = "LEFT", alignV = "TOP",
                     scaleH = "TRUE", scaleV = "TRUE",
                     posx = 10, posy = 20, scalex = 2, scaley = 3
-                }, 100, 100, 200, 300)
+                }, 100, 100, 200, 300, "ignored")
                 right_x, bottom_y = Align.getPositionAndScale({
                     alignH = "RIGHT", alignV = "BOTTOM",
                     scaleH = "TRUE", scaleV = "TRUE",
@@ -1684,6 +2006,27 @@ fn align_utility_matches_fixed_aspect_scale_permissions_and_anchor_math() {
                 bad_align_arity_fails = not pcall(
                     Align.getPositionAndScale, {}, 100, 100
                 )
+                bad_align_table_tag_fails = not pcall(
+                    Align.getPositionAndScale, "layout", 100, 100, 200, 300
+                )
+                bad_align_reference_width_tag_fails = not pcall(
+                    Align.getPositionAndScale, {}, "100", 100, 200, 300
+                )
+                bad_align_reference_height_tag_fails = not pcall(
+                    Align.getPositionAndScale, {}, 100, "100", 200, 300
+                )
+                bad_align_target_width_tag_fails = not pcall(
+                    Align.getPositionAndScale, {}, 100, 100, "200", 300
+                )
+                bad_align_target_height_tag_fails = not pcall(
+                    Align.getPositionAndScale, {}, 100, 100, 200, "300"
+                )
+                zero_x, zero_y, zero_sx, zero_sy = Align.getPositionAndScale({
+                    alignH = "LEFT", alignV = "TOP",
+                    scaleH = "TRUE", scaleV = "TRUE",
+                    posx = 10, posy = 20, scalex = 0, scaley = 0
+                }, 100, 100, 200, 300)
+                zero_position_ratios_are_nan = zero_x ~= zero_x and zero_y ~= zero_y
                 "#,
         )
         .unwrap();
@@ -1706,7 +2049,19 @@ fn align_utility_matches_fixed_aspect_scale_permissions_and_anchor_math() {
     ] {
         assert_eq!(environment.get::<f64>(name).unwrap(), expected, "{name}");
     }
-    assert!(environment.get::<bool>("bad_align_arity_fails").unwrap());
+    for name in [
+        "bad_align_arity_fails",
+        "bad_align_table_tag_fails",
+        "bad_align_reference_width_tag_fails",
+        "bad_align_reference_height_tag_fails",
+        "bad_align_target_width_tag_fails",
+        "bad_align_target_height_tag_fails",
+        "zero_position_ratios_are_nan",
+    ] {
+        assert!(environment.get::<bool>(name).unwrap(), "{name}");
+    }
+    assert_eq!(environment.get::<f64>("zero_sx").unwrap(), 0.0);
+    assert_eq!(environment.get::<f64>("zero_sy").unwrap(), 0.0);
 }
 
 #[test]
@@ -1724,10 +2079,27 @@ fn notification_adapters_enforce_native_types_and_keyed_removal() {
                 notification_bad_delay = pcall(function()
                     addNotificationAfter("bad-delay", {}, "message")
                 end)
+                notification_numeric_id_rejected = not pcall(
+                    addNotificationAfter, 123, 1, "message")
+                notification_string_delay_rejected = not pcall(
+                    addNotificationAfter, "string-delay", "1", "message")
+                notification_numeric_message_rejected = not pcall(
+                    addNotificationAfter, "numeric-message", 1, 123)
+                notification_trailing_added = addNotificationAfter(
+                    "trailing", 2, "message", "ignored")
+                notification_trailing_removed = removeNotification(
+                    "trailing", "ignored")
+                notification_numeric_remove_rejected = not pcall(
+                    removeNotification, 123)
+                notification_numeric_enable_rejected = not pcall(
+                    setNotificationsEnabled, 1)
+                notification_trailing_enable_accepted = pcall(
+                    setNotificationsEnabled, true, "ignored")
                 setNotificationsEnabled(false)
                 notification_added_while_disabled =
                     addNotificationAfter("disabled", 1, "message")
-                removeAllNotifications()
+                notification_remove_all_trailing = pcall(
+                    removeAllNotifications, "ignored")
                 "#,
         )
         .unwrap();
@@ -1742,6 +2114,19 @@ fn notification_adapters_enforce_native_types_and_keyed_removal() {
     );
     assert!(!environment.get::<bool>("notification_bad_arity").unwrap());
     assert!(!environment.get::<bool>("notification_bad_delay").unwrap());
+    for name in [
+        "notification_numeric_id_rejected",
+        "notification_string_delay_rejected",
+        "notification_numeric_message_rejected",
+        "notification_trailing_added",
+        "notification_trailing_removed",
+        "notification_numeric_remove_rejected",
+        "notification_numeric_enable_rejected",
+        "notification_trailing_enable_accepted",
+        "notification_remove_all_trailing",
+    ] {
+        assert!(environment.get::<bool>(name).unwrap(), "{name}");
+    }
     assert!(
         !environment
             .get::<bool>("notification_added_while_disabled")
@@ -1804,6 +2189,9 @@ fn recovered_resource_lifecycle_bindings_return_no_lua_values() {
                     res.releaseSpriteSheet, "images/SHEET.dat", 1
                 )
                 fonts_before = res.getAvailableSystemFonts()
+                fonts_with_extra = res.getAvailableSystemFonts(false)
+                locale_before = res.getLocale()
+                locale_with_extra = res.getLocale(false)
                 system_results = select("#", res.createSystemFont(
                     "SYSTEM_FONT", "Arial", 12, 255, 255, 255, 255
                 ))
@@ -1886,6 +2274,9 @@ fn recovered_resource_lifecycle_bindings_return_no_lua_values() {
                 bad_manager_play_channel_fails = not pcall(
                     ResourceManager.native_playAudio, "CLIP", 0.5, false, "3"
                 )
+                bad_manager_play_range_fails = not pcall(
+                    ResourceManager.native_playAudio, "CLIP", 0.5, false, 8
+                )
                 bad_audio_flag_fails = not pcall(
                     res.createAudio, "clip.wav", "BAD_CLIP", 1
                 )
@@ -1927,6 +2318,7 @@ fn recovered_resource_lifecycle_bindings_return_no_lua_values() {
         "bad_manager_play_volume_fails",
         "bad_manager_play_loop_fails",
         "bad_manager_play_channel_fails",
+        "bad_manager_play_range_fails",
         "short_audio_output_fails",
         "bad_audio_flag_fails",
     ] {
@@ -1971,8 +2363,14 @@ fn recovered_resource_lifecycle_bindings_return_no_lua_values() {
     );
     assert!(environment.get::<f64>("system_leading").unwrap() >= 0.0);
     let fonts_before: mlua::Table = environment.get("fonts_before").unwrap();
+    let fonts_with_extra: mlua::Table = environment.get("fonts_with_extra").unwrap();
     let fonts_after: mlua::Table = environment.get("fonts_after").unwrap();
     assert_eq!(fonts_before.raw_len(), fonts_after.raw_len());
+    assert_eq!(fonts_before.raw_len(), fonts_with_extra.raw_len());
+    assert_eq!(
+        environment.get::<String>("locale_before").unwrap(),
+        environment.get::<String>("locale_with_extra").unwrap()
+    );
     assert!(!environment.get::<bool>("created_alias_listed").unwrap());
     assert_eq!(
         environment.get::<String>("fallback_locale_string").unwrap(),
@@ -2459,8 +2857,11 @@ fn legacy_sprite_manager_forwards_to_filepath_keyed_lua_resources_member() {
             r##"
                 legacy_create_results = select(
                     "#", ResourceManager.native_createSpriteSheet(
-                        "images/MENU.PROFILE.dat"
+                        "images/MENU.PROFILE.dat", "ignored"
                     )
+                )
+                legacy_bad_create_tag = pcall(
+                    ResourceManager.native_createSpriteSheet, 123
                 )
                 legacy_duplicate_missing_ok = pcall(
                     ResourceManager.native_createSpriteSheet,
@@ -2475,6 +2876,7 @@ fn legacy_sprite_manager_forwards_to_filepath_keyed_lua_resources_member() {
         .unwrap();
     let environment = game_environment(runtime.lua()).unwrap();
     assert_eq!(environment.get::<i64>("legacy_create_results").unwrap(), 0);
+    assert!(!environment.get::<bool>("legacy_bad_create_tag").unwrap());
     assert!(
         environment
             .get::<bool>("legacy_duplicate_missing_ok")
@@ -2496,8 +2898,23 @@ fn legacy_sprite_manager_forwards_to_filepath_keyed_lua_resources_member() {
     }
 
     runtime
-        .execute_source(r#"ResourceManager.native_releaseSpriteSheet("images/MENU.PROFILE.dat")"#)
+        .execute_source(
+            r#"
+                legacy_bad_release_tag = pcall(
+                    ResourceManager.native_releaseSpriteSheet, 123
+                )
+                ResourceManager.native_releaseSpriteSheet(
+                    "images/MENU.PROFILE.dat", "ignored"
+                )
+            "#,
+        )
         .unwrap();
+    assert!(
+        !game_environment(runtime.lua())
+            .unwrap()
+            .get::<bool>("legacy_bad_release_tag")
+            .unwrap()
+    );
     let resources = runtime
         .resource_runtime
         .lock()

@@ -12,7 +12,11 @@ pub(crate) fn install(
     let set_bridge = Arc::clone(&render);
     resource_api.set(
         "setClipRect",
-        lua.create_function(move |_, (x, y, width, height): (f64, f64, f64, f64)| {
+        lua.create_function(move |_, args: MultiValue| {
+            let x = native_required_number(&args, 0, "res.setClipRect")?;
+            let y = native_required_number(&args, 1, "res.setClipRect")?;
+            let width = native_required_number(&args, 2, "res.setClipRect")?;
+            let height = native_required_number(&args, 3, "res.setClipRect")?;
             // The raw `ffff` dispatcher narrows every slot first; the member
             // then adds in float32 and FCVTZS-converts each stored edge.
             let x = x as f32;
@@ -39,7 +43,7 @@ pub(crate) fn install(
     )?;
     resource_api.set(
         "getClipRect",
-        lua.create_function(move |_, ()| {
+        lua.create_function(move |_, _: MultiValue| {
             let [left, top, right, bottom] = resource_runtime
                 .lock()
                 .expect("resource runtime lock poisoned")

@@ -97,6 +97,7 @@ impl RenderBridge {
         object: &SceneDrawObject,
         resources: &ResourceRuntime,
         data_root: &Path,
+        shader: Option<SpriteShader>,
     ) {
         if let Some(ray) = object.ray.as_ref() {
             // DrawablePolygon was constructed as alpha-filled (`mode=1`) and
@@ -109,7 +110,13 @@ impl RenderBridge {
             }
             return;
         }
-        if let Some(command) = self.scene_object_command(object) {
+        if let Some(mut command) = self.scene_object_command(object) {
+            // sub_10006D5B4 looks up the live Lua object's `shader` field at
+            // 0x10006D6D8..0x10006D744 immediately before submitting either
+            // its ordinary sprite or every composite part. The shader is not
+            // a RenderObjectData member and therefore must be supplied from
+            // the dispatcher on every draw.
+            command.shader = shader;
             self.push_render_command(command);
         }
         if object.flash_animation {

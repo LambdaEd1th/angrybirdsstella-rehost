@@ -2,7 +2,7 @@
 
 use mlua::{Lua, Result as LuaResult, Value};
 
-use crate::game_environment;
+use crate::{NativeLuaObject, game_environment, native_lua_object, retain_native_lua_object};
 
 pub(crate) fn mirror_lua_joint_descriptor(lua: &Lua, descriptor: &mlua::Table) -> LuaResult<()> {
     let name = descriptor.get::<String>("name").unwrap_or_default();
@@ -10,11 +10,12 @@ pub(crate) fn mirror_lua_joint_descriptor(lua: &Lua, descriptor: &mlua::Table) -
         return Ok(());
     }
     let environment = game_environment(lua)?;
-    let objects = match environment.get::<Value>("objects")? {
-        Value::Table(objects) => objects,
-        _ => {
+    let objects = match native_lua_object(lua, NativeLuaObject::Objects)? {
+        Some(objects) => objects,
+        None => {
             let objects = lua.create_table()?;
             environment.set("objects", objects.clone())?;
+            retain_native_lua_object(lua, NativeLuaObject::Objects, Some(&objects))?;
             objects
         }
     };

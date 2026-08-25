@@ -1,10 +1,13 @@
 //! Native frame update (`sub_10005E898`) and draw dispatcher (`sub_10004BAB4`).
 
+mod body_export;
+
 use super::StellaLua;
 use crate::*;
+use body_export::NativeBodyLuaState;
 
 impl StellaLua {
-    fn advance_native_aim_stream(&self, delta_seconds: f64) -> Result<(), ScriptError> {
+    fn advance_native_aim_stream(&self, delta_seconds: f64) {
         // 0x10006064C rereads GameLua+0x6A8 after both Lua update and the
         // particle-system call. A locked frame does not age, compact, or
         // spawn AimStream particles.
@@ -14,14 +17,12 @@ impl StellaLua {
             .expect("render bridge lock poisoned")
             .physics_enabled
         {
-            return Ok(());
+            return;
         }
-        let (spawn_time, speed) = native_aim_stream_settings(&self.lua)?;
         let mut bridge = self.render.lock().expect("render bridge lock poisoned");
         if bridge.physics_enabled {
-            bridge.update_native_aim_stream(delta_seconds as f32, spawn_time, speed);
+            bridge.update_native_aim_stream(delta_seconds as f32);
         }
-        Ok(())
     }
 
     /// Run the per-frame callback recovered from the native update loop.
@@ -33,12 +34,12 @@ impl StellaLua {
         // numeric boundary immediately on entry.
         let raw_delta = delta_seconds as f32;
         let delta_seconds = f64::from(raw_delta);
+        self.recover_native_audio_output()?;
         publish_native_key_state(&self.lua)?;
-        self.advance_input_zoom(delta_seconds)?;
-        self.publish_touches()?;
         let environment = game_environment(&self.lua)?;
         // sub_10005E898 converts Lua's g_safeToQuit with lua_toboolean and
-        // stores GameLua+0x6AC before the later script update callback.
+        // stores GameLua+0x6AC before applyUserZoom, touch publication and the
+        // later script update callback.
         let safe_to_quit = !matches!(
             environment.get::<Value>("g_safeToQuit")?,
             Value::Nil | Value::Boolean(false)
@@ -47,6 +48,8 @@ impl StellaLua {
             .lock()
             .expect("render bridge lock poisoned")
             .safe_to_quit = safe_to_quit;
+        self.advance_input_zoom(delta_seconds)?;
+        self.publish_touches()?;
         // sub_10005E898 passes two frame deltas to Lua: the engine-scaled
         // value first (v238), followed by the original wall-clock delta
         // (v230). The second value is not elapsed game time.
@@ -125,30 +128,22 @@ impl StellaLua {
             if !bridge.physics_enabled {
                 (None, Vec::new(), [0.0_f32; 3])
             } else {
+                // The previous awake bit participates in both Purple's body
+                // export predicate and this pass, so snapshot the Lua payload
+                // before advance_native_scene_frame updates that bit.
+                let scene_nonempty = !bridge.scene.is_empty();
+                let body_states = NativeBodyLuaState::collect(&bridge);
                 let (has_moving_objects, has_awake_objects, has_moving_zero_tolerance) =
                     bridge.advance_native_scene_frame(scaled_delta);
                 let joint_endpoint_exports = bridge.native_joint_endpoint_exports();
                 let rolling_audio_levels = bridge.native_rolling_audio_levels();
-                let [x_min, x_max, y_min, y_max] = bridge.level_limits;
-                let out_of_boundaries = bridge
-                    .scene
-                    .iter()
-                    .filter(|(_, object)| {
-                        object.dynamic_body
-                            && object.inverse_mass > f64::EPSILON
-                            && (object.x < x_min
-                                || object.x > x_max
-                                || object.y < y_min
-                                || object.y > y_max)
-                    })
-                    .map(|(name, _)| name.clone())
-                    .collect::<Vec<_>>();
                 (
                     Some((
                         has_moving_objects,
                         has_awake_objects,
                         has_moving_zero_tolerance,
-                        out_of_boundaries,
+                        scene_nonempty,
+                        body_states,
                     )),
                     joint_endpoint_exports,
                     rolling_audio_levels,
@@ -159,23 +154,31 @@ impl StellaLua {
             has_moving_objects,
             has_awake_objects,
             has_moving_zero_tolerance,
-            out_of_boundaries,
+            scene_nonempty,
+            body_states,
         )) = scene_frame
         {
+            // 0x10005F278..0x10005F798 exports every body only once per
+            // rendered frame, after all fixed steps and interpolation.
+            if scene_nonempty {
+                // GameLua+0x308 is the ordered scene-map node count. Purple
+                // resolves objects.world first, then requires the existing
+                // global out-of-bound table without replacing or clearing it.
+                let world = object_world(&self.lua)?;
+                let out_of_boundaries =
+                    environment.get::<mlua::Table>("g_outOfBoundariesObjects")?;
+                self.export_native_body_lua_state(&world, &out_of_boundaries, body_states)?;
+            }
             environment.set("hasMovingObjects", has_moving_objects)?;
             environment.set("hasAwakeObjects", has_awake_objects)?;
             environment.set("hasMovingObjectsZeroTolerance", has_moving_zero_tolerance)?;
-            let out_of_boundaries_table = self.lua.create_table()?;
-            for name in out_of_boundaries {
-                out_of_boundaries_table.raw_set(name, true)?;
-            }
-            environment.set("g_outOfBoundariesObjects", out_of_boundaries_table)?;
         }
         // 0x10005F944..0x10005FA98 reads both b2Joint anchors before looking
         // up the Lua descriptor. Weld/type-two descriptors are still looked
         // up but deliberately retain their authored coordinate fields.
         if !joint_endpoint_exports.is_empty() {
-            let objects: mlua::Table = environment.get("objects")?;
+            let objects = native_lua_object(&self.lua, NativeLuaObject::Objects)?
+                .ok_or_else(|| LuaError::RuntimeError("objects is not a table".to_owned()))?;
             let joints: mlua::Table = objects.get("joints")?;
             for joint in joint_endpoint_exports {
                 let descriptor: mlua::Table = joints.get(joint.name)?;
@@ -244,7 +247,7 @@ impl StellaLua {
                 // sub_10005E898 reloads its original float32 frame argument
                 // and updates AimStream after Lua and particles. It is neither
                 // time-multiplied nor advanced while physics is locked.
-                self.advance_native_aim_stream(delta_seconds)?;
+                self.advance_native_aim_stream(delta_seconds);
                 if std::env::var_os("STELLA_TRACE_CAMERA").is_some()
                     && let Value::Table(camera) = environment.get::<Value>("gameCamera")?
                 {
@@ -289,7 +292,7 @@ impl StellaLua {
                     .lock()
                     .expect("render bridge lock poisoned")
                     .drain_pending_native_joint_destructions();
-                self.advance_native_aim_stream(delta_seconds)?;
+                self.advance_native_aim_stream(delta_seconds);
                 clear_input_edges(&self.lua)?;
                 self.finish_mouse_wheel_frame()?;
                 Ok(false)

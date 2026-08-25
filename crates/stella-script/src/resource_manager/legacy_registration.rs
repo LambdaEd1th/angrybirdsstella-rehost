@@ -17,7 +17,8 @@ pub(crate) fn install(
     let create_sheet_root = Arc::clone(&data_root);
     resource_manager.set(
         "native_createSpriteSheet",
-        lua.create_function(move |lua, path: String| {
+        lua.create_function(move |lua, args: MultiValue| {
+            let path = native_required_string(&args, 0, "native_createSpriteSheet")?;
             let textures = legacy_usage::sprite_sheet_textures(&create_sheet_root, &path);
             // ResourceManager::native_createSpriteSheet at sub_10009470C
             // forwards to LuaResources::createSpriteSheet with replace=false
@@ -68,7 +69,8 @@ pub(crate) fn install(
     let release_sheet_resources = Arc::clone(&resource_runtime);
     resource_manager.set(
         "native_releaseSpriteSheet",
-        lua.create_function(move |lua, path: String| {
+        lua.create_function(move |lua, args: MultiValue| {
+            let path = native_required_string(&args, 0, "native_releaseSpriteSheet")?;
             // sub_100094800 forwards releaseResources=false before updating
             // its private per-path memory counter tree.
             lifecycle_registration::release_sprite_sheet(&release_sheet_resources, &path, false);

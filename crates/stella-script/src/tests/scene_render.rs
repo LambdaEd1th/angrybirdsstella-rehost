@@ -15,16 +15,10 @@ fn flash_animation_draws_same_named_animation_with_native_scene_transform() {
                 "#,
         )
         .unwrap();
+    runtime
+        .execute_source(r#"setRotation("animated", 0.25)"#)
+        .unwrap();
     {
-        runtime
-            .render
-            .lock()
-            .unwrap()
-            .scene
-            .get_mut("animated")
-            .unwrap()
-            .angle = 0.25;
-
         let mut definition = AnimationDefinition::default();
         definition.slots.push("SLOT_BODY".to_owned());
         let mut action = AnimationAction::default();
@@ -70,93 +64,320 @@ fn flash_animation_draws_same_named_animation_with_native_scene_transform() {
 }
 
 #[test]
-fn slow_motion_powers_and_stella_flight_use_continuous_fixed_step_display_poses() {
+fn native_fixed_step_interpolation_is_action_independent_for_flash_birds() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createCircle("bird", "RED_CROSS", 1, 2, 0.25, 1, 0, 0, true, false, 3)
+                setFlashAnimation("bird")
+                setWorldGravity(0, 0)
+                setVelocity("bird", 3, -1.5)
+                "#,
+        )
+        .unwrap();
+    {
+        let mut definition = AnimationDefinition::default();
+        definition.slots.push("SLOT_BODY".to_owned());
+        let mut action = AnimationAction::default();
+        action
+            .targets
+            .entry("SLOT_BODY".to_owned())
+            .or_default()
+            .sprite
+            .push((0.0, "BIRD_BODY".to_owned()));
+        // Deliberately not one of the bird ability action names: native
+        // interpolation belongs to RenderObjectData, not the animation state.
+        definition
+            .actions
+            .insert("arbitrary_action".to_owned(), action);
+        let mut animation = runtime._animation_runtime.lock().unwrap();
+        animation.definitions.insert("bird".to_owned(), definition);
+        animation.playback.insert(
+            "bird".to_owned(),
+            AnimationPlayback::active(
+                "arbitrary_action".to_owned(),
+                "once".to_owned(),
+                0.0,
+                1.0,
+                1.0,
+            ),
+        );
+        bind_test_animation_sprites(&mut animation, "bird", &["BIRD_BODY"]);
+    }
+
+    let step = f64::from(f32::from_bits(0x3D08_8889));
+    runtime.update(step).unwrap();
+    runtime.update(f64::from(1.0_f32 / 60.0_f32)).unwrap();
+    runtime.execute_source("drawGameNative()").unwrap();
+
+    let bridge = runtime.render.lock().unwrap();
+    assert_eq!(bridge.commands.len(), 1);
+    let object = &bridge.scene["bird"];
+    let alpha = bridge.physics_accumulator * f32::from_bits(0x41EF_FFFF);
+    let expected_x = alpha.mul_add(object.x as f32, (1.0_f32 - alpha) * 1.0_f32);
+    let expected_y = alpha.mul_add(object.y as f32, (1.0_f32 - alpha) * 2.0_f32);
+    assert_eq!(object.render_x.to_bits(), f64::from(expected_x).to_bits());
+    assert_eq!(object.render_y.to_bits(), f64::from(expected_y).to_bits());
+    let transform = runtime._animation_runtime.lock().unwrap().transforms["bird"];
+    assert_eq!(transform.x, f64::from(expected_x) * 20.0);
+    assert_eq!(transform.y, f64::from(expected_y) * 20.0);
+    assert_ne!(object.render_x, object.x);
+}
+
+#[test]
+fn flying_bird_visual_angle_interpolates_the_velocity_overwritten_by_lua() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createCircle("stella", "RED_CROSS", 1, 2, 0.25, 1, 0, 0, true, false, 3)
+                setFlashAnimation("stella")
+                setRotation("stella", 0.7853982)
+                "#,
+        )
+        .unwrap();
+    {
+        let mut definition = AnimationDefinition::default();
+        definition.slots.push("SLOT_BODY".to_owned());
+        let mut action = AnimationAction::default();
+        action
+            .targets
+            .entry("SLOT_BODY".to_owned())
+            .or_default()
+            .sprite
+            .push((0.0, "STELLA_BODY".to_owned()));
+        definition
+            .actions
+            .insert("Stella_Flying".to_owned(), action);
+        let mut animation = runtime._animation_runtime.lock().unwrap();
+        animation
+            .definitions
+            .insert("stella".to_owned(), definition);
+        animation.playback.insert(
+            "stella".to_owned(),
+            AnimationPlayback::active(
+                "Stella_Flying".to_owned(),
+                "repeat".to_owned(),
+                0.0,
+                1.0,
+                1.0,
+            ),
+        );
+        bind_test_animation_sprites(&mut animation, "stella", &["STELLA_BODY"]);
+    }
+    {
+        let mut bridge = runtime.render.lock().unwrap();
+        bridge.physics_interpolation_slot = 1;
+        bridge.physics_accumulator = 1.0_f32 / 60.0_f32;
+        let body = bridge.scene.get_mut("stella").unwrap();
+        body.display_interpolation_velocities[0] = DisplayInterpolationVelocity { x: 4.0, y: 0.0 };
+        body.display_interpolation_velocities[1] = DisplayInterpolationVelocity { x: 4.0, y: 4.0 };
+    }
+
+    runtime.execute_source("drawGameNative()").unwrap();
+
+    let alpha = (1.0_f32 / 60.0_f32) * f32::from_bits(0x41EF_FFFF);
+    let previous_weight = 1.0_f32 - alpha;
+    let velocity_x = alpha.mul_add(4.0, previous_weight * 4.0);
+    let velocity_y = alpha.mul_add(4.0, previous_weight * 0.0);
+    let target = f64::from(velocity_y).atan2(f64::from(velocity_x));
+    let expected = f64::from(target as f32);
+    let transform = runtime._animation_runtime.lock().unwrap().transforms["stella"];
+    assert_eq!(transform.angle.to_bits(), expected.to_bits());
+    assert_ne!(transform.angle, f64::from(std::f32::consts::FRAC_PI_4));
+    // The compatibility sample is submission-only. Native/Lua pose state
+    // still contains the exact setRotation result recovered from Purple.
+    assert_eq!(
+        runtime.render.lock().unwrap().scene["stella"].render_angle,
+        f64::from(std::f32::consts::FRAC_PI_4)
+    );
+}
+
+#[test]
+fn flying_bird_low_speed_replays_angle_lerp_with_interpolated_velocity() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createCircle("luca", "RED_CROSS", 1, 2, 0.25, 1, 0, 0, true, false, 3)
+                setFlashAnimation("luca")
+                setObjectParameter("luca", 8, 1)
+                setRotation("luca", 0.25)
+                "#,
+        )
+        .unwrap();
+    {
+        let mut definition = AnimationDefinition::default();
+        definition.slots.push("SLOT_BODY".to_owned());
+        let mut action = AnimationAction::default();
+        action
+            .targets
+            .entry("SLOT_BODY".to_owned())
+            .or_default()
+            .sprite
+            .push((0.0, "LUCA_BODY".to_owned()));
+        definition.actions.insert("Luca_Flying".to_owned(), action);
+        let mut animation = runtime._animation_runtime.lock().unwrap();
+        animation.definitions.insert("luca".to_owned(), definition);
+        animation.playback.insert(
+            "luca".to_owned(),
+            AnimationPlayback::active("Luca_Flying".to_owned(), "repeat".to_owned(), 0.0, 1.0, 1.0),
+        );
+        bind_test_animation_sprites(&mut animation, "luca", &["LUCA_BODY"]);
+    }
+    {
+        let mut bridge = runtime.render.lock().unwrap();
+        bridge.physics_interpolation_slot = 1;
+        bridge.physics_accumulator = 1.0_f32 / 60.0_f32;
+        let body = bridge.scene.get_mut("luca").unwrap();
+        body.display_interpolation_velocities = [
+            DisplayInterpolationVelocity { x: -0.25, y: -1.0 },
+            DisplayInterpolationVelocity { x: -0.25, y: -0.5 },
+        ];
+    }
+
+    runtime.execute_source("drawGameNative()").unwrap();
+
+    let alpha = (1.0_f32 / 60.0_f32) * f32::from_bits(0x41EF_FFFF);
+    let velocity_x = f64::from(alpha.mul_add(-0.25, (1.0_f32 - alpha) * -0.25));
+    let velocity_y = f64::from(alpha.mul_add(-0.5, -(1.0_f32 - alpha)));
+    let target = velocity_y.atan2(velocity_x);
+    let speed = (velocity_x * velocity_x + velocity_y * velocity_y).sqrt();
+    let mut difference = std::f64::consts::PI - target;
+    if difference > std::f64::consts::PI {
+        difference -= std::f64::consts::TAU;
+    }
+    let flight_angle = std::f64::consts::PI - difference * (0.5 * speed);
+    let normalized_flight = f64::from(flight_angle as f32);
+    let vector_angle = normalized_flight.sin().atan2(normalized_flight.cos());
+    let adjusted = vector_angle - std::f64::consts::PI;
+    let tau = std::f32::consts::PI + std::f32::consts::PI;
+    let mut native_expected = adjusted as f32 % tau;
+    if native_expected < 0.0 {
+        native_expected += tau;
+    }
+    let expected = f64::from(native_expected);
+    let angle = runtime._animation_runtime.lock().unwrap().transforms["luca"].angle;
+    assert_eq!(angle.to_bits(), expected.to_bits());
+    assert_ne!(angle, 0.25);
+}
+
+#[test]
+fn released_poppy_power_keeps_the_lua_pinned_pose_at_normal_time() {
     let runtime = StellaLua::new("/tmp").unwrap();
     runtime
         .execute_source(
             r#"
                 createNonPhysicsObject("poppy", "RED_CROSS", 1, 2, 3)
                 setFlashAnimation("poppy")
-                createNonPhysicsObject("luca", "RED_CROSS", 3, 4, 3)
-                setFlashAnimation("luca")
-                createNonPhysicsObject("stella", "RED_CROSS", 5, 6, 3)
-                setFlashAnimation("stella")
                 "#,
         )
         .unwrap();
     {
         let mut bridge = runtime.render.lock().unwrap();
         bridge.physics_accumulator = 1.0 / 60.0;
-        bridge.world_gravity_y = 2.0;
+        assert_eq!(bridge.delta_time_multiplier, 1.0);
         let object = bridge.scene.get_mut("poppy").unwrap();
-        object.velocity_x = 6.0;
-        object.velocity_y = -3.0;
-        let object = bridge.scene.get_mut("luca").unwrap();
-        object.velocity_x = 6.0;
-        object.velocity_y = -3.0;
-        let object = bridge.scene.get_mut("stella").unwrap();
+        // Poppy's release state retains the incoming body velocity while Lua
+        // pins the body to poppyStartX/Y until the drill begins.
         object.velocity_x = 6.0;
         object.velocity_y = -3.0;
     }
     {
+        let mut definition = AnimationDefinition::default();
+        definition.slots.push("SLOT_BODY".to_owned());
+        let mut action = AnimationAction::default();
+        action
+            .targets
+            .entry("SLOT_BODY".to_owned())
+            .or_default()
+            .sprite
+            .push((0.0, "POPPY_BODY".to_owned()));
+        definition.actions.insert("Poppy_Power".to_owned(), action);
         let mut animation = runtime._animation_runtime.lock().unwrap();
-        for (tag, action_name, sprite) in [
-            ("poppy", "Poppy_Power", "POPPY_BODY"),
-            ("luca", "Luca_ability", "LUCA_BODY"),
-            ("stella", "Stella_Flying", "STELLA_BODY"),
-        ] {
-            let mut definition = AnimationDefinition::default();
-            definition.slots.push("SLOT_BODY".to_owned());
-            let mut action = AnimationAction::default();
-            action
-                .targets
-                .entry("SLOT_BODY".to_owned())
-                .or_default()
-                .sprite
-                .push((0.0, sprite.to_owned()));
-            definition.actions.insert(action_name.to_owned(), action);
-            animation.definitions.insert(tag.to_owned(), definition);
-            animation.playback.insert(
-                tag.to_owned(),
-                AnimationPlayback::active(action_name.to_owned(), "once".to_owned(), 0.0, 1.0, 1.0),
-            );
-            bind_test_animation_sprites(&mut animation, tag, &[sprite]);
-        }
+        animation.definitions.insert("poppy".to_owned(), definition);
+        animation.playback.insert(
+            "poppy".to_owned(),
+            AnimationPlayback::active("Poppy_Power".to_owned(), "once".to_owned(), 0.0, 1.0, 1.0),
+        );
+        bind_test_animation_sprites(&mut animation, "poppy", &["POPPY_BODY"]);
     }
 
     runtime.execute_source("drawGameNative()").unwrap();
 
-    let residual = 1.0_f32 / 60.0_f32;
-    let predicted_stella_velocity_y = 2.0_f32.mul_add(residual, -3.0_f32);
-    let expected_stella_angle = predicted_stella_velocity_y.atan2(6.0_f32);
-    assert_eq!(
-        runtime._animation_runtime.lock().unwrap().transforms["stella"]
-            .angle
-            .to_bits(),
-        f64::from(expected_stella_angle).to_bits()
-    );
     let bridge = runtime.render.lock().unwrap();
-    assert_eq!(bridge.commands.len(), 3);
-    let display_x = 6.0_f32.mul_add(residual, 1.0_f32);
-    let display_y = (-3.0_f32).mul_add(residual, 2.0_f32);
-    assert_eq!(bridge.commands[0].x, f64::from(display_x * 20.0_f32));
-    assert_eq!(bridge.commands[0].y, f64::from(display_y * 20.0_f32));
-    let luca_display_x = 6.0_f32.mul_add(residual, 3.0_f32);
-    let luca_display_y = (-3.0_f32).mul_add(residual, 4.0_f32);
-    assert_eq!(bridge.commands[1].x, f64::from(luca_display_x * 20.0_f32));
-    assert_eq!(bridge.commands[1].y, f64::from(luca_display_y * 20.0_f32));
-    let stella_display_x = 6.0_f32.mul_add(residual, 5.0_f32);
-    let stella_display_y = (-3.0_f32).mul_add(residual, 6.0_f32);
-    assert_eq!(bridge.commands[2].x, f64::from(stella_display_x * 20.0_f32));
-    assert_eq!(bridge.commands[2].y, f64::from(stella_display_y * 20.0_f32));
+    assert_eq!(bridge.commands.len(), 1);
+    assert_eq!((bridge.commands[0].x, bridge.commands[0].y), (20.0, 40.0));
     assert_eq!(
         (bridge.scene["poppy"].x, bridge.scene["poppy"].y),
         (1.0, 2.0)
     );
-    assert_eq!((bridge.scene["luca"].x, bridge.scene["luca"].y), (3.0, 4.0));
+}
+
+#[test]
+fn ordinary_willow_action_keeps_its_solved_physics_pose_and_authored_angle() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .execute_source(
+            r#"
+                createNonPhysicsObject("willow", "RED_CROSS", 1, 2, 3)
+                setFlashAnimation("willow")
+                "#,
+        )
+        .unwrap();
+    {
+        let mut bridge = runtime.render.lock().unwrap();
+        bridge.physics_accumulator = 1.0 / 60.0;
+        let object = bridge.scene.get_mut("willow").unwrap();
+        object.velocity_x = 6.0;
+        object.velocity_y = -3.0;
+    }
+    runtime
+        .execute_source(r#"setRotation("willow", 0.75)"#)
+        .unwrap();
+    {
+        let mut definition = AnimationDefinition::default();
+        definition.slots.push("SLOT_BODY".to_owned());
+        let mut action = AnimationAction::default();
+        action
+            .targets
+            .entry("SLOT_BODY".to_owned())
+            .or_default()
+            .sprite
+            .push((0.0, "WILLOW_BODY".to_owned()));
+        definition
+            .actions
+            .insert("Willow_Flying".to_owned(), action);
+        let mut animation = runtime._animation_runtime.lock().unwrap();
+        animation
+            .definitions
+            .insert("willow".to_owned(), definition);
+        animation.playback.insert(
+            "willow".to_owned(),
+            AnimationPlayback::active(
+                "Willow_Flying".to_owned(),
+                "repeat".to_owned(),
+                0.0,
+                1.0,
+                1.0,
+            ),
+        );
+        bind_test_animation_sprites(&mut animation, "willow", &["WILLOW_BODY"]);
+    }
+
+    runtime.execute_source("drawGameNative()").unwrap();
+
     assert_eq!(
-        (bridge.scene["stella"].x, bridge.scene["stella"].y),
-        (5.0, 6.0)
+        runtime._animation_runtime.lock().unwrap().transforms["willow"].angle,
+        0.75
+    );
+    let bridge = runtime.render.lock().unwrap();
+    assert_eq!(bridge.commands.len(), 1);
+    assert_eq!((bridge.commands[0].x, bridge.commands[0].y), (20.0, 40.0));
+    assert_eq!(
+        (bridge.scene["willow"].x, bridge.scene["willow"].y),
+        (1.0, 2.0)
     );
 }
 
@@ -177,8 +398,10 @@ fn scripted_stella_ability_keeps_its_exact_per_frame_lua_pose() {
         let object = bridge.scene.get_mut("stella").unwrap();
         object.velocity_x = 6.0;
         object.velocity_y = -3.0;
-        object.angle = 0.75;
     }
+    runtime
+        .execute_source(r#"setRotation("stella", 0.75)"#)
+        .unwrap();
     {
         let mut definition = AnimationDefinition::default();
         definition.slots.push("SLOT_BODY".to_owned());
@@ -945,6 +1168,12 @@ fn native_audio_handles_are_unique_and_accept_volume_and_stop_updates() {
     runtime
         .execute_source(
             r#"
+                pre_output_channel_rejected = not pcall(
+                    setChannelCountLimit, 5, 1
+                )
+                pre_output_volume_rejected = not pcall(
+                    setAudioClipVolume, 0, 1
+                )
                 res.createAudioOutput(2, 16, 44100)
                 res.createAudio("first.wav", "first", false)
                 res.createAudio("loop.wav", "loop", false)
@@ -973,6 +1202,16 @@ fn native_audio_handles_are_unique_and_accept_volume_and_stop_updates() {
         )
         .unwrap();
     let environment = game_environment(runtime.lua()).unwrap();
+    assert!(
+        environment
+            .get::<bool>("pre_output_channel_rejected")
+            .unwrap()
+    );
+    assert!(
+        environment
+            .get::<bool>("pre_output_volume_rejected")
+            .unwrap()
+    );
     let first = environment.get::<i64>("first_audio_handle").unwrap();
     let second = environment.get::<i64>("second_audio_handle").unwrap();
     assert_eq!(first, 0);
@@ -1075,6 +1314,92 @@ fn native_texture_state_reaches_scene_render_commands() {
         Some("THEME_HOMETREE_BG_TEXTURE_1")
     );
     assert_eq!(bridge.commands[0].texture_scale, f64::from(0.0932025_f32));
+}
+
+#[test]
+fn native_scene_draw_reads_live_object_shader_for_golden_pollen() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .execute_source(
+            r#"
+                createNonPhysicsObject("golden", "RED_CROSS", 1, 2, 3)
+                objects.world.golden.shader = {
+                    name = "2d-sprite-gold",
+                    params = {
+                        { name = "DIFFUSEC", type = "vector", value = { 1, 0.6, 0 } },
+                        { name = "LIGHTNESS", type = "float", value = 0.4 },
+                        { name = "HIGHLIGHT", type = "float", value = 0.5 },
+                    },
+                }
+                drawGameNative()
+                "#,
+        )
+        .unwrap();
+
+    {
+        let bridge = runtime.render.lock().unwrap();
+        assert_eq!(bridge.commands.len(), 1);
+        let shader = bridge.commands[0].shader.as_ref().unwrap();
+        assert_eq!(shader.name, "2d-sprite-gold");
+        assert_eq!(shader.diffuse, [1.0, f64::from(0.6_f32), 0.0, 1.0]);
+        assert_eq!(shader.lightness, f64::from(0.4_f32));
+        assert_eq!(shader.highlight, 0.5);
+    }
+
+    runtime.render.lock().unwrap().commands.clear();
+    runtime
+        .execute_source(
+            r#"
+                objects.world.golden.shader = nil
+                drawGameNative()
+                "#,
+        )
+        .unwrap();
+    let bridge = runtime.render.lock().unwrap();
+    assert_eq!(bridge.commands.len(), 1);
+    assert!(bridge.commands[0].shader.is_none());
+}
+
+#[test]
+fn chapter01_finale_gold_transformer_reaches_native_scene_submission() {
+    let sandbox = ShippedDataSandbox::new("chapter01-l61-gold-shader");
+    let runtime = StellaLua::new(&sandbox.data_root).unwrap();
+    runtime.boot("scripts/game.lua").unwrap();
+    runtime.execute_source("initializeEventSystem()").unwrap();
+    runtime
+        .execute_source(
+            r#"
+                SpriteSheetManager.useGroupSet('INGAME')
+                currentFolder = 'Chapter01'
+                currentPack = 'Chapter01'
+                currentLevel = 61
+                levelFolder = 'levels/Chapter01/'
+                levelName = 'Chapter01_L61'
+                loadLevelInternal(levelFolder .. levelName)
+                blocks.BlockComponentManager.triggerGlobalEvent(blocks.events.EID_START)
+                setPhysicsEnabled(true)
+                -- GaleSlice paints the ray-cast Lua object through
+                -- `makeGolden`; do not bypass that gameplay gate by calling
+                -- its lower-level shader helper directly.
+                local painted = objects.world.BLOCK_WOOD_1X10_1_1
+                assert(makeGolden(painted))
+                assert(painted.shader.name == '2d-sprite-gold')
+                drawGameNative()
+            "#,
+        )
+        .unwrap();
+
+    let bridge = runtime.render.lock().unwrap();
+    let golden = bridge
+        .commands
+        .iter()
+        .filter_map(|command| command.shader.as_ref())
+        .collect::<Vec<_>>();
+    assert_eq!(golden.len(), 1);
+    assert_eq!(golden[0].name, "2d-sprite-gold");
+    assert_eq!(golden[0].diffuse, [1.0, f64::from(0.6_f32), 0.0, 1.0]);
+    assert_eq!(golden[0].lightness, f64::from(0.4_f32));
+    assert_eq!(golden[0].highlight, 0.5);
 }
 
 #[test]

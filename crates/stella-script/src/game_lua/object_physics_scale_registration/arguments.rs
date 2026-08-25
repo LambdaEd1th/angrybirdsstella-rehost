@@ -36,7 +36,14 @@ pub(super) fn circle_definition_scale(lua: &Lua, entry: &mlua::Table) -> LuaResu
     let Ok(definition_name) = entry.get::<String>("definition") else {
         return Ok(1.0);
     };
-    let Value::Table(blocks) = game_environment(lua)?.get::<Value>("blocks")? else {
+    // sub_10004050C reads GameLua+0x458, the retained `blockTable` Lua
+    // object, and only then indexes its `blocks` member. The unrelated
+    // global `blocks` table owns BlockComponentManager; using it here makes
+    // every shipped definition miss and scales circle fixtures twice.
+    let Some(block_table) = native_lua_object(lua, NativeLuaObject::BlockTable)? else {
+        return Ok(1.0);
+    };
+    let Value::Table(blocks) = block_table.raw_get::<Value>("blocks")? else {
         return Ok(1.0);
     };
     let Value::Table(definition) = blocks.raw_get::<Value>(definition_name)? else {

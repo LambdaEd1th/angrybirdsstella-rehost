@@ -32,6 +32,10 @@ pub(crate) fn install(lua: &Lua, globals: &mlua::Table, data_root: Arc<PathBuf>)
             install_table_fallback(lua, &editor, environment.clone())?;
             environment.set("blockEditorTable", editor.clone())?;
             lua.globals().set("blockEditorTable", editor.clone())?;
+            // sub_100044F90 assigns the new table to GameLua+0x480 before
+            // loading any module. sub_100067A40 keeps writing through that
+            // retained LuaObject even if a module shadows the public name.
+            retain_native_lua_object(lua, NativeLuaObject::BlockEditorTable, Some(&editor))?;
             let script_path = environment
                 .get::<String>("scriptPath")
                 .unwrap_or_else(|_| "scripts/definitions".to_owned());

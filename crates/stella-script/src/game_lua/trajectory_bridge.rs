@@ -3,6 +3,20 @@
 use crate::*;
 
 impl RenderBridge {
+    /// `loadLevelImpl` stores GameLua+0x4F8/+0x4FC/+0x500 immediately before
+    /// configuring AimStream. The predictor consumes these retained values;
+    /// it does not consult `worldAttributes` between predictions.
+    pub(crate) fn load_native_simulation_settings(
+        &mut self,
+        iterations: i32,
+        time_step_multiplier: f32,
+        point_sampler: i32,
+    ) {
+        self.simulation_iterations = iterations;
+        self.simulation_time_step_multiplier = time_step_multiplier;
+        self.simulation_store_points_sampler = point_sampler;
+    }
+
     /// `AimStream::reset` (`sub_1000086CC`) is called by native
     /// `loadLevelImpl` after publishing the new world. The reset owns only
     /// AimStream's two vectors and active flag; the spawn timer is retained.
@@ -10,6 +24,15 @@ impl RenderBridge {
         self.aim_stream_particles.clear();
         self.aim_stream_control_points.clear();
         self.aim_stream_active = false;
+    }
+
+    /// `loadLevelImpl` writes AimStream+0x40/+0x48 before calling reset and
+    /// setActive(false). The timer at +0x44 deliberately survives this
+    /// boundary until the next population.
+    pub(crate) fn load_native_aim_stream_settings(&mut self, spawn_time: f32, speed: f32) {
+        self.aim_stream_spawn_time = spawn_time;
+        self.aim_stream_speed = speed;
+        self.reset_native_aim_stream_for_level_load();
     }
 
     /// `sub_1000675C0`, called from `loadLevelImpl` at `0x100066228`, replaces
@@ -24,8 +47,10 @@ impl RenderBridge {
         self.trajectory_stream_index = 0;
     }
 
-    pub(crate) fn populate_native_aim_stream(&mut self, spawn_time: f32, speed: f32) {
+    pub(crate) fn populate_native_aim_stream(&mut self) {
         self.aim_stream_particles.clear();
+        let spawn_time = self.aim_stream_spawn_time;
+        let speed = self.aim_stream_speed;
         let segment_count = self.aim_stream_control_points.len() as i32 - 3;
         if segment_count > 0 {
             let segment_count_f32 = segment_count as f32;
@@ -50,20 +75,17 @@ impl RenderBridge {
         self.aim_stream_spawn_timer = spawn_time;
     }
 
-    pub(crate) fn set_native_aim_stream_active(
-        &mut self,
-        active: bool,
-        spawn_time: f32,
-        speed: f32,
-    ) {
+    pub(crate) fn set_native_aim_stream_active(&mut self, active: bool) {
         // AimStream::setActive repopulates only on a false -> true edge.
         if self.aim_stream_active != active && active {
-            self.populate_native_aim_stream(spawn_time, speed);
+            self.populate_native_aim_stream();
         }
         self.aim_stream_active = active;
     }
 
-    pub(crate) fn update_native_aim_stream(&mut self, delta: f32, spawn_time: f32, speed: f32) {
+    pub(crate) fn update_native_aim_stream(&mut self, delta: f32) {
+        let spawn_time = self.aim_stream_spawn_time;
+        let speed = self.aim_stream_speed;
         let segment_count = self.aim_stream_control_points.len() as i32 - 3;
         if segment_count > 0 {
             let segment_count_f32 = segment_count as f32;
@@ -80,11 +102,7 @@ impl RenderBridge {
         }
 
         self.aim_stream_spawn_timer -= delta;
-        if self.aim_stream_active
-            && self.aim_stream_spawn_timer < 0.0
-            && spawn_time.is_finite()
-            && spawn_time > 0.0
-        {
+        if self.aim_stream_active && self.aim_stream_spawn_timer < 0.0 {
             let scale = 1.2_f32 * self.game_world_scale as f32;
             while self.aim_stream_spawn_timer < 0.0 {
                 self.aim_stream_spawn_timer += spawn_time;

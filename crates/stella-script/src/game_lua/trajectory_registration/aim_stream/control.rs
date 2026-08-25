@@ -9,12 +9,11 @@ pub(in crate::game_lua::trajectory_registration) fn install_populate(
 ) -> LuaResult<()> {
     globals.set(
         "populateAimingAid",
-        lua.create_function(move |lua, _: MultiValue| {
-            let (spawn_time, speed) = native_aim_stream_settings(lua)?;
+        lua.create_function(move |_, _: MultiValue| {
             render
                 .lock()
                 .expect("render bridge lock poisoned")
-                .populate_native_aim_stream(spawn_time, speed);
+                .populate_native_aim_stream();
             Ok(())
         })?,
     )
@@ -28,7 +27,8 @@ pub(in crate::game_lua::trajectory_registration) fn install_time(
         "getAimingTime",
         lua.create_function(|lua, _: MultiValue| {
             // sub_10004B8EC excludes the trajectory time-step multiplier.
-            let (current_time_step, iterations, _, _) = native_trajectory_settings(lua)?;
+            let current_time_step = native_trajectory_current_time_step(lua)?;
+            let iterations = native_aiming_time_iterations(lua)?;
             Ok(f64::from(current_time_step * iterations as f32))
         })?,
     )

@@ -70,11 +70,12 @@ pub(crate) fn install(
 /// containers when a script has not initialized them yet.
 pub(crate) fn object_world(lua: &Lua) -> LuaResult<mlua::Table> {
     let environment = game_environment(lua)?;
-    let objects = match environment.get::<Value>("objects")? {
-        Value::Table(table) => table,
-        _ => {
+    let objects = match native_lua_object(lua, NativeLuaObject::Objects)? {
+        Some(table) => table,
+        None => {
             let table = lua.create_table()?;
             environment.set("objects", table.clone())?;
+            retain_native_lua_object(lua, NativeLuaObject::Objects, Some(&table))?;
             table
         }
     };

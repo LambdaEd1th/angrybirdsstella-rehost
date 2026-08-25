@@ -196,14 +196,11 @@ pub(super) fn install(
                     continue;
                 };
                 if object.flash_animation {
-                    // Poppy/Luca's held powers and Stella's post-timeout
-                    // flying pose are Flash actions attached to 30 Hz Box2D
-                    // bodies. Select the visual-only fixed-step sample by the
-                    // exact authored actions; other birds and ordinary
-                    // actions keep the solved native pose. Stella's authored
-                    // `Ability` action is deliberately absent because its
-                    // parkour root already moves every display frame through
-                    // the shipped real-time `setPosition` tween.
+                    // Preserve Purple's interpolated position and authored
+                    // ability rotations. The recovered BirdAnimation flying
+                    // state is the one late writer that derives angle from a
+                    // 30 Hz velocity sample, so the renderer also supplies
+                    // the matching two-slot visual velocity sample for it.
                     let current_action = animation_runtime
                         .lock()
                         .expect("animation runtime lock poisoned")
@@ -211,19 +208,10 @@ pub(super) fn install(
                         .get(&name)
                         .map(|playback| playback.current_action.clone())
                         .unwrap_or_default();
-                    let sample_fixed_step_motion = matches!(
-                        current_action.as_str(),
-                        "Poppy_Power" | "Luca_ability" | "Stella_Flying"
-                    );
-                    let sample_stella_flight_angle = current_action == "Stella_Flying";
                     let transform = render
                         .lock()
                         .expect("render bridge lock poisoned")
-                        .flash_animation_transform(
-                            &object,
-                            sample_fixed_step_motion,
-                            sample_stella_flight_angle,
-                        );
+                        .flash_animation_transform(&object, &current_action);
                     let mut commands = {
                         let mut runtime = animation_runtime
                             .lock()
@@ -235,14 +223,26 @@ pub(super) fn install(
                         animation_render_commands(&runtime, &name)
                     };
                     if std::env::var_os("STELLA_TRACE_ANIMATION").is_some() {
+                        let (physics_slot, physics_alpha) = {
+                            let bridge = render.lock().expect("render bridge lock poisoned");
+                            (
+                                bridge.physics_interpolation_slot,
+                                bridge.physics_accumulator * f32::from_bits(0x41EF_FFFF),
+                            )
+                        };
+                        let velocities = object.display_interpolation_velocities;
                         eprintln!(
-                            "animation-native scene-draw tag={name} sprites={} transform=({:.3},{:.3}; {:.3},{:.3}; angle={:.3})",
+                            "animation-native scene-draw tag={name} action={current_action:?} sprites={} transform=({:.3},{:.3}; {:.3},{:.3}; angle={:.6}) physics=(slot={physics_slot},alpha={physics_alpha:.6},v0={:.6},{:.6},v1={:.6},{:.6})",
                             commands.len(),
                             transform.x,
                             transform.y,
                             transform.scale_x,
                             transform.scale_y,
-                            transform.angle
+                            transform.angle,
+                            velocities[0].x,
+                            velocities[0].y,
+                            velocities[1].x,
+                            velocities[1].y,
                         );
                     }
                     let mut bridge = render.lock().expect("render bridge lock poisoned");
@@ -252,13 +252,30 @@ pub(super) fn install(
                     }
                     bridge.extend_render_commands(commands);
                 } else {
-                    let resources = resource_runtime
+                    let mut resources = resource_runtime
                         .lock()
                         .expect("resource runtime lock poisoned");
+                    // sub_10006D5B4 reads `shader` from the retained Lua
+                    // object after the pre-draw callback, then builds the
+                    // shared cached shader through sub_1000222E4/
+                    // sub_100529F68. This is the path used by
+                    // GoldTransformer's `2d-sprite-gold` table.
+                    let shader = match callback_object.clone() {
+                        Value::Table(object_table) => {
+                            match object_table.raw_get::<Value>("shader")? {
+                                Value::Table(shader) => Some(sprite_shader_from_lua(
+                                    shader,
+                                    &mut resources.shader_cache,
+                                )?),
+                                _ => None,
+                            }
+                        }
+                        _ => None,
+                    };
                     render
                         .lock()
                         .expect("render bridge lock poisoned")
-                        .push_scene_object(&object, &resources, &data_root);
+                        .push_scene_object(&object, &resources, &data_root, shader);
                 }
                 if let Some(function) = post {
                     let horizontal_flip = render

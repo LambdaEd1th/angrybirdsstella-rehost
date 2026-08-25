@@ -18,9 +18,10 @@ pub(in crate::game_lua::trajectory_registration) fn install_update(
             if bridge.physics_world_locked {
                 return Ok(());
             }
-            let (current_time_step, iterations, time_step_multiplier, point_sampler) =
-                native_trajectory_settings(lua)?;
-            let (aim_spawn_time, aim_speed) = native_aim_stream_settings(lua)?;
+            let current_time_step = native_trajectory_current_time_step(lua)?;
+            let iterations = bridge.simulation_iterations;
+            let time_step_multiplier = bridge.simulation_time_step_multiplier;
+            let point_sampler = bridge.simulation_store_points_sampler;
             // The native member always clears this pointer before returning.
             bridge.selected_simulation_bird = None;
             let Some(mut simulation) = bridge.scene.get("BirdSimulation").cloned() else {
@@ -102,7 +103,7 @@ pub(in crate::game_lua::trajectory_registration) fn install_update(
                 control_points.extend(bridge.trajectory_points.iter().copied());
                 control_points.push(last);
                 bridge.aim_stream_control_points = control_points;
-                bridge.update_native_aim_stream(0.0_f32, aim_spawn_time, aim_speed);
+                bridge.update_native_aim_stream(0.0_f32);
             }
             Ok(())
         })?,

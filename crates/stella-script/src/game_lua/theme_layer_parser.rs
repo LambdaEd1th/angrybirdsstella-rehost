@@ -24,8 +24,7 @@ pub(crate) fn named_theme_layer_offsets(
     theme_name: &str,
     layer_field: &str,
 ) -> LuaResult<Vec<Option<f32>>> {
-    let environment = game_environment(lua)?;
-    let Value::Table(block_table) = environment.get::<Value>("blockTable")? else {
+    let Some(block_table) = native_lua_object(lua, NativeLuaObject::BlockTable)? else {
         return Ok(Vec::new());
     };
     let Value::Table(themes) = block_table.get::<Value>("themes")? else {

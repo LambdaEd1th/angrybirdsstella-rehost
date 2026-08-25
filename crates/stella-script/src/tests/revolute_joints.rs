@@ -108,11 +108,24 @@ fn recovered_joint_limit_helpers_reverse_or_stop_motor_and_keep_void_abi() {
                     motor = true, motorSpeed = 2, maxTorque = 10,
                     limit = true, lowerLimit = -0.1, upperLimit = 0.1
                 }
-                objects.joints = { descriptor }
+                local numeric_name_descriptor = {
+                    name = "123", end1 = "anchor", end2 = "rotor",
+                    type = 3, x1 = 0, y1 = 0, x2 = 0, y2 = 0,
+                    motor = true, motorSpeed = 1, maxTorque = 1
+                }
+                objects.joints = { descriptor, numeric_name_descriptor }
                 createJoint(descriptor)
-                parameter_result_count = select("#", setJointParameters({
-                    name = "boundary", motorSpeed = 3, upperLimit = 0.2
-                }))
+                createJoint(numeric_name_descriptor)
+                parameter_result_count = select("#", setJointParameters(
+                    { name = "ignored", motorSpeed = 99 },
+                    { name = "boundary", motorSpeed = "3", upperLimit = "0.2" }
+                ))
+                parameter_missing_fails = not pcall(setJointParameters)
+                parameter_non_table_top_fails = not pcall(
+                    setJointParameters, { name = "boundary" }, false
+                )
+                setJointParameters({ name = 123, motorSpeed = "4" })
+                numeric_name_mirrored_speed = objects.joints[2].motorSpeed
                 mirrored_speed = objects.joints[1].motorSpeed
                 mirrored_upper = objects.joints[1].upperLimit
                 setAngle("rotor", 0.3)
@@ -123,6 +136,7 @@ fn recovered_joint_limit_helpers_reverse_or_stop_motor_and_keep_void_abi() {
     {
         let bridge = runtime.render.lock().unwrap();
         assert_eq!(bridge.joints["boundary"].motor_speed, Some(3.0));
+        assert_eq!(bridge.joints["123"].motor_speed, Some(4.0));
         assert!(bridge.joints["boundary"].limits_enabled);
         assert_eq!(bridge.joints["boundary"].upper_limit, f64::from(0.2_f32));
         assert_eq!(bridge.scene["rotor"].angle, f64::from(0.3_f32));
@@ -146,9 +160,21 @@ fn recovered_joint_limit_helpers_reverse_or_stop_motor_and_keep_void_abi() {
 
     let environment = game_environment(runtime.lua()).unwrap();
     assert_eq!(environment.get::<i64>("parameter_result_count").unwrap(), 0);
+    assert!(environment.get::<bool>("parameter_missing_fails").unwrap());
+    assert!(
+        environment
+            .get::<bool>("parameter_non_table_top_fails")
+            .unwrap()
+    );
     assert_eq!(environment.get::<i64>("check_result_count").unwrap(), 0);
     assert_eq!(environment.get::<i64>("handle_result_count").unwrap(), 0);
     assert_eq!(environment.get::<f64>("mirrored_speed").unwrap(), 3.0);
+    assert_eq!(
+        environment
+            .get::<f64>("numeric_name_mirrored_speed")
+            .unwrap(),
+        4.0
+    );
     assert_eq!(
         environment.get::<f64>("mirrored_upper").unwrap(),
         f64::from(0.2_f32)

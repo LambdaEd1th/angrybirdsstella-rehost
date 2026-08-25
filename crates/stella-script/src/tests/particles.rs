@@ -1052,6 +1052,35 @@ fn lifetime_particle_animation_uses_first_sprite_and_one_based_ceil_frames() {
 }
 
 #[test]
+fn menu_particle_scale_preserves_generated_number_adapter_and_float32_store() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                missing_ok = pcall(setMenuParticlesScale)
+                string_ok = pcall(setMenuParticlesScale, "2.5")
+                boolean_ok = pcall(setMenuParticlesScale, true)
+                extra_ok, extra_error = pcall(setMenuParticlesScale, 2.123456789, "ignored")
+            "#,
+        )
+        .unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert!(!environment.get::<bool>("missing_ok").unwrap());
+    assert!(!environment.get::<bool>("string_ok").unwrap());
+    assert!(!environment.get::<bool>("boolean_ok").unwrap());
+    assert!(
+        environment.get::<bool>("extra_ok").unwrap(),
+        "{:?}",
+        environment.get::<Value>("extra_error").unwrap()
+    );
+    assert_eq!(
+        runtime.render.lock().unwrap().particle_system.scale,
+        2.123_456_7_f32
+    );
+}
+
+#[test]
 fn native_particle_random_matches_fixed_xorshift_cmwc_sequence() {
     let mut random = NativeParticleRandom::default();
     for expected in [

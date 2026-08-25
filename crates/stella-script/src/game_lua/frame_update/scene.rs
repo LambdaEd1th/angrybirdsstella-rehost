@@ -69,8 +69,7 @@ impl RenderBridge {
             // sub_10005E898 skips a body with zero mass unless it is
             // kinematic. Static fixtures can carry Box2D's awake flag, but do
             // not contribute to any of the three Lua motion aggregates.
-            let reports_motion = object.kinematic_body
-                || (object.dynamic_body && object.inverse_mass > f64::EPSILON);
+            let reports_motion = object.kinematic_body || object.inverse_mass > 0.0;
             if reports_motion && (object.native_was_awake || awake) {
                 has_awake_objects = true;
                 let velocity_x = object.velocity_x as f32;

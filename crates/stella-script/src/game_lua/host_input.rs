@@ -3,6 +3,58 @@
 use super::StellaLua;
 use crate::*;
 
+#[derive(Clone, Copy, Debug)]
+struct NativePinchBaseline {
+    active: bool,
+    initial_distance: f32,
+    initial_scale: f32,
+}
+
+const EMPTY_NATIVE_PINCH_BASELINE: NativePinchBaseline = NativePinchBaseline {
+    active: false,
+    initial_distance: 0.0,
+    initial_scale: 0.0,
+};
+
+#[cfg(not(test))]
+static NATIVE_PINCH_BASELINE: Mutex<NativePinchBaseline> = Mutex::new(EMPTY_NATIVE_PINCH_BASELINE);
+
+// The shipped process owns one GameApp, so Purple's three static pinch fields
+// cannot be touched concurrently by independent runtimes. Unit tests do create
+// many GameApps on parallel test threads, however. Give each simulated process
+// thread its own copy while preserving the native cross-runtime lifetime within
+// a test thread.
+#[cfg(test)]
+thread_local! {
+    static NATIVE_PINCH_BASELINE: std::cell::RefCell<NativePinchBaseline> =
+        const { std::cell::RefCell::new(EMPTY_NATIVE_PINCH_BASELINE) };
+}
+
+#[cfg(not(test))]
+fn with_native_pinch_baseline<T>(callback: impl FnOnce(&mut NativePinchBaseline) -> T) -> T {
+    let mut baseline = NATIVE_PINCH_BASELINE
+        .lock()
+        .expect("native pinch baseline lock poisoned");
+    callback(&mut baseline)
+}
+
+#[cfg(test)]
+fn with_native_pinch_baseline<T>(callback: impl FnOnce(&mut NativePinchBaseline) -> T) -> T {
+    NATIVE_PINCH_BASELINE.with(|baseline| callback(&mut baseline.borrow_mut()))
+}
+
+#[cfg(test)]
+static NATIVE_PINCH_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+#[cfg(test)]
+pub(crate) fn lock_native_pinch_for_test() -> std::sync::MutexGuard<'static, ()> {
+    let guard = NATIVE_PINCH_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    with_native_pinch_baseline(|baseline| *baseline = EMPTY_NATIVE_PINCH_BASELINE);
+    guard
+}
+
 impl StellaLua {
     /// Inject one of the five names published by Purple's native per-frame
     /// key loop. The platform byte arrays distinguish held state from the two
@@ -11,10 +63,9 @@ impl StellaLua {
     pub fn set_key(&self, key_name: &str, down: bool) -> Result<(), ScriptError> {
         let environment = game_environment(&self.lua)?;
         let key = Value::String(self.lua.create_string(key_name)?);
-        let was_down = match environment.get::<Value>("keyHold")? {
-            Value::Table(table) => table.raw_get::<bool>(key.clone()).unwrap_or(false),
-            _ => false,
-        };
+        let was_down = native_lua_object(&self.lua, NativeLuaObject::KeyHold)?
+            .and_then(|table| table.raw_get::<bool>(key.clone()).ok())
+            .unwrap_or(false);
         for name in ["keyHold", "g_keyHold", "g_keyHoldNotBlocked"] {
             set_input_flag(&self.lua, &environment, name, key.clone(), down)?;
         }
@@ -48,7 +99,8 @@ impl StellaLua {
         if !had_primary_pointer {
             return Ok(());
         }
-        let cursor: mlua::Table = self.lua.globals().get("cursor")?;
+        let cursor = native_lua_object(&self.lua, NativeLuaObject::Cursor)?
+            .ok_or_else(|| runtime_error("cursor is not a table"))?;
         let x = cursor.get::<f64>("x").unwrap_or(0.0);
         let y = cursor.get::<f64>("y").unwrap_or(0.0);
         self.set_cursor(x, y, false)
@@ -129,7 +181,8 @@ impl StellaLua {
             }
         }
 
-        let cursor: mlua::Table = self.lua.globals().get("cursor")?;
+        let cursor = native_lua_object(&self.lua, NativeLuaObject::Cursor)?
+            .ok_or_else(|| runtime_error("cursor is not a table"))?;
         cursor.set("wheel", f64::from(wheel_delta))?;
         cursor.set("wheelTriggered", true)?;
         Ok(())
@@ -165,22 +218,27 @@ impl StellaLua {
                 let dx = (touches[0].1 as f32) - (touches[1].1 as f32);
                 let dy = (touches[0].2 as f32) - (touches[1].2 as f32);
                 let distance = dx.mul_add(dx, dy * dy).sqrt();
-                if !zoom.pinch_active {
-                    zoom.pinch_active = true;
-                    zoom.pinch_initial_distance = distance;
-                    zoom.pinch_initial_scale = world_scale;
-                    zoom.current = world_scale;
-                }
-                if zoom.pinch_initial_distance > f32::MIN_POSITIVE
-                    && zoom.pinch_initial_distance < f32::MAX
-                {
-                    zoom.previous = zoom.current;
-                    zoom.current =
-                        zoom.pinch_initial_scale * (distance / zoom.pinch_initial_distance);
-                }
-            } else if zoom.pinch_active {
-                zoom.pinch_active = false;
-                zoom.previous = zoom.current;
+                with_native_pinch_baseline(|pinch| {
+                    if !pinch.active {
+                        pinch.active = true;
+                        pinch.initial_distance = distance;
+                        pinch.initial_scale = world_scale;
+                        zoom.current = world_scale;
+                    }
+                    if pinch.initial_distance > f32::MIN_POSITIVE
+                        && pinch.initial_distance < f32::MAX
+                    {
+                        zoom.previous = zoom.current;
+                        zoom.current = pinch.initial_scale * (distance / pinch.initial_distance);
+                    }
+                });
+            } else {
+                with_native_pinch_baseline(|pinch| {
+                    if pinch.active {
+                        pinch.active = false;
+                        zoom.previous = zoom.current;
+                    }
+                });
             }
 
             (zoom.current != zoom.previous).then_some((zoom.current - zoom.previous) * 0.5_f32)
@@ -205,14 +263,16 @@ impl StellaLua {
             std::mem::take(&mut bridge.input_zoom.wheel_pending)
         };
         if pending {
-            let cursor: mlua::Table = self.lua.globals().get("cursor")?;
+            let cursor = native_lua_object(&self.lua, NativeLuaObject::Cursor)?
+                .ok_or_else(|| runtime_error("cursor is not a table"))?;
             cursor.set("wheelTriggered", false)?;
         }
         Ok(())
     }
 
     pub fn set_cursor(&self, x: f64, y: f64, down: bool) -> Result<(), ScriptError> {
-        let cursor: mlua::Table = self.lua.globals().get("cursor")?;
+        let cursor = native_lua_object(&self.lua, NativeLuaObject::Cursor)?
+            .ok_or_else(|| runtime_error("cursor is not a table"))?;
         let was_down = cursor.get::<bool>("down").unwrap_or(false);
         cursor.set("x", x)?;
         cursor.set("y", y)?;

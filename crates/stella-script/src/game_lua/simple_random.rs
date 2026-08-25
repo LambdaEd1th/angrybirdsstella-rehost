@@ -4,7 +4,10 @@ use std::sync::{Mutex, OnceLock};
 
 use mlua::{Lua, MultiValue, Result as LuaResult, Table, Value};
 
-use crate::runtime_error;
+use crate::{
+    native_fcvtzu_f32, native_required_integer, native_required_number, native_required_string,
+    runtime_error,
+};
 
 /// Process-global CMWC source used only by `newSeed`/`newSeedString`.
 #[derive(Debug)]
@@ -66,7 +69,7 @@ pub(crate) fn install(lua: &Lua, globals: &Table) -> LuaResult<()> {
     let simple_random = lua.create_table()?;
     simple_random.set(
         "newSeed",
-        lua.create_function(|_, ()| {
+        lua.create_function(|_, _: MultiValue| {
             Ok(NATIVE_SEED_RANDOM
                 .get_or_init(|| Mutex::new(NativeSeedRandom::new()))
                 .lock()
@@ -76,7 +79,7 @@ pub(crate) fn install(lua: &Lua, globals: &Table) -> LuaResult<()> {
     )?;
     simple_random.set(
         "newSeedString",
-        lua.create_function(|_, ()| {
+        lua.create_function(|_, _: MultiValue| {
             let seed = NATIVE_SEED_RANDOM
                 .get_or_init(|| Mutex::new(NativeSeedRandom::new()))
                 .lock()
@@ -87,11 +90,15 @@ pub(crate) fn install(lua: &Lua, globals: &Table) -> LuaResult<()> {
     )?;
     simple_random.set(
         "newSeedFromNumber",
-        lua.create_function(|_, seed: f64| Ok((seed as f32) as u32))?,
+        lua.create_function(|_, args: MultiValue| {
+            let seed = native_required_number(&args, 0, "newSeedFromNumber")? as f32;
+            Ok(native_fcvtzu_f32(seed))
+        })?,
     )?;
     simple_random.set(
         "newSeedFromString",
-        lua.create_function(|_, seed: String| {
+        lua.create_function(|_, args: MultiValue| {
+            let seed = native_required_string(&args, 0, "newSeedFromString")?;
             Ok(
                 seed_from_decimal_string(&seed).map_or_else(MultiValue::new, |seed| {
                     MultiValue::from_vec(vec![Value::Integer(i64::from(seed))])
@@ -101,13 +108,16 @@ pub(crate) fn install(lua: &Lua, globals: &Table) -> LuaResult<()> {
     )?;
     simple_random.set(
         "random",
-        lua.create_function(|_, (seed, minimum, maximum): (u32, f64, f64)| {
+        lua.create_function(|_, args: MultiValue| {
+            let seed = native_required_integer(&args, 0, "random")? as u32;
+            let minimum = native_required_number(&args, 1, "random")? as f32;
+            let maximum = native_required_number(&args, 2, "random")? as f32;
             let mut next = seed.wrapping_mul(214_013).wrapping_add(2_531_011);
             if next == u32::MAX {
                 next = next.wrapping_add(1);
             }
-            let minimum = (minimum as f32) as u32;
-            let maximum = (maximum as f32) as u32;
+            let minimum = native_fcvtzu_f32(minimum);
+            let maximum = native_fcvtzu_f32(maximum);
             let span = 1_u32.wrapping_sub(minimum).wrapping_add(maximum);
             if span == 0 {
                 return Err(runtime_error(
@@ -120,7 +130,10 @@ pub(crate) fn install(lua: &Lua, globals: &Table) -> LuaResult<()> {
     )?;
     simple_random.set(
         "seedToString",
-        lua.create_function(|_, seed: u32| Ok(seed.to_string()))?,
+        lua.create_function(|_, args: MultiValue| {
+            let seed = native_required_integer(&args, 0, "seedToString")? as u32;
+            Ok(seed.to_string())
+        })?,
     )?;
     globals.set("SimpleRandomNative", simple_random)?;
     Ok(())

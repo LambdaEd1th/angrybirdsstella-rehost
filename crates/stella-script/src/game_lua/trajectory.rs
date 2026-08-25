@@ -2,7 +2,9 @@
 
 use mlua::{Lua, Result as LuaResult, Value};
 
-use crate::{SceneObject, game_environment, native_fcvtzs_f32, value_number};
+use crate::{
+    NativeLuaObject, SceneObject, native_fcvtzs_f32, native_lua_object, native_lua51_number,
+};
 
 /// One of the two native 0x38-byte flight-trail records beginning at
 /// GameLua+0x558. These records are independent from the simulation trajectory
@@ -85,59 +87,57 @@ pub(crate) fn step_native_trajectory_body(
     object.apply_native_trajectory_velocity_step(step, velocity_x, velocity_y, angular_velocity);
 }
 
-pub(crate) fn native_trajectory_settings(lua: &Lua) -> LuaResult<(f32, i32, f32, i32)> {
-    let environment = game_environment(lua)?;
+pub(crate) fn native_trajectory_current_time_step(lua: &Lua) -> LuaResult<f32> {
     // GameLua+0x408/+0x420 is the persistent LuaObject named `objects`.
     // Both sub_100032970 and sub_10004B8EC resolve currentTimeStep from that
     // table, not from the global environment. GameScene deliberately selects
     // 1/90 while a bird is aimed and 1/30 otherwise.
-    let objects = environment.get::<mlua::Table>("objects").ok();
-    let current_time_step = objects
+    let objects = native_lua_object(lua, NativeLuaObject::Objects)?;
+    Ok(objects
         .as_ref()
         .and_then(|objects| objects.get::<Value>("currentTimeStep").ok())
         .as_ref()
-        .and_then(value_number)
-        .map_or(f32::from_bits(0x3cea_0ea1), |value| value as f32);
-    let world_attributes = environment.get::<mlua::Table>("worldAttributes").ok();
-    let attribute_number = |name: &str, fallback: f32| {
+        .and_then(native_lua51_number)
+        .map_or(f32::from_bits(0x3cea_0ea1), |value| value as f32))
+}
+
+pub(crate) fn native_aiming_time_iterations(lua: &Lua) -> LuaResult<i32> {
+    let world_attributes = native_lua_object(lua, NativeLuaObject::WorldAttributes)?;
+    let iterations = world_attributes
+        .as_ref()
+        .and_then(|attributes| attributes.get::<Value>("simulationIterations").ok())
+        .as_ref()
+        .and_then(native_lua51_number)
+        .map_or(0.0_f32, |value| value as f32);
+    // Unlike the BirdSimulation predictor, getAimingTime
+    // (`sub_10004B8EC`) resolves the retained worldAttributes LuaObject on
+    // every call and applies FCVTZS to its current simulationIterations.
+    Ok(native_fcvtzs_f32(iterations))
+}
+
+pub(crate) fn native_trajectory_level_settings(lua: &Lua) -> LuaResult<(i32, f32, i32, f32, f32)> {
+    let world_attributes = native_lua_object(lua, NativeLuaObject::WorldAttributes)?;
+    let attribute_number = |name: &str| {
         world_attributes
             .as_ref()
             .and_then(|attributes| attributes.get::<Value>(name).ok())
             .as_ref()
-            .and_then(value_number)
-            .map_or(fallback, |value| value as f32)
+            .and_then(native_lua51_number)
+            .map_or(0.0_f32, |value| value as f32)
     };
-    // Level initialization at sub_100066978 narrows both integer fields with
-    // FCVTZS and retains the time multiplier as float32.
-    let iterations = native_fcvtzs_f32(attribute_number("simulationIterations", 50.0_f32));
-    let time_step_multiplier = attribute_number("simulationTimeStepMultiplier", 3.0_f32);
-    let point_sampler =
-        native_fcvtzs_f32(attribute_number("simulationStorePointsSampler", 1.0_f32));
+    // loadLevelImpl at sub_100066978 reads all five values with Lua 5.1's
+    // lua_tonumber semantics, narrows the two integer fields with FCVTZS and
+    // writes them to GameLua+0x4F8..+0x508. Missing/non-numeric values become
+    // zero; no trajectory or AimStream member rereads worldAttributes later.
+    let iterations = native_fcvtzs_f32(attribute_number("simulationIterations"));
+    let time_step_multiplier = attribute_number("simulationTimeStepMultiplier");
+    let point_sampler = native_fcvtzs_f32(attribute_number("simulationStorePointsSampler"));
     Ok((
-        current_time_step,
         iterations,
         time_step_multiplier,
         point_sampler,
-    ))
-}
-
-pub(crate) fn native_aim_stream_settings(lua: &Lua) -> LuaResult<(f32, f32)> {
-    let environment = game_environment(lua)?;
-    let world_attributes = environment.get::<mlua::Table>("worldAttributes").ok();
-    let attribute = |name: &str, fallback: f32| {
-        world_attributes
-            .as_ref()
-            .and_then(|attributes| attributes.get::<Value>(name).ok())
-            .as_ref()
-            .and_then(value_number)
-            .map_or(fallback, |value| value as f32)
-    };
-    // AimStream's constructor stores 0.6f/4.0f. Level initialization at
-    // sub_100066A6C replaces them with the two worldAttributes float32s (the
-    // shipped table uses 0.6f/5.0f), resets both vectors and deactivates it.
-    Ok((
-        attribute("simulationAimSpawnTime", 0.6_f32),
-        attribute("simulationAimSpeed", 4.0_f32),
+        attribute_number("simulationAimSpawnTime"),
+        attribute_number("simulationAimSpeed"),
     ))
 }
 

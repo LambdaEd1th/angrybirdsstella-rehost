@@ -57,13 +57,4 @@ impl RenderBridge {
         self.capture_commands
             .push(CaptureRenderCommand { order, name });
     }
-
-    pub(crate) fn extend_rect_commands(
-        &mut self,
-        commands: impl IntoIterator<Item = RectRenderCommand>,
-    ) {
-        for command in commands {
-            self.push_rect_command(command);
-        }
-    }
 }

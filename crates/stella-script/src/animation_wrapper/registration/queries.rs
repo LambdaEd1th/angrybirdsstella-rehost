@@ -14,7 +14,9 @@ pub(super) fn install_entities(
     let known_animation_entities = Arc::clone(&animation_runtime);
     animation_native.set(
         "containsEntity",
-        lua.create_function(move |_, (tag, entity): (String, String)| {
+        lua.create_function(move |_, args: MultiValue| {
+            let tag = native_required_string(&args, 0, "containsEntity")?;
+            let entity = native_required_string(&args, 1, "containsEntity")?;
             Ok(known_animation_entities
                 .lock()
                 .expect("animation runtime lock poisoned")
@@ -28,7 +30,9 @@ pub(super) fn install_entities(
     let runtime = Arc::clone(&animation_runtime);
     animation_native.set(
         "getEntityPosition",
-        lua.create_function(move |_, (tag, entity): (String, String)| {
+        lua.create_function(move |_, args: MultiValue| {
+            let tag = native_required_string(&args, 0, "getEntityPosition")?;
+            let entity = native_required_string(&args, 1, "getEntityPosition")?;
             let runtime = runtime.lock().expect("animation runtime lock poisoned");
             Ok(animation_entity_local_transform(&runtime, &tag, &entity)
                 .map_or((0.0, 0.0), |transform| (transform.x, transform.y)))
@@ -37,7 +41,9 @@ pub(super) fn install_entities(
     let runtime = Arc::clone(&animation_runtime);
     animation_native.set(
         "getEntityWorldPosition",
-        lua.create_function(move |_, (tag, entity): (String, String)| {
+        lua.create_function(move |_, args: MultiValue| {
+            let tag = native_required_string(&args, 0, "getEntityWorldPosition")?;
+            let entity = native_required_string(&args, 1, "getEntityWorldPosition")?;
             let runtime = runtime.lock().expect("animation runtime lock poisoned");
             Ok(animation_entity_world_affine(&runtime, &tag, &entity)
                 .map_or((0.0, 0.0), |transform| (transform.x, transform.y)))
@@ -46,7 +52,9 @@ pub(super) fn install_entities(
     let runtime = Arc::clone(&animation_runtime);
     animation_native.set(
         "getEntityScale",
-        lua.create_function(move |_, (tag, entity): (String, String)| {
+        lua.create_function(move |_, args: MultiValue| {
+            let tag = native_required_string(&args, 0, "getEntityScale")?;
+            let entity = native_required_string(&args, 1, "getEntityScale")?;
             let runtime = runtime.lock().expect("animation runtime lock poisoned");
             Ok(
                 animation_entity_local_transform(&runtime, &tag, &entity).map_or(
@@ -65,7 +73,9 @@ pub(super) fn install_entities(
     let runtime = Arc::clone(&animation_runtime);
     animation_native.set(
         "getEntityWorldScale",
-        lua.create_function(move |_, (tag, entity): (String, String)| {
+        lua.create_function(move |_, args: MultiValue| {
+            let tag = native_required_string(&args, 0, "getEntityWorldScale")?;
+            let entity = native_required_string(&args, 1, "getEntityWorldScale")?;
             let runtime = runtime.lock().expect("animation runtime lock poisoned");
             Ok(animation_entity_world_affine(&runtime, &tag, &entity)
                 .map_or((1.0, 1.0), |transform| {
@@ -76,7 +86,9 @@ pub(super) fn install_entities(
     let entity_transform_runtime = Arc::clone(&animation_runtime);
     animation_native.set(
         "getEntityWorldTransform",
-        lua.create_function(move |_, (tag, entity): (String, String)| {
+        lua.create_function(move |_, args: MultiValue| {
+            let tag = native_required_string(&args, 0, "getEntityWorldTransform")?;
+            let entity = native_required_string(&args, 1, "getEntityWorldTransform")?;
             let runtime = entity_transform_runtime
                 .lock()
                 .expect("animation runtime lock poisoned");
@@ -103,7 +115,9 @@ pub(super) fn install_entities(
     let runtime = Arc::clone(&animation_runtime);
     animation_native.set(
         "getEntityWorldBounds",
-        lua.create_function(move |_, (tag, entity): (String, String)| {
+        lua.create_function(move |_, args: MultiValue| {
+            let tag = native_required_string(&args, 0, "getEntityWorldBounds")?;
+            let entity = native_required_string(&args, 1, "getEntityWorldBounds")?;
             let runtime = runtime.lock().expect("animation runtime lock poisoned");
             let [left, top, right, bottom] = animation_entity_world_bounds(&runtime, &tag, &entity);
             Ok((left, top, right, bottom))
@@ -120,7 +134,8 @@ pub(super) fn install_actions(
     let runtime = Arc::clone(&animation_runtime);
     animation_native.set(
         "getActions",
-        lua.create_function(move |lua, tag: String| {
+        lua.create_function(move |lua, args: MultiValue| {
+            let tag = native_required_string(&args, 0, "getActions")?;
             let table = lua.create_table()?;
             if let Some(actions) = runtime
                 .lock()
