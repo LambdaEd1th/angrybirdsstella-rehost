@@ -76,8 +76,9 @@ pub(crate) struct SceneObject {
     pub(crate) sprite_bound: bool,
     pub(crate) sprite_region: Option<Arc<SpriteCatalogRegion>>,
     pub(crate) composite_sprite: Option<Arc<Vec<BoundCompositePart>>>,
-    pub(crate) texture: Option<Arc<str>>,
-    pub(crate) texture_binding: Option<Arc<MaskedTextureBinding>>,
+    /// Retained fill-image pointer and its masked-draw inputs. Purple stores
+    /// the image pointer on RenderObjectData and reuses it on every draw.
+    pub(crate) texture: Option<Arc<SpriteTextureSubmission>>,
     pub(crate) texture_scale: f64,
     pub(crate) x: f64,
     pub(crate) y: f64,

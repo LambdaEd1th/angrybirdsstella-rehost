@@ -34,8 +34,6 @@ fn near_degenerate_atlas_matrix_is_submitted_without_a_host_epsilon_cull() {
         order: 0,
         sprite: "TINY".into(),
         texture: None,
-        texture_scale: 1.0,
-        masked_texture_binding: None,
         bound_region: None,
         bound_composite: None,
         geometry: None,
@@ -99,8 +97,6 @@ fn native_explicit_quad_reaches_gpu_in_recovered_triangle_and_uv_order() {
         order: 0,
         sprite: "MASK".into(),
         texture: None,
-        texture_scale: 1.0,
-        masked_texture_binding: None,
         bound_region: Some(
             SpriteCatalogRegion {
                 native_sheet_id: 1,
@@ -182,8 +178,6 @@ fn native_atlas_quad_keeps_positions_and_signed_rotated_region_uvs() {
         order: 0,
         sprite: "RUBBER".into(),
         texture: None,
-        texture_scale: 1.0,
-        masked_texture_binding: None,
         bound_region: Some(
             SpriteCatalogRegion {
                 native_sheet_id: 1,
@@ -261,8 +255,6 @@ fn render_state_pivot_is_not_applied_twice_after_native_sprite_anchoring() {
         order: 0,
         sprite: "PIVOT_SPRITE".into(),
         texture: None,
-        texture_scale: 1.0,
-        masked_texture_binding: None,
         bound_region: None,
         bound_composite: None,
         geometry: None,
@@ -324,8 +316,6 @@ fn explicit_sprite_pivot_override_replaces_an_atlas_pivot() {
         order: 0,
         sprite: "PANEL".into(),
         texture: None,
-        texture_scale: 1.0,
-        masked_texture_binding: None,
         bound_region: None,
         bound_composite: None,
         geometry: None,
@@ -363,8 +353,6 @@ fn retained_animation_region_draws_after_active_resource_catalog_release() {
         order: 0,
         sprite: "RETAINED".into(),
         texture: None,
-        texture_scale: 1.0,
-        masked_texture_binding: None,
         bound_region: Some(
             SpriteCatalogRegion {
                 native_sheet_id: 1,
@@ -421,9 +409,11 @@ fn selected_sprite_uses_its_submission_time_mask_texture_pointer() {
     let command = RenderCommand {
         order: 0,
         sprite: "SELECTED".into(),
-        texture: Some("MASK".to_owned()),
-        texture_scale: 0.25,
-        masked_texture_binding: Some(MaskedTextureBinding::Source(retained_mask.clone())),
+        texture: Some(Arc::new(stella_script::SpriteTextureSubmission {
+            name: Arc::from("MASK"),
+            scale: 0.25,
+            binding: MaskedTextureBinding::Source(retained_mask.clone()),
+        })),
         bound_region: Some(
             SpriteCatalogRegion {
                 native_sheet_id: 1,
@@ -483,8 +473,6 @@ fn retained_scene_composite_draws_its_frozen_child_after_catalog_release() {
         order: 0,
         sprite: "RETAINED_COMPOSITE".into(),
         texture: None,
-        texture_scale: 1.0,
-        masked_texture_binding: None,
         bound_region: None,
         bound_composite: Some(
             vec![BoundCompositePart {
@@ -564,8 +552,6 @@ fn rotated_native_pivot_and_non_uniform_scale_reach_gpu_vertices_exactly() {
         order: 0,
         sprite: "ROTATED_PIVOT_SPRITE".into(),
         texture: None,
-        texture_scale: 1.0,
-        masked_texture_binding: None,
         bound_region: None,
         bound_composite: None,
         geometry: None,

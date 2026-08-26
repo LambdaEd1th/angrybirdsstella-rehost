@@ -84,8 +84,6 @@ pub(crate) fn native_resource_sprite_command(
         order: 0,
         sprite: draw.sprite.into(),
         texture: None,
-        texture_scale: 1.0,
-        masked_texture_binding: None,
         bound_region,
         bound_composite,
         geometry: None,

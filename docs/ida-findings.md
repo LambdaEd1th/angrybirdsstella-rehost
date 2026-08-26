@@ -14258,3 +14258,62 @@ zero remaining compatibility bindings and empty stderr; its PNG SHA-256 is
 The stripped `stella-app` and `stella-headless` hashes are respectively
 `b1558834edc64f8a6a9efb715f5167e8d1a265e419f7af44b55fee1ff0f936c1`
 and `a8c0baaa470033dd6baedeb6ed6de19b6d11d88069d452ab574acb54a06160a2`.
+
+## Retained alpha-masked texture submission payload
+
+The next common-command audit found three more fields that ordinary sprites
+never use: an owned fill-image name, its scale and an optional resolved image
+binding. They survived from the earlier masked-terrain reconstruction, but
+the Rust command copied the name and binding on every scene submission even
+though `SceneObject` had already retained both native-style owners. This was
+also structurally different from Purple: the optional masked path is selected
+by an image pointer, not by embedding an image descriptor in every draw.
+
+IDA's decompilation of `sub_10008D428` shows the complete special-call
+boundary. After viewport rejection it writes argument `a2` to renderer
+`+0x28`, resolves the mask image from the AtlasSprite and writes that pointer
+to `+0x30`; only then does it divide the fill-image width and height by scalar
+arguments `a6/a7` and emit six position, fill-coordinate and mask-coordinate
+vertices. Hopper independently shows the same `r19[5] = r21`, `r19[6] =
+resolvedImage` stores and the later divisions by its stack scalars
+`var_138/var_134`. Together with the previously recovered
+`sub_10004BAB4` branch, `setTexture` image pointer at RenderObjectData `+0x80`
+and float32 texture scale at `+0xC4`, both tools establish that this is one
+rare retained pointer payload rather than common inline state.
+
+`RenderCommand` now has one optional `Arc<SpriteTextureSubmission>` containing
+the retained name, float32-derived scale and submission-time image binding.
+The live `SceneObject`, its scalar draw snapshot and every unchanged deferred
+command share the same allocation. `setTextureScale` updates the live payload
+with `Arc::make_mut`, so a command already queued in the current immediate
+stream keeps its old scale while subsequent draws observe the new one.
+Selected-texturized-object calls create the same explicit payload once for
+their one-shot submission; all ordinary animation, theme, particle,
+trajectory and resource commands carry only `None`. The common 64-bit command
+therefore falls from 392 to 360 bytes. Pointer-identity and queued-before-
+setter regressions lock both ownership cases.
+
+Three alternating Chapter02 L16 runs issue 30,000 complete
+`drawGameNative` submissions. The retained-shader/Dirt baseline reports
+median real/user/system times of 1.83/1.62/0.20 seconds and a median maximum
+resident set of 1,992,785,920 bytes. The retained texture-payload build
+reports 1.75/1.58/0.16 seconds and 1,763,803,136 bytes, reductions of about
+4.4 percent real time, 2.5 percent user CPU, 20.0 percent system CPU and 11.5
+percent peak resident memory in this deliberately retained-command-heavy
+diagnostic.
+
+The previously recovered rectangular-water branch was rechecked at the same
+checkpoint rather than approximated through the texture change. A direct
+real-wgpu Chapter02 L16 load renders the translucent blue volume over the
+four-porthole structure, submits no red editor cross and produces empty
+stderr; its PNG SHA-256 is
+`d0fffab9fe0a41408e014a73bcbb840edbaefc455eef3db93d83e82dce4ce01e`.
+The complete workspace passes 671 tests with the intentional long-duration
+BirdRun audit ignored. Formatting, diff whitespace, strict all-target and
+all-feature Clippy, doc tests and the locked stripped release build are clean.
+A final 1,200-frame real-wgpu map smoke test reports zero invoked fallbacks,
+zero remaining compatibility bindings and empty stderr; its PNG SHA-256 is
+`95aa759f1b8fc15e6f6e8b7244b8c7420c23b3490dec0415bba08697c09b93c6`.
+The stripped `stella-app` and `stella-headless` hashes are respectively
+`0eefd9d1ae02b52ed774219706f7b588584208f021da9c217567e9a57e82149d`
+and `18d4a660c7c4ad38cb82c045e70a795d6cb7840ccb8e7b78c327b64df72532e0`.

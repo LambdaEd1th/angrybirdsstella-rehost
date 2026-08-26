@@ -234,8 +234,8 @@ impl AssetCatalog {
             eprintln!(
                 "render[{index}] sprite={:?} texture={:?}@{:.4} dirt={} draw=({:.2},{:.2}) size={:?} state=({:.2},{:.2}; {:.3},{:.3}; angle={:.3}; pivot={:.2},{:.2}; alpha={:.3})",
                 command.sprite,
-                command.texture,
-                command.texture_scale,
+                command.texture_name(),
+                command.texture_scale(),
                 command.dirt.is_some(),
                 command.x,
                 command.y,
@@ -288,11 +288,11 @@ impl AssetCatalog {
             state.draw_size,
             state.sprite_pivot,
             state.masked_texture_matrix,
-            command.texture.as_deref().map(|texture| {
+            command.texture_name().map(|texture| {
                 (
                     texture,
-                    command.texture_scale,
-                    command.masked_texture_binding.as_ref(),
+                    command.texture_scale(),
+                    command.masked_texture_binding(),
                 )
             }),
             command.shader.as_deref(),

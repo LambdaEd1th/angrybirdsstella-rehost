@@ -54,8 +54,11 @@ pub(crate) fn install(
                 .ok_or_else(|| runtime_error(format!("Missing object: {name}")))?;
             // sub_10004CC74 writes the resource name at +0x70, resolves the
             // texture pointer into +0x80, and performs no Lua reflection.
-            object.texture = Some(texture.into());
-            object.texture_binding = Some(Arc::new(texture_binding));
+            object.texture = Some(Arc::new(SpriteTextureSubmission {
+                name: texture.into(),
+                scale: object.texture_scale,
+                binding: texture_binding,
+            }));
             Ok(())
         })?,
     )?;
@@ -76,6 +79,12 @@ pub(crate) fn install(
             // sub_10004CE38 stores the generated adapter's float32 scalar at
             // RenderObjectData+0xC4 and performs no Lua-world reflection.
             object.texture_scale = scale;
+            if let Some(texture) = object.texture.as_mut() {
+                // A command queued before this setter retains the old native
+                // submission snapshot; the live RenderObjectData pointer gets
+                // the new scalar for all subsequent draws.
+                Arc::make_mut(texture).scale = scale;
+            }
             Ok(())
         })?,
     )?;

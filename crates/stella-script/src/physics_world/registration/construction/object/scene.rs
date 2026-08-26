@@ -47,7 +47,6 @@ pub(super) fn insert(render: &Arc<Mutex<RenderBridge>>, prepared: PreparedConstr
         sprite_region,
         composite_sprite,
         texture: None,
-        texture_binding: None,
         texture_scale: 1.0,
         x: request.x,
         y: request.y,

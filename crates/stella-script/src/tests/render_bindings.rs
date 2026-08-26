@@ -40,7 +40,7 @@ fn recovered_native_sprite_helpers_emit_every_requested_layer() {
         .iter()
         .find(|command| command.sprite == "MASK")
         .unwrap();
-    assert_eq!(selected.texture.as_deref(), Some("FILL"));
+    assert_eq!(selected.texture_name(), Some("FILL"));
     assert_eq!(selected.x, 40.0);
     assert_eq!(selected.y, f64::from((2.0_f32 * 20.0_f32) / 0.75_f32));
     assert_eq!(
@@ -1305,7 +1305,7 @@ fn selected_object_submission_retains_both_native_image_pointers() {
             .texture_source
             .ends_with("first/first.pvr")
     );
-    match command.masked_texture_binding.as_ref().unwrap() {
+    match command.masked_texture_binding().unwrap() {
         MaskedTextureBinding::Source(source) => assert!(source.ends_with("first/first.pvr")),
         MaskedTextureBinding::Missing => panic!("mask image was resolved at submission"),
     }

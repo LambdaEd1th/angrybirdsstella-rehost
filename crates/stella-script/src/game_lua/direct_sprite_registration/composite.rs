@@ -67,8 +67,6 @@ pub(super) fn install(
                     order: 0,
                     sprite: part.sprite.into(),
                     texture: None,
-                    texture_scale: 1.0,
-                    masked_texture_binding: None,
                     bound_region: Some(bound_region.into()),
                     bound_composite: None,
                     geometry: None,

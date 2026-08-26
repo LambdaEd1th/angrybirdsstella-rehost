@@ -77,8 +77,6 @@ pub(super) fn install(
                 order: 0,
                 sprite: sprite.into(),
                 texture: None,
-                texture_scale: 1.0,
-                masked_texture_binding: None,
                 bound_region,
                 bound_composite: None,
                 geometry: Some(SpriteGeometrySubmission::ExplicitQuad(Arc::new(

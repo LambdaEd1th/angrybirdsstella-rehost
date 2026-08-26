@@ -45,6 +45,20 @@ pub enum MaskedTextureBinding {
     Source(String),
 }
 
+/// Retained inputs for Purple's optional alpha-masked texture branch.
+///
+/// `sub_10008D428` receives the fill image as one pointer, resolves the mask
+/// image from the AtlasSprite passed beside it, and consumes both axis scales
+/// only on that branch. Ordinary sprite submissions therefore must not carry
+/// an inline string, scale and binding payload. The deferred host retains the
+/// same selected image state behind one pointer instead.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SpriteTextureSubmission {
+    pub name: Arc<str>,
+    pub scale: f64,
+    pub binding: MaskedTextureBinding,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct RenderQuad {
     /// Vertex order consumed by the immediate renderer. `PreparedFrame`
@@ -161,12 +175,10 @@ pub struct RenderCommand {
     /// sharing the immutable label preserves that ownership boundary without
     /// allocating again for every deferred command.
     pub sprite: SharedSpriteName,
-    pub texture: Option<String>,
-    pub texture_scale: f64,
-    /// Submission-time image pointer used by alpha-masked sprite programs.
-    /// `None` retains the dynamic-name path for components whose ownership
-    /// has not selected an explicit image at command creation.
-    pub masked_texture_binding: Option<MaskedTextureBinding>,
+    /// Optional fill-image state supplied as a pointer to Purple's masked
+    /// sprite member. Keeping the complete rare branch out-of-line makes the
+    /// overwhelmingly common untextured command pointer-sized here.
+    pub texture: Option<Arc<SpriteTextureSubmission>>,
     /// AtlasSprite pointer retained by a native scene component or immediate
     /// draw submission. Deferred commands share that immutable owner instead
     /// of copying its texture path and region name on every frame. This also
@@ -197,6 +209,20 @@ pub struct RenderCommand {
     pub y: f64,
     pub state: RenderState,
     pub world_space: bool,
+}
+
+impl RenderCommand {
+    pub fn texture_name(&self) -> Option<&str> {
+        self.texture.as_deref().map(|texture| texture.name.as_ref())
+    }
+
+    pub fn texture_scale(&self) -> f64 {
+        self.texture.as_deref().map_or(1.0, |texture| texture.scale)
+    }
+
+    pub fn masked_texture_binding(&self) -> Option<&MaskedTextureBinding> {
+        self.texture.as_deref().map(|texture| &texture.binding)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -302,6 +328,11 @@ mod deferred_payload_tests {
             std::mem::size_of::<Option<Arc<DirtRenderCommand>>>(),
             std::mem::size_of::<usize>()
         );
+        assert_eq!(
+            std::mem::size_of::<Option<Arc<SpriteTextureSubmission>>>(),
+            std::mem::size_of::<usize>()
+        );
+        assert!(std::mem::size_of::<RenderCommand>() <= 360);
         assert!(
             std::mem::size_of::<RenderCommand>()
                 < std::mem::size_of::<RenderState>()

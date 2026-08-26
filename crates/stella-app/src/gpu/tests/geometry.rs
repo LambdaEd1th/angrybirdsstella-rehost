@@ -150,8 +150,6 @@ fn dirt_mesh_uses_constructor_time_texture_pointers_after_catalog_shadowing() {
         order: 0,
         sprite: "DIRT".into(),
         texture: None,
-        texture_scale: 1.0,
-        masked_texture_binding: None,
         bound_region: None,
         bound_composite: None,
         geometry: None,

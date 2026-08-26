@@ -123,8 +123,6 @@ fn ordinary_atlas_submission_preserves_the_surface_format_program_branch() {
         order,
         sprite: "OPAQUE_SPRITE".into(),
         texture: None,
-        texture_scale: 1.0,
-        masked_texture_binding: None,
         bound_region: None,
         bound_composite: None,
         geometry: None,

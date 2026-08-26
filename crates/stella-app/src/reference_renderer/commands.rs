@@ -55,8 +55,8 @@ pub(super) fn render_game(
             eprintln!(
                 "render[{index}] sprite={:?} texture={:?}@{:.4} draw=({:.2},{:.2}) size={:?} state=({:.2},{:.2}; {:.3},{:.3}; angle={:.3}; pivot={:.2},{:.2}; alpha={:.3})",
                 command.sprite,
-                command.texture,
-                command.texture_scale,
+                command.texture_name(),
+                command.texture_scale(),
                 command.x,
                 command.y,
                 state.draw_size,
@@ -93,9 +93,8 @@ pub(super) fn render_game(
             0,
             SpriteDrawOptions {
                 masked_texture: command
-                    .texture
-                    .as_deref()
-                    .map(|texture| (texture, command.texture_scale)),
+                    .texture_name()
+                    .map(|texture| (texture, command.texture_scale())),
                 masked_texture_matrix: state.masked_texture_matrix,
                 shader: command.shader.as_deref(),
                 clip_holes: &command.clip_holes,

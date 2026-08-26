@@ -72,9 +72,11 @@ pub(super) fn install(
             bridge.push_render_command(RenderCommand {
                 order: 0,
                 sprite: sprite.into(),
-                texture: Some(texture),
-                texture_scale: 1.0,
-                masked_texture_binding: Some(masked_texture_binding),
+                texture: Some(Arc::new(SpriteTextureSubmission {
+                    name: texture.into(),
+                    scale: 1.0,
+                    binding: masked_texture_binding,
+                })),
                 bound_region,
                 bound_composite: None,
                 geometry: None,

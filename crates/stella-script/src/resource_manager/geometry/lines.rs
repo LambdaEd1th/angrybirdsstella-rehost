@@ -95,8 +95,6 @@ impl SpriteGeometry {
             order: 0,
             sprite: sprite.into(),
             texture: None,
-            texture_scale: 1.0,
-            masked_texture_binding: None,
             bound_region: bound_region.map(Arc::new),
             bound_composite: None,
             geometry: Some(SpriteGeometrySubmission::NativeAtlasQuad(Arc::new(
@@ -185,8 +183,6 @@ impl SpriteGeometry {
             order: 0,
             sprite: sprite.into(),
             texture: None,
-            texture_scale: 1.0,
-            masked_texture_binding: None,
             bound_region: bound_region.map(Arc::new),
             bound_composite: None,
             geometry: Some(SpriteGeometrySubmission::NativeAtlasQuad(Arc::new(

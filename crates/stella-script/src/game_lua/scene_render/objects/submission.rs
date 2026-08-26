@@ -100,9 +100,7 @@ impl RenderBridge {
             .then(|| RenderCommand {
                 order: 0,
                 sprite: object.sprite.clone().into(),
-                texture: object.texture.as_deref().map(str::to_owned),
-                texture_scale: object.texture_scale,
-                masked_texture_binding: object.texture_binding.as_deref().cloned(),
+                texture: object.texture.clone(),
                 // Purple passes the retained RenderObjectData resource
                 // pointers at +0x90/+0x78 into its immediate draw member.
                 // Keep both immutable owners shared across the deferred wgpu
@@ -211,8 +209,6 @@ impl RenderBridge {
                 order: 0,
                 sprite: sprite.clone(),
                 texture: None,
-                texture_scale: 1.0,
-                masked_texture_binding: None,
                 bound_region: bound_region.clone(),
                 bound_composite: bound_composite.clone(),
                 geometry: None,

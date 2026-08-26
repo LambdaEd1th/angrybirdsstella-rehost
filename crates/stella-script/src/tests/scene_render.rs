@@ -933,7 +933,13 @@ fn native_scene_draw_command_retains_the_same_name_and_atlas_pointers() {
     let runtime = StellaLua::new(std::env::temp_dir()).unwrap();
     register_test_sprite_sheet(&runtime, &["BODY"]);
     runtime
-        .execute_source(r#"createNonPhysicsObject("body", "BODY", 0, 0, 3)"#)
+        .execute_source(
+            r#"
+                createNonPhysicsObject("body", "BODY", 0, 0, 3)
+                setTextureScale("body", 0.25)
+                setTexture("body", "FILL")
+            "#,
+        )
         .unwrap();
 
     let bridge = runtime.render.lock().unwrap();
@@ -952,11 +958,18 @@ fn native_scene_draw_command_retains_the_same_name_and_atlas_pointers() {
     assert!(Arc::ptr_eq(&scene_object.sprite, &snapshot.sprite));
     let snapshot_region = snapshot.sprite_region.as_ref().unwrap();
     assert!(Arc::ptr_eq(retained, snapshot_region));
+    let retained_texture = scene_object.texture.as_ref().unwrap();
+    let snapshot_texture = snapshot.texture.as_ref().unwrap();
+    assert!(Arc::ptr_eq(retained_texture, snapshot_texture));
 
     let command = bridge.scene_object_command(&snapshot).unwrap();
     assert!(Arc::ptr_eq(&snapshot.sprite, command.sprite.as_arc()));
     let command_region = command.bound_region.as_ref().unwrap();
     assert!(Arc::ptr_eq(retained, command_region));
+    let command_texture = command.texture.as_ref().unwrap();
+    assert!(Arc::ptr_eq(retained_texture, command_texture));
+    assert_eq!(command.texture_name(), Some("FILL"));
+    assert_eq!(command.texture_scale(), 0.25);
 }
 
 #[test]
@@ -1540,10 +1553,10 @@ fn native_texture_state_reaches_scene_render_commands() {
     );
     let bridge = runtime.render.lock().unwrap();
     assert_eq!(
-        bridge.commands[0].texture.as_deref(),
+        bridge.commands[0].texture_name(),
         Some("THEME_HOMETREE_BG_TEXTURE_1")
     );
-    assert_eq!(bridge.commands[0].texture_scale, f64::from(0.0932025_f32));
+    assert_eq!(bridge.commands[0].texture_scale(), f64::from(0.0932025_f32));
     let expected_matrix = RenderState::native_masked_texture_matrix(
         20.0,
         40.0,
@@ -1557,6 +1570,7 @@ fn native_texture_state_reaches_scene_render_commands() {
         bridge.commands[0].state.masked_texture_matrix,
         Some(expected_matrix)
     );
+    let retained_texture = bridge.commands[0].texture.as_ref().unwrap().clone();
     let original_screen_x = bridge.commands[0].state.translate_x;
     drop(bridge);
 
@@ -1571,12 +1585,41 @@ fn native_texture_state_reaches_scene_render_commands() {
         )
         .unwrap();
     let bridge = runtime.render.lock().unwrap();
+    assert!(Arc::ptr_eq(
+        &retained_texture,
+        bridge.commands[0].texture.as_ref().unwrap()
+    ));
     assert_ne!(bridge.commands[0].state.translate_x, original_screen_x);
     assert_eq!(
         bridge.commands[0].state.masked_texture_matrix,
         Some(expected_matrix),
         "camera movement must not make the terrain texture swim"
     );
+}
+
+#[test]
+fn texture_scale_update_preserves_an_already_queued_native_submission() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .execute_source(
+            r#"
+                createNonPhysicsObject("textured", "RED_CROSS", 0, 0, 1)
+                setTexture("textured", "FILL")
+                drawGameNative()
+                setTextureScale("textured", 0.25)
+                drawGameNative()
+            "#,
+        )
+        .unwrap();
+
+    let bridge = runtime.render.lock().unwrap();
+    assert_eq!(bridge.commands.len(), 2);
+    assert_eq!(bridge.commands[0].texture_scale(), 1.0);
+    assert_eq!(bridge.commands[1].texture_scale(), 0.25);
+    assert!(!Arc::ptr_eq(
+        bridge.commands[0].texture.as_ref().unwrap(),
+        bridge.commands[1].texture.as_ref().unwrap()
+    ));
 }
 
 #[test]
@@ -1605,11 +1648,11 @@ fn chapter02_themed_terrain_keeps_native_world_anchored_fill_matrices() {
     let terrain = bridge
         .commands
         .iter()
-        .filter(|command| command.texture.as_deref() == Some("THEME_HOMETREE_BOTTOM_TEXTURE_1"))
+        .filter(|command| command.texture_name() == Some("THEME_HOMETREE_BOTTOM_TEXTURE_1"))
         .collect::<Vec<_>>();
     assert!(terrain.len() >= 2, "Chapter02_L01 lost its themed terrain");
     assert!(terrain.iter().all(|command| {
-        command.texture_scale == f64::from(0.0932025_f32)
+        command.texture_scale() == f64::from(0.0932025_f32)
             && command.state.masked_texture_matrix.is_some()
     }));
     let first_origin = terrain[0].state.masked_texture_matrix.unwrap()[..2].to_vec();
@@ -1756,7 +1799,7 @@ fn set_texture_retains_its_resolved_native_image_pointer_across_replacement() {
     assert_eq!(bridge.commands.len(), 1);
     let command = &bridge.commands[0];
     assert_eq!(command.bound_region.as_ref().unwrap().sprite.width, 12);
-    match command.masked_texture_binding.as_ref().unwrap() {
+    match command.masked_texture_binding().unwrap() {
         MaskedTextureBinding::Source(source) => assert!(source.ends_with("first/first.pvr")),
         MaskedTextureBinding::Missing => panic!("setTexture resolved a live image"),
     }
