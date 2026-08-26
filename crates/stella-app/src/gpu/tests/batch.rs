@@ -249,7 +249,7 @@ fn mixed_command_classes_keep_native_immediate_submission_order() {
     };
     let sprite = RenderCommand {
         order: 1,
-        sprite: "ORDER_SPRITE".to_owned(),
+        sprite: "ORDER_SPRITE".into(),
         texture: None,
         texture_scale: 1.0,
         masked_texture_binding: None,
@@ -329,7 +329,7 @@ fn capture_sprite_copies_the_immediate_framebuffer_for_later_draws() {
     };
     let captured = RenderCommand {
         order: 3,
-        sprite: "CAPTURED_FRAME".to_owned(),
+        sprite: "CAPTURED_FRAME".into(),
         texture: None,
         texture_scale: 1.0,
         masked_texture_binding: None,
@@ -388,7 +388,7 @@ fn shipped_challenge_level_end_background_occludes_the_complete_gpu_framebuffer(
                    pivot_x: f64,
                    pivot_y: f64| RenderCommand {
         order,
-        sprite: sprite.to_owned(),
+        sprite: sprite.into(),
         texture: None,
         texture_scale: 1.0,
         masked_texture_binding: None,

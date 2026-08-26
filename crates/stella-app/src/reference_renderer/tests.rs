@@ -51,7 +51,7 @@ fn colorize_shader_matches_bundled_pixel_program_order() {
 fn native_scalar_render_state_uses_scale_after_pivoted_rotation() {
     let command = RenderCommand {
         order: 0,
-        sprite: "TEST".to_owned(),
+        sprite: "TEST".into(),
         texture: None,
         texture_scale: 1.0,
         masked_texture_binding: None,
@@ -88,7 +88,7 @@ fn native_scalar_render_state_uses_scale_after_pivoted_rotation() {
 fn tutorial_target_uses_the_same_native_matrix_path_as_every_atlas_sprite() {
     let tutorial = RenderCommand {
         order: 0,
-        sprite: "TUTORIAL_TARGET".to_owned(),
+        sprite: "TUTORIAL_TARGET".into(),
         texture: None,
         texture_scale: 1.0,
         masked_texture_binding: None,
@@ -107,7 +107,7 @@ fn tutorial_target_uses_the_same_native_matrix_path_as_every_atlas_sprite() {
         world_space: false,
     };
     let ordinary = RenderCommand {
-        sprite: "ORDINARY_ATLAS_REGION".to_owned(),
+        sprite: "ORDINARY_ATLAS_REGION".into(),
         ..tutorial.clone()
     };
 
@@ -139,7 +139,7 @@ fn tutorial_target_uses_the_same_native_matrix_path_as_every_atlas_sprite() {
 fn native_render_boundary_quantizes_to_f32_and_uses_mixed_fmul_fmadd_vertex_math() {
     let command = RenderCommand {
         order: 0,
-        sprite: "TEST".to_owned(),
+        sprite: "TEST".into(),
         texture: None,
         texture_scale: 1.0,
         masked_texture_binding: None,
@@ -356,7 +356,7 @@ fn shipped_challenge_level_end_background_occludes_the_complete_native_framebuff
                    pivot_x: f64,
                    pivot_y: f64| RenderCommand {
         order: 0,
-        sprite: sprite.to_owned(),
+        sprite: sprite.into(),
         texture: None,
         texture_scale: 1.0,
         masked_texture_binding: None,

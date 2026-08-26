@@ -121,7 +121,7 @@ fn ordinary_atlas_submission_preserves_the_surface_format_program_branch() {
     };
     let command = |order, alpha| RenderCommand {
         order,
-        sprite: "OPAQUE_SPRITE".to_owned(),
+        sprite: "OPAQUE_SPRITE".into(),
         texture: None,
         texture_scale: 1.0,
         masked_texture_binding: None,

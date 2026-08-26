@@ -119,7 +119,7 @@ impl NativeThemeParticles {
                 }
                 frame = frame.min(count);
                 if frame != particle.animation_frame {
-                    particle.sprite = particle.sprites[frame - 1].clone();
+                    particle.sprite = particle.sprites[frame - 1].as_str().into();
                     particle.animation_frame = frame;
                     if let Some((resources, data_root)) = bindings {
                         particle.bind_sprite(resources, data_root);

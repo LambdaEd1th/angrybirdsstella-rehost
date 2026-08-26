@@ -1,6 +1,6 @@
 //! Deferred sprite-command payloads matching Purple's ResourceManager draws.
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::BTreeMap, fmt, ops::Deref, sync::Arc};
 
 use stella_assets::ka3d::{CompositePart, SpriteRegion};
 
@@ -167,7 +167,11 @@ impl RenderState {
 pub struct RenderCommand {
     /// Monotonic order of the original immediate renderer submission.
     pub order: u64,
-    pub sprite: String,
+    /// Stable sprite label associated with the retained native resource.
+    /// The executable's old libstdc++ string copies are reference-counted;
+    /// sharing the immutable label preserves that ownership boundary without
+    /// allocating again for every deferred command.
+    pub sprite: SharedSpriteName,
     pub texture: Option<String>,
     pub texture_scale: f64,
     /// Submission-time image pointer used by alpha-masked sprite programs.
@@ -193,6 +197,78 @@ pub struct RenderCommand {
     pub y: f64,
     pub state: RenderState,
     pub world_space: bool,
+}
+
+/// Reference-counted counterpart of Purple's copy-on-write libstdc++ sprite
+/// strings. The small wrapper keeps the existing string-facing render API
+/// while making command clones retain a pointer instead of copying bytes.
+#[derive(Debug, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct SharedSpriteName(Arc<str>);
+
+impl SharedSpriteName {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn as_arc(&self) -> &Arc<str> {
+        &self.0
+    }
+}
+
+impl Deref for SharedSpriteName {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        self.as_str()
+    }
+}
+
+impl fmt::Display for SharedSpriteName {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+impl From<Arc<str>> for SharedSpriteName {
+    fn from(value: Arc<str>) -> Self {
+        Self(value)
+    }
+}
+
+impl From<String> for SharedSpriteName {
+    fn from(value: String) -> Self {
+        Self(value.into())
+    }
+}
+
+impl From<&str> for SharedSpriteName {
+    fn from(value: &str) -> Self {
+        Self(value.into())
+    }
+}
+
+impl PartialEq<&str> for SharedSpriteName {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
+
+impl PartialEq<SharedSpriteName> for &str {
+    fn eq(&self, other: &SharedSpriteName) -> bool {
+        *self == other.as_str()
+    }
+}
+
+impl PartialEq<String> for SharedSpriteName {
+    fn eq(&self, other: &String) -> bool {
+        self.as_str() == other
+    }
+}
+
+impl PartialEq<SharedSpriteName> for String {
+    fn eq(&self, other: &SharedSpriteName) -> bool {
+        self == other.as_str()
+    }
 }
 
 #[derive(Debug, Clone)]

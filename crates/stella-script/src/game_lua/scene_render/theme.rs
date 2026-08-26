@@ -66,6 +66,7 @@ impl RenderBridge {
             if bound_region.is_none() && bound_composite.is_none() {
                 continue;
             }
+            let sprite: SharedSpriteName = sprite.into();
             let scale_x = transform.scale_x;
             let scale_y = transform.scale_y;
             // ThemeManager calls ResourceManager::drawSprite with both anchor

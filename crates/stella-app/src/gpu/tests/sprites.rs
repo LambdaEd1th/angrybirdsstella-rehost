@@ -32,7 +32,7 @@ fn near_degenerate_atlas_matrix_is_submitted_without_a_host_epsilon_cull() {
     };
     let command = RenderCommand {
         order: 0,
-        sprite: "TINY".to_owned(),
+        sprite: "TINY".into(),
         texture: None,
         texture_scale: 1.0,
         masked_texture_binding: None,
@@ -96,7 +96,7 @@ fn native_explicit_quad_reaches_gpu_in_recovered_triangle_and_uv_order() {
     let uv = [[0.9, 0.8], [0.1, 0.7], [1.0, 0.2], [0.2, 0.1]];
     let command = RenderCommand {
         order: 0,
-        sprite: "MASK".to_owned(),
+        sprite: "MASK".into(),
         texture: None,
         texture_scale: 1.0,
         masked_texture_binding: None,
@@ -177,7 +177,7 @@ fn native_atlas_quad_keeps_positions_and_signed_rotated_region_uvs() {
     let positions = [[10.0, 16.0], [10.0, 24.0], [30.0, 16.0], [30.0, 24.0]];
     let command = RenderCommand {
         order: 0,
-        sprite: "RUBBER".to_owned(),
+        sprite: "RUBBER".into(),
         texture: None,
         texture_scale: 1.0,
         masked_texture_binding: None,
@@ -254,7 +254,7 @@ fn render_state_pivot_is_not_applied_twice_after_native_sprite_anchoring() {
     };
     let command = RenderCommand {
         order: 0,
-        sprite: "PIVOT_SPRITE".to_owned(),
+        sprite: "PIVOT_SPRITE".into(),
         texture: None,
         texture_scale: 1.0,
         masked_texture_binding: None,
@@ -316,7 +316,7 @@ fn explicit_sprite_pivot_override_replaces_an_atlas_pivot() {
     };
     let command = RenderCommand {
         order: 0,
-        sprite: "PANEL".to_owned(),
+        sprite: "PANEL".into(),
         texture: None,
         texture_scale: 1.0,
         masked_texture_binding: None,
@@ -354,7 +354,7 @@ fn retained_animation_region_draws_after_active_resource_catalog_release() {
     };
     let command = RenderCommand {
         order: 0,
-        sprite: "RETAINED".to_owned(),
+        sprite: "RETAINED".into(),
         texture: None,
         texture_scale: 1.0,
         masked_texture_binding: None,
@@ -412,7 +412,7 @@ fn selected_sprite_uses_its_submission_time_mask_texture_pointer() {
     };
     let command = RenderCommand {
         order: 0,
-        sprite: "SELECTED".to_owned(),
+        sprite: "SELECTED".into(),
         texture: Some("MASK".to_owned()),
         texture_scale: 0.25,
         masked_texture_binding: Some(MaskedTextureBinding::Source(retained_mask.clone())),
@@ -472,7 +472,7 @@ fn retained_scene_composite_draws_its_frozen_child_after_catalog_release() {
     };
     let command = RenderCommand {
         order: 0,
-        sprite: "RETAINED_COMPOSITE".to_owned(),
+        sprite: "RETAINED_COMPOSITE".into(),
         texture: None,
         texture_scale: 1.0,
         masked_texture_binding: None,
@@ -552,7 +552,7 @@ fn rotated_native_pivot_and_non_uniform_scale_reach_gpu_vertices_exactly() {
     };
     let command = RenderCommand {
         order: 0,
-        sprite: "ROTATED_PIVOT_SPRITE".to_owned(),
+        sprite: "ROTATED_PIVOT_SPRITE".into(),
         texture: None,
         texture_scale: 1.0,
         masked_texture_binding: None,

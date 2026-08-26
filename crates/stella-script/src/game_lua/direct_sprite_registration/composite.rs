@@ -65,7 +65,7 @@ pub(super) fn install(
                 bridge.state.pivot_y = native_pivot_y;
                 bridge.push_render_command(RenderCommand {
                     order: 0,
-                    sprite: part.sprite,
+                    sprite: part.sprite.into(),
                     texture: None,
                     texture_scale: 1.0,
                     masked_texture_binding: None,

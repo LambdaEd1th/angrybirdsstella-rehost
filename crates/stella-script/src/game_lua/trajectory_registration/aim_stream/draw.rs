@@ -36,6 +36,7 @@ pub(in crate::game_lua::trajectory_registration) fn install_draw(
                 if bound_region.is_none() && bound_composite.is_none() {
                     bound_composite = Some(Arc::new(Vec::new()));
                 }
+                let sprite: SharedSpriteName = sprite.into();
                 particles
                     .into_iter()
                     .filter_map(|particle| {

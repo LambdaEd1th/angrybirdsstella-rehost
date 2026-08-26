@@ -99,7 +99,7 @@ impl RenderBridge {
             && object.sprite_bound)
             .then(|| RenderCommand {
                 order: 0,
-                sprite: object.sprite.to_string(),
+                sprite: object.sprite.clone().into(),
                 texture: object.texture.as_deref().map(str::to_owned),
                 texture_scale: object.texture_scale,
                 masked_texture_binding: object.texture_binding.as_deref().cloned(),
@@ -203,11 +203,12 @@ impl RenderBridge {
         if bound_region.is_none() && bound_composite.is_none() {
             bound_composite = Some(Arc::new(Vec::new()));
         }
+        let sprite: SharedSpriteName = decoration.sprite.as_str().into();
         let base = self.scene_object_state(object);
         for index in 0..decoration.amount {
             self.push_render_command(RenderCommand {
                 order: 0,
-                sprite: decoration.sprite.clone(),
+                sprite: sprite.clone(),
                 texture: None,
                 texture_scale: 1.0,
                 masked_texture_binding: None,

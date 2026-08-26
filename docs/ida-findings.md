@@ -14096,3 +14096,56 @@ SHA-256 is
 The stripped `stella-app` and `stella-headless` hashes are respectively
 `8f907af7dc1bae63837c17e74b6a40587a417a8cc5c2ed7da4cd5b73f65ad469`
 and `a8f518953c2bb09010ec27613eb0f0f579790575471cf11a56153da6c9169f5c`.
+
+## Copy-on-write sprite labels across deferred command submission
+
+After retained atlas records became shared, the next symbolized Chapter02 L16
+sample still showed `String::write_str`, allocation and byte-copy descendants
+under `push_scene_object`. The source was the host-only conversion from the
+scene object's already retained `Arc<str>` sprite label into a new owned
+`String` for every deferred command. Repeated theme tiles, trajectory points,
+decorations and particles had equivalent label copies.
+
+IDA's `sub_10006D5B4` ordinary branch at
+`0x10006D8B4..0x10006D8F4` loads the Lua draw object and AtlasSprite pointer
+from `RenderObjectData+0x90`, prepares only scalar transforms, and calls
+`sub_10006C838`; it never constructs or copies a sprite-name string. The
+composite branch does copy its part label with the libstdc++ copy constructor
+at `0x10006D7D0..0x10006D7D8`, but the matching release at
+`0x10006D888..0x10006D8AC` atomically decrements the old `_Rep` reference
+count. This executable therefore uses the old copy-on-write libstdc++ string
+ABI rather than duplicating the label bytes. Hopper independently exposes the
+same name-free ordinary call and reference-counted composite string lifetime.
+
+`RenderCommand.sprite` now uses `SharedSpriteName`, a small `Arc<str>` wrapper
+that preserves the renderer's string-facing API while matching that immutable
+shared ownership. Ordinary scene objects, callback-safe snapshots and their
+final commands retain one underlying name pointer. Particle data retains the
+selected label across draws and replaces it only when a lifetime animation
+changes frames. Theme tiles, trajectory particles and decorations create one
+shared label before expanding repeated commands. Immediate one-shot paths
+convert their owned adapter string at submission and otherwise keep their
+existing behavior. A focused scene regression proves both the AtlasSprite and
+label pointers remain identical through the complete deferred boundary.
+
+Three alternating Chapter02 L16 runs issue 30,000 complete
+`drawGameNative` submissions. The shared-AtlasSprite baseline reports median
+real/user/system times of 2.45/2.06/0.38 seconds and a median maximum resident
+set of about 4.03 GB. Shared labels report 2.15/1.86/0.28 seconds and about
+3.88 GB, reductions of approximately 12.2 percent real time, 9.7 percent user
+CPU, 26.3 percent system CPU and 3.7 percent maximum resident memory in this
+deliberately command-retention-heavy workload. Retired instructions fall by
+about 12.3 percent. A follow-up five-second symbolized sample keeps the live
+`push_scene_object` path while reporting zero sprite-label allocation stacks
+and zero AtlasSprite or CompoSprite clone stacks beneath it.
+
+The complete workspace remains at 668 passing tests with the intentional
+long-duration BirdRun audit ignored. Formatting, diff whitespace, strict
+all-target/all-feature Clippy, doc tests and the locked release build are
+clean. A final 1,200-frame real-wgpu map smoke test reports zero invoked
+fallbacks, zero remaining compatibility bindings and empty stderr; its PNG
+SHA-256 is
+`60b3e8d73365a99fbf76d52b26a7a0f091717337a05a201e994f4c4cb39627fa`.
+The stripped `stella-app` and `stella-headless` hashes are respectively
+`b7f07fd6648329e895f2090c19f655cd8f304693fcddabaac64e69ce4e81cfd0`
+and `350fb9681ab5cca4eb1fea743f4830822f7eda6b8b9a3444ea419a75a192c5f7`.

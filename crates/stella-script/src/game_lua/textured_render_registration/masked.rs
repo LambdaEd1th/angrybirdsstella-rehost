@@ -79,7 +79,7 @@ pub(super) fn install(
             };
             bridge.push_render_command(RenderCommand {
                 order: 0,
-                sprite,
+                sprite: sprite.into(),
                 texture: None,
                 texture_scale: 1.0,
                 masked_texture_binding: None,

@@ -1,12 +1,12 @@
 //! Packed particle fields shared by native update and draw members.
 
-use crate::{BoundCompositePart, ResourceRuntime, SpriteCatalogRegion};
+use crate::{BoundCompositePart, ResourceRuntime, SharedSpriteName, SpriteCatalogRegion};
 use std::path::Path;
 use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub(crate) struct Particle {
-    pub(crate) sprite: String,
+    pub(crate) sprite: SharedSpriteName,
     pub(crate) sprites: Vec<String>,
     /// ParticleData+0x20. Purple resolves and retains the concrete
     /// AtlasSprite when this particle is created (and whenever a lifeTime

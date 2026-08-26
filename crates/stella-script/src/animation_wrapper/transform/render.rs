@@ -133,7 +133,7 @@ pub(crate) fn animation_render_commands(
             |(_, sprite, transform, compatibility, alpha, bound_region)| {
                 RenderCommand {
                     order: 0,
-                    sprite,
+                    sprite: sprite.into(),
                     texture: None,
                     texture_scale: 1.0,
                     masked_texture_binding: None,

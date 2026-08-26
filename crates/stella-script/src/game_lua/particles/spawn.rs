@@ -283,7 +283,7 @@ pub(crate) fn emit_particles(
         };
         let (velocity_sine, velocity_cosine) = velocity_angle.sin_cos();
         let mut particle = Particle {
-            sprite,
+            sprite: sprite.into(),
             sprites: definition.sprites.clone(),
             bound_region: None,
             bound_composite: None,

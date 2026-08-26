@@ -89,9 +89,10 @@ pub(super) fn install(
                         if bound_region.is_none() && bound_composite.is_none() {
                             bound_composite = Some(Arc::new(Vec::new()));
                         }
+                        let sprite: SharedSpriteName = stream.normal_sprite.as_str().into();
                         commands.extend(stream.points.iter().map(|&(x, y)| RenderCommand {
                             order: 0,
-                            sprite: stream.normal_sprite.clone(),
+                            sprite: sprite.clone(),
                             texture: None,
                             texture_scale: 1.0,
                             masked_texture_binding: None,
@@ -122,7 +123,7 @@ pub(super) fn install(
                         }
                         commands.push(RenderCommand {
                             order: 0,
-                            sprite: stream.special_sprite.clone(),
+                            sprite: stream.special_sprite.as_str().into(),
                             texture: None,
                             texture_scale: 1.0,
                             masked_texture_binding: None,

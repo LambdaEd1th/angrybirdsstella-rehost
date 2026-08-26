@@ -49,7 +49,7 @@ pub(super) fn command(
     };
     Some(RenderCommand {
         order: 0,
-        sprite: sprite.to_owned(),
+        sprite: sprite.into(),
         texture: None,
         texture_scale: 1.0,
         masked_texture_binding: None,
