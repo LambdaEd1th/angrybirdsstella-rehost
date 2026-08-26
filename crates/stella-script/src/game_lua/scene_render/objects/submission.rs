@@ -175,7 +175,7 @@ impl RenderBridge {
             // its ordinary sprite or every composite part. The shader is not
             // a RenderObjectData member and therefore must be supplied from
             // the dispatcher on every draw.
-            command.shader = shader;
+            command.shader = shader.map(Arc::new);
             self.push_render_command(command);
         }
         if object.flash_animation {

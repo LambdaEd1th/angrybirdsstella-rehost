@@ -1,13 +1,14 @@
 use crate::*;
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub(crate) struct DirtComponent {
-    textures: DirtTextures,
     pub(crate) fixture_density: f64,
     pub(crate) fixture_friction: f64,
     pub(crate) fixture_restitution: f64,
     pub(crate) background_paths: Vec<Vec<(f64, f64)>>,
     pub(crate) foreground_paths: Vec<Vec<(f64, f64)>>,
+    render_command: Arc<DirtRenderCommand>,
 }
 
 #[derive(Debug, Clone)]
@@ -52,18 +53,33 @@ impl DirtComponent {
             .into_iter()
             .map(|(x, y)| (f64::from(x as f32), f64::from(y as f32)))
             .collect::<Vec<_>>();
-        (path.len() >= 3).then(|| Self {
-            textures,
-            fixture_density,
-            fixture_friction,
-            fixture_restitution,
-            background_paths: vec![path.clone()],
-            foreground_paths: vec![path],
+        (path.len() >= 3).then(|| {
+            let background_paths = vec![path.clone()];
+            let foreground_paths = vec![path];
+            let render_command = Arc::new(DirtRenderCommand {
+                background_texture: textures.background.clone(),
+                foreground_texture: textures.foreground.clone(),
+                background_texture_binding: textures.background_binding.clone(),
+                foreground_texture_binding: textures.foreground_binding.clone(),
+                background_triangles: triangulate_dirt_paths(&background_paths),
+                foreground_triangles: triangulate_dirt_paths(&foreground_paths),
+            });
+            Self {
+                fixture_density,
+                fixture_friction,
+                fixture_restitution,
+                background_paths,
+                foreground_paths,
+                render_command,
+            }
         })
     }
 
     pub(crate) fn cut(&mut self, hole: DirtHole) {
+        debug_assert!(!self.background_paths.is_empty());
         self.foreground_paths = native_dirt_difference(&self.foreground_paths, hole);
+        Arc::make_mut(&mut self.render_command).foreground_triangles =
+            triangulate_dirt_paths(&self.foreground_paths);
     }
 
     pub(crate) fn foreground_fixtures(&self) -> Vec<Vec<(f64, f64)>> {
@@ -74,14 +90,7 @@ impl DirtComponent {
             .collect()
     }
 
-    pub(crate) fn render_command(&self) -> DirtRenderCommand {
-        DirtRenderCommand {
-            background_texture: self.textures.background.clone(),
-            foreground_texture: self.textures.foreground.clone(),
-            background_texture_binding: self.textures.background_binding.clone(),
-            foreground_texture_binding: self.textures.foreground_binding.clone(),
-            background_triangles: triangulate_dirt_paths(&self.background_paths),
-            foreground_triangles: triangulate_dirt_paths(&self.foreground_paths),
-        }
+    pub(crate) fn render_command(&self) -> Arc<DirtRenderCommand> {
+        Arc::clone(&self.render_command)
     }
 }

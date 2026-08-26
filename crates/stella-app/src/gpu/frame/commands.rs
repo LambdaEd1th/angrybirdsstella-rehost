@@ -272,7 +272,7 @@ impl AssetCatalog {
             None => {}
         }
         let transform = render_command_transform(command);
-        if let Some(dirt) = &command.dirt {
+        if let Some(dirt) = command.dirt.as_deref() {
             self.append_gpu_dirt(dirt, transform, frame)?;
             return Ok(());
         }
@@ -295,7 +295,7 @@ impl AssetCatalog {
                     command.masked_texture_binding.as_ref(),
                 )
             }),
-            command.shader.as_ref(),
+            command.shader.as_deref(),
             &command.clip_holes,
             frame,
         )

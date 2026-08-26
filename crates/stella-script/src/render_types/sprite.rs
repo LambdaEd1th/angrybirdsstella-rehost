@@ -182,11 +182,17 @@ pub struct RenderCommand {
     /// The deferred host owns them separately so ordinary commands stay
     /// compact and command clones retain rather than duplicate the vertices.
     pub geometry: Option<SpriteGeometrySubmission>,
-    pub shader: Option<SpriteShader>,
+    /// Optional shader object supplied as a pointer to the native draw call.
+    /// Keep it retained out-of-line so its string and parameter block do not
+    /// enlarge every unshaded scene command.
+    pub shader: Option<Arc<SpriteShader>>,
     pub clip_holes: Vec<RenderHole>,
     /// Native DirtMechanics replaces the object's ordinary sprite callback
     /// with a background polygon followed by its clipped foreground polygons.
-    pub dirt: Option<DirtRenderCommand>,
+    /// Cached DrawablePolygon pair retained by DirtMechanics. The native
+    /// component owns these meshes between cuts instead of rebuilding or
+    /// embedding them in every ordinary draw submission.
+    pub dirt: Option<Arc<DirtRenderCommand>>,
     pub x: f64,
     pub y: f64,
     pub state: RenderState,
@@ -279,7 +285,7 @@ mod deferred_payload_tests {
     use super::*;
 
     #[test]
-    fn rare_vertex_geometry_stays_out_of_the_copied_render_state() {
+    fn rare_render_payloads_stay_out_of_the_common_command_storage() {
         // The native GL state is copied for every scene submission, while
         // these arrays exist only on masked/line/rubber-band calls. Keep the
         // common state compact and retain a rare payload through one pointer.
@@ -287,6 +293,20 @@ mod deferred_payload_tests {
         assert_eq!(
             std::mem::size_of::<Option<SpriteGeometrySubmission>>(),
             2 * std::mem::size_of::<usize>()
+        );
+        assert_eq!(
+            std::mem::size_of::<Option<Arc<SpriteShader>>>(),
+            std::mem::size_of::<usize>()
+        );
+        assert_eq!(
+            std::mem::size_of::<Option<Arc<DirtRenderCommand>>>(),
+            std::mem::size_of::<usize>()
+        );
+        assert!(
+            std::mem::size_of::<RenderCommand>()
+                < std::mem::size_of::<RenderState>()
+                    + std::mem::size_of::<SpriteShader>()
+                    + std::mem::size_of::<DirtRenderCommand>()
         );
     }
 }

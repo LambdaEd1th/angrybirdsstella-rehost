@@ -14203,3 +14203,58 @@ zero remaining compatibility bindings and empty stderr; its PNG SHA-256 is
 The stripped `stella-app` and `stella-headless` hashes are respectively
 `c73fddc0e52a4e1d536125a726e917cee139d27c59c8e65aea0a57b3d56cf10d`
 and `4484889ba5e65ee03b1d0e3ff285ae838eb3e9b03886cc7de8ed0182ee53a364`.
+
+## Retained shader and Dirt draw objects outside ordinary commands
+
+After removing the per-call vertex arrays, the host's common
+`RenderCommand` was still 616 bytes. Two absent optional values accounted for
+most of the remainder: the inline `SpriteShader` alternative occupied 88
+bytes and the inline `DirtRenderCommand` alternative occupied 152 bytes.
+Every ordinary scene object paid for both even though Chapter02 L16 does not
+submit either payload. Dirt commands also regenerated both triangulated
+polygon groups and copied their texture strings on every draw.
+
+IDA gives the ordinary native call a much smaller boundary.
+`sub_10006C838` accepts four pointer arguments followed by nine scalar float
+arguments. At `0x10006CA70` it tests the fourth pointer, optionally resolves
+the shader object through `sub_10006CB08`, then calls the atlas draw at
+`0x10006CAC0`; no shader parameter block is embedded in the scalar call.
+`sub_10006D5B4` performs the live Lua `shader` lookup at
+`0x10006D6D8..0x10006D744`, keeps the result in a call-local object and passes
+its pointer—or null—to each `sub_10006C838` invocation. Hopper independently
+shows the same local `r21`, the null branch and the pointer argument for both
+ordinary and composite submissions.
+
+Dirt has an even earlier persistent boundary. As previously recovered from
+`sub_10001F98C`, DirtMechanics resolves its background/foreground images once
+and constructs two retained DrawablePolygon objects. Collision cutting
+replaces the foreground shape; the ordinary draw path does not rerun polygon
+triangulation. The rehost now caches the corresponding `DirtRenderCommand` in
+`DirtComponent`, shares it across deferred draws and uses `Arc::make_mut` only
+when a cut changes the foreground. An already queued command therefore keeps
+the old mesh exactly as an immediate native draw would, while later commands
+observe the replacement. Shader and Dirt command fields are both retained
+pointer-sized `Arc` options, reducing the common Rust command from 616 to 392
+bytes. A focused regression proves pointer identity across unchanged Dirt
+draws, copy-on-write separation after a cut and identity between the current
+component cache and the new submission.
+
+Three alternating Chapter02 L16 runs issue 30,000 complete
+`drawGameNative` submissions. The split-geometry baseline reports median
+real/user/system times of 1.83/1.61/0.22 seconds and a median maximum resident
+set of about 2.97 GB. Retaining shader and Dirt objects reports
+1.71/1.56/0.15 seconds and about 1.99 GB, reductions of approximately 6.6
+percent real time, 3.1 percent user CPU, 31.8 percent system CPU and 33.0
+percent peak resident memory in this command-retention-heavy diagnostic. In
+the matching three-second symbol sample, the dominant `push_scene_object`
+bulk-copy sites fall again from 325 `memmove` samples to 164.
+
+The complete workspace passes 670 tests with the intentional long-duration
+BirdRun audit ignored. Formatting, diff whitespace, strict all-target and
+all-feature Clippy, doc tests and the locked stripped release build are clean.
+A final 1,200-frame real-wgpu map smoke test reports zero invoked fallbacks,
+zero remaining compatibility bindings and empty stderr; its PNG SHA-256 is
+`a0e809d37e4207d1f2f51aac7633ff796da474eee7f2339e2b8ed6ab3221305a`.
+The stripped `stella-app` and `stella-headless` hashes are respectively
+`b1558834edc64f8a6a9efb715f5167e8d1a265e419f7af44b55fee1ff0f936c1`
+and `a8c0baaa470033dd6baedeb6ed6de19b6d11d88069d452ab574acb54a06160a2`.

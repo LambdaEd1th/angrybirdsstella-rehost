@@ -1,6 +1,73 @@
 use super::*;
 
 #[test]
+fn dirt_draws_share_cached_native_meshes_until_the_next_cut() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .execute_source(
+            r#"
+                createBox("dirt", "DIRT", 0, 0, 10, 10, 0, 0, 0, true, false, 1)
+                blocks = {
+                    DIRT_DEF = {
+                        components = {
+                            dirt = {
+                                bgTexture = "DIRT_BACKGROUND",
+                                fgTexture = "DIRT_FOREGROUND"
+                            }
+                        }
+                    }
+                }
+                objects.world.dirt.definition = "DIRT_DEF"
+                dirt_extension = createNativeBlockExtension("dirt", "dirt")
+                dirt_extension.render()
+                drawGameNative()
+                drawGameNative()
+            "#,
+        )
+        .unwrap();
+
+    let before_cut = {
+        let bridge = runtime.render.lock().unwrap();
+        let commands = bridge
+            .commands
+            .iter()
+            .filter_map(|command| command.dirt.as_ref())
+            .collect::<Vec<_>>();
+        assert!(commands.len() >= 2);
+        assert!(Arc::ptr_eq(
+            commands[commands.len() - 2],
+            commands[commands.len() - 1]
+        ));
+        Arc::clone(commands[commands.len() - 1])
+    };
+
+    runtime
+        .execute_source(
+            r#"
+                dirt_extension.onCollision(0, 0, 0, 1, 2, "impact", 0, 0)
+                dirt_extension.checkCollisions()
+                drawGameNative()
+            "#,
+        )
+        .unwrap();
+
+    let bridge = runtime.render.lock().unwrap();
+    let after_cut = bridge
+        .commands
+        .iter()
+        .rev()
+        .find_map(|command| command.dirt.as_ref())
+        .unwrap();
+    assert!(!Arc::ptr_eq(&before_cut, after_cut));
+    assert_ne!(
+        before_cut.foreground_triangles,
+        after_cut.foreground_triangles
+    );
+    let cached = bridge.scene["dirt"].dirt.as_ref().unwrap().render_command();
+    assert!(Arc::ptr_eq(&cached, after_cut));
+}
+
+#[test]
 fn native_block_extension_queues_collision_holes_and_exposes_methods() {
     let runtime = StellaLua::new("/tmp").unwrap();
     runtime

@@ -1,6 +1,7 @@
 //! Native z-ordered animation slot expansion into affine render commands.
 
 use crate::{NativeSpriteMetrics, RenderCommand, RenderState, SpriteCatalogRegion, SpriteGeometry};
+use std::sync::Arc;
 
 use super::{
     super::model::*,
@@ -28,7 +29,7 @@ pub(crate) fn animation_render_commands(
     let sprite_geometry = runtime.sprite_geometry.get(tag);
     let sprite_metrics = runtime.sprite_metrics.get(tag);
     let sprite_regions = runtime.sprite_regions.get(tag);
-    let shader = runtime.shaders.get(tag).cloned();
+    let shader = runtime.shaders.get(tag).cloned().map(Arc::new);
     let descendant_reflection = runtime
         .descendant_reflections
         .get(tag)

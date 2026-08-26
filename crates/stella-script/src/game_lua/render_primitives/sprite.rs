@@ -1,4 +1,5 @@
 use crate::*;
+use std::sync::Arc;
 
 pub(crate) fn native_direct_sprite_command(
     sprite: String,
@@ -33,7 +34,7 @@ pub(crate) fn native_direct_sprite_command(
         bound_region: Some(bound_region.into()),
         bound_composite: None,
         geometry: None,
-        shader,
+        shader: shader.map(Arc::new),
         clip_holes: Vec::new(),
         dirt: None,
         x: origin[0],
