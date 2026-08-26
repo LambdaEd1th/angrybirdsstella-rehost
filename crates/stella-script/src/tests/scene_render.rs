@@ -929,7 +929,7 @@ fn native_scene_index_retains_old_sheet_pointer_until_explicit_sprite_rebind() {
 }
 
 #[test]
-fn native_scene_draw_snapshot_retains_resource_pointer_until_command_materialization() {
+fn native_scene_draw_command_retains_the_same_atlas_pointer() {
     let runtime = StellaLua::new(std::env::temp_dir()).unwrap();
     register_test_sprite_sheet(&runtime, &["BODY"]);
     runtime
@@ -954,10 +954,8 @@ fn native_scene_draw_snapshot_retains_resource_pointer_until_command_materializa
     assert!(Arc::ptr_eq(retained, snapshot_region));
 
     let command = bridge.scene_object_command(&snapshot).unwrap();
-    assert_eq!(
-        command.bound_region.as_ref().unwrap().native_sheet_id,
-        retained.native_sheet_id
-    );
+    let command_region = command.bound_region.as_ref().unwrap();
+    assert!(Arc::ptr_eq(retained, command_region));
 }
 
 #[test]

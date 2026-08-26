@@ -47,7 +47,8 @@ pub(super) fn install(
             let bound_region = resource_runtime
                 .lock()
                 .expect("resource runtime lock poisoned")
-                .active_atlas_catalog_region(&sprite, &data_root);
+                .active_atlas_catalog_region(&sprite, &data_root)
+                .map(Arc::new);
             let uv1 = [masked_uv_x(x1, factor), masked_uv_y(y4, factor)];
             let uv2 = [masked_uv_x(x2, factor), masked_uv_y(y3, factor)];
             let uv3 = [masked_uv_x(x3, factor), masked_uv_y(y2, factor)];

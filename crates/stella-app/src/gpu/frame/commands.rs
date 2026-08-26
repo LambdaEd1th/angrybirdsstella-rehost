@@ -242,7 +242,7 @@ impl AssetCatalog {
         if let Some(positions) = state.native_sprite_quad {
             return self.append_gpu_native_sprite_quad(
                 &command.sprite,
-                command.bound_region.as_ref(),
+                command.bound_region.as_deref(),
                 positions,
                 state.alpha,
                 frame,
@@ -251,7 +251,7 @@ impl AssetCatalog {
         if let Some(quad) = state.explicit_quad {
             return self.append_gpu_explicit_quad(
                 &command.sprite,
-                command.bound_region.as_ref(),
+                command.bound_region.as_deref(),
                 quad,
                 state.alpha,
                 frame,
@@ -264,7 +264,7 @@ impl AssetCatalog {
         }
         self.append_gpu_sprite(
             &command.sprite,
-            command.bound_region.as_ref(),
+            command.bound_region.as_deref(),
             command
                 .bound_composite
                 .as_ref()

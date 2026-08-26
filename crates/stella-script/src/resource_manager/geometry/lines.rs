@@ -1,6 +1,7 @@
 //! Native textured-line and rubber-band quad construction.
 
 use crate::{RenderCommand, RenderState, SpriteCatalogRegion};
+use std::sync::Arc;
 
 use super::model::SpriteGeometry;
 
@@ -96,7 +97,7 @@ impl SpriteGeometry {
             texture: None,
             texture_scale: 1.0,
             masked_texture_binding: None,
-            bound_region,
+            bound_region: bound_region.map(Arc::new),
             bound_composite: None,
             shader: None,
             clip_holes: Vec::new(),
@@ -190,7 +191,7 @@ impl SpriteGeometry {
             texture: None,
             texture_scale: 1.0,
             masked_texture_binding: None,
-            bound_region,
+            bound_region: bound_region.map(Arc::new),
             bound_composite: None,
             shader: None,
             clip_holes: Vec::new(),

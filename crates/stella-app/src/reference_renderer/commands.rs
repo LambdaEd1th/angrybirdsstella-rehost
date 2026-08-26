@@ -73,7 +73,7 @@ pub(super) fn render_game(
         if let Some(quad) = state.explicit_quad {
             assets.draw_explicit_quad(
                 &command.sprite,
-                command.bound_region.as_ref(),
+                command.bound_region.as_deref(),
                 quad,
                 state.alpha,
                 state.clip_rect,

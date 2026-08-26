@@ -12,7 +12,7 @@ pub(crate) struct Particle {
     /// AtlasSprite when this particle is created (and whenever a lifeTime
     /// animation changes frame); its draw member never looks the name up
     /// again.
-    pub(crate) bound_region: Option<SpriteCatalogRegion>,
+    pub(crate) bound_region: Option<Arc<SpriteCatalogRegion>>,
     /// ParticleData+0x28. Atlas lookup has priority. When a later animation
     /// frame resolves to an atlas sprite Purple leaves an older composite
     /// pointer retained in this lower-priority slot, so keep the two native
@@ -48,7 +48,9 @@ impl Particle {
     /// change branches in `sub_100091834`: overwrite +0x20 on every bind,
     /// but touch +0x28 only when the atlas lookup returned null.
     pub(crate) fn bind_sprite(&mut self, resources: &ResourceRuntime, data_root: &Path) {
-        self.bound_region = resources.active_atlas_catalog_region(&self.sprite, data_root);
+        self.bound_region = resources
+            .active_atlas_catalog_region(&self.sprite, data_root)
+            .map(Arc::new);
         if self.bound_region.is_none() {
             self.bound_composite = resources.active_bound_composite(&self.sprite).map(Arc::new);
         }
@@ -60,7 +62,7 @@ impl Particle {
     pub(crate) fn draw_bindings(
         &self,
     ) -> (
-        Option<SpriteCatalogRegion>,
+        Option<Arc<SpriteCatalogRegion>>,
         Option<Arc<Vec<BoundCompositePart>>>,
     ) {
         let bound_region = self.bound_region.clone();

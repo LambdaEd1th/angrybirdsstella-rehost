@@ -174,10 +174,11 @@ pub struct RenderCommand {
     /// `None` retains the dynamic-name path for components whose ownership
     /// has not selected an explicit image at command creation.
     pub masked_texture_binding: Option<MaskedTextureBinding>,
-    /// Atlas resource pointer retained by a native scene component or copied
-    /// when an immediate draw is submitted. This preserves same-frame
-    /// draw-then-release and same-name shadowing in the deferred wgpu host.
-    pub bound_region: Option<SpriteCatalogRegion>,
+    /// AtlasSprite pointer retained by a native scene component or immediate
+    /// draw submission. Deferred commands share that immutable owner instead
+    /// of copying its texture path and region name on every frame. This also
+    /// preserves same-frame draw-then-release and same-name shadowing.
+    pub bound_region: Option<Arc<SpriteCatalogRegion>>,
     /// CompoSprite pointer retained by a native scene component. Every child
     /// carries the AtlasSprite pointer resolved when its COMP file loaded.
     /// Deferred commands share that immutable owner instead of cloning the

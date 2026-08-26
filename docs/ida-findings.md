@@ -14043,3 +14043,56 @@ SHA-256 is
 The stripped `stella-app` and `stella-headless` hashes are respectively
 `1f66574b091027391728e1323411c6730c8310a7080be5fc99780a691d316021`
 and `eb5bf9886d47c001f42455de92cf2210139cfd34ed95d8902368bf25c6777bd4`.
+
+## Retained AtlasSprite command ownership without per-draw record copies
+
+The follow-up symbolized Chapter02 L16 sample showed that the composite graph
+copy had disappeared, but ordinary scene submission still cloned each
+`SpriteCatalogRegion` into every deferred command. That record contains the
+resolved texture-source string and the SPRT region name, so the supposedly
+small copy still allocated and copied two strings for every atlas object on
+every `drawGameNative` call. The command queue then retained all of those
+duplicates until the host consumed the frame.
+
+IDA and Hopper independently show the ordinary resource lifetime in
+`sub_10004C7FC`. The ResourceManager virtual lookup at
+`0x10004C89C..0x10004C8B0` returns one AtlasSprite pointer; the function writes
+that pointer directly to `RenderObjectData+0x90` at `0x10004C8C0`. The draw
+member `sub_10006D5B4` later passes the same `+0x90` value directly into the
+AtlasSprite draw path at `0x10006D8F4`. Neither boundary copies the atlas
+record, texture path or region name. The composite alternative similarly
+stores its retained owner at `+0x78`.
+
+`RenderCommand.bound_region` now carries an `Arc<SpriteCatalogRegion>`.
+Ordinary scene objects therefore share one immutable AtlasSprite owner across
+`SceneObject`, the callback-safe draw snapshot and the final deferred wgpu
+command. Particles model their native retained pointer at `ParticleData+0x20`
+the same way. Theme, trajectory, decoration and immediate draw paths wrap a
+newly resolved region once and cheaply retain it when producing repeated
+commands. Both the software reference renderer and wgpu consume a borrowed
+region, so there is no rendering or resource-shadowing semantic change. A
+focused regression proves pointer identity across all three ordinary scene
+ownership layers; the existing release and same-name-shadow tests continue to
+prove the frozen submission-time resource behavior.
+
+Three alternating Chapter02 L16 runs issue 30,000 complete
+`drawGameNative` submissions. The shared-composite baseline reports median
+real/user/system times of 3.05/2.49/0.53 seconds and a median maximum resident
+set of about 4.96 GB. Sharing the ordinary AtlasSprite record reports
+2.61/2.17/0.42 seconds and about 4.05 GB, reductions of approximately 14.4
+percent real time, 12.9 percent user CPU, 20.8 percent system CPU and 18.4
+percent peak resident memory in this deliberately command-retention-heavy
+workload. A follow-up five-second symbolized sample keeps the live
+`push_scene_object` path but contains no `SpriteCatalogRegion` or
+`BoundCompositePart` clone stack.
+
+The complete workspace remains at 668 passing tests with the intentional
+long-duration BirdRun audit ignored. Formatting, diff whitespace, strict
+all-target/all-feature Clippy, doc tests and the locked release build are
+clean. A final 1,200-frame real-wgpu map smoke test reports zero invoked
+fallbacks, zero remaining compatibility bindings and empty stderr; its PNG
+SHA-256 is
+`46e405eafc2873b41adc51dce1d4ad8077f1003415e3bbc8b976b14ed6cffbde`.
+The stripped `stella-app` and `stella-headless` hashes are respectively
+`8f907af7dc1bae63837c17e74b6a40587a417a8cc5c2ed7da4cd5b73f65ad469`
+and `a8f518953c2bb09010ec27613eb0f0f579790575471cf11a56153da6c9169f5c`.

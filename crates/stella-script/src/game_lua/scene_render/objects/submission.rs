@@ -104,11 +104,10 @@ impl RenderBridge {
                 texture_scale: object.texture_scale,
                 masked_texture_binding: object.texture_binding.as_deref().cloned(),
                 // Purple passes the retained RenderObjectData resource
-                // pointer into its immediate draw member. The small atlas
-                // record remains command-owned for deferred wgpu consumption;
-                // the potentially large composite graph below keeps its
-                // immutable retained owner instead of being materialized.
-                bound_region: object.sprite_region.as_deref().cloned(),
+                // pointers at +0x90/+0x78 into its immediate draw member.
+                // Keep both immutable owners shared across the deferred wgpu
+                // boundary instead of materializing either resource graph.
+                bound_region: object.sprite_region.clone(),
                 bound_composite: object.composite_sprite.clone(),
                 shader: None,
                 clip_holes: object.dirt.as_ref().map_or_else(
@@ -195,7 +194,9 @@ impl RenderBridge {
         let Some((resources, data_root)) = decoration_resources else {
             return;
         };
-        let bound_region = resources.active_atlas_catalog_region(&decoration.sprite, data_root);
+        let bound_region = resources
+            .active_atlas_catalog_region(&decoration.sprite, data_root)
+            .map(Arc::new);
         let mut bound_composite = resources
             .active_bound_composite(&decoration.sprite)
             .map(Arc::new);

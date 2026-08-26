@@ -81,7 +81,8 @@ pub(super) fn install(
                 for stream in &bridge.trajectory_streams {
                     if !stream.normal_sprite.is_empty() {
                         let bound_region = resources
-                            .active_atlas_catalog_region(&stream.normal_sprite, &data_root);
+                            .active_atlas_catalog_region(&stream.normal_sprite, &data_root)
+                            .map(Arc::new);
                         let mut bound_composite = resources
                             .active_bound_composite(&stream.normal_sprite)
                             .map(Arc::new);
@@ -111,7 +112,8 @@ pub(super) fn install(
                         && !stream.special_sprite.is_empty()
                     {
                         let bound_region = resources
-                            .active_atlas_catalog_region(&stream.special_sprite, &data_root);
+                            .active_atlas_catalog_region(&stream.special_sprite, &data_root)
+                            .map(Arc::new);
                         let mut bound_composite = resources
                             .active_bound_composite(&stream.special_sprite)
                             .map(Arc::new);
