@@ -13705,3 +13705,66 @@ nil probes, zero fallbacks and zero compatibility bindings. The stripped
 `stella-app` and `stella-headless` hashes are respectively
 `72ce04045bf490ef9fceb0e1f1efd85f415d4cad278d4f21138daa9215513a92`
 and `264fb417104690ee42e39497f77d00c697ef8fed6b2510e65c3e2aa7904aea61`.
+
+## Fixed GameLua LuaObject slots and integer registry references
+
+The next real update/draw sample moved a visible part of the remaining Rust
+adapter cost into `object_world`. Every object transform setter first resolved
+the public `gamelua` global, then performed two named-registry string lookups
+to recover one retained native table before doing the actual `world` and
+object-name lookups. The latter two lookups are native; the preceding three
+were host bookkeeping.
+
+IDA's position member `sub_10003FA60` resolves the RenderObjectData by name,
+then passes the fixed GameLua member at `a1 + 0x408` directly to
+`sub_10006F8BC` with `"world"` at `0x10003FADC`. It indexes the resulting
+table by the supplied object name through `sub_100009944` at `0x10003FAEC`
+and writes `x`/`y` before updating the native pose fields. The rotation member
+`sub_10003FB78` repeats that exact fixed-member, `world`, name and setter chain
+at `0x10003FC04..0x10003FC34`. Scale member `sub_100040304` does the same at
+`0x100040340..0x100040388` before resolving RenderObjectData and writing both
+live and persistent scale pairs.
+
+The helper `sub_10006F8BC` confirms the ownership distinction: its first
+argument is already one `lua::LuaObject`, whose Lua state pointer is read at
+object `+0x18`; it pushes that retained reference, indexes `world`, validates
+the table and constructs the returned LuaObject. It never resolves `gamelua`
+or a textual host registry key. `sub_100009944` then performs the necessary
+name-keyed table access. Hopper independently recovers all three setter chains,
+the fixed `arg0 + 0x408` owner and the same two Lua table accesses.
+
+The rehost now represents all twelve recovered fixed GameLua LuaObject members
+as a fixed Rust slot array. Each slot owns mlua's integer `RegistryKey`, so a
+normal read is one integer registry access instead of a bound-flag string
+lookup followed by a value string lookup. A present `LUA_REFNIL` key preserves
+the native distinction between an explicitly retained nil and a member that
+has not yet been initialized. Replacing nil with a table, a table with nil or
+one table with another reuses the same logical member. The pre-boot fallback
+still captures the public field once for isolated tests, but the ordinary
+`object_world` path no longer resolves `gamelua` after the member is bound.
+
+Three focused regressions cover first capture and global shadowing, retained
+nil followed by a later public table, and repeated nil/table replacement.
+Existing constructor, input, level-load, collision and draw-reference identity
+tests pass unchanged. The complete workspace now passes 663 tests with one
+intentional long-duration BirdRun audit ignored. Formatting, diff whitespace,
+strict all-target/all-feature Clippy, doc tests and the locked release build
+are clean.
+
+Three warmed 1,000,000-iteration transform-adapter runs, each issuing
+`setScale`, `setPosition` and `setAngle`, reduce median real time from 2.09 to
+1.32 seconds and median user CPU from 2.00 to 1.26 seconds, reductions of about
+36.8 and 37.0 percent in this deliberately setter-heavy microbenchmark. It is
+not treated as a universal gameplay frame-rate claim. In the follow-up real
+frame symbol sample, named-registry lookup is absent from the collapsed hot
+stack; the retained-object path uses the expected integer `lua_rawgeti`.
+
+The final stripped release opens the settings panel through a deterministic
+wgpu LBUTTON click after the map settles, with zero invoked fallbacks, zero
+remaining compatibility bindings and empty stderr. Its PNG SHA-256 is
+`ed3d6aca3da4e1d0c80bb899e417fd4b1df53e5f7125442e8a4181a57ecdc0f8`.
+The same binaries directly construct and draw Chapter01 L50 with 14 optional
+nil probes, zero fallbacks, zero compatibility bindings and empty stderr. The
+stripped `stella-app` and `stella-headless` hashes are respectively
+`34af11ca17294aa92e460a756a93d2b5dea544d411275220d3555dbae55ccd4e`
+and `0ccb4b4a0abd67895d0c7a009195428c022ff83b181bfaff848d4bf267a8fd57`.
