@@ -109,20 +109,6 @@ impl RenderBridge {
                 bound_composite: object.composite_sprite.clone(),
                 geometry: None,
                 shader: None,
-                clip_holes: object.dirt.as_ref().map_or_else(
-                    || {
-                        object
-                            .dirt_holes
-                            .iter()
-                            .map(|hole| RenderHole {
-                                x: hole.local_x * 20.0,
-                                y: hole.local_y * 20.0,
-                                radius: hole.radius * 20.0,
-                            })
-                            .collect()
-                    },
-                    |_| Vec::new(),
-                ),
                 dirt: object.dirt.as_deref().map(DirtComponent::render_command),
                 x: 0.0,
                 y: 0.0,
@@ -213,7 +199,6 @@ impl RenderBridge {
                 bound_composite: bound_composite.clone(),
                 geometry: None,
                 shader: None,
-                clip_holes: Vec::new(),
                 dirt: None,
                 x: 0.0,
                 y: 0.0,

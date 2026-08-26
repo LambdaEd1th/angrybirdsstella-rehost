@@ -56,7 +56,6 @@ impl AssetCatalog {
             positions,
             uv,
             positions,
-            positions,
             uniform,
             base_texture,
             WHITE_TEXTURE.to_owned(),
@@ -114,7 +113,6 @@ impl AssetCatalog {
         frame.push_quad(
             positions,
             uv,
-            positions,
             positions,
             uniform,
             base_texture,

@@ -11,7 +11,6 @@ pub(crate) fn draw_region(
     masked_texture: Option<(&RgbaImage, f64)>,
     masked_texture_matrix: Option<[f64; 6]>,
     shader: Option<&SpriteShader>,
-    clip_holes: &[RenderHole],
 ) {
     // The native transform has already been quantized and composed in f32.
     // Widen only for the test-only software sampler's pixel traversal.
@@ -95,15 +94,6 @@ pub(crate) fn draw_region(
             let source_y = display_y * height / draw_height;
             let local_x = display_x - pivot_x;
             let local_y = display_y - pivot_y;
-            if clip_holes.iter().any(|hole| {
-                let x = (local_x - hole.x).abs();
-                let y = (local_y - hole.y).abs();
-                let maximum = x.max(y);
-                let minimum = x.min(y);
-                maximum + (std::f64::consts::SQRT_2 - 1.0) * minimum <= hole.radius
-            }) {
-                continue;
-            }
             // Purple fixes GL_TEXTURE_MAG_FILTER to GL_LINEAR (0x2601) in
             // sub_10018AFB8. sub_100467760 constructs UVs directly from the
             // atlas rectangle boundaries (x/textureWidth through

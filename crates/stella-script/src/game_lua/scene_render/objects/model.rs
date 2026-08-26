@@ -37,7 +37,6 @@ pub(crate) struct SceneDrawObject {
     pub(crate) decoration: Option<Arc<ObjectDecoration>>,
     pub(crate) ray: Option<Arc<DrawablePolygonState>>,
     pub(crate) dirt: Option<Arc<DirtComponent>>,
-    pub(crate) dirt_holes: Arc<Vec<DirtHole>>,
 }
 
 /// Scalar callback context copied from the live RenderObjectData record.
@@ -149,7 +148,6 @@ impl From<&SceneObject> for SceneDrawObject {
             decoration: object.decoration.clone(),
             ray: object.ray.clone(),
             dirt: object.dirt.clone(),
-            dirt_holes: object.dirt_holes.clone(),
         }
     }
 }

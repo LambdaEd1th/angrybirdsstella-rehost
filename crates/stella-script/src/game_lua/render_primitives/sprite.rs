@@ -33,7 +33,6 @@ pub(crate) fn native_direct_sprite_command(
         bound_composite: None,
         geometry: None,
         shader: shader.map(Arc::new),
-        clip_holes: Vec::new(),
         dirt: None,
         x: origin[0],
         y: origin[1],

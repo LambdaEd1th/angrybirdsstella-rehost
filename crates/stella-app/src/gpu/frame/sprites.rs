@@ -42,7 +42,6 @@ impl AssetCatalog {
         masked_texture_matrix: Option<[f64; 6]>,
         masked_texture: Option<(&str, f64, Option<&MaskedTextureBinding>)>,
         shader: Option<&SpriteShader>,
-        clip_holes: &[RenderHole],
         frame: &mut PreparedFrame,
     ) -> Result<()> {
         if depth > 16 {
@@ -68,7 +67,6 @@ impl AssetCatalog {
                     masked_texture_matrix,
                     masked_texture,
                     shader,
-                    clip_holes,
                     frame,
                 )?;
             }
@@ -99,7 +97,6 @@ impl AssetCatalog {
                     masked_texture_matrix,
                     masked_texture,
                     shader,
-                    clip_holes,
                     frame,
                 )?;
             }
@@ -189,7 +186,6 @@ impl AssetCatalog {
             source_mode,
             blend,
             shader,
-            clip_holes,
         );
         Ok(())
     }

@@ -140,7 +140,6 @@ pub(crate) fn animation_render_commands(
                     bound_composite: None,
                     geometry: None,
                     shader: shader.clone(),
-                    clip_holes: Vec::new(),
                     dirt: None,
                     x: transform.x,
                     y: transform.y,

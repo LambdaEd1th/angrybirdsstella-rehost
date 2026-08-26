@@ -97,7 +97,6 @@ pub(super) fn render_game(
                     .map(|texture| (texture, command.texture_scale())),
                 masked_texture_matrix: state.masked_texture_matrix,
                 shader: command.shader.as_deref(),
-                clip_holes: &command.clip_holes,
                 draw_size: state.draw_size,
                 sprite_pivot: state.sprite_pivot,
             },

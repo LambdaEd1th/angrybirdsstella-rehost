@@ -296,7 +296,6 @@ impl AssetCatalog {
                 )
             }),
             command.shader.as_deref(),
-            &command.clip_holes,
             frame,
         )
     }

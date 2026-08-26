@@ -98,7 +98,6 @@ impl AssetCatalog {
                         positions,
                         [[left, top], [right, top], [left, bottom], [right, bottom]],
                         local.map(|point| point.map(|value| value as f32)),
-                        local.map(|point| point.map(|value| value as f32)),
                         uniform,
                         texture_source.clone(),
                         WHITE_TEXTURE.to_owned(),
@@ -136,7 +135,6 @@ impl AssetCatalog {
                 0.0,
                 native_sprite_program(surface_format, transform.alpha),
                 None,
-                &[],
             );
             cursor += f64::from(i32::from(glyph.width) + i32::from(font.tracking));
         }

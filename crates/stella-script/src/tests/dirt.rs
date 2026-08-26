@@ -130,7 +130,6 @@ fn native_block_extension_queues_collision_holes_and_exposes_methods() {
         .iter()
         .find(|command| command.sprite == "DIRT")
         .unwrap();
-    assert!(command.clip_holes.is_empty());
     let dirt = command.dirt.as_ref().unwrap();
     assert_eq!(dirt.background_texture, "DIRT_BACKGROUND");
     assert_eq!(dirt.foreground_texture, "DIRT_FOREGROUND");

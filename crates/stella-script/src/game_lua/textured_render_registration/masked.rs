@@ -83,7 +83,6 @@ pub(super) fn install(
                     explicit_quad,
                 ))),
                 shader: None,
-                clip_holes: Vec::new(),
                 dirt: None,
                 x: 0.0,
                 y: 0.0,

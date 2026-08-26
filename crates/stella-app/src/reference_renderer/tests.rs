@@ -57,7 +57,6 @@ fn native_scalar_render_state_uses_scale_after_pivoted_rotation() {
         bound_composite: None,
         geometry: None,
         shader: None,
-        clip_holes: Vec::new(),
         dirt: None,
         x: 30.0,
         y: 40.0,
@@ -93,7 +92,6 @@ fn tutorial_target_uses_the_same_native_matrix_path_as_every_atlas_sprite() {
         bound_composite: None,
         geometry: None,
         shader: None,
-        clip_holes: Vec::new(),
         dirt: None,
         x: 100.0,
         y: 200.0,
@@ -143,7 +141,6 @@ fn native_render_boundary_quantizes_to_f32_and_uses_mixed_fmul_fmadd_vertex_math
         bound_composite: None,
         geometry: None,
         shader: None,
-        clip_holes: Vec::new(),
         dirt: None,
         x: 0.25,
         y: -0.25,
@@ -211,41 +208,6 @@ fn bitmap_glyphs_use_native_scale_once_and_preserve_exact_ui_matrix() {
         (2.0, -3.0, 4.0, 5.0)
     );
     assert_eq!(affine.alpha, 0.75);
-}
-
-#[test]
-fn sprite_region_uses_native_octagonal_dirt_clip() {
-    let texture = RgbaImage::from_pixel(16, 16, image::Rgba([255, 0, 0, 255]));
-    let region = SpriteRegion {
-        name: "dirt-test".to_owned(),
-        x: 0,
-        y: 0,
-        width: 16,
-        height: 16,
-        pivot_x: 8,
-        pivot_y: 8,
-        atlas_rotation: 0,
-    };
-    let mut target = vec![0; (GAME_WIDTH * GAME_HEIGHT) as usize];
-    draw_region(
-        &texture,
-        &region,
-        SpriteTransform::from_scale_rotation(100.0, 100.0, 1.0, 1.0, 0.0, 1.0),
-        None,
-        None,
-        &mut target,
-        None,
-        None,
-        None,
-        &[RenderHole {
-            x: 0.0,
-            y: 0.0,
-            radius: 3.0,
-        }],
-    );
-
-    assert_eq!(target[(100 * GAME_WIDTH + 100) as usize], 0);
-    assert_eq!(target[(100 * GAME_WIDTH + 105) as usize], 0x00ff0000);
 }
 
 #[test]
@@ -359,7 +321,6 @@ fn shipped_challenge_level_end_background_occludes_the_complete_native_framebuff
         bound_composite: None,
         geometry: None,
         shader: None,
-        clip_holes: Vec::new(),
         dirt: None,
         x: 0.0,
         y: 0.0,

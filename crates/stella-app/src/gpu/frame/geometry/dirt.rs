@@ -14,7 +14,6 @@ pub(in crate::gpu) fn append_gpu_dirt_triangles(
     let mut positions = Vec::with_capacity(triangles.len() * 3);
     let mut uv = Vec::with_capacity(triangles.len() * 3);
     let mut source = Vec::with_capacity(triangles.len() * 3);
-    let mut local = Vec::with_capacity(triangles.len() * 3);
     for triangle in triangles {
         for [x, y] in triangle.vertices {
             let x = x as f32;
@@ -26,7 +25,6 @@ pub(in crate::gpu) fn append_gpu_dirt_triangles(
             // as TEX0. The material texture is configured to repeat.
             uv.push([x, y]);
             source.push([x, y]);
-            local.push([pixel_x, pixel_y]);
         }
     }
     let mut uniform = shader_uniform(None);
@@ -38,7 +36,6 @@ pub(in crate::gpu) fn append_gpu_dirt_triangles(
         &positions,
         &uv,
         &source,
-        &local,
         uniform,
         WHITE_TEXTURE.to_owned(),
         texture,

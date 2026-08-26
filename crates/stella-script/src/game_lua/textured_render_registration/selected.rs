@@ -81,7 +81,6 @@ pub(super) fn install(
                 bound_composite: None,
                 geometry: None,
                 shader: None,
-                clip_holes: Vec::new(),
                 dirt: None,
                 x: f64::from((x * 20.0_f32) / scale_x),
                 y: f64::from((y * 20.0_f32) / scale_y),

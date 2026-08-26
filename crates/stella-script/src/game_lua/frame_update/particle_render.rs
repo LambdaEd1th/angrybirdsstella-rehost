@@ -37,7 +37,6 @@ impl RenderBridge {
                     bound_composite,
                     geometry: None,
                     shader: None,
-                    clip_holes: Vec::new(),
                     dirt: None,
                     // AtlasSprite/CompoSprite receives position divided by
                     // the same scale installed in the current GL state. The

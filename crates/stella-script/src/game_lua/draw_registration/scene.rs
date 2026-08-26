@@ -98,7 +98,6 @@ pub(super) fn install(
                             bound_composite: bound_composite.clone(),
                             geometry: None,
                             shader: None,
-                            clip_holes: Vec::new(),
                             dirt: None,
                             // sub_10006D9C0 divides each point before the
                             // GL context applies its divided translation.
@@ -128,7 +127,6 @@ pub(super) fn install(
                             bound_composite,
                             geometry: None,
                             shader: None,
-                            clip_holes: Vec::new(),
                             dirt: None,
                             x: f64::from(x as f32 / game_world_scale),
                             y: f64::from(y as f32 / game_world_scale),

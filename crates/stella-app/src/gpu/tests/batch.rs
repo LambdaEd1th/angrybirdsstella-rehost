@@ -3,6 +3,15 @@
 use super::*;
 
 #[test]
+fn native_sprite_stream_excludes_host_only_analytic_dirt_holes() {
+    // The recovered GL sprite submission uploads four float4 uniform rows.
+    // Dirt holes are triangulated by DirtMechanics and never consume an
+    // ordinary sprite uniform or per-vertex local-coordinate attribute.
+    assert_eq!(std::mem::size_of::<DrawUniform>(), 64);
+    assert_eq!(std::mem::size_of::<GpuVertex>(), 40);
+}
+
+#[test]
 fn native_viewport_projection_rounds_scale_before_fused_translation() {
     assert_eq!(
         frame::screen_to_clip([0.0, 0.0], GameResolution::default()),
@@ -34,7 +43,6 @@ fn wide_native_viewport_projects_its_own_center_and_clamps_scissors() {
     };
     prepared.push_quad(
         [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]],
-        [[0.0, 0.0]; 4],
         [[0.0, 0.0]; 4],
         [[0.0, 0.0]; 4],
         DrawUniform::default(),
@@ -108,7 +116,6 @@ fn quad_stream_uses_native_triangle_order_and_draw_index() {
         [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]],
         [[0.0, 0.0]; 4],
         [[0.0, 0.0]; 4],
-        [[0.0, 0.0]; 4],
         DrawUniform::default(),
         WHITE_TEXTURE.to_owned(),
         WHITE_TEXTURE.to_owned(),
@@ -147,7 +154,6 @@ fn adjacent_compatible_quads_share_one_wgpu_draw_without_sharing_uniforms() {
             ],
             [[0.0, 0.0]; 4],
             [[0.0, 0.0]; 4],
-            [[0.0, 0.0]; 4],
             uniform,
             "theme.pvr".to_owned(),
             WHITE_TEXTURE.to_owned(),
@@ -181,7 +187,6 @@ fn native_clip_edges_become_clamped_wgpu_scissors_and_empty_clips_skip_draws() {
         [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]],
         [[0.0, 0.0]; 4],
         [[0.0, 0.0]; 4],
-        [[0.0, 0.0]; 4],
         DrawUniform::default(),
         WHITE_TEXTURE.to_owned(),
         WHITE_TEXTURE.to_owned(),
@@ -192,7 +197,6 @@ fn native_clip_edges_become_clamped_wgpu_scissors_and_empty_clips_skip_draws() {
     frame.current_clip = Some([20, 30, 10, 40]);
     frame.push_quad(
         [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]],
-        [[0.0, 0.0]; 4],
         [[0.0, 0.0]; 4],
         [[0.0, 0.0]; 4],
         DrawUniform::default(),
@@ -255,7 +259,6 @@ fn mixed_command_classes_keep_native_immediate_submission_order() {
         bound_composite: None,
         geometry: None,
         shader: None,
-        clip_holes: Vec::new(),
         dirt: None,
         x: 0.0,
         y: 0.0,
@@ -334,7 +337,6 @@ fn capture_sprite_copies_the_immediate_framebuffer_for_later_draws() {
         bound_composite: None,
         geometry: None,
         shader: None,
-        clip_holes: Vec::new(),
         dirt: None,
         x: 0.0,
         y: 0.0,
@@ -392,7 +394,6 @@ fn shipped_challenge_level_end_background_occludes_the_complete_gpu_framebuffer(
         bound_composite: None,
         geometry: None,
         shader: None,
-        clip_holes: Vec::new(),
         dirt: None,
         x: 0.0,
         y: 0.0,

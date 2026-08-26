@@ -43,7 +43,6 @@ pub(super) struct SpriteDrawOptions<'a> {
     pub(super) masked_texture: Option<(&'a str, f64)>,
     pub(super) masked_texture_matrix: Option<[f64; 6]>,
     pub(super) shader: Option<&'a SpriteShader>,
-    pub(super) clip_holes: &'a [RenderHole],
     pub(super) draw_size: Option<[f64; 2]>,
     pub(super) sprite_pivot: Option<[f64; 2]>,
 }

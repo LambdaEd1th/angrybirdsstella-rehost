@@ -138,7 +138,6 @@ impl AssetCatalog {
                 None,
                 None,
                 None,
-                &[],
             );
             cursor += f64::from(i32::from(glyph.width) + i32::from(font.tracking));
         }
@@ -224,7 +223,6 @@ fn draw_system_text(
         None,
         None,
         None,
-        &[],
     );
     Ok(())
 }

@@ -154,7 +154,6 @@ fn dirt_mesh_uses_constructor_time_texture_pointers_after_catalog_shadowing() {
         bound_composite: None,
         geometry: None,
         shader: None,
-        clip_holes: Vec::new(),
         dirt: Some(Arc::new(dirt)),
         x: 0.0,
         y: 0.0,

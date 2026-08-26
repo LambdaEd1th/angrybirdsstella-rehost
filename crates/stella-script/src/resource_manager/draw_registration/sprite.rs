@@ -88,7 +88,6 @@ pub(crate) fn native_resource_sprite_command(
         bound_composite,
         geometry: None,
         shader: None,
-        clip_holes: Vec::new(),
         dirt: None,
         x,
         y,

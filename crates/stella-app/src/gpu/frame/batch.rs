@@ -20,7 +20,6 @@ impl PreparedFrame {
         positions: &[[f32; 2]],
         uv: &[[f32; 2]],
         source: &[[f32; 2]],
-        local: &[[f32; 2]],
         uniform: DrawUniform,
         base_texture: String,
         fill_texture: String,
@@ -28,7 +27,6 @@ impl PreparedFrame {
     ) {
         debug_assert_eq!(positions.len(), uv.len());
         debug_assert_eq!(positions.len(), source.len());
-        debug_assert_eq!(positions.len(), local.len());
         if positions.is_empty() {
             return;
         }
@@ -54,17 +52,20 @@ impl PreparedFrame {
         self.uniforms.push(uniform);
         let first_vertex = self.vertices.len() as u32;
         self.vertices
-            .extend(positions.iter().zip(uv).zip(source).zip(local).map(
-                |(((position, uv), source), local)| GpuVertex {
-                    position: *position,
-                    uv: *uv,
-                    source: *source,
-                    local: *local,
-                    clip_position: screen_to_clip(*position, self.resolution),
-                    draw_index,
-                    padding: 0,
-                },
-            ));
+            .extend(
+                positions
+                    .iter()
+                    .zip(uv)
+                    .zip(source)
+                    .map(|((position, uv), source)| GpuVertex {
+                        position: *position,
+                        uv: *uv,
+                        source: *source,
+                        clip_position: screen_to_clip(*position, self.resolution),
+                        draw_index,
+                        padding: 0,
+                    }),
+            );
         let vertex_count = self.vertices.len() as u32 - first_vertex;
         // Purple's GL context keeps adjacent submissions with the same
         // program, texture pair and clip in one vertex batch.  Each vertex
@@ -129,7 +130,6 @@ impl PreparedFrame {
         positions: [[f32; 2]; 4],
         uv: [[f32; 2]; 4],
         source: [[f32; 2]; 4],
-        local: [[f32; 2]; 4],
         uniform: DrawUniform,
         base_texture: String,
         fill_texture: String,
@@ -139,12 +139,10 @@ impl PreparedFrame {
         let triangle_positions = indices.map(|index| positions[index]);
         let triangle_uv = indices.map(|index| uv[index]);
         let triangle_source = indices.map(|index| source[index]);
-        let triangle_local = indices.map(|index| local[index]);
         self.push_mesh(
             &triangle_positions,
             &triangle_uv,
             &triangle_source,
-            &triangle_local,
             uniform,
             base_texture,
             fill_texture,

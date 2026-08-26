@@ -98,13 +98,12 @@ pub(super) fn create_sprite_pipeline(
     blend: wgpu::BlendState,
     label: &str,
 ) -> wgpu::RenderPipeline {
-    const ATTRIBUTES: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![
+    const ATTRIBUTES: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![
         0 => Float32x2,
         1 => Float32x2,
         2 => Float32x2,
-        3 => Float32x2,
-        5 => Float32x2,
-        4 => Uint32
+        4 => Float32x2,
+        3 => Uint32
     ];
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some(label),

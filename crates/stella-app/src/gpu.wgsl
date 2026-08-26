@@ -1,15 +1,11 @@
-const MAX_HOLES: u32 = 64u;
-
 struct DrawUniform {
     // alpha, texture scale, source mode, shader mode
     header: vec4<f32>,
     diffuse: vec4<f32>,
-    // lightness, saturation, gold highlight, hole count
+    // lightness, saturation, gold highlight
     params: vec4<f32>,
     // fill texture width and height
     fill: vec4<f32>,
-    // x, y and radius in sprite-pivot space
-    holes: array<vec4<f32>, 64>,
 };
 
 @group(0) @binding(0)
@@ -30,17 +26,15 @@ struct VertexInput {
     @location(0) screen_position: vec2<f32>,
     @location(1) uv: vec2<f32>,
     @location(2) source: vec2<f32>,
-    @location(3) local: vec2<f32>,
-    @location(4) draw_index: u32,
-    @location(5) clip_position: vec2<f32>,
+    @location(4) clip_position: vec2<f32>,
+    @location(3) draw_index: u32,
 };
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) uv: vec2<f32>,
     @location(1) source: vec2<f32>,
-    @location(2) local: vec2<f32>,
-    @location(3) @interpolate(flat) draw_index: u32,
+    @location(2) @interpolate(flat) draw_index: u32,
 };
 
 @vertex
@@ -49,7 +43,6 @@ fn sprite_vertex(input: VertexInput) -> VertexOutput {
     output.position = vec4<f32>(input.clip_position, 0.0, 1.0);
     output.uv = input.uv;
     output.source = input.source;
-    output.local = input.local;
     output.draw_index = input.draw_index;
     return output;
 }
@@ -57,20 +50,6 @@ fn sprite_vertex(input: VertexInput) -> VertexOutput {
 @fragment
 fn sprite_fragment(input: VertexOutput) -> @location(0) vec4<f32> {
     let state = draw_uniforms[input.draw_index];
-    let hole_count = min(u32(state.params.w + 0.5), MAX_HOLES);
-    for (var index = 0u; index < MAX_HOLES; index += 1u) {
-        if (index >= hole_count) {
-            break;
-        }
-        let hole = state.holes[index];
-        let delta = abs(input.local - hole.xy);
-        let octagonal_distance = max(delta.x, delta.y)
-            + (sqrt(2.0) - 1.0) * min(delta.x, delta.y);
-        if (octagonal_distance <= hole.z) {
-            discard;
-        }
-    }
-
     let source_mode = u32(state.header.z + 0.5);
     var color: vec4<f32>;
     if (source_mode == 2u) {

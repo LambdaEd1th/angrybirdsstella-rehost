@@ -88,7 +88,6 @@ impl AssetCatalog {
                     positions,
                     [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]],
                     source,
-                    source,
                     uniform,
                     label.texture_key,
                     WHITE_TEXTURE.to_owned(),
@@ -134,7 +133,6 @@ impl AssetCatalog {
                 command.alpha.clamp(0.0, 1.0) as f32,
             ),
             None,
-            &[],
         );
         Ok(())
     }

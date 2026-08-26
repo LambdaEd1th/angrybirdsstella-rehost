@@ -55,7 +55,6 @@ pub(super) fn command(
         bound_composite: None,
         geometry: None,
         shader: None,
-        clip_holes: Vec::new(),
         dirt: None,
         x: f64::from(x - bounds.min_x as f32),
         y: f64::from(y - bounds.min_y as f32),

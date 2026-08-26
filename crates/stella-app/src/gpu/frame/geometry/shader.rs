@@ -8,7 +8,6 @@ pub(in crate::gpu) fn shader_uniform(shader: Option<&SpriteShader>) -> DrawUnifo
         diffuse: [1.0; 4],
         params: [0.0, 1.0, 0.0, 0.0],
         fill: [1.0, 1.0, 0.0, 0.0],
-        holes: [[0.0; 4]; MAX_HOLES],
     };
     let Some(shader) = shader else {
         return uniform;

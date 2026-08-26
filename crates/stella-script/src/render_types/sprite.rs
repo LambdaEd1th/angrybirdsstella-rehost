@@ -198,7 +198,6 @@ pub struct RenderCommand {
     /// Keep it retained out-of-line so its string and parameter block do not
     /// enlarge every unshaded scene command.
     pub shader: Option<Arc<SpriteShader>>,
-    pub clip_holes: Vec<RenderHole>,
     /// Native DirtMechanics replaces the object's ordinary sprite callback
     /// with a background polygon followed by its clipped foreground polygons.
     /// Cached DrawablePolygon pair retained by DirtMechanics. The native
@@ -332,7 +331,9 @@ mod deferred_payload_tests {
             std::mem::size_of::<Option<Arc<SpriteTextureSubmission>>>(),
             std::mem::size_of::<usize>()
         );
-        assert!(std::mem::size_of::<RenderCommand>() <= 360);
+        // Dirt holes belong to the retained DirtMechanics component.  The
+        // original sprite submission has no per-command analytic-hole list.
+        assert_eq!(std::mem::size_of::<RenderCommand>(), 336);
         assert!(
             std::mem::size_of::<RenderCommand>()
                 < std::mem::size_of::<RenderState>()
@@ -384,13 +385,4 @@ impl Default for SpriteShader {
             highlight: 0.0,
         }
     }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct RenderHole {
-    /// Hole center in unscaled sprite-local pixels relative to its pivot.
-    pub x: f64,
-    pub y: f64,
-    /// Circumradius of Purple's eight-point collision cut, in local pixels.
-    pub radius: f64,
 }

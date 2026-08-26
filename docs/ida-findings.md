@@ -14317,3 +14317,58 @@ zero remaining compatibility bindings and empty stderr; its PNG SHA-256 is
 The stripped `stella-app` and `stella-headless` hashes are respectively
 `0eefd9d1ae02b52ed774219706f7b588584208f021da9c217567e9a57e82149d`
 and `18d4a660c7c4ad38cb82c045e70a795d6cb7840ccb8e7b78c327b64df72532e0`.
+
+## DirtMechanics-only clipping and compact wgpu sprite streams
+
+The remaining sprite pipeline still carried a host-invented analytic Dirt
+hole approximation. If a collision cut had been queued before the retained
+`DirtComponent` became available, every ordinary sprite command received a
+heap vector of octagonal holes. The software renderer tested those holes per
+pixel, while wgpu uploaded a fixed array of 64 `vec4` values for every draw
+and interpolated an otherwise unused sprite-local vertex coordinate. This was
+not an ownership or rendering boundary present in Purple.
+
+IDA's `sub_1000208D4` decompilation shows the complete Dirt render method. It
+first calls `sub_100024A08(a1[25])` for the retained background
+`DrawablePolygon`, then walks the half-open vector at `a1[26]..a1[27]` in
+16-byte steps and calls the same render function for each foreground polygon.
+Hopper independently recovers the same three-block function: it renders
+`arg0[0x19]`, loads the begin/end pointers from `arg0[0x1a]` and
+`arg0[0x1b]`, and advances the foreground iterator by `0x10`. Neither path
+submits an ordinary sprite, a hole array or a special fragment-discard
+uniform. Collision cuts remain retained in `SceneObject::dirt_holes` until
+they can update the real Dirt polygon; only the incorrect renderer-side
+fallback has been removed.
+
+The common `RenderCommand` is now 336 rather than 360 bytes. The wgpu
+`DrawUniform` shrinks from 1,088 to the four native-style `vec4` rows (64
+bytes), and `GpuVertex` shrinks from 48 to 40 bytes after removing its local
+hole coordinate. A layout regression fixes all three boundaries. Dirt still
+reaches wgpu exclusively as the recovered opaque background triangle stream
+followed by its foreground triangle streams, and the retained texture-pointer
+tests continue to cover catalog replacement.
+
+Three alternating Chapter02 L16 runs issue 30,000 complete
+`drawGameNative` submissions. The retained-texture baseline reports median
+real/user/system times of 1.72/1.57/0.14 seconds and a median maximum resident
+set of 1,763,885,056 bytes. The Dirt-only clipping build reports
+1.66/1.52/0.13 seconds and 1,650,655,232 bytes, reductions of approximately
+3.5 percent real time, 3.2 percent user CPU, 7.1 percent system CPU and 6.4
+percent peak resident memory in this retained-command-heavy diagnostic. A
+real-wgpu 1,200-frame L16 comparison remains pixel-identical while its median
+retired instruction count falls by about 1.4 percent.
+
+The earlier native rectangular-water replacement remains intact: a direct
+real-wgpu Chapter02 L16 load renders the translucent blue volume and submerged
+structure without the red editor cross, invokes no compatibility fallback and
+has empty stderr. Its PNG SHA-256 is
+`63b5da87b1a55a57d0e5d3559336f604d35817b5651cf8cf7347f7def189d4d7`.
+The complete workspace passes 671 tests with the intentional long-duration
+BirdRun audit ignored. Formatting, diff whitespace, strict all-target and
+all-feature Clippy, documentation and the locked release build are clean. A
+final 1,200-frame real-wgpu map smoke test reports zero invoked fallbacks,
+zero remaining compatibility bindings and empty stderr; its PNG SHA-256 is
+`d0451e60f2e15a0c04141cc4051291a96ead4ea02c78764c97f35035155c2351`.
+The release `stella-app` and `stella-headless` hashes are respectively
+`b4240f0d42aa4ab2b874abc81b80faeda9682e0c40618c1f8771303b78fe263b`
+and `704647a723c5df5ad846aa2ce313780e9cc72080038f13761c1dafad85b50bb2`.

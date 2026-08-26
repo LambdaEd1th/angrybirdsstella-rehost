@@ -21,15 +21,12 @@ use program::{NativeProgram, native_sprite_program};
 
 const GAME_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const WHITE_TEXTURE: &str = "<stella-white>";
-const MAX_HOLES: usize = 64;
-
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct GpuVertex {
     position: [f32; 2],
     uv: [f32; 2],
     source: [f32; 2],
-    local: [f32; 2],
     clip_position: [f32; 2],
     draw_index: u32,
     padding: u32,
@@ -42,7 +39,6 @@ struct DrawUniform {
     diffuse: [f32; 4],
     params: [f32; 4],
     fill: [f32; 4],
-    holes: [[f32; 4]; MAX_HOLES],
 }
 
 impl Default for DrawUniform {

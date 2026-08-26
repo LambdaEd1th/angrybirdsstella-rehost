@@ -43,7 +43,6 @@ pub(in crate::gpu) fn append_gpu_rect(frame: &mut PreparedFrame, command: &RectR
         ],
         params: [0.0, 1.0, 0.0, 0.0],
         fill: [1.0, 1.0, 0.0, 0.0],
-        holes: [[0.0; 4]; MAX_HOLES],
     };
     if let Some(vertices) = &command.vertices {
         if vertices.len() < 3 || !vertices.iter().flatten().copied().all(f64::is_finite) {
@@ -88,7 +87,6 @@ pub(in crate::gpu) fn append_gpu_rect(frame: &mut PreparedFrame, command: &RectR
             &positions,
             &empty,
             &empty,
-            &empty,
             uniform,
             WHITE_TEXTURE.to_owned(),
             WHITE_TEXTURE.to_owned(),
@@ -107,7 +105,6 @@ pub(in crate::gpu) fn append_gpu_rect(frame: &mut PreparedFrame, command: &RectR
     ];
     frame.push_quad(
         positions,
-        [[0.0, 0.0]; 4],
         [[0.0, 0.0]; 4],
         [[0.0, 0.0]; 4],
         uniform,

@@ -71,7 +71,6 @@ pub(super) fn install(
                     bound_composite: None,
                     geometry: None,
                     shader: None,
-                    clip_holes: Vec::new(),
                     dirt: None,
                     x: current.scale_x
                         * (current.translate_x + x + cosine * local_scale_x * part_x

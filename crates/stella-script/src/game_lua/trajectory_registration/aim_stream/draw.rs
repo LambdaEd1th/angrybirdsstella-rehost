@@ -53,7 +53,6 @@ pub(in crate::game_lua::trajectory_registration) fn install_draw(
                             bound_composite: bound_composite.clone(),
                             geometry: None,
                             shader: None,
-                            clip_holes: Vec::new(),
                             dirt: None,
                             x: f64::from(draw_x),
                             y: f64::from(draw_y),

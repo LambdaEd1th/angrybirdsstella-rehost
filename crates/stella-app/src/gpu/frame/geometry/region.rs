@@ -45,7 +45,6 @@ pub(in crate::gpu) fn append_gpu_region(
     source_mode: f32,
     program: NativeProgram,
     shader: Option<&SpriteShader>,
-    clip_holes: &[RenderHole],
 ) {
     // Sprite::Draw (`sub_100467BE8`) always transforms and submits all four
     // vertices. In particular it has no determinant epsilon: near-zero
@@ -116,16 +115,10 @@ pub(in crate::gpu) fn append_gpu_region(
     uniform.header[2] = source_mode;
     uniform.fill[0] = fill_width.max(1) as f32;
     uniform.fill[1] = fill_height.max(1) as f32;
-    let hole_count = clip_holes.len().min(MAX_HOLES);
-    uniform.params[3] = hole_count as f32;
-    for (target, source) in uniform.holes.iter_mut().zip(clip_holes).take(hole_count) {
-        *target = [source.x as f32, source.y as f32, source.radius as f32, 0.0];
-    }
     frame.push_quad(
         positions,
         uv,
         source,
-        local,
         uniform,
         base_texture,
         fill_texture,
