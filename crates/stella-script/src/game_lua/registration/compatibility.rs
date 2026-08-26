@@ -1,8 +1,36 @@
 //! Late utility members and the host's missing-global diagnostic boundary.
 
+use std::collections::HashSet;
+
+use mlua::LuaString;
+
 use crate::*;
 
 static UNIQUE_SHADER_COUNTER: Mutex<i32> = Mutex::new(0);
+
+/// Diagnostic-only ownership for absent interned Lua string keys.
+///
+/// Lua 5.1 interns string keys, and the original global lookup simply returns
+/// nil when the global table has no metatable. Retain each first-seen TString
+/// so its pointer cannot be recycled, then keep repeated diagnostic probes on
+/// the pointer-only path instead of rematerializing a Rust String and locking
+/// the public report set every frame.
+#[derive(Default)]
+struct MissingStringCache {
+    identities: HashSet<usize>,
+    owners: Vec<LuaString>,
+}
+
+impl MissingStringCache {
+    fn remember(&mut self, value: &LuaString) -> bool {
+        let identity = value.to_pointer() as usize;
+        if !self.identities.insert(identity) {
+            return false;
+        }
+        self.owners.push(value.clone());
+        true
+    }
+}
 
 pub(super) fn install(
     lua: &Lua,
@@ -11,6 +39,7 @@ pub(super) fn install(
     missing: Arc<Mutex<BTreeSet<String>>>,
     fallback_calls: Arc<Mutex<BTreeSet<String>>>,
     compatibility_bindings: Arc<Mutex<BTreeSet<String>>>,
+    track_missing_globals: bool,
 ) -> LuaResult<()> {
     for name in NATIVE_NOOP_FUNCTIONS {
         if globals.contains_key(*name)? {
@@ -91,22 +120,31 @@ pub(super) fn install(
         })?,
     )?;
 
-    let metatable = lua.create_table()?;
-    metatable.set(
-        "__index",
-        lua.create_function(move |_, (_table, key): (Value, Value)| {
-            let key = match key {
-                Value::String(value) => value.to_string_lossy(),
-                value => format!("{value:?}"),
-            };
-            missing
-                .lock()
-                .expect("missing-global lock poisoned")
-                .insert(key);
-            Ok(Value::Nil)
-        })?,
-    )?;
-    globals.set_metatable(Some(metatable))
+    if track_missing_globals {
+        let metatable = lua.create_table()?;
+        let missing_string_cache = Rc::new(RefCell::new(MissingStringCache::default()));
+        metatable.set(
+            "__index",
+            lua.create_function(move |_, (_table, key): (Value, Value)| {
+                let key = match key {
+                    Value::String(value) => {
+                        if !missing_string_cache.borrow_mut().remember(&value) {
+                            return Ok(Value::Nil);
+                        }
+                        value.to_string_lossy()
+                    }
+                    value => format!("{value:?}"),
+                };
+                missing
+                    .lock()
+                    .expect("missing-global lock poisoned")
+                    .insert(key);
+                Ok(Value::Nil)
+            })?,
+        )?;
+        globals.set_metatable(Some(metatable))?;
+    }
+    Ok(())
 }
 
 fn install_unique_shaders(lua: &Lua, globals: &mlua::Table) -> LuaResult<()> {
@@ -164,4 +202,24 @@ fn install_unique_shaders(lua: &Lua, globals: &mlua::Table) -> LuaResult<()> {
             Ok(())
         })?,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_string_cache_deduplicates_interned_keys_and_retains_owners() {
+        let lua = Lua::new();
+        let first = lua.create_string("missing_name").unwrap();
+        let same = lua.create_string("missing_name").unwrap();
+        let other = lua.create_string("other_name").unwrap();
+        let mut cache = MissingStringCache::default();
+
+        assert!(cache.remember(&first));
+        assert!(!cache.remember(&same));
+        assert!(cache.remember(&other));
+        assert_eq!(cache.identities.len(), 2);
+        assert_eq!(cache.owners.len(), 2);
+    }
 }

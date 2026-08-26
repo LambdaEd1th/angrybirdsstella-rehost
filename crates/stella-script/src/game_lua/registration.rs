@@ -24,6 +24,7 @@ pub(crate) fn install_base_globals(
     render: Arc<Mutex<RenderBridge>>,
     animation_runtime: Arc<Mutex<AnimationRuntime>>,
     draw_callbacks: Rc<RefCell<DrawCallbacks>>,
+    track_missing_globals: bool,
 ) -> LuaResult<InstalledRuntimes> {
     let globals = lua.globals();
     let bitmap_font_assets = Arc::new(load_bitmap_fonts(&data_root));
@@ -205,6 +206,7 @@ pub(crate) fn install_base_globals(
         missing,
         fallback_calls,
         compatibility_bindings,
+        track_missing_globals,
     )?;
     Ok(InstalledRuntimes {
         resources: resource_runtime,

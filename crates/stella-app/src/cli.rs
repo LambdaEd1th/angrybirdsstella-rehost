@@ -88,7 +88,8 @@ struct Args {
 pub(super) fn run() -> Result<()> {
     let args = Args::parse();
     let resolution = GameResolution::new(args.width, args.height)?;
-    let mut app = StellaApp::new(args.data, resolution)?;
+    let mut app =
+        StellaApp::new_with_missing_global_diagnostics(args.data, resolution, args.list_missing)?;
     if let Some(destination) = args.screenshot {
         let mut clicks = Vec::new();
         if let Some(values) = args.click.as_deref() {

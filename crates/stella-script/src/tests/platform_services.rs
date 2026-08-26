@@ -4273,7 +4273,7 @@ fn legacy_resource_memory_globals_follow_native_upload_and_decode_counters() {
 
 #[test]
 fn fallback_audit_distinguishes_missing_data_reads_from_invoked_native_methods() {
-    let runtime = StellaLua::new("/tmp").unwrap();
+    let runtime = StellaLua::new_with_missing_global_diagnostics("/tmp").unwrap();
     assert_eq!(runtime.compatibility_bindings(), Vec::<String>::new());
     runtime
         .execute_source(

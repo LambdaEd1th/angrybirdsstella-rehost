@@ -41,6 +41,26 @@ fn expected_keys(shape_fields: &[&str]) -> Vec<String> {
 }
 
 #[test]
+fn missing_global_diagnostics_are_opt_in_and_leave_native_lookup_untouched() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    assert!(runtime.lua().globals().metatable().is_none());
+    runtime
+        .execute_source("ordinary_missing_value = absentNativeGlobal")
+        .unwrap();
+    assert!(runtime.missing_globals().is_empty());
+
+    let diagnostic = StellaLua::new_with_missing_global_diagnostics("/tmp").unwrap();
+    assert!(diagnostic.lua().globals().metatable().is_some());
+    diagnostic
+        .execute_source("diagnostic_missing_value = absentNativeGlobal")
+        .unwrap();
+    assert_eq!(
+        diagnostic.missing_globals(),
+        vec!["absentNativeGlobal".to_owned()]
+    );
+}
+
+#[test]
 fn constructors_publish_only_the_native_objects_world_fields() {
     let runtime = StellaLua::new("/tmp").unwrap();
     runtime

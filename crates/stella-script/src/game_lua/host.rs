@@ -34,12 +34,39 @@ impl StellaLua {
         Self::new_with_resolution(data_root, 1024, 768)
     }
 
+    /// Construct a host that records absent global reads for explicit
+    /// compatibility audits. Normal hosts intentionally leave `_G` without a
+    /// metatable, matching Purple's stock Lua 5.1 lookup path.
+    pub fn new_with_missing_global_diagnostics(
+        data_root: impl Into<PathBuf>,
+    ) -> Result<Self, ScriptError> {
+        Self::new_with_resolution_and_missing_global_diagnostics(data_root, 1024, 768)
+    }
+
     /// Construct the native script host with the drawable size that Purple
     /// publishes before loading `gamelogic.lua`.
     pub fn new_with_resolution(
         data_root: impl Into<PathBuf>,
         screen_width: u32,
         screen_height: u32,
+    ) -> Result<Self, ScriptError> {
+        Self::new_with_resolution_options(data_root, screen_width, screen_height, false)
+    }
+
+    /// Resolution-aware variant of [`Self::new_with_missing_global_diagnostics`].
+    pub fn new_with_resolution_and_missing_global_diagnostics(
+        data_root: impl Into<PathBuf>,
+        screen_width: u32,
+        screen_height: u32,
+    ) -> Result<Self, ScriptError> {
+        Self::new_with_resolution_options(data_root, screen_width, screen_height, true)
+    }
+
+    fn new_with_resolution_options(
+        data_root: impl Into<PathBuf>,
+        screen_width: u32,
+        screen_height: u32,
+        track_missing_globals: bool,
     ) -> Result<Self, ScriptError> {
         if screen_width == 0 || screen_height == 0 {
             return Err(ScriptError::Lua(LuaError::RuntimeError(
@@ -74,6 +101,7 @@ impl StellaLua {
             Arc::clone(&render),
             Arc::clone(&animation_runtime),
             Rc::clone(&draw_callbacks),
+            track_missing_globals,
         )?;
         Ok(Self {
             lua,

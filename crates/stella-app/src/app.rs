@@ -36,10 +36,21 @@ pub(super) struct StellaApp {
 }
 
 impl StellaApp {
-    pub(super) fn new(data_root: PathBuf, resolution: GameResolution) -> Result<Self> {
-        let runtime =
+    pub(super) fn new_with_missing_global_diagnostics(
+        data_root: PathBuf,
+        resolution: GameResolution,
+        track_missing_globals: bool,
+    ) -> Result<Self> {
+        let runtime = if track_missing_globals {
+            StellaLua::new_with_resolution_and_missing_global_diagnostics(
+                &data_root,
+                resolution.width,
+                resolution.height,
+            )
+        } else {
             StellaLua::new_with_resolution(&data_root, resolution.width, resolution.height)
-                .map_err(|error| anyhow!("create Lua runtime: {error}"))?;
+        }
+        .map_err(|error| anyhow!("create Lua runtime: {error}"))?;
         runtime
             .boot("scripts/game.lua")
             .map_err(|error| anyhow!("boot original scripts: {error}"))?;

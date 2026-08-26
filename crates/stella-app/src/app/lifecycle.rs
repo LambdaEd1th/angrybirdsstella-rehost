@@ -76,7 +76,12 @@ mod tests {
         if !data_root.join("scripts/game.lua").is_file() {
             return;
         }
-        let mut app = StellaApp::new(data_root, GameResolution::default()).unwrap();
+        let mut app = StellaApp::new_with_missing_global_diagnostics(
+            data_root,
+            GameResolution::default(),
+            false,
+        )
+        .unwrap();
         app.runtime
             .execute_source(
                 r#"

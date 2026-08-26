@@ -32,7 +32,11 @@ struct Args {
 
 fn main() {
     let args = Args::parse();
-    let runtime = match StellaLua::new(args.data) {
+    let runtime = match if args.list_missing {
+        StellaLua::new_with_missing_global_diagnostics(args.data)
+    } else {
+        StellaLua::new(args.data)
+    } {
         Ok(runtime) => runtime,
         Err(error) => {
             eprintln!("failed to create Lua runtime: {error}");

@@ -13839,3 +13839,58 @@ zero fallbacks, zero compatibility bindings and empty stderr. The stripped
 `stella-app` and `stella-headless` hashes are respectively
 `01d41b11e05099b67bed0b9cd8f9a66ab9b8f96ba8b016c415be39b7db48eb95`
 and `dc58a4a8425732194b714d853a1fb234d6515eccf5a4ec4e2190aa538e7239c6`.
+
+## Native global nil lookup and opt-in missing-key diagnostics
+
+The next symbolized update/draw sample identified the rehost's missing-global
+reporter as a host-only frame hotspot. Every absent `_G` read entered a Rust
+`__index` callback. Although the public set contained only the first copy of
+each name, the old callback still converted every interned Lua string into a
+Rust string, acquired a mutex and walked the ordered report set. These steps
+were useful while discovering the native surface, but they are not part of
+Purple's runtime behavior.
+
+IDA's complete `GameLua` aggregate constructor at `sub_10002C274` registers
+the recovered native wrapper families directly into the Lua global table. Its
+call/import inventory contains neither `lua_setmetatable` nor a constructor
+route that installs a global `__index`; the constructor span also contains no
+`__index` literal. Hopper independently recovers the same registration call
+sequence and no global-metatable setup. An absent global therefore follows
+the ordinary Lua 5.1 table lookup and produces nil without a native callback.
+This distinguishes the earlier Rust audit hook from an executable feature.
+
+Normal `StellaLua` and desktop construction now leave `_G` without a
+metatable, matching that native path. The `--list-missing` command-line mode
+selects a separate diagnostic constructor and retains the audit behavior. In
+that explicitly instrumented mode, the reporter retains the first interned
+Lua string object and deduplicates subsequent probes by its stable pointer,
+so long audits do not repeatedly allocate, convert or lock for the same key.
+ResourceManager and AnimationWrapper's separately recovered fallback tables
+are unchanged.
+
+The focused regressions prove that an ordinary host has no global metatable
+and records no absent read, while the diagnostic host records the exact same
+read; the existing missing-data/fallback audit continues to separate an
+absent value from an invoked compatibility member. The complete workspace
+passes 666 tests with one intentional long-duration BirdRun audit ignored.
+Formatting, diff whitespace, strict all-target/all-feature Clippy, doc tests
+and the locked stripped release build are clean.
+
+In the same fresh-AppData 10,000-frame workload, pointer deduplication first
+reduced the three warmed median real/user times from 4.47/4.24 seconds to
+4.33/4.12 seconds. Removing the diagnostic callback from normal execution
+then reduced them to 3.33/3.12 seconds, a further reduction of approximately
+23.1 percent real time and 24.3 percent user CPU. Across both changes the
+reductions are about 25.5 and 26.4 percent. This deliberately missing-read-
+heavy benchmark is not treated as a universal frame-rate claim. A follow-up
+six-second symbol sample contains no global compatibility callback,
+`MissingStringCache`, missing-set insertion or missing-key string conversion
+stack.
+
+The final stripped 1,200-frame real-wgpu checkpoint keeps the explicit audit
+available and reports 74 optional nil probes, zero invoked fallbacks, zero
+remaining compatibility bindings and empty stderr. Its PNG SHA-256 is
+`d5cccb8525b12447b7176a5c19df6fee8db21a957eae9016761c26278f355ceb`.
+The stripped `stella-app` and `stella-headless` hashes are respectively
+`af6ba685e30fbf7428f2feff1294ae21180719b3cee697285aca96bc8b82181e`
+and `48570a7150ebe755b3086cd28a16b1d8a4bdb48614f7f8adf30aab1e9baa50a3`.
