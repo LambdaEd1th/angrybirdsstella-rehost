@@ -78,15 +78,18 @@ pub(super) fn install(
                 let mut callbacks = callback_store.borrow_mut();
                 let world_identity = object_world(lua)?.to_pointer() as usize;
                 if callbacks.object_world_identity != Some(world_identity) {
-                    callbacks.records.clear();
+                    callbacks.clear_records();
                     callbacks.object_world_identity = Some(world_identity);
                 }
                 // sub_10004E3C0/sub_10004E570 call getRenderObject before
                 // touching the callback holder. A missing name raises the same
                 // native error instead of creating a detached callback entry.
-                let Some(record) = callbacks.records.get_mut(&name) else {
+                let Some(slot) = callbacks.records.get(&name).copied() else {
                     return Err(LuaError::RuntimeError(format!("Missing object: {name}")));
                 };
+                let record = callbacks
+                    .record_mut(slot)
+                    .expect("live callback name must retain its native slot");
                 let target = if pre_draw {
                     &mut record.pre
                 } else {

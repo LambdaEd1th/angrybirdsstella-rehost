@@ -278,8 +278,48 @@ pub(crate) struct DrawCallbackRecord {
 
 #[derive(Default)]
 pub(crate) struct DrawCallbacks {
-    pub(crate) records: BTreeMap<String, DrawCallbackRecord>,
+    /// Constructor name index used by infrequent mutation/removal members.
+    /// The hot draw path follows the slot retained by `SceneObject`, matching
+    /// Purple's direct `RenderObjectData*` fields instead of searching this
+    /// tree for every visible object.
+    pub(crate) records: BTreeMap<String, usize>,
+    slots: Vec<Option<DrawCallbackRecord>>,
     pub(crate) object_world_identity: Option<usize>,
+}
+
+impl DrawCallbacks {
+    pub(crate) fn clear_records(&mut self) {
+        self.records.clear();
+        self.slots.clear();
+    }
+
+    /// Install the three retained Lua holders that live on one native
+    /// RenderObjectData allocation. A same-name constructor replaces that
+    /// allocation in the native name map while old render leaves continue to
+    /// resolve the new pointer, so reuse its stable host slot as well.
+    pub(crate) fn insert_record(&mut self, name: String, record: DrawCallbackRecord) -> usize {
+        if let Some(&slot) = self.records.get(&name) {
+            self.slots[slot] = Some(record);
+            return slot;
+        }
+        let slot = self.slots.len();
+        self.slots.push(Some(record));
+        self.records.insert(name, slot);
+        slot
+    }
+
+    pub(crate) fn remove_record(&mut self, name: &str) -> Option<DrawCallbackRecord> {
+        let slot = self.records.remove(name)?;
+        self.slots.get_mut(slot)?.take()
+    }
+
+    pub(crate) fn record(&self, slot: usize) -> Option<&DrawCallbackRecord> {
+        self.slots.get(slot)?.as_ref()
+    }
+
+    pub(crate) fn record_mut(&mut self, slot: usize) -> Option<&mut DrawCallbackRecord> {
+        self.slots.get_mut(slot)?.as_mut()
+    }
 }
 
 impl Default for RenderBridge {

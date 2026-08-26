@@ -14424,3 +14424,78 @@ zero remaining compatibility bindings and empty stderr; its PNG SHA-256 is
 The release `stella-app` and `stella-headless` hashes are respectively
 `fbab87a46c7d3670e67628676b2fb65273dabe999cebc28961434e272e7c4286`
 and `524a6fadfc6c2dc6c1a23afe2e67b7062a10786b7ddb46d48d72471e2439fc1b`.
+
+## Retained RenderObjectData callback slots and single scene visits
+
+The next Chapter02 L16 symbol profile showed that the previously consolidated
+`DrawCallbackRecord` was still reached through a separate Rust name tree for
+every visible object. Callback-free objects also performed a second scene-name
+tree lookup to build the ordinary draw snapshot. These searches were host
+ownership adapters rather than work performed by Purple's scene dispatcher.
+
+IDA's `sub_10004BAB4` resolves the current leaf name with
+`sub_100070278(GameLua+0x2E0, name)` exactly once at `0x10004BD24` and retains
+the returned `RenderObjectData*`. The same pointer supplies the embedded Lua
+object holder at `+0x20`, the pre-draw holder at `+0x158`, the complete ordinary
+visual record passed to `sub_10006D5B4`, and the post-draw holder at `+0x160`.
+The pre holder is invoked around `0x10004BFA4`; the post holder is loaded at
+`0x10004C300`. Hopper independently exposes `BL sub_100070278`, retains the
+result in `x21`, loads `[x21,#0x158]` and `[x21,#0x160]`, forms the callback
+object as `x21+0x20`, and passes that same `x21` through the ordinary draw
+branch. There is no second object or callback-name lookup in this visit.
+
+The mutation boundary is equally direct. IDA's `sub_10004E3C0` and
+`sub_10004E570` each resolve the object once with `sub_10005DAF8`, then replace
+the retained function pointer at decimal offsets 344 and 352 respectively.
+Hopper confirms the single lookup followed by `LDR/STR [x19,#0x158]` or
+`LDR/STR [x19,#0x160]`.
+
+Each Rust `SceneObject` now retains a stable callback-record slot allocated at
+construction. The name tree remains only for infrequent setter and removal
+members; the draw loop follows the retained slot directly. One scene lookup
+returns callback state and the initial ordinary draw snapshot together. A
+pre-draw callback still forces a live visual reload after Lua returns, and its
+post callback is reread from the same slot, preserving same-visit visual and
+callback replacement semantics. Removed slots are not recycled for a
+different name during the same level, preventing an object removed by its own
+callback from observing a newly constructed object's holders. Level teardown
+clears both the index and slot storage.
+
+A focused regression removes only the host setter/removal name index after
+construction and proves that native drawing still invokes the retained pre
+callback. Existing tests continue to cover same-name replacement, immediate
+removal, failed and successful level loads, pre-draw visual mutations,
+same-visit post replacement, live z-order changes and rectangular water's
+early replacement branch.
+
+Three alternating stripped-release runs issue 30,000 complete Chapter02 L16
+`drawGameNative` submissions. The float32-snapshot baseline reports median
+real/user/system times of 1.48/1.37/0.10 seconds, 22,721,346,051 retired
+instructions and 5,175,723,438 CPU cycles. The stable-slot build reports
+1.21/1.11/0.09 seconds, 17,312,480,397 instructions and 4,260,982,056 cycles,
+reductions of approximately 18.2 percent real time, 19.0 percent user CPU,
+10.0 percent system CPU, 23.8 percent instructions and 17.7 percent cycles.
+Median maximum resident memory is unchanged at 1,085,177,856 bytes. This is a
+deliberately scene-dispatch-heavy diagnostic, not a universal frame-rate
+claim.
+
+In matching 100,000-visit symbol samples, the old callback-tree branch had
+178 samples including 71 `memcmp` samples, while the second scene-snapshot
+lookup had 263 samples including 75 `memcmp` samples. Both branches disappear
+after the change. The direct slot access has three samples and no `memcmp`;
+the one required native-style scene-name-map lookup remains visible.
+
+The direct real-wgpu Chapter02 L16 checkpoint remains byte-identical to the
+water-fix baseline: the translucent blue pool and submerged structure render
+without the red editor cross, no compatibility fallback is invoked and stderr
+is empty. Its PNG SHA-256 remains
+`63b5da87b1a55a57d0e5d3559336f604d35817b5651cf8cf7347f7def189d4d7`.
+The complete workspace passes 672 tests with the intentional long-duration
+BirdRun audit ignored. Formatting, diff whitespace, strict all-target and
+all-feature Clippy, documentation and the locked release build are clean. A
+final 1,200-frame real-wgpu map smoke test reports zero invoked fallbacks,
+zero remaining compatibility bindings and empty stderr; its PNG SHA-256 is
+`20d62dceac610657093c4b36936f78f9e2d9b9efbc947c9e84f70d0d6831a030`.
+The release `stella-app` and `stella-headless` hashes are respectively
+`1c8699435a862bc860fcd3e406027d196eb3489b488a88d92e384a40f873a508`
+and `4832a17e20c3e36025ca6eb5b186726084f9baa2255b117b028a0250056d5054`.

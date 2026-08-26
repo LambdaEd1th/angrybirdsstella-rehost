@@ -603,6 +603,38 @@ fn native_scene_draw_retains_the_constructor_object_table() {
 }
 
 #[test]
+fn native_scene_draw_reaches_callbacks_through_the_retained_object_slot() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .execute_source(
+            r#"
+                createNonPhysicsObject("slotted", "RED_CROSS", 1, 2, 3)
+                slot_callback_count = 0
+                native_setPreDrawFunction("slotted", function()
+                    slot_callback_count = slot_callback_count + 1
+                end)
+            "#,
+        )
+        .unwrap();
+
+    // RenderObjectData already owns the Lua holders after construction. Drop
+    // only the host-side name index used by setter/removal adapters: Purple's
+    // hot draw loop must still reach +0x158 through its retained object
+    // pointer, and the Rust path must therefore reach the stable slot too.
+    assert!(
+        runtime
+            .draw_callbacks
+            .borrow_mut()
+            .records
+            .remove("slotted")
+            .is_some()
+    );
+    runtime.execute_source("drawGameNative()").unwrap();
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert_eq!(environment.get::<i64>("slot_callback_count").unwrap(), 1);
+}
+
+#[test]
 fn native_remove_object_releases_its_retained_lua_draw_state_immediately() {
     let runtime = StellaLua::new("/tmp").unwrap();
     runtime

@@ -17,7 +17,7 @@ pub(super) fn install_remove(
             {
                 let mut callbacks = draw_callbacks.borrow_mut();
                 for removed_name in &removed {
-                    callbacks.records.remove(removed_name);
+                    callbacks.remove_record(removed_name);
                 }
             }
             let world = object_world(lua)?;

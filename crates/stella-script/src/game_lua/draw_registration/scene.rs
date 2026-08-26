@@ -148,13 +148,14 @@ pub(super) fn install(
                     }
                     continue;
                 };
-                let Some(callback_state_object) = render
+                let Some(visit) = render
                     .lock()
                     .expect("render bridge lock poisoned")
-                    .scene_callback_object(name.as_ref())
+                    .scene_draw_visit(name.as_ref())
                 else {
                     continue;
                 };
+                let callback_state_object = visit.callback;
                 let callback_horizontal_flip = callback_state_object.horizontal_flip;
                 // sub_10004BAB4 handles rectangular water before resolving
                 // either retained Lua callback. In normal gameplay the fill
@@ -168,47 +169,29 @@ pub(super) fn install(
                 if water_replaces_object {
                     continue;
                 }
-                // RenderObjectData+0x20 owns the exact table through a Lua
-                // registry reference. Keep a compatibility fallback for
-                // tests or extension-created scene records that bypass the
-                // recovered constructors, but retain its first table too.
+                // RenderObjectData+0x20/+0x158/+0x160 are reached directly
+                // from the pointer already resolved by the scene-name map.
+                // The stable Rust slot models those three inline holders and
+                // deliberately avoids a second per-object name-tree search.
                 let (callback_object, pre, initial_post) = {
-                    let mut callbacks = draw_callbacks.borrow_mut();
-                    if let Some(record) = callbacks.records.get(name.as_ref()) {
-                        (
-                            Value::Table(record.object.clone()),
-                            record.pre.clone(),
-                            record.post.clone(),
-                        )
-                    } else {
-                        let object = object_world(lua)?.raw_get::<Value>(name.as_ref())?;
-                        if let Value::Table(table) = &object {
-                            callbacks.records.insert(
-                                name.to_string(),
-                                DrawCallbackRecord {
-                                    object: table.clone(),
-                                    pre: None,
-                                    post: None,
-                                },
-                            );
-                        }
-                        (object, None, None)
-                    }
+                    let callbacks = draw_callbacks.borrow();
+                    let record = callbacks
+                        .record(visit.callback_slot)
+                        .expect("live scene object must retain its native callback record");
+                    (
+                        Value::Table(record.object.clone()),
+                        record.pre.clone(),
+                        record.post.clone(),
+                    )
                 };
                 // RenderObjectData+0x158 is tested before the original starts
                 // consuming the visual fields.  A pre callback can mutate all
                 // of those fields, so defer its SceneDrawObject snapshot until
                 // after Lua returns.  Objects without a pre callback keep the
                 // native one-pointer/one-snapshot fast path.
-                let (previous, initial_draw_object) = {
+                let previous = {
                     let mut bridge = render.lock().expect("render bridge lock poisoned");
-                    let initial_draw_object = pre
-                        .is_none()
-                        .then(|| bridge.scene_draw_object(name.as_ref()))
-                        .flatten();
-                    let previous =
-                        bridge.begin_scene_object_draw_callback(callback_state_object);
-                    (previous, initial_draw_object)
+                    bridge.begin_scene_object_draw_callback(callback_state_object)
                 };
                 if trace_draw_callbacks && (pre.is_some() || initial_post.is_some())
                 {
@@ -238,7 +221,7 @@ pub(super) fn install(
                         .expect("render bridge lock poisoned")
                         .scene_draw_object(name.as_ref())
                 } else {
-                    initial_draw_object
+                    Some(visit.initial_draw_object)
                 };
                 let Some(object) = object
                 else {
@@ -356,8 +339,7 @@ pub(super) fn install(
                 let post = if pre.is_some() {
                     draw_callbacks
                         .borrow()
-                        .records
-                        .get(name.as_ref())
+                        .record(visit.callback_slot)
                         .and_then(|record| record.post.clone())
                 } else {
                     initial_post

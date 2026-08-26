@@ -64,6 +64,18 @@ pub(crate) struct SceneCallbackObject {
     pub(crate) collision_is_circle: bool,
 }
 
+/// One retained RenderObjectData visit after the native name-map lookup.
+/// Purple keeps this pointer in `x21` and reads its Lua holders and visual
+/// members directly. The deferred host snapshots the ordinary draw fields at
+/// the same lookup so callback-free objects do not search the scene tree a
+/// second time.
+#[derive(Debug, Clone)]
+pub(crate) struct SceneDrawVisit {
+    pub(crate) callback_slot: usize,
+    pub(crate) callback: SceneCallbackObject,
+    pub(crate) initial_draw_object: SceneDrawObject,
+}
+
 impl From<&SceneObject> for SceneCallbackObject {
     fn from(object: &SceneObject) -> Self {
         let (pivot_x, pivot_y) = native_scene_callback_pivot(

@@ -88,7 +88,7 @@ fn clear_native_level_owner(
     bridge.reset_native_flight_trails_for_level_load();
     drop(bridge);
     let mut callbacks = draw_callbacks.borrow_mut();
-    callbacks.records.clear();
+    callbacks.clear_records();
     callbacks.object_world_identity = None;
 }
 

@@ -6,4 +6,4 @@ mod pivot;
 mod state;
 mod submission;
 
-pub(crate) use model::{SceneCallbackObject, SceneDrawObject};
+pub(crate) use model::{SceneCallbackObject, SceneDrawObject, SceneDrawVisit};

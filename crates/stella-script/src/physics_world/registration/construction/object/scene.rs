@@ -6,7 +6,11 @@ use crate::{DisplayInterpolationVelocity, NativeInterpolationPose, RenderBridge,
 
 use super::super::{ConstructorKind, PreparedConstruction};
 
-pub(super) fn insert(render: &Arc<Mutex<RenderBridge>>, prepared: PreparedConstruction) {
+pub(super) fn insert(
+    render: &Arc<Mutex<RenderBridge>>,
+    prepared: PreparedConstruction,
+    draw_callback_slot: usize,
+) {
     let PreparedConstruction {
         request,
         collision_shape,
@@ -41,6 +45,7 @@ pub(super) fn insert(render: &Arc<Mutex<RenderBridge>>, prepared: PreparedConstr
     let mut scene_object = SceneObject {
         physics_creation_order,
         body_allocation_slot,
+        draw_callback_slot,
         fixture_proxy_ids: vec![None; fixture_count],
         sprite: request.sprite.into(),
         sprite_bound,

@@ -62,6 +62,11 @@ impl NativeInterpolationPose {
 pub(crate) struct SceneObject {
     pub(crate) physics_creation_order: u64,
     pub(crate) body_allocation_slot: Option<u64>,
+    /// Host slot for RenderObjectData+0x20/+0x158/+0x160. Purple reaches all
+    /// three retained Lua holders through the RenderObjectData pointer already
+    /// resolved by the scene name map; the draw loop must not do another name
+    /// lookup for them.
+    pub(crate) draw_callback_slot: usize,
     pub(crate) fixture_proxy_ids: Vec<Option<i32>>,
     /// The target ABI's old libstdc++ string is a COW pointer. Keep the live
     /// RenderObjectData name fields pointer-cheap and materialize an owned Rust

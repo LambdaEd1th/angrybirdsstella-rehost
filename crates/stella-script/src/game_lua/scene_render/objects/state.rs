@@ -1,6 +1,6 @@
 //! Render state reconstructed by the ordinary object member `sub_10006D5B4`.
 
-use super::{SceneCallbackObject, SceneDrawObject};
+use super::{SceneCallbackObject, SceneDrawObject, SceneDrawVisit};
 use crate::*;
 
 impl RenderBridge {
@@ -220,12 +220,16 @@ impl RenderBridge {
         }
     }
 
-    pub(crate) fn scene_callback_object(&self, name: &str) -> Option<SceneCallbackObject> {
+    pub(crate) fn scene_draw_visit(&self, name: &str) -> Option<SceneDrawVisit> {
         let object = self.scene.get(name)?;
         if !object.visible {
             return None;
         }
-        Some(SceneCallbackObject::from(object))
+        Some(SceneDrawVisit {
+            callback_slot: object.draw_callback_slot,
+            callback: SceneCallbackObject::from(object),
+            initial_draw_object: SceneDrawObject::from(object),
+        })
     }
 
     pub(crate) fn begin_scene_object_draw_callback(
