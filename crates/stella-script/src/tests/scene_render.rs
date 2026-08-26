@@ -509,6 +509,7 @@ fn native_scene_draw_callbacks_wrap_object_draw_and_can_be_cleared() {
 #[test]
 fn native_rectangular_water_replaces_editor_sprite_before_callbacks() {
     let runtime = StellaLua::new("/tmp").unwrap();
+    register_test_sprite_sheet(&runtime, &["RED_CROSS", "WATER_PRE"]);
     runtime
         .execute_source(
             r#"
@@ -521,6 +522,7 @@ fn native_rectangular_water_replaces_editor_sprite_before_callbacks() {
                 post_count = 0
                 native_setPreDrawFunction("water", function()
                     pre_count = pre_count + 1
+                    res.drawSprite("WATER_PRE", 0, 0)
                 end)
                 native_setPostDrawFunction("water", function()
                     post_count = post_count + 1
@@ -569,10 +571,70 @@ fn native_rectangular_water_replaces_editor_sprite_before_callbacks() {
     assert_eq!(environment.get::<i64>("post_count").unwrap(), 1);
     let bridge = runtime.render.lock().unwrap();
     assert_eq!(bridge.rect_commands.len(), 1);
-    assert_eq!(bridge.commands.len(), 1);
+    assert_eq!(bridge.commands.len(), 2);
     assert_eq!(bridge.rect_commands[0].order, 0);
     assert_eq!(bridge.commands[0].order, 1);
-    assert_eq!(bridge.commands[0].sprite, "RED_CROSS");
+    assert_eq!(bridge.commands[0].sprite, "WATER_PRE");
+    assert_eq!(
+        (
+            bridge.commands[0].state.translate_x,
+            bridge.commands[0].state.translate_y,
+            bridge.commands[0].state.scale_x,
+            bridge.commands[0].state.scale_y,
+            bridge.commands[0].state.angle,
+            bridge.commands[0].state.alpha,
+        ),
+        (0.0, 0.0, 1.0, 1.0, 0.0, 1.0)
+    );
+    assert_eq!(bridge.commands[1].order, 2);
+    assert_eq!(bridge.commands[1].sprite, "RED_CROSS");
+}
+
+#[test]
+fn chapter02_l16_water_draws_native_fill_without_editor_cross() {
+    let sandbox = ShippedDataSandbox::new("chapter02-l16-water");
+    let runtime = StellaLua::new(&sandbox.data_root).unwrap();
+    runtime.boot("scripts/game.lua").unwrap();
+    runtime.execute_source("initializeEventSystem()").unwrap();
+    runtime
+        .execute_source(
+            r#"
+                SpriteSheetManager.useGroupSet('INGAME')
+                currentFolder = 'Chapter02'
+                currentPack = 'Chapter02'
+                currentLevel = 16
+                levelFolder = 'levels/Chapter02/'
+                levelName = 'Chapter02_L16'
+                loadLevelInternal(levelFolder .. levelName)
+                blocks.BlockComponentManager.triggerGlobalEvent(blocks.events.EID_START)
+                drawGameNative()
+            "#,
+        )
+        .unwrap();
+
+    let bridge = runtime.render.lock().unwrap();
+    let water_count = bridge
+        .scene
+        .values()
+        .filter(|object| object.visible && object.is_water)
+        .count();
+    assert!(
+        water_count > 0,
+        "Chapter02_L16 lost its authored water body"
+    );
+    assert_eq!(bridge.rect_commands.len(), water_count);
+    assert!(bridge.rect_commands.iter().all(|command| {
+        command.color_program == ColorProgram::PlainAlpha
+            && command.alpha > 0.0
+            && command.clip_rect.is_none()
+    }));
+    assert!(
+        bridge
+            .commands
+            .iter()
+            .all(|command| command.sprite != "RED_CROSS"),
+        "Chapter02_L16 leaked the water editor placeholder"
+    );
 }
 
 #[test]
@@ -1202,14 +1264,15 @@ fn native_box_and_nonphysics_ground_skip_only_their_initial_render_leaf() {
 }
 
 #[test]
-fn native_scene_callback_state_uses_secondary_pre_scale_translation() {
+fn native_scene_pre_observes_prior_context_and_post_observes_object_context() {
     let runtime = StellaLua::new("/tmp").unwrap();
-    register_test_sprite_sheet(&runtime, &["PRE_DRAW", "BODY"]);
+    register_test_sprite_sheet(&runtime, &["PRE_DRAW", "BODY", "POST_DRAW"]);
     runtime
         .execute_source(
             r#"
                 setWorldScale(3)
                 setTopLeft(10, 20)
+                setRenderState(7, 8, 9, 10, 0.5, 11, 12, 0.75)
                 createNonPhysicsObject("callback_transform", "BODY", 1, 2, 3)
                 setObjectParameter("callback_transform", 5, 2)
                 setObjectParameter("callback_transform", 8, 1)
@@ -1217,6 +1280,9 @@ fn native_scene_callback_state_uses_secondary_pre_scale_translation() {
                 setPivotOffset("callback_transform", 12, 18)
                 native_setPreDrawFunction("callback_transform", function()
                     res.drawSprite("PRE_DRAW", 5, 6)
+                end)
+                native_setPostDrawFunction("callback_transform", function()
+                    res.drawSprite("POST_DRAW", 7, 8)
                 end)
                 drawGameNative()
                 "#,
@@ -1233,19 +1299,18 @@ fn native_scene_callback_state_uses_secondary_pre_scale_translation() {
     assert_eq!((callback.x, callback.y), (5.0, 6.0));
     assert_eq!(
         (callback.state.translate_x, callback.state.translate_y),
-        (-1.0, -1.0)
+        (7.0, 8.0)
     );
     assert_eq!(
         (callback.state.scale_x, callback.state.scale_y),
-        (-6.0, 6.0)
+        (9.0, 10.0)
     );
-    assert_eq!(callback.state.angle, -0.25);
-    // BODY's 1x1 test region has an integer pivot of zero. The atlas branch
-    // adds the object's two float32 pivot offsets to that native pivot.
+    assert_eq!(callback.state.angle, 0.5);
     assert_eq!(
         (callback.state.pivot_x, callback.state.pivot_y),
-        (12.0, 18.0)
+        (11.0, 12.0)
     );
+    assert_eq!(callback.state.alpha, 0.75);
 
     let body = bridge
         .commands
@@ -1260,6 +1325,32 @@ fn native_scene_callback_state_uses_secondary_pre_scale_translation() {
     assert_eq!((body.state.scale_x, body.state.scale_y), (-6.0, 6.0));
     assert_eq!(body.state.angle, 0.25);
     assert_eq!((body.state.pivot_x, body.state.pivot_y), (0.0, 0.0));
+
+    let post = bridge
+        .commands
+        .iter()
+        .find(|command| command.sprite == "POST_DRAW")
+        .unwrap();
+    assert!(!post.world_space);
+    assert_eq!((post.x, post.y), (7.0, 8.0));
+    assert_eq!(
+        (post.state.translate_x, post.state.translate_y),
+        (-1.0, -1.0)
+    );
+    assert_eq!((post.state.scale_x, post.state.scale_y), (-6.0, 6.0));
+    assert_eq!(post.state.angle, -0.25);
+    // BODY's 1x1 test region has an integer pivot of zero. The atlas branch
+    // adds the object's two float32 pivot offsets to that native pivot.
+    assert_eq!((post.state.pivot_x, post.state.pivot_y), (12.0, 18.0));
+
+    // 0x10004C350 restores only scale after the SpriteSheet vector ends.
+    assert_eq!((bridge.state.scale_x, bridge.state.scale_y), (3.0, 3.0));
+    assert_eq!(
+        (bridge.state.translate_x, bridge.state.translate_y),
+        (-1.0, -1.0)
+    );
+    assert_eq!(bridge.state.angle, -0.25);
+    assert_eq!((bridge.state.pivot_x, bridge.state.pivot_y), (12.0, 18.0));
 }
 
 #[test]
@@ -1305,7 +1396,7 @@ fn native_scene_composite_callback_uses_integer_bounds_pivot_and_ignores_object_
 
     let bridge = runtime.render.lock().unwrap();
     let object = bridge.scene_draw_object("composite").unwrap();
-    let state = bridge.scene_callback_state(&object);
+    let state = bridge.scene_post_draw_state(&object);
     // Native transformed/truncated X bounds are [-4,16], Y bounds [-7,2],
     // hence CompoSprite+0x68/+0x6C store (4,7). +0xB4/+0xB8 are skipped by
     // the composite branch despite the deliberately large object offsets.
@@ -1364,7 +1455,7 @@ fn native_scene_object_and_callback_transforms_keep_arm64_float_order() {
     // +0xB0 field and therefore must not rotate the ordinary sprite twice.
     assert_eq!(command.state.angle, object.angle as f32);
 
-    let callback = bridge.scene_callback_state(&object);
+    let callback = bridge.scene_post_draw_state(&object);
     assert_eq!(
         callback.translate_x,
         f64::from((object.pivot_offset_x as f32 - top_left_x) / scale_x)

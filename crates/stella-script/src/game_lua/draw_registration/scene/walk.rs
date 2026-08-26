@@ -10,6 +10,7 @@ pub(super) struct NativeSceneWalk {
 struct NativeSceneCursor {
     minimum_z: i32,
     maximum_z: i32,
+    draw_world_scale: f32,
     z: Option<i32>,
     sheet: Option<u64>,
     name_index: usize,
@@ -18,12 +19,17 @@ struct NativeSceneCursor {
 }
 
 impl NativeSceneWalk {
-    pub(super) fn new(render: Arc<Mutex<RenderBridge>>, bounds: (i32, i32)) -> Self {
+    pub(super) fn new(
+        render: Arc<Mutex<RenderBridge>>,
+        bounds: (i32, i32),
+        draw_world_scale: f32,
+    ) -> Self {
         Self {
             render,
             cursor: NativeSceneCursor {
                 minimum_z: bounds.0,
                 maximum_z: bounds.1,
+                draw_world_scale,
                 z: None,
                 sheet: None,
                 name_index: 0,
@@ -58,15 +64,14 @@ impl Iterator for NativeSceneWalk {
         // re-reads the live vector length exactly like 0x10004C340. Borrowing
         // owner and cursor independently also avoids an atomic Arc retain and
         // release per item: Purple retains GameLua once for the complete walk.
-        let bridge = self.render.lock().expect("render bridge lock poisoned");
-        let index = &bridge.scene_render_index;
+        let mut bridge = self.render.lock().expect("render bridge lock poisoned");
         let cursor = &mut self.cursor;
         loop {
             let Some(current_z) = cursor.z else {
                 if cursor.finished {
                     return None;
                 }
-                if !cursor.advance_z(index) {
+                if !cursor.advance_z(&bridge.scene_render_index) {
                     return None;
                 }
                 continue;
@@ -78,9 +83,9 @@ impl Iterator for NativeSceneWalk {
             let current_sheet = match cursor.sheet {
                 Some(current_sheet) => current_sheet,
                 None => {
-                    let first = index.first_sheet(current_z);
+                    let first = bridge.scene_render_index.first_sheet(current_z);
                     let Some(first) = first else {
-                        cursor.advance_z(index);
+                        cursor.advance_z(&bridge.scene_render_index);
                         continue;
                     };
                     cursor.sheet = Some(first);
@@ -88,15 +93,26 @@ impl Iterator for NativeSceneWalk {
                     first
                 }
             };
-            let name = index.name_at(current_z, current_sheet, cursor.name_index);
+            let name =
+                bridge
+                    .scene_render_index
+                    .name_at(current_z, current_sheet, cursor.name_index);
             if let Some(name) = name {
                 cursor.name_index += 1;
                 return Some((current_z, Some(name)));
             }
-            cursor.sheet = index.next_sheet(current_z, current_sheet);
+            // 0x10004C350..0x10004C354 restores only the two scale
+            // members after every SpriteSheet/name vector. Translation,
+            // angle, pivot, alpha and clipping remain live for the next
+            // z-ordered/pre-draw callback exactly as they do in Purple.
+            bridge.state.scale_x = f64::from(cursor.draw_world_scale);
+            bridge.state.scale_y = f64::from(cursor.draw_world_scale);
+            cursor.sheet = bridge
+                .scene_render_index
+                .next_sheet(current_z, current_sheet);
             cursor.name_index = 0;
             if cursor.sheet.is_none() {
-                cursor.advance_z(index);
+                cursor.advance_z(&bridge.scene_render_index);
             }
         }
     }

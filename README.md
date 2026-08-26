@@ -314,7 +314,8 @@ object state/submission (`sub_10006D5B4`) and the independent flash-animation
 transform (`sub_10006794C`); `particles.rs` separates packed state, native CMWC randomness and
 emission; `persistence.rs` separates AppData file members from the executable
 Lua serializer family; `draw_registration.rs` is the ordered facade over
-platform/Z-range/callback adapters, the scene-and-trail dispatcher, and the
+platform/Z-range/callback adapters, the scene dispatcher and its live
+`scene/walk.rs` plus anchor-triggered `scene/trails.rs` leaves, and the
 distinct textured-line/rubber-band ABIs in `draw_registration/misc.rs`,
 `scene.rs` and `lines.rs`; and the ordered native constructor is decomposed into
 the 132-line `registration.rs` facade plus its focused `registration/clip_text.rs`,

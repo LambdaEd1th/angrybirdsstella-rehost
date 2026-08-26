@@ -1,5 +1,6 @@
 //! Ordinary sprite, ray and decoration submission owned by `sub_10006D5B4`.
 
+use super::pivot::native_scene_callback_pivot;
 use super::{SceneCallbackObject, SceneDrawObject};
 use crate::*;
 
@@ -12,6 +13,12 @@ impl RenderBridge {
         if !object.is_water || object.collision_is_circle {
             return false;
         }
+
+        // 0x10004BDA4..0x10004BE88 constructs and memcpy's a complete
+        // default GL context before the rectangle draw. It remains current
+        // when the editor branch continues into pre-draw, and after a normal
+        // water placeholder is suppressed.
+        self.state = RenderState::default();
 
         let pixels_per_physics = 1.0_f32 / f32::from_bits(0x3D4C_CCCD);
         let width = object.native_shape_width as f32;
@@ -179,38 +186,68 @@ impl RenderBridge {
         let Some((resources, data_root)) = decoration_resources else {
             return;
         };
-        let bound_region = resources
-            .active_atlas_catalog_region(&decoration.sprite, data_root)
-            .map(Arc::new);
-        let mut bound_composite = resources
-            .active_bound_composite(&decoration.sprite)
-            .map(Arc::new);
-        if bound_region.is_none() && bound_composite.is_none() {
-            bound_composite = Some(Arc::new(Vec::new()));
+        let mut decoration_angle = object.angle as f32;
+        let radians_per_step = (decoration.angle_increment as f32) * f32::from_bits(0x4049_0FDB);
+        for _ in 0..decoration.amount {
+            let decoration_scale = decoration.scale as f32;
+            let scale_x = object.scale_x as f32 * decoration_scale;
+            let scale_y = object.scale_y as f32 * decoration_scale;
+            let world_scale = self.world_scale as f32;
+            let bound_region = resources.active_atlas_catalog_region(&decoration.sprite, data_root);
+            let bound_composite = resources.active_bound_composite(&decoration.sprite);
+            let (pivot_x, pivot_y) = native_scene_callback_pivot(
+                bound_composite.as_deref(),
+                bound_region.as_ref(),
+                0.0,
+                0.0,
+            );
+            let decoration_state = RenderState {
+                translate_x: f64::from(-(self.top_left_x as f32) / scale_x),
+                translate_y: f64::from(-(self.top_left_y as f32) / scale_y),
+                scale_x: f64::from(world_scale * scale_x),
+                scale_y: f64::from(world_scale * scale_y),
+                angle: f64::from(decoration_angle),
+                matrix: None,
+                masked_texture_matrix: None,
+                sprite_pivot: None,
+                pivot_x: f64::from(pivot_x),
+                pivot_y: f64::from(pivot_y),
+                draw_size: None,
+                alpha: object.alpha,
+                clip_rect: self.state.clip_rect,
+            };
+            // 0x10004C278..0x10004C2C4 installs the divided camera
+            // translation and raw object*decoration scale, then calls the
+            // shared ResourceManager HPIVOT/VPIVOT draw with the divided
+            // object position. It deliberately does not inherit the
+            // ordinary body's horizontal flip or game-world body scale.
+            self.state = decoration_state;
+            if let Some(command) = native_resource_sprite_command(
+                resources,
+                data_root,
+                ParsedSpriteDraw {
+                    sprite: decoration.sprite.clone(),
+                    x: f64::from((object.x as f32 * 20.0_f32) / scale_x),
+                    y: f64::from((object.y as f32 * 20.0_f32) / scale_y),
+                    horizontal_anchor: SpriteHorizontalAnchor::Pivot,
+                    vertical_anchor: SpriteVerticalAnchor::Pivot,
+                    draw_size: None,
+                },
+                decoration_state,
+            ) {
+                self.push_render_command(command);
+            }
+            // 0x10004C2CC..0x10004C2EC performs one rounded FMUL followed
+            // by FMADD and fmodf. `angleIncrement` is authored in degrees;
+            // the old host path incorrectly treated it as radians.
+            decoration_angle = radians_per_step
+                .mul_add(f32::from_bits(0x3BB6_0B61), decoration_angle)
+                % (f32::from_bits(0x4049_0FDB) + f32::from_bits(0x4049_0FDB));
+            if decoration_angle < 0.0 {
+                decoration_angle += f32::from_bits(0x4049_0FDB) + f32::from_bits(0x4049_0FDB);
+            }
         }
-        let sprite: SharedSpriteName = decoration.sprite.as_str().into();
-        let base = self.scene_object_state(object);
-        for index in 0..decoration.amount {
-            self.push_render_command(RenderCommand {
-                order: 0,
-                sprite: sprite.clone(),
-                texture: None,
-                bound_region: bound_region.clone(),
-                bound_composite: bound_composite.clone(),
-                geometry: None,
-                shader: None,
-                dirt: None,
-                x: 0.0,
-                y: 0.0,
-                state: RenderState {
-                    scale_x: base.scale_x * decoration.scale,
-                    scale_y: base.scale_y * decoration.scale,
-                    angle: base.angle + decoration.angle_increment * index as f64,
-                    ..base
-                }
-                .into(),
-                world_space: true,
-            });
-        }
+        // The post callback therefore sees the last iteration's state. The
+        // loop computes one following angle but never stores it into GL.
     }
 }

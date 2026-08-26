@@ -14499,3 +14499,85 @@ zero remaining compatibility bindings and empty stderr; its PNG SHA-256 is
 The release `stella-app` and `stella-headless` hashes are respectively
 `1c8699435a862bc860fcd3e406027d196eb3489b488a88d92e384a40f873a508`
 and `4832a17e20c3e36025ca6eb5b186726084f9baa2255b117b028a0250056d5054`.
+
+## Persistent scene context, anchor-ordered trajectories and water-state audit
+
+The next scene-dispatch audit found that the deferred host still treated each
+object callback as an isolated save/install/restore scope. Purple instead owns
+one persistent `GL_Context` across the complete z-tree walk. This difference
+was largely invisible to ordinary sprite commands, which snapshot their own
+transform, but it changed Lua pre/post helpers, trajectory placement,
+decoration rotation and the state inherited after a rectangular water draw.
+
+IDA's `sub_10004BAB4` invokes the pre holder at
+`0x10004BFA4..0x10004BFDC`, then begins installing alpha, camera translation,
+scale, pivot and the composed object/sprite angle at `0x10004BFE0`. The
+ordinary draw reaches `sub_10006D5B4` at `0x10004C144`; only afterward is the
+post holder loaded and invoked at `0x10004C300..0x10004C338`. No context
+save/restore surrounds those calls. At the end of each SpriteSheet/name
+vector, `0x10004C350..0x10004C354` restores only the two scale fields to the
+draw-start world-scale snapshot. Hopper independently shows the pre
+`[x21,#0x158]` load before the context stores, the ordinary draw, the post
+`[x21,#0x160]` load, and the two terminal scale stores in the same order.
+
+The ordinary member mutates the live context further. Its flip/body-scale
+branch divides the secondary pivot-offset translation by object scale and, on
+a horizontal flip, replaces the live angle with the negated object angle.
+The masked-texture branch bypasses that member and therefore leaves raw-scale
+camera translation and the composed angle. Ray and flash-animation branches
+leave the caller-installed base context. The Rust dispatcher now installs the
+matching branch-specific post state only after pre returns, leaves it live
+through post and the following entry, and resets scale only when the native
+name vector ends. The pre-callback snapshot consequently shrinks to the eight
+fields actually read before context installation, avoiding per-object pivot
+and transform work.
+
+The same procedure's latch at `0x10004BF28..0x10004BF9C` proves that the two
+trajectory records are not a scene-wide pre-pass. They are inserted directly
+before the first visible object whose `RenderObjectData+0x140` controllable or
+`+0x148` level-goal byte is set, and their trajectory context remains live for
+that anchor's pre callback. The trail implementation now lives in
+`draw_registration/scene/trails.rs`, is invoked at that exact tree position,
+and emits nothing when no visible anchor exists.
+
+Decoration iteration at `0x10004C220..0x10004C2FC` starts from the object
+angle. After each draw, Purple computes `angleIncrement * PI` followed by an
+FMADD with the `1/180` float constant and normalizes with `fmodf(2*PI)`.
+Authored increments are therefore degrees, not radians. The rehost now keeps
+the same float32 FMUL/FMA boundaries. It also installs the recovered raw
+object-times-decoration scale, divides camera and object position by that
+scale, and enters the shared ResourceManager HPIVOT/VPIVOT draw instead of
+reusing the ordinary body's host-screen transform. The final decoration draw
+context remains visible to post. Regressions cover three successive 90-degree
+draws, divided resource coordinates and the live callback ordering.
+
+The rectangular-water path at `0x10004BDA4..0x10004BE88` was rechecked in the
+same context audit. Purple constructs and copies a complete default GL context
+before submitting the untextured water rectangle, clears its scissor, and
+leaves that state current. Normal gameplay then terminates the visit; editing
+continues into pre and the `RED_CROSS` placeholder with the default context.
+The implementation and focused editing regression now preserve that full
+ordering. A real `Chapter02_L16` construction finds every authored water body,
+emits one translucent unclipped rectangle for each, and emits no editor-cross
+sprite. The release-wgpu direct checkpoint renders the blue pool over the
+complete submerged structure and remains byte-identical to the established
+water baseline, SHA-256
+`63b5da87b1a55a57d0e5d3559336f604d35817b5651cf8cf7347f7def189d4d7`.
+
+Three alternating stripped-release measurements each issue 30,000 complete
+Chapter02 L16 `drawGameNative` submissions. The retained-callback-slot baseline
+reports median real/user/system times of 1.22/1.08/0.13 seconds; the persistent
+context and compact pre-snapshot build reports 1.13/0.99/0.13 seconds,
+reductions of approximately 7.4 and 8.3 percent in real time and user CPU,
+with median system CPU unchanged, in this intentionally scene-dispatch-heavy
+diagnostic. This is not a universal frame-rate claim.
+
+The complete workspace passes 675 tests with the intentional long-duration
+BirdRun audit ignored. Formatting, diff whitespace, documentation, strict
+all-target/all-feature Clippy and the locked release build are clean. The
+release `stella-app` and `stella-headless` hashes are respectively
+`1d745f5ad3f0f5adb4f560954e5c6fbdbbf22799a351e813e5e2412bf35a216a`
+and `5024a85419116ef4bf355e0790761b0ed1c53e91db45cd1adbbf190622ca815e`.
+A final 1,200-frame release-wgpu run against a copied runtime save reports
+zero invoked compatibility fallbacks and zero remaining compatibility
+bindings.

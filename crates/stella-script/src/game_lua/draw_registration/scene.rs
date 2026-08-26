@@ -1,9 +1,11 @@
-//! Z-ordered scene dispatcher (`sub_10004BAB4`) and trail pre-pass.
+//! Z-ordered scene dispatcher (`sub_10004BAB4`) and anchor-ordered trails.
 
 use crate::*;
 
+mod trails;
 mod walk;
 
+use trails::push_native_trajectory_streams;
 use walk::NativeSceneWalk;
 
 pub(super) fn install(
@@ -54,94 +56,14 @@ pub(super) fn install(
                     _ => None,
                 }
             };
-            // sub_10004BAB4 calls sub_10006D9C0 before the scene list. It
-            // draws both 0x38-byte trail records in fixed slot order.
+            let (z_bounds, draw_world_scale) = {
+                let bridge = render.lock().expect("render bridge lock poisoned");
+                (bridge.native_scene_z_bounds(), bridge.world_scale as f32)
+            };
+            let mut trajectory_drawn = false;
+            for (z_bucket, name) in
+                NativeSceneWalk::new(Arc::clone(&render), z_bounds, draw_world_scale)
             {
-                let resources = resource_runtime
-                    .lock()
-                    .expect("resource runtime lock poisoned");
-                let mut bridge = render.lock().expect("render bridge lock poisoned");
-                let top_left_x = bridge.top_left_x as f32;
-                let top_left_y = bridge.top_left_y as f32;
-                let world_scale = bridge.world_scale as f32;
-                let game_world_scale = bridge.game_world_scale as f32;
-                let trail_state = RenderState {
-                    translate_x: f64::from(-top_left_x / game_world_scale),
-                    translate_y: f64::from(-top_left_y / game_world_scale),
-                    scale_x: f64::from(world_scale * game_world_scale),
-                    scale_y: f64::from(world_scale * game_world_scale),
-                    ..RenderState::default()
-                };
-                let mut commands = Vec::new();
-                // sub_10006D9C0 reads the two fixed 0x38-byte records at
-                // GameLua+0x558 in place and re-reads each point-vector end
-                // while iterating. The bridge lock already excludes the Lua
-                // mutators, so borrowing here avoids a Rust-only deep clone of
-                // both point vectors on every rendered frame.
-                for stream in &bridge.trajectory_streams {
-                    if !stream.normal_sprite.is_empty() {
-                        let bound_region = resources
-                            .active_atlas_catalog_region(&stream.normal_sprite, &data_root)
-                            .map(Arc::new);
-                        let mut bound_composite = resources
-                            .active_bound_composite(&stream.normal_sprite)
-                            .map(Arc::new);
-                        if bound_region.is_none() && bound_composite.is_none() {
-                            bound_composite = Some(Arc::new(Vec::new()));
-                        }
-                        let sprite: SharedSpriteName = stream.normal_sprite.as_str().into();
-                        commands.extend(stream.points.iter().map(|&(x, y)| RenderCommand {
-                            order: 0,
-                            sprite: sprite.clone(),
-                            texture: None,
-                            bound_region: bound_region.clone(),
-                            bound_composite: bound_composite.clone(),
-                            geometry: None,
-                            shader: None,
-                            dirt: None,
-                            // sub_10006D9C0 divides each point before the
-                            // GL context applies its divided translation.
-                            x: x as f32 / game_world_scale,
-                            y: y as f32 / game_world_scale,
-                            state: trail_state.into(),
-                            world_space: false,
-                        }));
-                    }
-                    if let Some((x, y)) = stream.puff
-                        && !stream.special_sprite.is_empty()
-                    {
-                        let bound_region = resources
-                            .active_atlas_catalog_region(&stream.special_sprite, &data_root)
-                            .map(Arc::new);
-                        let mut bound_composite = resources
-                            .active_bound_composite(&stream.special_sprite)
-                            .map(Arc::new);
-                        if bound_region.is_none() && bound_composite.is_none() {
-                            bound_composite = Some(Arc::new(Vec::new()));
-                        }
-                        commands.push(RenderCommand {
-                            order: 0,
-                            sprite: stream.special_sprite.as_str().into(),
-                            texture: None,
-                            bound_region,
-                            bound_composite,
-                            geometry: None,
-                            shader: None,
-                            dirt: None,
-                            x: x as f32 / game_world_scale,
-                            y: y as f32 / game_world_scale,
-                            state: trail_state.into(),
-                            world_space: false,
-                        });
-                    }
-                }
-                bridge.extend_render_commands(commands);
-            }
-            let z_bounds = render
-                .lock()
-                .expect("render bridge lock poisoned")
-                .native_scene_z_bounds();
-            for (z_bucket, name) in NativeSceneWalk::new(Arc::clone(&render), z_bounds) {
                 let Some(name) = name else {
                     if let Some(draw) = z_order_draw.as_ref() {
                         draw.call::<()>(f64::from(z_bucket))?;
@@ -169,6 +91,18 @@ pub(super) fn install(
                 if water_replaces_object {
                     continue;
                 }
+                // The two +0x558 trajectory records are not a scene-wide
+                // pre-pass. 0x10004BF28 tests the first visible +0x140
+                // controllable or +0x148 level-goal record and inserts them
+                // immediately before that object's pre callback.
+                if !trajectory_drawn && callback_state_object.trajectory_anchor {
+                    let resources = resource_runtime
+                        .lock()
+                        .expect("resource runtime lock poisoned");
+                    let mut bridge = render.lock().expect("render bridge lock poisoned");
+                    push_native_trajectory_streams(&mut bridge, &resources, &data_root);
+                    trajectory_drawn = true;
+                }
                 // RenderObjectData+0x20/+0x158/+0x160 are reached directly
                 // from the pointer already resolved by the scene-name map.
                 // The stable Rust slot models those three inline holders and
@@ -184,15 +118,10 @@ pub(super) fn install(
                         record.post.clone(),
                     )
                 };
-                // RenderObjectData+0x158 is tested before the original starts
-                // consuming the visual fields.  A pre callback can mutate all
-                // of those fields, so defer its SceneDrawObject snapshot until
-                // after Lua returns.  Objects without a pre callback keep the
-                // native one-pointer/one-snapshot fast path.
-                let previous = {
-                    let mut bridge = render.lock().expect("render bridge lock poisoned");
-                    bridge.begin_scene_object_draw_callback(callback_state_object)
-                };
+                // RenderObjectData+0x158 is invoked at 0x10004BFA4 before
+                // 0x10004BFE0 starts installing this object's GL state. A pre
+                // callback therefore observes the persistent context left by
+                // the preceding scene/z draw and may mutate the live record.
                 if trace_draw_callbacks && (pre.is_some() || initial_post.is_some())
                 {
                     eprintln!(
@@ -223,14 +152,18 @@ pub(super) fn install(
                 } else {
                     Some(visit.initial_draw_object)
                 };
-                let Some(object) = object
-                else {
-                    render
-                        .lock()
-                        .expect("render bridge lock poisoned")
-                        .finish_scene_object_draw(previous);
+                let Some(object) = object else {
                     continue;
                 };
+                // Alpha, camera transform, pivot, angle and the branch-local
+                // scale/translation are installed only after pre returns.
+                // Purple leaves this context live through +0x160 post and
+                // into the following scene entry; there is no per-object
+                // save/restore pair.
+                render
+                    .lock()
+                    .expect("render bridge lock poisoned")
+                    .install_scene_post_draw_state(&object);
                 if object.flash_animation {
                     // Preserve Purple's interpolated position and authored
                     // ability rotations. The recovered BirdAnimation flying
@@ -345,19 +278,8 @@ pub(super) fn install(
                     initial_post
                 };
                 if let Some(function) = post {
-                    let horizontal_flip = render
-                        .lock()
-                        .expect("render bridge lock poisoned")
-                        .scene
-                        .get(name.as_ref())
-                        .map(|object| object.horizontal_flip)
-                        .unwrap_or(object.horizontal_flip);
-                    function.call::<()>((callback_object, horizontal_flip))?;
+                    function.call::<()>((callback_object, object.horizontal_flip))?;
                 }
-                render
-                    .lock()
-                    .expect("render bridge lock poisoned")
-                    .finish_scene_object_draw(previous);
             }
             Ok(())
         })?,

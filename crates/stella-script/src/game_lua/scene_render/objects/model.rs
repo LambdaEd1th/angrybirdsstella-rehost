@@ -2,7 +2,6 @@
 
 use std::sync::Arc;
 
-use super::pivot::native_scene_callback_pivot;
 use crate::*;
 
 /// The native z tree stores object names and resolves a live RenderObjectData
@@ -39,10 +38,9 @@ pub(crate) struct SceneDrawObject {
     pub(crate) dirt: Option<Arc<DirtComponent>>,
 }
 
-/// Scalar callback context copied from the live RenderObjectData record.
-/// Purple keeps the record and its retained sprite pointer in place while a
-/// callback runs; calculating the pivot before releasing the bridge lock
-/// avoids deep-cloning those resource graphs just to install GL state.
+/// Fields consumed before the pre callback is entered. Purple has not yet
+/// installed this object's GL transform at that point; the remaining visual
+/// state already lives in `SceneDrawObject` for the later draw/post phase.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct SceneCallbackObject {
     pub(crate) x: f64,
@@ -50,18 +48,9 @@ pub(crate) struct SceneCallbackObject {
     pub(crate) native_shape_width: f64,
     pub(crate) native_shape_height: f64,
     pub(crate) is_water: bool,
-    pub(crate) scale_x: f64,
-    pub(crate) scale_y: f64,
-    pub(crate) angle: f64,
-    pub(crate) sprite_rotation: f64,
-    pub(crate) pivot_offset_x: f64,
-    pub(crate) pivot_offset_y: f64,
-    pub(crate) pivot_x: f32,
-    pub(crate) pivot_y: f32,
-    pub(crate) alpha: f64,
     pub(crate) horizontal_flip: bool,
-    pub(crate) sensor_type: i32,
     pub(crate) collision_is_circle: bool,
+    pub(crate) trajectory_anchor: bool,
 }
 
 /// One retained RenderObjectData visit after the native name-map lookup.
@@ -78,58 +67,18 @@ pub(crate) struct SceneDrawVisit {
 
 impl From<&SceneObject> for SceneCallbackObject {
     fn from(object: &SceneObject) -> Self {
-        let (pivot_x, pivot_y) = native_scene_callback_pivot(
-            object.composite_sprite.as_deref().map(Vec::as_slice),
-            object.sprite_region.as_deref(),
-            object.pivot_offset_x,
-            object.pivot_offset_y,
-        );
         Self {
             x: object.render_x,
             y: object.render_y,
             native_shape_width: object.native_shape_width,
             native_shape_height: object.native_shape_height,
             is_water: object.is_water,
-            scale_x: object.scale_x,
-            scale_y: object.scale_y,
-            angle: object.render_angle,
-            sprite_rotation: object.sprite_rotation,
-            pivot_offset_x: object.pivot_offset_x,
-            pivot_offset_y: object.pivot_offset_y,
-            pivot_x,
-            pivot_y,
-            alpha: object.alpha,
             horizontal_flip: object.horizontal_flip,
-            sensor_type: object.sensor_type,
             collision_is_circle: matches!(object.collision_shape, CollisionShape::Circle { .. }),
-        }
-    }
-}
-
-#[cfg(test)]
-impl From<&SceneDrawObject> for SceneCallbackObject {
-    fn from(object: &SceneDrawObject) -> Self {
-        let (pivot_x, pivot_y) = object.callback_pivot();
-        Self {
-            x: object.x,
-            y: object.y,
-            // This conversion only supports callback-state unit tests. Water
-            // submission snapshots the live SceneObject directly above.
-            native_shape_width: 0.0,
-            native_shape_height: 0.0,
-            is_water: false,
-            scale_x: object.scale_x,
-            scale_y: object.scale_y,
-            angle: object.angle,
-            sprite_rotation: object.sprite_rotation,
-            pivot_offset_x: object.pivot_offset_x,
-            pivot_offset_y: object.pivot_offset_y,
-            pivot_x,
-            pivot_y,
-            alpha: object.alpha,
-            horizontal_flip: object.horizontal_flip,
-            sensor_type: object.sensor_type,
-            collision_is_circle: object.collision_is_circle,
+            // 0x10004BF28..0x10004BF9C inserts both trajectory buffers
+            // immediately before the first +0x140 controllable or +0x148
+            // level-goal object, then latches that insertion for this draw.
+            trajectory_anchor: object.controllable || object.level_goal,
         }
     }
 }

@@ -493,6 +493,10 @@ fn track_overlap_uses_native_fused_b2transform() {
 #[test]
 fn recovered_object_transform_pivot_decoration_and_joint_motor_contracts() {
     let runtime = unlocked_test_runtime();
+    register_test_sprite_sheet(
+        &runtime,
+        &["BASE_SPRITE", "DECORATION_SPRITE", "POST_DECORATION"],
+    );
     runtime
         .execute_source(
             r#"
@@ -502,7 +506,7 @@ fn recovered_object_transform_pivot_decoration_and_joint_motor_contracts() {
                             objects = {
                                 amount = 3,
                                 sprite = "DECORATION_SPRITE",
-                                angleIncrement = 0.25,
+                                angleIncrement = 90,
                                 scale = 0.5
                             }
                         }
@@ -517,6 +521,9 @@ fn recovered_object_transform_pivot_decoration_and_joint_motor_contracts() {
                 setPivotOffset("decorated", 12, 18)
                 setSensorGravityMask("decorated", 13)
                 setDecorationObjects("decorated")
+                native_setPostDrawFunction("decorated", function()
+                    res.drawSprite("POST_DECORATION", 0, 0)
+                end)
                 world_x, world_y = getWorldPoint("decorated", 2, 3)
                 local_x, local_y = getLocalPoint("decorated", world_x, world_y)
 
@@ -568,8 +575,28 @@ fn recovered_object_transform_pivot_decoration_and_joint_motor_contracts() {
         .filter(|command| command.sprite == "DECORATION_SPRITE")
         .collect::<Vec<_>>();
     assert_eq!(decorations.len(), 3);
+    assert!(decorations.iter().all(|command| !command.world_space));
     assert!((decorations[0].state.scale_x - 0.5).abs() < 1e-9);
-    assert!((decorations[2].state.angle - (object.angle + 0.5) as f32).abs() < 1e-6);
+    assert_eq!((decorations[0].x, decorations[0].y), (160.0, 280.0));
+    let native_step =
+        (90.0_f32 * f32::from_bits(0x4049_0FDB)).mul_add(f32::from_bits(0x3BB6_0B61), 0.0);
+    let first_angle = object.angle as f32;
+    let second_angle = native_step + first_angle;
+    let third_angle = native_step + second_angle;
+    assert_eq!(decorations[0].state.angle, first_angle);
+    assert_eq!(decorations[1].state.angle, second_angle);
+    assert_eq!(decorations[2].state.angle, third_angle);
+    let post_decoration = bridge
+        .commands
+        .iter()
+        .find(|command| command.sprite == "POST_DECORATION")
+        .unwrap();
+    assert!(!post_decoration.world_space);
+    assert_eq!(
+        (post_decoration.state.scale_x, post_decoration.state.scale_y),
+        (0.5, 0.5)
+    );
+    assert_eq!(post_decoration.state.angle, third_angle);
     assert_eq!(bridge.joints["motor"].motor_speed, Some(2.5));
     assert!(bridge.scene["motor_a"].motion_started);
     assert!(bridge.scene["motor_b"].motion_started);

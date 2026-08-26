@@ -1,5 +1,6 @@
 //! Render state reconstructed by the ordinary object member `sub_10006D5B4`.
 
+use super::pivot::native_scene_callback_pivot;
 use super::{SceneCallbackObject, SceneDrawObject, SceneDrawVisit};
 use crate::*;
 
@@ -164,12 +165,71 @@ impl RenderBridge {
         }
     }
 
+    /// GL context left by the object branch immediately before +0x160 post.
+    /// The +0x158 pre callback runs before this state is installed.
     #[cfg(test)]
-    pub(crate) fn scene_callback_state(&self, object: &SceneDrawObject) -> RenderState {
-        self.scene_callback_snapshot_state(&SceneCallbackObject::from(object))
+    pub(crate) fn scene_post_draw_state(&self, object: &SceneDrawObject) -> RenderState {
+        self.native_scene_post_draw_state(object)
     }
 
-    fn scene_callback_snapshot_state(&self, object: &SceneCallbackObject) -> RenderState {
+    fn native_scene_post_draw_state(&self, object: &SceneDrawObject) -> RenderState {
+        let (pivot_x, pivot_y) = native_scene_callback_pivot(
+            object.composite_sprite.as_deref().map(Vec::as_slice),
+            object.sprite_region.as_deref(),
+            object.pivot_offset_x,
+            object.pivot_offset_y,
+        );
+        let world_scale = self.world_scale as f32;
+        let object_angle = object.angle as f32;
+        let composed_angle = object_angle + object.sprite_rotation as f32;
+        let clip_rect = self.state.clip_rect;
+
+        // The custom/ray branch leaves the state installed by
+        // 0x10004BFE0..0x10004C104: camera translation and world scale are
+        // still separate from the object transform passed to the callback.
+        if object.flash_animation || object.ray.is_some() {
+            return RenderState {
+                translate_x: f64::from(-(self.top_left_x as f32)),
+                translate_y: f64::from(-(self.top_left_y as f32)),
+                scale_x: f64::from(world_scale),
+                scale_y: f64::from(world_scale),
+                angle: f64::from(composed_angle),
+                matrix: None,
+                masked_texture_matrix: None,
+                sprite_pivot: None,
+                pivot_x: f64::from(pivot_x),
+                pivot_y: f64::from(pivot_y),
+                draw_size: None,
+                alpha: object.alpha,
+                clip_rect,
+            };
+        }
+
+        // The masked-texture branch at 0x10004C14C bypasses sub_10006D5B4
+        // and divides only the camera translation by raw +0xBC/+0xC0.
+        if object.texture.is_some() {
+            let scale_x = object.scale_x as f32;
+            let scale_y = object.scale_y as f32;
+            return RenderState {
+                translate_x: f64::from(-(self.top_left_x as f32) / scale_x),
+                translate_y: f64::from(-(self.top_left_y as f32) / scale_y),
+                scale_x: f64::from(world_scale * scale_x),
+                scale_y: f64::from(world_scale * scale_y),
+                angle: f64::from(composed_angle),
+                matrix: None,
+                masked_texture_matrix: None,
+                sprite_pivot: None,
+                pivot_x: f64::from(pivot_x),
+                pivot_y: f64::from(pivot_y),
+                draw_size: None,
+                alpha: object.alpha,
+                clip_rect,
+            };
+        }
+
+        // Ordinary/composite rendering enters sub_10006D5B4, which applies
+        // body scale, flip and the secondary pivot-offset translation in
+        // place. These values remain live for the post callback.
         let body_scale = if object.sensor_type == 2 && !object.collision_is_circle {
             self.game_world_scale as f32
         } else {
@@ -183,15 +243,12 @@ impl RenderBridge {
         let object_scale_x = object.scale_x as f32 * body_scale;
         let object_scale_y = object.scale_y as f32 * body_scale;
         let horizontally_flipped = horizontal_sign < 0.0;
-        let world_scale = self.world_scale as f32;
         let translate_x = (horizontal_sign
             * (object.pivot_offset_x as f32 - self.top_left_x as f32))
             / object_scale_x;
         let translate_y = (object.pivot_offset_y as f32 - self.top_left_y as f32) / object_scale_y;
         let scale_x = (horizontal_sign * world_scale) * object_scale_x;
         let scale_y = world_scale * object_scale_y;
-        let object_angle = object.angle as f32;
-        let (pivot_x, pivot_y) = (object.pivot_x, object.pivot_y);
         let callback_angle = if horizontally_flipped {
             // The flip branch at 0x10006D640 overwrites the live angle with
             // FNEG of +0xAC and deliberately drops +0xB0.
@@ -216,7 +273,7 @@ impl RenderBridge {
             pivot_y: f64::from(pivot_y),
             draw_size: None,
             alpha: object.alpha,
-            clip_rect: self.state.clip_rect,
+            clip_rect,
         }
     }
 
@@ -232,17 +289,8 @@ impl RenderBridge {
         })
     }
 
-    pub(crate) fn begin_scene_object_draw_callback(
-        &mut self,
-        object: SceneCallbackObject,
-    ) -> RenderState {
-        let previous = self.state;
-        self.state = self.scene_callback_snapshot_state(&object);
-        previous
-    }
-
-    pub(crate) fn finish_scene_object_draw(&mut self, previous: RenderState) {
-        self.state = previous;
+    pub(crate) fn install_scene_post_draw_state(&mut self, object: &SceneDrawObject) {
+        self.state = self.native_scene_post_draw_state(object);
     }
 }
 

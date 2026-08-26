@@ -52,6 +52,8 @@ fn trajectory_draw_submission_retains_the_resolved_atlas_across_shadow_and_relea
                 startNewTrajectory()
                 setNormalTrailSprite("TRAIL")
                 addToTrajectory(0, 1, 2)
+                createNonPhysicsObject("trajectory_anchor", "", 0, 0, 1)
+                setObjectParameter("trajectory_anchor", 1, 1)
                 drawGameNative()
                 res.createSpriteSheet("second/SECOND.dat")
                 res.releaseSpriteSheet("first/FIRST.dat", false)
@@ -72,6 +74,53 @@ fn trajectory_draw_submission_retains_the_resolved_atlas_across_shadow_and_relea
     assert!(retained.texture_source.ends_with("first/first.pvr"));
     drop(bridge);
     fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn native_trajectory_is_inserted_immediately_before_the_first_anchor() {
+    let runtime = unlocked_test_runtime();
+    register_test_sprite_sheet(&runtime, &["BACK", "ANCHOR", "FRONT", "TRAIL"]);
+    runtime
+        .execute_source(
+            r#"
+                startNewTrajectory()
+                setNormalTrailSprite("TRAIL")
+                addToTrajectory(0, 1, 2)
+                createNonPhysicsObject("back", "BACK", 0, 0, 1)
+                createNonPhysicsObject("anchor", "ANCHOR", 0, 0, 2)
+                setObjectParameter("anchor", 1, 1)
+                createNonPhysicsObject("front", "FRONT", 0, 0, 3)
+                drawGameNative()
+            "#,
+        )
+        .unwrap();
+
+    let bridge = runtime.render.lock().unwrap();
+    assert_eq!(
+        bridge
+            .commands
+            .iter()
+            .map(|command| command.sprite.as_str())
+            .collect::<Vec<_>>(),
+        ["BACK", "TRAIL", "ANCHOR", "FRONT"]
+    );
+}
+
+#[test]
+fn native_trajectory_is_not_drawn_without_a_visible_anchor() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                startNewTrajectory()
+                setNormalTrailSprite("TRAIL")
+                addToTrajectory(0, 1, 2)
+                drawGameNative()
+            "#,
+        )
+        .unwrap();
+
+    assert!(runtime.render.lock().unwrap().commands.is_empty());
 }
 
 #[test]
@@ -626,6 +675,8 @@ fn native_flight_trajectory_is_strict_double_buffered_and_independent() {
                 objects = { currentTimeStep = 0.1 }
                 createCircle("BirdSimulation", "", 0, 0, 1, 1, 0, 0,
                     true, false, 1)
+                createNonPhysicsObject("trajectory_anchor", "", 0, 0, 2)
+                setObjectParameter("trajectory_anchor", 1, 1)
                 setWorldGravity(0, 0)
                 native_setAdditionalBirdGravity(0)
                 setVelocity("BirdSimulation", 1, 0)

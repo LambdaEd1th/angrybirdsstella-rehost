@@ -1,21 +1,6 @@
 //! Native atlas and CompoSprite pivots installed for scene-object callbacks.
 
-use super::SceneDrawObject;
 use crate::*;
-
-impl SceneDrawObject {
-    /// Recover the live GL-context pivot installed by `sub_10004BAB4` before
-    /// the object's draw/callback branch.
-    #[cfg(test)]
-    pub(crate) fn callback_pivot(&self) -> (f32, f32) {
-        native_scene_callback_pivot(
-            self.composite_sprite.as_deref().map(Vec::as_slice),
-            self.sprite_region.as_deref(),
-            self.pivot_offset_x,
-            self.pivot_offset_y,
-        )
-    }
-}
 
 pub(super) fn native_scene_callback_pivot(
     composite_sprite: Option<&[BoundCompositePart]>,
