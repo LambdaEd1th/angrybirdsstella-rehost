@@ -13944,3 +13944,50 @@ are clean. The final L16 PNG SHA-256 is
 the stripped `stella-app` and `stella-headless` hashes are respectively
 `0c020a8db952ff5b481914b7d5098ef5f815735953291974756805538d52860e`
 and `6a241149e9e98612a8ba66bb622d17180f984254fb7966c4f1fe1b09f516f5d6`.
+
+## Conditional scene-resource access on Purple's retained-pointer path
+
+The follow-up dense-scene audit found that Rust still acquired the shared
+`ResourceRuntime` mutex for every ordinary scene object. Most visits used it
+neither for sprite resolution nor for a shader or decoration: their atlas or
+composite resource had already been retained by `RenderObjectData`. The water
+implementation also entered a second render-bridge critical section for every
+non-water object only to return false. Both are rehost synchronization costs,
+not work performed by Purple's single-threaded dispatcher.
+
+IDA's `sub_10006D5B4` loads the ordinary AtlasSprite directly from
+`RenderObjectData+0x90` at `0x10006D8F4`; the composite branch walks the
+retained owner at `+0x78` through `0x10006D758..0x10006D870`. Its per-object
+Lua `shader` lookup remains at `0x10006D6D8..0x10006D754`. In the surrounding
+`sub_10004BAB4`, the ordinary/ray submission finishes at `0x10004C1E0` before
+the decoration byte at `+0x141` is tested. Only a present decoration with a
+positive count reaches the ResourceManager pointer at `GameLua+0xE0` and the
+lookup calls at `0x10004C228..0x10004C2C4`. Hopper independently exposes the
+same retained `+0x78/+0x90` ordinary resources and the decoration-only
+`[x19,#0xE0]` loads. The water bytes are similarly tested before the native
+rectangle draw, so non-water objects never enter that branch.
+
+Scene dispatch now reads the Lua shader field first and acquires
+`ResourceRuntime` only when a shader table or an active decoration actually
+requires it. Ordinary sprites and rays submit exclusively from their retained
+scene snapshot. The rectangular-water bridge is likewise entered only for a
+rectangular object whose water bit is set. Decoration lookup and the cached
+gold shader path are otherwise unchanged.
+
+Three alternating runs directly construct Chapter02 L16 and issue 30,000
+complete `drawGameNative` submissions. The water-fix baseline reports real
+times 4.40, 4.00 and 3.88 seconds (median 4.00) and user CPU 3.16, 3.07 and
+2.97 seconds (median 3.07). The conditional path reports real times 3.89,
+3.93 and 3.80 seconds (median 3.89) and user CPU 3.00, 3.02 and 2.94 seconds
+(median 3.00), reductions of about 2.8 and 2.3 percent in this deliberately
+scene-dispatch-heavy workload. This is host-overhead evidence, not a universal
+frame-rate claim. Existing regressions continue to exercise live shaders,
+decorations, retained sprite pointers, water order and callback mutation.
+
+The complete workspace remains at 667 passing tests with the intentional
+long-duration BirdRun audit ignored. Formatting, diff whitespace, strict
+all-target/all-feature Clippy, doc tests and the locked stripped release build
+are clean. The final `stella-app` and `stella-headless` SHA-256 values are
+respectively
+`7126543179cbe0b1c2f68be342465ba344e0051281a0989edcca699c5e145687`
+and `65f48a93277915f632ed792c6ee8f0ee7d7cb54e30e1100917b60b5da2458d44`.

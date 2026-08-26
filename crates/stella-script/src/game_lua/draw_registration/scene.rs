@@ -158,10 +158,12 @@ pub(super) fn install(
                 // sub_10004BAB4 handles rectangular water before resolving
                 // either retained Lua callback. In normal gameplay the fill
                 // replaces the editor-only placeholder and this visit ends.
-                let water_replaces_object = {
-                    let mut bridge = render.lock().expect("render bridge lock poisoned");
-                    bridge.push_scene_water(&callback_state_object) && !bridge.editing
-                };
+                let water_replaces_object = callback_state_object.is_water
+                    && !callback_state_object.collision_is_circle
+                    && {
+                        let mut bridge = render.lock().expect("render bridge lock poisoned");
+                        bridge.push_scene_water(&callback_state_object) && !bridge.editing
+                    };
                 if water_replaces_object {
                     continue;
                 }
@@ -302,30 +304,48 @@ pub(super) fn install(
                     }
                     bridge.extend_render_commands(commands);
                 } else {
-                    let mut resources = resource_runtime
-                        .lock()
-                        .expect("resource runtime lock poisoned");
                     // sub_10006D5B4 reads `shader` from the retained Lua
                     // object after the pre-draw callback, then builds the
                     // shared cached shader through sub_1000222E4/
                     // sub_100529F68. This is the path used by
                     // GoldTransformer's `2d-sprite-gold` table.
-                    let shader = match &callback_object {
+                    let shader_table = match &callback_object {
                         Value::Table(object_table) => {
                             match object_table.raw_get::<Value>("shader")? {
-                                Value::Table(shader) => Some(sprite_shader_from_lua(
-                                    shader,
-                                    &mut resources.shader_cache,
-                                )?),
+                                Value::Table(shader) => Some(shader),
                                 _ => None,
                             }
                         }
                         _ => None,
                     };
-                    render
-                        .lock()
-                        .expect("render bridge lock poisoned")
-                        .push_scene_object(&object, &resources, &data_root, shader);
+                    let decoration_needs_resources = object.ray.is_none()
+                        && object.decoration.as_deref().is_some_and(|decoration| {
+                            !decoration.sprite.is_empty() && decoration.amount > 0
+                        });
+                    if shader_table.is_some() || decoration_needs_resources {
+                        let mut resources = resource_runtime
+                            .lock()
+                            .expect("resource runtime lock poisoned");
+                        let shader = shader_table
+                            .map(|shader| {
+                                sprite_shader_from_lua(shader, &mut resources.shader_cache)
+                            })
+                            .transpose()?;
+                        let decoration_resources = decoration_needs_resources
+                            .then_some((&*resources, data_root.as_path()));
+                        render
+                            .lock()
+                            .expect("render bridge lock poisoned")
+                            .push_scene_object(&object, decoration_resources, shader);
+                    } else {
+                        // Purple's ordinary sprite branch consumes only the
+                        // retained RenderObjectData resource pointer. Keep the
+                        // overwhelmingly common path free of ResourceRuntime.
+                        render
+                            .lock()
+                            .expect("render bridge lock poisoned")
+                            .push_scene_object(&object, None, None);
+                    }
                 }
                 // RenderObjectData+0x160 is loaded at 0x10004C300, after the
                 // pre callback and the ordinary draw. A pre callback can

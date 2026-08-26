@@ -154,8 +154,7 @@ impl RenderBridge {
     pub(crate) fn push_scene_object(
         &mut self,
         object: &SceneDrawObject,
-        resources: &ResourceRuntime,
-        data_root: &Path,
+        decoration_resources: Option<(&ResourceRuntime, &Path)>,
         shader: Option<SpriteShader>,
     ) {
         if let Some(ray) = object.ray.as_ref() {
@@ -187,6 +186,14 @@ impl RenderBridge {
         if decoration.sprite.is_empty() || decoration.amount <= 0 {
             return;
         }
+        // sub_10004BAB4 reaches GameLua+0xe0 (ResourceManager) only after the
+        // RenderObjectData+0x141 decoration byte and its positive count have
+        // passed. Ordinary sub_10006D5B4 submissions use the retained
+        // +0x78/+0x90 pointers, so their caller must not acquire the rehost's
+        // shared resource-manager lock.
+        let Some((resources, data_root)) = decoration_resources else {
+            return;
+        };
         let bound_region = resources.active_atlas_catalog_region(&decoration.sprite, data_root);
         let mut bound_composite = resources.active_bound_composite(&decoration.sprite);
         if bound_region.is_none() && bound_composite.is_none() {
