@@ -86,7 +86,7 @@ pub(super) fn install(
                 dirt: None,
                 x: 0.0,
                 y: 0.0,
-                state,
+                state: state.into(),
                 world_space: true,
             });
             Ok(())

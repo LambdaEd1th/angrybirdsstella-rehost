@@ -141,8 +141,8 @@ pub(crate) fn animation_render_commands(
                     geometry: None,
                     shader: shader.clone(),
                     dirt: None,
-                    x: transform.x,
-                    y: transform.y,
+                    x: transform.x as f32,
+                    y: transform.y as f32,
                     state: RenderState {
                         scale_x: compatibility.scale_x,
                         scale_y: compatibility.scale_y,
@@ -155,7 +155,8 @@ pub(crate) fn animation_render_commands(
                         sprite_pivot: None,
                         alpha,
                         ..RenderState::default()
-                    },
+                    }
+                    .into(),
                     world_space: true,
                 }
             },

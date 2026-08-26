@@ -69,7 +69,8 @@ fn native_scalar_render_state_uses_scale_after_pivoted_rotation() {
             pivot_x: 4.0,
             pivot_y: 5.0,
             ..stella_script::RenderState::default()
-        },
+        }
+        .into(),
         world_space: false,
     };
 
@@ -99,7 +100,8 @@ fn tutorial_target_uses_the_same_native_matrix_path_as_every_atlas_sprite() {
             scale_x: 2.0,
             scale_y: 3.0,
             ..RenderState::default()
-        },
+        }
+        .into(),
         world_space: false,
     };
     let ordinary = RenderCommand {
@@ -148,7 +150,8 @@ fn native_render_boundary_quantizes_to_f32_and_uses_mixed_fmul_fmadd_vertex_math
             translate_x: 16_777_217.0,
             translate_y: -16_777_217.0,
             ..stella_script::RenderState::default()
-        },
+        }
+        .into(),
         world_space: true,
     };
     let boundary = render_command_transform(&command);
@@ -332,7 +335,8 @@ fn shipped_challenge_level_end_background_occludes_the_complete_native_framebuff
             pivot_x,
             pivot_y,
             ..RenderState::default()
-        },
+        }
+        .into(),
         world_space: false,
     };
     let commands = [

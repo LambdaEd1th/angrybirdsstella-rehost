@@ -99,8 +99,8 @@ impl RenderBridge {
                 geometry: None,
                 shader: None,
                 dirt: None,
-                x,
-                y,
+                x: x as f32,
+                y: y as f32,
                 state: RenderState {
                     translate_x: local_anchor_x * scale_x,
                     translate_y: local_anchor_y * scale_y,
@@ -109,7 +109,8 @@ impl RenderBridge {
                     alpha,
                     sprite_pivot,
                     ..RenderState::default()
-                },
+                }
+                .into(),
                 world_space: true,
             };
             let layer_commands = positions.into_iter().map(|(x, y)| command(x, y));
@@ -161,8 +162,8 @@ impl RenderBridge {
                     geometry: None,
                     shader: None,
                     dirt: None,
-                    x: f64::from((particle.x + layer_x) / particle.current_scale),
-                    y: f64::from((particle.y + layer_y) / particle.current_scale),
+                    x: (particle.x + layer_x) / particle.current_scale,
+                    y: (particle.y + layer_y) / particle.current_scale,
                     state: RenderState {
                         translate_x: f64::from(-top_left_x / particle.current_scale),
                         translate_y: f64::from(-top_left_y / particle.current_scale),
@@ -173,7 +174,8 @@ impl RenderBridge {
                         sprite_pivot: None,
                         draw_size: None,
                         ..inherited_state
-                    },
+                    }
+                    .into(),
                     world_space: false,
                 }
             })

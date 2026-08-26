@@ -32,8 +32,8 @@ pub(in crate::gpu) fn append_gpu_region(
     frame: &mut PreparedFrame,
     region: &SpriteRegion,
     transform: SpriteTransform,
-    draw_size: Option<[f64; 2]>,
-    pivot_override: Option<[f64; 2]>,
+    draw_size: Option<[f32; 2]>,
+    pivot_override: Option<[f32; 2]>,
     base_texture: String,
     base_width: u32,
     base_height: u32,
@@ -41,7 +41,7 @@ pub(in crate::gpu) fn append_gpu_region(
     fill_width: u32,
     fill_height: u32,
     texture_scale: f64,
-    masked_texture_matrix: Option<[f64; 6]>,
+    masked_texture_matrix: Option<[f32; 6]>,
     source_mode: f32,
     program: NativeProgram,
     shader: Option<&SpriteShader>,
@@ -54,15 +54,12 @@ pub(in crate::gpu) fn append_gpu_region(
     if transform.alpha <= 0.0 || region.width == 0 || region.height == 0 {
         return;
     }
-    let [pivot_x, pivot_y] = pivot_override
-        .map(|pivot| pivot.map(|value| value as f32))
-        .unwrap_or([f32::from(region.pivot_x), f32::from(region.pivot_y)]);
+    let [pivot_x, pivot_y] =
+        pivot_override.unwrap_or([f32::from(region.pivot_x), f32::from(region.pivot_y)]);
     let width = f32::from(region.width);
     let height = f32::from(region.height);
     let source_points = [(0.0, 0.0), (width, 0.0), (0.0, height), (width, height)];
-    let [draw_width, draw_height] = draw_size
-        .map(|size| size.map(|value| value as f32))
-        .unwrap_or([width, height]);
+    let [draw_width, draw_height] = draw_size.unwrap_or([width, height]);
     let display_points = [
         (0.0, 0.0),
         (draw_width, 0.0),
@@ -103,7 +100,6 @@ pub(in crate::gpu) fn append_gpu_region(
     }
     let local = display_points.map(|(x, y)| [x - pivot_x, y - pivot_y]);
     let source = if let Some([tx, ty, m00, m01, m10, m11]) = masked_texture_matrix {
-        let [tx, ty, m00, m01, m10, m11] = [tx, ty, m00, m01, m10, m11].map(|value| value as f32);
         local.map(|[x, y]| [tx + m00.mul_add(x, m01 * y), ty + m10.mul_add(x, m11 * y)])
     } else {
         source_points.map(|(x, y)| [x, y])

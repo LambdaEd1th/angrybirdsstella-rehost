@@ -112,7 +112,7 @@ impl RenderBridge {
                 dirt: object.dirt.as_deref().map(DirtComponent::render_command),
                 x: 0.0,
                 y: 0.0,
-                state: self.scene_object_state(object),
+                state: self.scene_object_state(object).into(),
                 world_space: true,
             })
     }
@@ -207,7 +207,8 @@ impl RenderBridge {
                     scale_y: base.scale_y * decoration.scale,
                     angle: base.angle + decoration.angle_increment * index as f64,
                     ..base
-                },
+                }
+                .into(),
                 world_space: true,
             });
         }

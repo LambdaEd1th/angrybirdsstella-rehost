@@ -25,23 +25,22 @@ pub(super) fn render_game(
     }
     for (index, command) in commands.iter().enumerate() {
         let state = command.state;
-        if ![
-            command.x,
-            command.y,
-            state.translate_x,
-            state.translate_y,
-            state.scale_x,
-            state.scale_y,
-            state.angle,
-            state.pivot_x,
-            state.pivot_y,
-            state.alpha,
-        ]
-        .into_iter()
-        .all(f64::is_finite)
+        if ![command.x, command.y].into_iter().all(f32::is_finite)
+            || ![
+                state.translate_x,
+                state.translate_y,
+                state.scale_x,
+                state.scale_y,
+                state.angle,
+                state.pivot_x,
+                state.pivot_y,
+                state.alpha,
+            ]
+            .into_iter()
+            .all(f32::is_finite)
             || state
                 .matrix
-                .is_some_and(|matrix| !matrix.into_iter().all(f64::is_finite))
+                .is_some_and(|matrix| !matrix.into_iter().all(f32::is_finite))
         {
             if trace_render {
                 eprintln!(

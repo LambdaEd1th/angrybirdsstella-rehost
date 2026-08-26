@@ -127,7 +127,7 @@ fn every_shipped_level_constructs_updates_and_reaches_native_draw() {
                 command
                     .state
                     .masked_texture_matrix
-                    .is_none_or(|matrix| !matrix.into_iter().all(f64::is_finite))
+                    .is_none_or(|matrix| !matrix.into_iter().all(f32::is_finite))
             })
             .map(|command| command.sprite.clone())
             .collect::<BTreeSet<_>>();

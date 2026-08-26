@@ -166,6 +166,54 @@ impl RenderState {
     }
 }
 
+/// Float32 snapshot copied across Purple's immediate renderer boundary.
+///
+/// Lua-facing compatibility code may keep widened values while assembling a
+/// call, but `setRenderState` stores floats in the native GL context and the
+/// ordinary sprite member receives every scalar in `s` registers. Deferred
+/// commands therefore retain the post-boundary values rather than copying a
+/// host-double representation for every submitted sprite.
+#[derive(Debug, Clone, Copy)]
+pub struct RenderSubmissionState {
+    pub translate_x: f32,
+    pub translate_y: f32,
+    pub scale_x: f32,
+    pub scale_y: f32,
+    pub angle: f32,
+    pub matrix: Option<[f32; 4]>,
+    pub masked_texture_matrix: Option<[f32; 6]>,
+    pub sprite_pivot: Option<[f32; 2]>,
+    pub pivot_x: f32,
+    pub pivot_y: f32,
+    pub draw_size: Option<[f32; 2]>,
+    pub alpha: f32,
+    pub clip_rect: Option<[i32; 4]>,
+}
+
+impl From<RenderState> for RenderSubmissionState {
+    fn from(state: RenderState) -> Self {
+        Self {
+            translate_x: state.translate_x as f32,
+            translate_y: state.translate_y as f32,
+            scale_x: state.scale_x as f32,
+            scale_y: state.scale_y as f32,
+            angle: state.angle as f32,
+            matrix: state.matrix.map(|matrix| matrix.map(|value| value as f32)),
+            masked_texture_matrix: state
+                .masked_texture_matrix
+                .map(|matrix| matrix.map(|value| value as f32)),
+            sprite_pivot: state
+                .sprite_pivot
+                .map(|pivot| pivot.map(|value| value as f32)),
+            pivot_x: state.pivot_x as f32,
+            pivot_y: state.pivot_y as f32,
+            draw_size: state.draw_size.map(|size| size.map(|value| value as f32)),
+            alpha: state.alpha as f32,
+            clip_rect: state.clip_rect,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct RenderCommand {
     /// Monotonic order of the original immediate renderer submission.
@@ -204,9 +252,10 @@ pub struct RenderCommand {
     /// component owns these meshes between cuts instead of rebuilding or
     /// embedding them in every ordinary draw submission.
     pub dirt: Option<Arc<DirtRenderCommand>>,
-    pub x: f64,
-    pub y: f64,
-    pub state: RenderState,
+    /// Float arguments passed beside the copied GL state in `s0`/`s1`.
+    pub x: f32,
+    pub y: f32,
+    pub state: RenderSubmissionState,
     pub world_space: bool,
 }
 
@@ -331,9 +380,10 @@ mod deferred_payload_tests {
             std::mem::size_of::<Option<Arc<SpriteTextureSubmission>>>(),
             std::mem::size_of::<usize>()
         );
+        assert_eq!(std::mem::size_of::<RenderSubmissionState>(), 124);
         // Dirt holes belong to the retained DirtMechanics component.  The
         // original sprite submission has no per-command analytic-hole list.
-        assert_eq!(std::mem::size_of::<RenderCommand>(), 336);
+        assert_eq!(std::mem::size_of::<RenderCommand>(), 216);
         assert!(
             std::mem::size_of::<RenderCommand>()
                 < std::mem::size_of::<RenderState>()

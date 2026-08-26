@@ -72,14 +72,14 @@ pub(super) fn install(
                     geometry: None,
                     shader: None,
                     dirt: None,
-                    x: current.scale_x
+                    x: (current.scale_x
                         * (current.translate_x + x + cosine * local_scale_x * part_x
-                            - sine * local_scale_y * part_y),
-                    y: current.scale_y
+                            - sine * local_scale_y * part_y)) as f32,
+                    y: (current.scale_y
                         * (current.translate_y
                             + y
                             + sine * local_scale_x * part_x
-                            + cosine * local_scale_y * part_y),
+                            + cosine * local_scale_y * part_y)) as f32,
                     state: RenderState {
                         scale_x: current.scale_x * local_scale_x,
                         scale_y: current.scale_y * local_scale_y,
@@ -90,7 +90,8 @@ pub(super) fn install(
                         alpha: current.alpha,
                         clip_rect: current.clip_rect,
                         ..RenderState::default()
-                    },
+                    }
+                    .into(),
                     world_space: true,
                 });
             }

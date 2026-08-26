@@ -43,8 +43,8 @@ impl RenderBridge {
                     // renderer then performs FADD followed by FMUL; retaining
                     // that representation avoids collapsing three float32
                     // boundaries into one host-double expression.
-                    x: f64::from(particle.x / coordinate_divisor),
-                    y: f64::from(particle.y / coordinate_divisor),
+                    x: particle.x / coordinate_divisor,
+                    y: particle.y / coordinate_divisor,
                     state: RenderState {
                         translate_x: if world_mode {
                             f64::from(-top_left_x / particle.current_scale)
@@ -61,7 +61,8 @@ impl RenderBridge {
                         angle: f64::from(particle.angle),
                         alpha: 1.0,
                         ..RenderState::default()
-                    },
+                    }
+                    .into(),
                     world_space: false,
                 }
             })

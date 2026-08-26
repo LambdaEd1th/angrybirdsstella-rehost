@@ -157,7 +157,7 @@ fn dirt_mesh_uses_constructor_time_texture_pointers_after_catalog_shadowing() {
         dirt: Some(Arc::new(dirt)),
         x: 0.0,
         y: 0.0,
-        state: stella_script::RenderState::default(),
+        state: stella_script::RenderState::default().into(),
         world_space: true,
     };
     let frame = assets.prepare_gpu_frame(&[command], &[], &[], &[]).unwrap();

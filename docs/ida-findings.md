@@ -14372,3 +14372,55 @@ zero remaining compatibility bindings and empty stderr; its PNG SHA-256 is
 The release `stella-app` and `stella-headless` hashes are respectively
 `b4240f0d42aa4ab2b874abc81b80faeda9682e0c40618c1f8771303b78fe263b`
 and `704647a723c5df5ad846aa2ce313780e9cc72080038f13761c1dafad85b50bb2`.
+
+## Float32 renderer submission snapshots
+
+The next retained-command audit found that the deferred host still copied the
+live renderer state as doubles even though Purple closes that numeric boundary
+before an ordinary sprite reaches its renderer. This doubled the storage for
+translation, scale, angle, pivot, optional affine matrices and draw size in
+every queued command, and postponed float narrowing until the wgpu consumer.
+
+IDA's `sub_100044CFC` (`setRenderState`) reads the Lua-facing values through
+`sub_10052859C`, narrows them to `s` registers and stores translation at GL
+context offsets `+0x20/+0x24`, scale at `+0x28/+0x2c`, pivot at
+`+0x30/+0x34`, alpha at `+0x40` and angle at `+0x48`. Its
+`__sincosf_stret` result and four matrix members at `+0x10..+0x1c` remain
+single precision as well. IDA's ordinary sprite member `sub_10006C838`
+independently exposes its position and transform arguments as floats and
+performs its arithmetic in float registers. Hopper confirms the same `s0/s8`
+stores, offsets and float argument sequence in both procedures.
+
+`RenderState` remains widened while Lua adapters assemble a call, preserving
+their existing coercion behavior. At the recovered immediate-renderer
+boundary it is now converted once into `RenderSubmissionState`, which carries
+the copied native state as `f32`; the command-local X/Y arguments close at the
+same boundary. The software reference renderer and wgpu preparation path both
+consume that snapshot directly, so they no longer repeat conversions or
+retain a host-double representation. The snapshot is 124 bytes and the common
+`RenderCommand` is now 216 rather than 336 bytes.
+
+Three alternating Chapter02 L16 runs issue 30,000 complete
+`drawGameNative` submissions. The Dirt-only baseline reports median
+real/user/system times of 1.65/1.52/0.13 seconds, median maximum resident set
+of 1,650,491,392 bytes and 24,133,503,240 retired instructions. The float32
+snapshot build reports 1.54/1.41/0.12 seconds, 1,081,327,616 bytes and
+23,044,775,996 instructions, reductions of approximately 6.7 percent real
+time, 7.2 percent user CPU, 7.7 percent system CPU, 34.5 percent peak resident
+memory and 4.5 percent instructions in this deliberately command-retention-
+heavy diagnostic.
+
+The direct real-wgpu Chapter02 L16 checkpoint remains byte-identical to the
+water-fix baseline: it renders the translucent blue pool and submerged
+structure, submits no red editor cross, invokes no compatibility fallback and
+has empty stderr. Its PNG SHA-256 remains
+`63b5da87b1a55a57d0e5d3559336f604d35817b5651cf8cf7347f7def189d4d7`.
+The complete workspace passes 671 tests with the intentional long-duration
+BirdRun audit ignored. Formatting, diff whitespace, strict all-target and
+all-feature Clippy, documentation and the locked release build are clean. A
+final 1,200-frame real-wgpu map smoke test reports zero invoked fallbacks,
+zero remaining compatibility bindings and empty stderr; its PNG SHA-256 is
+`0af0eae36441a5be042e08672ac29032e71a6775ba352fce107d87d423227024`.
+The release `stella-app` and `stella-headless` hashes are respectively
+`fbab87a46c7d3670e67628676b2fb65273dabe999cebc28961434e272e7c4286`
+and `524a6fadfc6c2dc6c1a23afe2e67b7062a10786b7ddb46d48d72471e2439fc1b`.

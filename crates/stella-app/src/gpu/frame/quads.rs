@@ -8,7 +8,7 @@ impl AssetCatalog {
         name: &str,
         bound_region: Option<&SpriteCatalogRegion>,
         positions: [[f64; 2]; 4],
-        alpha: f64,
+        alpha: f32,
         frame: &mut PreparedFrame,
     ) -> Result<()> {
         if alpha <= 0.0 {
@@ -51,7 +51,7 @@ impl AssetCatalog {
         let uv = region.sprite.native_uvs(texture_width, texture_height);
         let positions = positions.map(|point| point.map(|value| value as f32));
         let mut uniform = shader_uniform(None);
-        uniform.header[0] = alpha as f32;
+        uniform.header[0] = alpha;
         frame.push_quad(
             positions,
             uv,
@@ -59,7 +59,7 @@ impl AssetCatalog {
             uniform,
             base_texture,
             WHITE_TEXTURE.to_owned(),
-            native_sprite_program(surface_format, alpha as f32),
+            native_sprite_program(surface_format, alpha),
         );
         Ok(())
     }
@@ -69,7 +69,7 @@ impl AssetCatalog {
         name: &str,
         bound_region: Option<&SpriteCatalogRegion>,
         quad: RenderQuad,
-        alpha: f64,
+        alpha: f32,
         frame: &mut PreparedFrame,
     ) -> Result<()> {
         if alpha <= 0.0
@@ -109,7 +109,7 @@ impl AssetCatalog {
         let positions = quad.positions.map(|[x, y]| [x as f32, y as f32]);
         let uv = quad.uv.map(|[u, v]| [u as f32, v as f32]);
         let mut uniform = shader_uniform(None);
-        uniform.header[0] = alpha as f32;
+        uniform.header[0] = alpha;
         frame.push_quad(
             positions,
             uv,
@@ -117,7 +117,7 @@ impl AssetCatalog {
             uniform,
             base_texture,
             WHITE_TEXTURE.to_owned(),
-            native_sprite_program(surface_format, alpha as f32),
+            native_sprite_program(surface_format, alpha),
         );
         Ok(())
     }

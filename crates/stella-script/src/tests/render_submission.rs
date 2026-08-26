@@ -42,19 +42,28 @@ fn global_draw_compo_sprite_matches_native_legacy_part_scaling() {
     assert_eq!(first_command.sprite, first.get::<String>("name").unwrap());
     assert_eq!(first_command.state.scale_x, 1.0);
     assert_eq!(first_command.state.scale_y, 0.75);
-    let angle = f64::from(0.25_f32);
+    let angle = 0.25_f32;
     assert_eq!(first_command.state.angle, angle);
-    assert_eq!(first_command.state.alpha, f64::from(0.6_f32));
-    assert_eq!(first_command.state.pivot_x, (pivot_x - first_x) * 0.5);
-    assert_eq!(first_command.state.pivot_y, (pivot_y - first_y) * 0.25);
-    let cosine = angle.cos();
-    let sine = angle.sin();
+    assert_eq!(first_command.state.alpha, 0.6_f32);
+    assert_eq!(
+        first_command.state.pivot_x,
+        ((pivot_x - first_x) * 0.5) as f32
+    );
+    assert_eq!(
+        first_command.state.pivot_y,
+        ((pivot_y - first_y) * 0.25) as f32
+    );
+    let cosine = f64::from(angle).cos();
+    let sine = f64::from(angle).sin();
     let expected_matrix = [cosine, -0.5 * sine, 1.5 * sine, 0.75 * cosine];
-    assert_eq!(first_command.state.matrix, Some(expected_matrix));
+    assert_eq!(
+        first_command.state.matrix,
+        Some(expected_matrix.map(|value| value as f32))
+    );
     let expected_x = 2.0 * (110.0 + cosine * 0.5 * first_x - sine * 0.25 * first_y);
     let expected_y = 3.0 * (220.0 + sine * 0.5 * first_x + cosine * 0.25 * first_y);
-    assert!((first_command.x - expected_x).abs() < 1.0e-9);
-    assert!((first_command.y - expected_y).abs() < 1.0e-9);
+    assert_eq!(first_command.x, expected_x as f32);
+    assert_eq!(first_command.y, expected_y as f32);
     // sub_10004DDA0 ignores the entry's scale/angle/flip/visible fields.
     assert_ne!(first_command.state.scale_x, 9.0);
     assert_ne!(first_command.state.angle, 1.25);

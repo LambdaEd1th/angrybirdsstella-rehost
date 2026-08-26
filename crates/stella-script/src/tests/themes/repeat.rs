@@ -488,6 +488,6 @@ fn native_theme_repeats_accumulate_float32_world_coordinates() {
         expected_world += step_world;
     }
     let expected_screen = expected_world * 3.0_f32;
-    assert_eq!(first_visible.x, f64::from(expected_screen));
+    assert_eq!(first_visible.x, expected_screen);
     assert_ne!(first_visible.x, 0.5);
 }

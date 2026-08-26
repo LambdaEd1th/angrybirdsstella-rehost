@@ -102,14 +102,15 @@ impl SpriteGeometry {
             ))),
             shader: None,
             dirt: None,
-            x: f64::from(origin_x),
-            y: f64::from(origin_y),
+            x: origin_x,
+            y: origin_y,
             state: RenderState {
                 matrix: Some([m00, m01, m10, m11].map(f64::from)),
                 alpha: render_state.alpha,
                 clip_rect: render_state.clip_rect,
                 ..RenderState::default()
-            },
+            }
+            .into(),
             world_space: true,
         })
     }
@@ -189,14 +190,15 @@ impl SpriteGeometry {
             ))),
             shader: None,
             dirt: None,
-            x: f64::from(origin_x),
-            y: f64::from(origin_y),
+            x: origin_x,
+            y: origin_y,
             state: RenderState {
                 matrix: Some([m00, m01, m10, m11].map(f64::from)),
                 alpha: render_state.alpha,
                 clip_rect: render_state.clip_rect,
                 ..RenderState::default()
-            },
+            }
+            .into(),
             world_space: true,
         })
     }

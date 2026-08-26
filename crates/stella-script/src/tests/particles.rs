@@ -766,8 +766,7 @@ fn ordinary_particle_draw_keeps_native_divide_add_multiply_float_boundaries() {
     bridge.draw_particles(1);
     let command = &bridge.commands[0];
     assert!(!command.world_space);
-    let projected =
-        (command.state.translate_x as f32 + command.x as f32) * command.state.scale_x as f32;
+    let projected = (command.state.translate_x + command.x) * command.state.scale_x;
     assert_eq!(projected.to_bits(), 0x4b5e_d64d);
     // Algebraically collapsing the native operations and rounding only once
     // lands one pixel lower for this exact ARM-float boundary fixture.
@@ -790,8 +789,7 @@ fn ordinary_particle_draw_keeps_native_divide_add_multiply_float_boundaries() {
     bridge.particle_system.scale = menu_scale;
     bridge.draw_particles(3);
     let command = &bridge.commands[0];
-    let projected =
-        (command.state.translate_x as f32 + command.x as f32) * command.state.scale_x as f32;
+    let projected = (command.state.translate_x + command.x) * command.state.scale_x;
     assert_eq!(projected.to_bits(), 0x4850_1c9a);
     assert_ne!(projected, framebuffer_position);
 }
@@ -1019,7 +1017,7 @@ fn lifetime_particle_animation_uses_first_sprite_and_one_based_ceil_frames() {
         assert_eq!(particle.sprite, "FRAME_1");
         assert_eq!(particle.animation_frame, 0);
         assert_eq!(bridge.commands.len(), 1);
-        assert_eq!(bridge.commands[0].state.scale_x, f64::from(2.123_456_7_f32));
+        assert_eq!(bridge.commands[0].state.scale_x, 2.123_456_7_f32);
     }
 
     runtime.update(0.26).unwrap();

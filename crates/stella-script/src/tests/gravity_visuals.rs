@@ -92,13 +92,13 @@ fn circle_gravity_visuals_draw_two_native_four_way_sprite_rings() {
         assert_eq!(command.sprite, "GRAVITY_RING");
         // Pivot anchoring converts the atlas request to its raw rectangle.
         assert_eq!((command.x, command.y), (1.5, -17.25));
-        assert_eq!(command.state.translate_x, f64::from(120.25_f32 / scale));
-        assert_eq!(command.state.translate_y, f64::from(-80.5_f32 / scale));
-        assert_eq!(command.state.scale_x, f64::from(scale));
-        assert_eq!(command.state.scale_y, f64::from(scale));
+        assert_eq!(command.state.translate_x, 120.25_f32 / scale);
+        assert_eq!(command.state.translate_y, -80.5_f32 / scale);
+        assert_eq!(command.state.scale_x, scale);
+        assert_eq!(command.state.scale_y, scale);
         assert_eq!((command.state.pivot_x, command.state.pivot_y), (5.0, 10.0));
-        assert_eq!(command.state.angle, f64::from(angle));
-        assert_eq!(command.state.alpha, f64::from(0.375_f32));
+        assert_eq!(command.state.angle, angle);
+        assert_eq!(command.state.alpha, 0.375_f32);
         assert_eq!(command.state.clip_rect, Some([10, 20, 40, 60]));
         assert_eq!(command.state.sprite_pivot, Some([0.0, 0.0]));
         assert!(command.bound_region.is_some());
@@ -156,17 +156,17 @@ fn box_gravity_visuals_use_faded_height_pivot_and_rotated_slice_positions() {
     let expected_y = y_delta.mul_add(0.75, y_base) / local_scale;
     assert_eq!(command.sprite, "GRAVITY_SLICE");
     // The slice's own 3x5 pivot is subtracted by AtlasSprite::draw.
-    assert_eq!(command.x, f64::from(expected_x) - 3.0);
-    assert_eq!(command.y, f64::from(expected_y) - 5.0);
-    assert_eq!(command.state.translate_x, f64::from(96.5_f32 / scale));
-    assert_eq!(command.state.translate_y, f64::from(-42.25_f32 / scale));
-    assert_eq!(command.state.scale_x, f64::from(scale));
-    assert_eq!(command.state.scale_y, f64::from(scale));
+    assert_eq!(command.x, expected_x - 3.0);
+    assert_eq!(command.y, expected_y - 5.0);
+    assert_eq!(command.state.translate_x, 96.5_f32 / scale);
+    assert_eq!(command.state.translate_y, -42.25_f32 / scale);
+    assert_eq!(command.state.scale_x, scale);
+    assert_eq!(command.state.scale_y, scale);
     let expected_angle = f64::from(3.1416_f32).mul_add(0.5, f64::from(0.4_f32)) as f32;
-    assert_eq!(command.state.angle, f64::from(expected_angle));
+    assert_eq!(command.state.angle, expected_angle);
     // State pivot comes from the faded 8x12 sprite, not the drawn slice.
     assert_eq!((command.state.pivot_x, command.state.pivot_y), (4.0, 6.0));
-    assert_eq!(command.state.alpha, f64::from(0.625_f32));
+    assert_eq!(command.state.alpha, 0.625_f32);
     assert_eq!(command.state.matrix, None);
 }
 

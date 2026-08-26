@@ -190,23 +190,22 @@ impl AssetCatalog {
     ) -> Result<()> {
         let state = command.state;
         frame.current_clip = state.clip_rect;
-        if ![
-            command.x,
-            command.y,
-            state.translate_x,
-            state.translate_y,
-            state.scale_x,
-            state.scale_y,
-            state.angle,
-            state.pivot_x,
-            state.pivot_y,
-            state.alpha,
-        ]
-        .into_iter()
-        .all(f64::is_finite)
+        if ![command.x, command.y].into_iter().all(f32::is_finite)
+            || ![
+                state.translate_x,
+                state.translate_y,
+                state.scale_x,
+                state.scale_y,
+                state.angle,
+                state.pivot_x,
+                state.pivot_y,
+                state.alpha,
+            ]
+            .into_iter()
+            .all(f32::is_finite)
             || state
                 .matrix
-                .is_some_and(|matrix| !matrix.into_iter().all(f64::is_finite))
+                .is_some_and(|matrix| !matrix.into_iter().all(f32::is_finite))
             || command.geometry.as_ref().is_some_and(|geometry| {
                 let finite = match geometry {
                     SpriteGeometrySubmission::ExplicitQuad(quad) => quad

@@ -262,7 +262,7 @@ fn mixed_command_classes_keep_native_immediate_submission_order() {
         dirt: None,
         x: 0.0,
         y: 0.0,
-        state: stella_script::RenderState::default(),
+        state: stella_script::RenderState::default().into(),
         world_space: true,
     };
     let frame = assets
@@ -340,7 +340,7 @@ fn capture_sprite_copies_the_immediate_framebuffer_for_later_draws() {
         dirt: None,
         x: 0.0,
         y: 0.0,
-        state: stella_script::RenderState::default(),
+        state: stella_script::RenderState::default().into(),
         world_space: true,
     };
     let frame = assets
@@ -405,7 +405,8 @@ fn shipped_challenge_level_end_background_occludes_the_complete_gpu_framebuffer(
             pivot_x,
             pivot_y,
             ..stella_script::RenderState::default()
-        },
+        }
+        .into(),
         world_space: false,
     };
     let commands = [

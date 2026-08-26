@@ -47,7 +47,8 @@ fn near_degenerate_atlas_matrix_is_submitted_without_a_host_epsilon_cull() {
             scale_x: 0.0001,
             scale_y: 0.0001,
             ..stella_script::RenderState::default()
-        },
+        }
+        .into(),
         world_space: true,
     };
 
@@ -124,7 +125,8 @@ fn native_explicit_quad_reaches_gpu_in_recovered_triangle_and_uv_order() {
         state: stella_script::RenderState {
             alpha: 0.25,
             ..stella_script::RenderState::default()
-        },
+        }
+        .into(),
         world_space: true,
     };
     let frame = assets.prepare_gpu_frame(&[command], &[], &[], &[]).unwrap();
@@ -204,7 +206,8 @@ fn native_atlas_quad_keeps_positions_and_signed_rotated_region_uvs() {
         state: stella_script::RenderState {
             alpha: 0.375,
             ..stella_script::RenderState::default()
-        },
+        }
+        .into(),
         world_space: true,
     };
     let frame = assets.prepare_gpu_frame(&[command], &[], &[], &[]).unwrap();
@@ -272,7 +275,8 @@ fn render_state_pivot_is_not_applied_twice_after_native_sprite_anchoring() {
             pivot_y: 5.0,
             draw_size: Some([30.0, 40.0]),
             ..stella_script::RenderState::default()
-        },
+        }
+        .into(),
         world_space: false,
     };
     let frame = assets.prepare_gpu_frame(&[command], &[], &[], &[]).unwrap();
@@ -322,7 +326,8 @@ fn explicit_sprite_pivot_override_replaces_an_atlas_pivot() {
         state: stella_script::RenderState {
             sprite_pivot: Some([5.0, 10.0]),
             ..stella_script::RenderState::default()
-        },
+        }
+        .into(),
         world_space: true,
     };
 
@@ -371,7 +376,7 @@ fn retained_animation_region_draws_after_active_resource_catalog_release() {
         dirt: None,
         x: 20.0,
         y: 30.0,
-        state: stella_script::RenderState::default(),
+        state: stella_script::RenderState::default().into(),
         world_space: true,
     };
 
@@ -434,7 +439,8 @@ fn selected_sprite_uses_its_submission_time_mask_texture_pointer() {
         state: stella_script::RenderState {
             masked_texture_matrix: Some([100.0, 200.0, 2.0, 0.0, 0.0, 3.0]),
             ..stella_script::RenderState::default()
-        },
+        }
+        .into(),
         world_space: true,
     };
 
@@ -502,7 +508,7 @@ fn retained_scene_composite_draws_its_frozen_child_after_catalog_release() {
         dirt: None,
         x: 20.0,
         y: 30.0,
-        state: stella_script::RenderState::default(),
+        state: stella_script::RenderState::default().into(),
         world_space: true,
     };
 
@@ -560,7 +566,8 @@ fn rotated_native_pivot_and_non_uniform_scale_reach_gpu_vertices_exactly() {
             pivot_x: 4.0,
             pivot_y: 5.0,
             ..stella_script::RenderState::default()
-        },
+        }
+        .into(),
         world_space: false,
     };
     let frame = assets.prepare_gpu_frame(&[command], &[], &[], &[]).unwrap();

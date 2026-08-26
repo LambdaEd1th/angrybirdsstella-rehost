@@ -5,11 +5,11 @@ pub(crate) fn draw_region(
     texture: &RgbaImage,
     region: &SpriteRegion,
     transform: SpriteTransform,
-    draw_size: Option<[f64; 2]>,
-    pivot_override: Option<[f64; 2]>,
+    draw_size: Option<[f32; 2]>,
+    pivot_override: Option<[f32; 2]>,
     target: &mut [u32],
     masked_texture: Option<(&RgbaImage, f64)>,
-    masked_texture_matrix: Option<[f64; 6]>,
+    masked_texture_matrix: Option<[f32; 6]>,
     shader: Option<&SpriteShader>,
 ) {
     // The native transform has already been quantized and composed in f32.
@@ -25,11 +25,14 @@ pub(crate) fn draw_region(
     if determinant.abs() < f64::EPSILON || transform_alpha <= 0.0 {
         return;
     }
-    let [pivot_x, pivot_y] =
-        pivot_override.unwrap_or([f64::from(region.pivot_x), f64::from(region.pivot_y)]);
+    let [pivot_x, pivot_y] = pivot_override
+        .map(|pivot| pivot.map(f64::from))
+        .unwrap_or([f64::from(region.pivot_x), f64::from(region.pivot_y)]);
     let width = f64::from(region.width);
     let height = f64::from(region.height);
-    let [draw_width, draw_height] = draw_size.unwrap_or([width, height]);
+    let [draw_width, draw_height] = draw_size
+        .map(|size| size.map(f64::from))
+        .unwrap_or([width, height]);
     if draw_width.abs() < f64::EPSILON || draw_height.abs() < f64::EPSILON {
         return;
     }
@@ -118,6 +121,8 @@ pub(crate) fn draw_region(
                 let [fill_x, fill_y] = masked_texture_matrix.map_or(
                     [source_x, source_y],
                     |[tx, ty, m00, m01, m10, m11]| {
+                        let [tx, ty, m00, m01, m10, m11] =
+                            [tx, ty, m00, m01, m10, m11].map(f64::from);
                         [
                             tx + m00.mul_add(local_x, m01 * local_y),
                             ty + m10.mul_add(local_x, m11 * local_y),

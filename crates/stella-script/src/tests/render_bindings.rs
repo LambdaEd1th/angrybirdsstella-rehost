@@ -42,7 +42,7 @@ fn recovered_native_sprite_helpers_emit_every_requested_layer() {
         .unwrap();
     assert_eq!(selected.texture_name(), Some("FILL"));
     assert_eq!(selected.x, 40.0);
-    assert_eq!(selected.y, f64::from((2.0_f32 * 20.0_f32) / 0.75_f32));
+    assert_eq!(selected.y, (2.0_f32 * 20.0_f32) / 0.75_f32);
     assert_eq!(
         (selected.state.scale_x, selected.state.scale_y),
         (0.5, 0.75)
@@ -50,8 +50,8 @@ fn recovered_native_sprite_helpers_emit_every_requested_layer() {
     assert!(!selected.world_space);
     assert_eq!(
         (
-            (selected.state.translate_x as f32 + selected.x as f32) * selected.state.scale_x as f32,
-            (selected.state.translate_y as f32 + selected.y as f32) * selected.state.scale_y as f32,
+            (selected.state.translate_x + selected.x) * selected.state.scale_x,
+            (selected.state.translate_y + selected.y) * selected.state.scale_y,
         ),
         (20.0_f32, 40.0_f32)
     );
@@ -483,13 +483,13 @@ fn box_native_uses_middle_keys_anchors_background_and_submission_order() {
     assert_eq!(
         (top.x, top.y),
         (
-            -top_geometry.min_x,
-            25.0 - top_geometry.height() - top_geometry.min_y
+            -top_geometry.min_x as f32,
+            (25.0 - top_geometry.height() - top_geometry.min_y) as f32
         )
     );
     assert_eq!(
         top.state.draw_size,
-        Some([100.0, top_geometry.height().floor()])
+        Some([100.0, top_geometry.height().floor() as f32])
     );
     assert_eq!((top.state.scale_x, top.state.scale_y), (1.0, 1.0));
     assert_eq!(bridge.rect_commands.len(), 1);
@@ -541,7 +541,10 @@ fn box_native_floors_each_target_rect_and_coerces_lua51_color_strings() {
     let center_geometry = load_sprite_geometry(runtime.data_root()).0["BTN_BG_SMALL"];
     assert_eq!(
         (center.x, center.y),
-        (-center_geometry.min_x, 1.0 - center_geometry.min_y)
+        (
+            -center_geometry.min_x as f32,
+            (1.0 - center_geometry.min_y) as f32
+        )
     );
     assert_eq!(center.state.draw_size, Some([10.0, 5.0]));
     let background = &bridge.rect_commands[0];
@@ -614,15 +617,18 @@ fn box_native_uses_native_resource_lookup_culling_and_lua51_stack_rules() {
     assert_eq!(corner.sprite, "BTN_BG_SMALL");
     assert_eq!(
         corner.state.draw_size,
-        Some([geometry.width() * 2.0, geometry.height() * 3.0])
+        Some([
+            (geometry.width() * 2.0) as f32,
+            (geometry.height() * 3.0) as f32,
+        ])
     );
     // sub_100467AF0 subtracts the atlas region's original width/height for
     // RIGHT/BOTTOM anchoring, even when the destination rectangle is scaled.
     assert_eq!(
         (corner.x, corner.y),
         (
-            100.0 - geometry.width() - geometry.min_x,
-            100.0 - geometry.height() - geometry.min_y
+            (100.0 - geometry.width() - geometry.min_x) as f32,
+            (100.0 - geometry.height() - geometry.min_y) as f32
         )
     );
 }
@@ -681,19 +687,19 @@ fn selected_texturized_object_installs_divided_native_gl_state() {
         (selected.state.pivot_x, selected.state.pivot_y),
         (7.0, 11.0)
     );
-    assert_eq!(selected.state.alpha, f64::from(0.3_f32));
+    assert_eq!(selected.state.alpha, 0.3_f32);
     let (sine, cosine) = 0.5_f32.sin_cos();
     let expected_origin_x = (40.0_f32 + cosine * -7.0_f32 + -sine * -11.0_f32) * 0.5_f32;
     let expected_origin_y = (160.0_f32 + sine * -7.0_f32 + cosine * -11.0_f32) * 0.25_f32;
     assert_eq!(
         selected.state.masked_texture_matrix,
         Some([
-            f64::from(expected_origin_x),
-            f64::from(expected_origin_y),
-            f64::from(0.5_f32 * cosine),
-            f64::from(0.5_f32 * -sine),
-            f64::from(0.25_f32 * sine),
-            f64::from(0.25_f32 * cosine),
+            expected_origin_x,
+            expected_origin_y,
+            0.5_f32 * cosine,
+            0.5_f32 * -sine,
+            0.25_f32 * sine,
+            0.25_f32 * cosine,
         ])
     );
     assert!(!selected.world_space);
@@ -1083,10 +1089,10 @@ fn direct_sprite_helpers_match_native_lookup_fallback_and_independent_affine_mat
     assert_eq!((bridge.commands[0].x, bridge.commands[0].y), (7.0, 8.0));
     let (child_sine, child_cosine) = 0.4_f32.sin_cos();
     let expected_matrix = [
-        f64::from(child_cosine * 0.5_f32),
-        f64::from(-child_sine * 0.25_f32),
-        f64::from(child_sine * 0.5_f32),
-        f64::from(child_cosine * 0.25_f32),
+        child_cosine * 0.5_f32,
+        -child_sine * 0.25_f32,
+        child_sine * 0.5_f32,
+        child_cosine * 0.25_f32,
     ];
     for (actual, expected) in bridge.commands[0]
         .state

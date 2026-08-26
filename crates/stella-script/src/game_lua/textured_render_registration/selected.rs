@@ -82,9 +82,9 @@ pub(super) fn install(
                 geometry: None,
                 shader: None,
                 dirt: None,
-                x: f64::from((x * 20.0_f32) / scale_x),
-                y: f64::from((y * 20.0_f32) / scale_y),
-                state,
+                x: (x * 20.0_f32) / scale_x,
+                y: (y * 20.0_f32) / scale_y,
+                state: state.into(),
                 world_space: false,
             });
             Ok(())

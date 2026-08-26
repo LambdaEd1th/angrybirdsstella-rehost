@@ -56,12 +56,13 @@ pub(super) fn command(
         geometry: None,
         shader: None,
         dirt: None,
-        x: f64::from(x - bounds.min_x as f32),
-        y: f64::from(y - bounds.min_y as f32),
+        x: x - bounds.min_x as f32,
+        y: y - bounds.min_y as f32,
         state: RenderState {
             draw_size: Some([f64::from(width), f64::from(height)]),
             ..RenderState::default()
-        },
+        }
+        .into(),
         world_space: true,
     })
 }

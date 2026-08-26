@@ -34,14 +34,15 @@ pub(crate) fn native_direct_sprite_command(
         geometry: None,
         shader: shader.map(Arc::new),
         dirt: None,
-        x: origin[0],
-        y: origin[1],
+        x: origin[0] as f32,
+        y: origin[1] as f32,
         state: RenderState {
             matrix: Some(matrix),
             alpha: parent.alpha,
             clip_rect: parent.clip_rect,
             ..RenderState::default()
-        },
+        }
+        .into(),
         world_space: true,
     }
 }

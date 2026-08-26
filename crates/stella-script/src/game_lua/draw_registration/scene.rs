@@ -101,9 +101,9 @@ pub(super) fn install(
                             dirt: None,
                             // sub_10006D9C0 divides each point before the
                             // GL context applies its divided translation.
-                            x: f64::from(x as f32 / game_world_scale),
-                            y: f64::from(y as f32 / game_world_scale),
-                            state: trail_state,
+                            x: x as f32 / game_world_scale,
+                            y: y as f32 / game_world_scale,
+                            state: trail_state.into(),
                             world_space: false,
                         }));
                     }
@@ -128,9 +128,9 @@ pub(super) fn install(
                             geometry: None,
                             shader: None,
                             dirt: None,
-                            x: f64::from(x as f32 / game_world_scale),
-                            y: f64::from(y as f32 / game_world_scale),
-                            state: trail_state,
+                            x: x as f32 / game_world_scale,
+                            y: y as f32 / game_world_scale,
+                            state: trail_state.into(),
                             world_space: false,
                         });
                     }

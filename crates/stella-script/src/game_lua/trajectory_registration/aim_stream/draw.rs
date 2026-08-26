@@ -54,8 +54,8 @@ pub(in crate::game_lua::trajectory_registration) fn install_draw(
                             geometry: None,
                             shader: None,
                             dirt: None,
-                            x: f64::from(draw_x),
-                            y: f64::from(draw_y),
+                            x: draw_x,
+                            y: draw_y,
                             state: RenderState {
                                 translate_x: f64::from(-top_left_x / particle.scale),
                                 translate_y: f64::from(-top_left_y / particle.scale),
@@ -65,7 +65,8 @@ pub(in crate::game_lua::trajectory_registration) fn install_draw(
                                 pivot_x: 10.0,
                                 pivot_y: 10.0,
                                 ..RenderState::default()
-                            },
+                            }
+                            .into(),
                             world_space: false,
                         })
                     })

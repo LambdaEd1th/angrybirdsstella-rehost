@@ -651,7 +651,7 @@ fn native_pre_draw_mutations_feed_the_same_object_draw_and_live_post_flip() {
         .iter()
         .find(|command| command.sprite == "BODY")
         .unwrap();
-    assert_eq!(body.state.alpha, f64::from(0.25_f32));
+    assert_eq!(body.state.alpha, 0.25_f32);
     assert_eq!((body.state.scale_x, body.state.scale_y), (-2.0, 3.0));
 }
 
@@ -1320,20 +1320,17 @@ fn native_scene_object_and_callback_transforms_keep_arm64_float_order() {
     let scale_y = object.scale_y as f32;
     assert_eq!(
         command.state.translate_x,
-        f64::from(((x * 20.0_f32) - top_left_x) * world_scale)
+        ((x * 20.0_f32) - top_left_x) * world_scale
     );
     assert_eq!(
         command.state.translate_y,
-        f64::from(((y * 20.0_f32) - top_left_y) * world_scale)
+        ((y * 20.0_f32) - top_left_y) * world_scale
     );
-    assert_eq!(
-        command.state.scale_x,
-        f64::from((1.0_f32 * world_scale) * scale_x)
-    );
-    assert_eq!(command.state.scale_y, f64::from(world_scale * scale_y));
+    assert_eq!(command.state.scale_x, (1.0_f32 * world_scale) * scale_x);
+    assert_eq!(command.state.scale_y, world_scale * scale_y);
     // sub_10006C838 receives +0xAC. setSpriteRotation writes the distinct
     // +0xB0 field and therefore must not rotate the ordinary sprite twice.
-    assert_eq!(command.state.angle, f64::from(object.angle as f32));
+    assert_eq!(command.state.angle, object.angle as f32);
 
     let callback = bridge.scene_callback_state(&object);
     assert_eq!(
@@ -1383,13 +1380,13 @@ fn native_direct_post_draw_sprite_uses_its_own_matrix_inside_flipped_object_cont
     assert_eq!(
         pupil.state.matrix.unwrap(),
         [
-            f64::from(cosine * 0.5_f32),
-            f64::from(-sine * 0.25_f32),
-            f64::from(sine * 0.5_f32),
-            f64::from(cosine * 0.25_f32),
+            cosine * 0.5_f32,
+            -sine * 0.25_f32,
+            sine * 0.5_f32,
+            cosine * 0.25_f32,
         ]
     );
-    assert_eq!(pupil.state.alpha, f64::from(0.6_f32));
+    assert_eq!(pupil.state.alpha, 0.6_f32);
 }
 
 #[test]
@@ -1568,7 +1565,7 @@ fn native_texture_state_reaches_scene_render_commands() {
     );
     assert_eq!(
         bridge.commands[0].state.masked_texture_matrix,
-        Some(expected_matrix)
+        Some(expected_matrix.map(|value| value as f32))
     );
     let retained_texture = bridge.commands[0].texture.as_ref().unwrap().clone();
     let original_screen_x = bridge.commands[0].state.translate_x;
@@ -1592,7 +1589,7 @@ fn native_texture_state_reaches_scene_render_commands() {
     assert_ne!(bridge.commands[0].state.translate_x, original_screen_x);
     assert_eq!(
         bridge.commands[0].state.masked_texture_matrix,
-        Some(expected_matrix),
+        Some(expected_matrix.map(|value| value as f32)),
         "camera movement must not make the terrain texture swim"
     );
 }
@@ -1911,17 +1908,17 @@ fn native_scene_draw_uses_game_world_scale_only_for_parameter_21_mode_two() {
         .unwrap();
     assert!((ordinary_dynamic.state.scale_x - 5.0).abs() < 1e-9);
     assert!((ordinary_dynamic.state.scale_y - 5.0).abs() < 1e-9);
-    let native_mode_two_scale = f64::from(5.0_f32 * 0.1_f32);
-    assert!((mode_two.state.scale_x - native_mode_two_scale).abs() < 1e-9);
-    assert!((mode_two.state.scale_y - native_mode_two_scale).abs() < 1e-9);
+    let native_mode_two_scale = 5.0_f32 * 0.1_f32;
+    assert!((mode_two.state.scale_x - native_mode_two_scale).abs() < 1e-6);
+    assert!((mode_two.state.scale_y - native_mode_two_scale).abs() < 1e-6);
     assert!((static_object.state.scale_x - 5.0).abs() < 1e-9);
     assert!((static_object.state.scale_y - 5.0).abs() < 1e-9);
-    let native_circle_scale = f64::from(5.0_f32 * 0.09_f32);
-    assert!((circle.state.scale_x + native_circle_scale).abs() < 1e-9);
-    assert!((circle.state.scale_y - native_circle_scale).abs() < 1e-9);
-    let native_decoration_scale = f64::from(5.0_f32 * 0.1_f32);
-    assert!((decoration.state.scale_x - native_decoration_scale).abs() < 1e-9);
-    assert!((decoration.state.scale_y - native_decoration_scale).abs() < 1e-9);
+    let native_circle_scale = 5.0_f32 * 0.09_f32;
+    assert!((circle.state.scale_x + native_circle_scale).abs() < 1e-6);
+    assert!((circle.state.scale_y - native_circle_scale).abs() < 1e-6);
+    let native_decoration_scale = 5.0_f32 * 0.1_f32;
+    assert!((decoration.state.scale_x - native_decoration_scale).abs() < 1e-6);
+    assert!((decoration.state.scale_y - native_decoration_scale).abs() < 1e-6);
     assert_eq!(bridge.scene["decoration"].sensor_type, -1);
     drop(bridge);
     let environment = game_environment(runtime.lua()).unwrap();

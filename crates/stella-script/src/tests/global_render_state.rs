@@ -109,14 +109,14 @@ fn set_render_state_quantizes_and_commits_native_arity_groups() {
     let commands = runtime.take_render_commands();
     assert_eq!(commands.len(), 6);
     let valid = commands[0].state;
-    assert_eq!(valid.translate_x, f64::from(0.99999999_f64 as f32));
-    assert_eq!(valid.translate_y, f64::from(-0.99999999_f64 as f32));
-    assert_eq!(valid.scale_x, f64::from(1.9999999_f64 as f32));
-    assert_eq!(valid.scale_y, f64::from(2.9999999_f64 as f32));
-    assert_eq!(valid.angle, f64::from(0.99999999_f64 as f32));
-    assert_eq!(valid.pivot_x, f64::from(3.9999999_f64 as f32));
-    assert_eq!(valid.pivot_y, f64::from(4.9999999_f64 as f32));
-    assert_eq!(valid.alpha, f64::from(0.99999999_f64 as f32));
+    assert_eq!(valid.translate_x, 0.99999999_f64 as f32);
+    assert_eq!(valid.translate_y, -0.99999999_f64 as f32);
+    assert_eq!(valid.scale_x, 1.9999999_f64 as f32);
+    assert_eq!(valid.scale_y, 2.9999999_f64 as f32);
+    assert_eq!(valid.angle, 0.99999999_f64 as f32);
+    assert_eq!(valid.pivot_x, 3.9999999_f64 as f32);
+    assert_eq!(valid.pivot_y, 4.9999999_f64 as f32);
+    assert_eq!(valid.alpha, 0.99999999_f64 as f32);
 
     // The failing second translation argument prevents either member of that
     // packed pair from being stored.

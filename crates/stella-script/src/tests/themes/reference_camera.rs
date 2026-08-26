@@ -78,7 +78,7 @@ fn theme_refresh_recovers_reference_camera_and_native_layer_transform() {
         .unwrap();
     // Literal results of sub_10009CEB0 followed by sub_100067A04, using the
     // recovered float32 instruction order (not a screenshot-derived target).
-    assert_eq!((command.x, command.y), (212.5625, 96.375_007_629_394_53));
+    assert_eq!((command.x, command.y), (212.5625, 96.375_01));
     assert_eq!(
         (command.state.scale_x, command.state.scale_y),
         (2.625, 2.625)
@@ -352,10 +352,7 @@ fn theme_layer_preserves_xmult_and_relative_record_fields() {
     let camera_y = -3.0_f32 + (768.0_f32 * 0.5_f32) / current_scale;
     let y_world = base_y + z_distance * (camera_y - 20.0_f32);
     let expected_y = (y_world - -3.0_f32) * current_scale;
-    assert_eq!(
-        (command.x, command.y),
-        (expected_x.into(), expected_y.into())
-    );
+    assert_eq!((command.x, command.y), (expected_x, expected_y));
 }
 
 #[test]

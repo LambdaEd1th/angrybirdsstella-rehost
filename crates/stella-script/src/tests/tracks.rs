@@ -569,7 +569,7 @@ fn recovered_object_transform_pivot_decoration_and_joint_motor_contracts() {
         .collect::<Vec<_>>();
     assert_eq!(decorations.len(), 3);
     assert!((decorations[0].state.scale_x - 0.5).abs() < 1e-9);
-    assert!((decorations[2].state.angle - (object.angle + 0.5)).abs() < 1e-9);
+    assert!((decorations[2].state.angle - (object.angle + 0.5) as f32).abs() < 1e-6);
     assert_eq!(bridge.joints["motor"].motor_speed, Some(2.5));
     assert!(bridge.scene["motor_a"].motion_started);
     assert!(bridge.scene["motor_b"].motion_started);

@@ -41,10 +41,10 @@ pub(super) struct AssetCatalog {
 #[derive(Clone, Copy)]
 pub(super) struct SpriteDrawOptions<'a> {
     pub(super) masked_texture: Option<(&'a str, f64)>,
-    pub(super) masked_texture_matrix: Option<[f64; 6]>,
+    pub(super) masked_texture_matrix: Option<[f32; 6]>,
     pub(super) shader: Option<&'a SpriteShader>,
-    pub(super) draw_size: Option<[f64; 2]>,
-    pub(super) sprite_pivot: Option<[f64; 2]>,
+    pub(super) draw_size: Option<[f32; 2]>,
+    pub(super) sprite_pivot: Option<[f32; 2]>,
 }
 
 #[derive(Debug, Clone, Copy)]

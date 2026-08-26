@@ -132,7 +132,8 @@ fn ordinary_atlas_submission_preserves_the_surface_format_program_branch() {
         state: stella_script::RenderState {
             alpha,
             ..stella_script::RenderState::default()
-        },
+        }
+        .into(),
         world_space: true,
     };
     let frame = assets

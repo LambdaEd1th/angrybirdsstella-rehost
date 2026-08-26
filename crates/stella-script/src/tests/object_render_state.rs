@@ -72,7 +72,7 @@ fn renderer_and_object_alpha_bindings_are_distinct_strict_and_float32() {
 
     let commands = runtime.take_render_commands();
     assert_eq!(commands.len(), 2);
-    let native_context_alpha = f64::from(0.69999999_f64 as f32);
+    let native_context_alpha = 0.69999999_f64 as f32;
     assert_eq!(commands[0].state.alpha, native_context_alpha);
     assert_eq!(commands[1].state.alpha, native_context_alpha);
 
@@ -80,7 +80,7 @@ fn renderer_and_object_alpha_bindings_are_distinct_strict_and_float32() {
     let object = bridge.scene.get("alpha_object").unwrap();
     assert_eq!(object.alpha, f64::from(0.49999999_f64 as f32));
     assert_eq!(object.z_order, f64::from(2.9999999_f64 as f32));
-    assert_eq!(bridge.state.alpha, native_context_alpha);
+    assert_eq!(bridge.state.alpha, f64::from(native_context_alpha));
     // sub_100044E60 only writes RenderObjectData+0xC8. In contrast,
     // sub_1000592C4 explicitly writes the reflected `z_order` attribute.
     assert_eq!(

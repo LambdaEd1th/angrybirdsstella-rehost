@@ -922,11 +922,11 @@ fn recovered_platform_and_render_utilities_preserve_native_contracts() {
     else {
         panic!("rubber band did not retain its native atlas quad");
     };
-    assert_eq!(commands[0].x, native_quad[0][0]);
-    assert_eq!(commands[0].y, native_quad[0][1]);
+    assert_eq!(commands[0].x, native_quad[0][0] as f32);
+    assert_eq!(commands[0].y, native_quad[0][1] as f32);
     assert_eq!(
         commands[0].state.matrix,
-        Some([f64::from(f32::from_bits(0xB2CC_DE2E)), 10.0, 2.0, 0.0])
+        Some([f32::from_bits(0xB2CC_DE2E), 10.0, 2.0, 0.0])
     );
 }
 

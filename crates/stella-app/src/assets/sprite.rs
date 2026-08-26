@@ -86,7 +86,7 @@ impl AssetCatalog {
         name: &str,
         bound_region: Option<&SpriteCatalogRegion>,
         quad: RenderQuad,
-        alpha: f64,
+        alpha: f32,
         clip_rect: Option<[i32; 4]>,
         target: &mut [u32],
     ) -> Result<()> {
@@ -106,7 +106,7 @@ impl AssetCatalog {
             return Ok(());
         };
         let texture = self.texture(&region.texture)?.clone();
-        draw_explicit_quad(&texture.image, quad, alpha, clip_rect, target);
+        draw_explicit_quad(&texture.image, quad, f64::from(alpha), clip_rect, target);
         Ok(())
     }
 }

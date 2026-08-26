@@ -228,8 +228,8 @@ fn shipped_leaves_use_inverse_skin_rotation_and_native_layer_order() {
     // positive and leaves a visible hole in the covered transition frame.
     let leaf_1 = &leaves[8];
     assert_eq!(leaf_1.sprite, "TRANSITION_LEAF_1");
-    assert_eq!((leaf_1.x as f32).to_bits(), 0x4411_6c0d);
-    assert_eq!((leaf_1.y as f32).to_bits(), 0x437d_b065);
+    assert_eq!(leaf_1.x.to_bits(), 0x4411_6c0d);
+    assert_eq!(leaf_1.y.to_bits(), 0x437d_b065);
     let matrix = leaf_1.state.matrix.expect("leaf affine matrix");
     assert!(matrix[0] < 0.0);
     assert!(matrix[1] < 0.0);
@@ -342,14 +342,14 @@ fn shipped_leaves_follow_native_recursive_world_matrices_during_both_phases() {
         assert_eq!(leaves.len(), 16);
         for (index, expected_x, expected_y, expected_matrix) in expected {
             let command = &leaves[index];
-            assert_eq!((command.x as f32).to_bits(), expected_x, "{action} x");
-            assert_eq!((command.y as f32).to_bits(), expected_y, "{action} y");
+            assert_eq!(command.x.to_bits(), expected_x, "{action} x");
+            assert_eq!(command.y.to_bits(), expected_y, "{action} y");
             assert_eq!(
                 command
                     .state
                     .matrix
                     .expect("LEAVES command matrix")
-                    .map(|value| (value as f32).to_bits()),
+                    .map(f32::to_bits),
                 expected_matrix,
                 "{action} matrix"
             );
@@ -874,10 +874,10 @@ fn animation_render_preserves_full_parent_child_affine_matrix() {
         .unwrap();
     let cosine = (std::f64::consts::FRAC_PI_4 as f32).cos();
     let expected = [
-        f64::from(2.0_f32 * cosine),
-        f64::from(-2.0_f32 * cosine),
-        f64::from(3.0_f32 * cosine),
-        f64::from(3.0_f32 * cosine),
+        2.0_f32 * cosine,
+        -2.0_f32 * cosine,
+        3.0_f32 * cosine,
+        3.0_f32 * cosine,
     ];
     for (actual, expected) in matrix.into_iter().zip(expected) {
         assert_eq!(actual.to_bits(), expected.to_bits());

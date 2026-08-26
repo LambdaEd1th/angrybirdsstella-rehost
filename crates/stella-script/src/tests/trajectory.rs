@@ -382,7 +382,7 @@ fn native_aim_stream_populates_updates_and_draws_catmull_particles() {
         assert!(!first.world_space);
         assert_eq!(first.state.pivot_x, 10.0);
         assert_eq!(first.state.pivot_y, 10.0);
-        assert!((first.state.scale_x - f64::from(1.2_f32)).abs() < 1.0e-7);
+        assert!((first.state.scale_x - 1.2_f32).abs() < 1.0e-7);
         // GL_Context's divided draw coordinate and particle scale cancel:
         // the first 0.1-physics-unit sample lands at 2 screen units.
         assert!((first.x * first.state.scale_x - 2.0).abs() < 1.0e-6);
@@ -702,10 +702,7 @@ fn native_flight_trajectory_is_strict_double_buffered_and_independent() {
     assert_eq!(bridge.commands[1].sprite, "TRAIL_WHITE_1");
     assert_eq!(
         (bridge.commands[1].x, bridge.commands[1].y),
-        (
-            f64::from(10.123_457_f32 / 0.25_f32),
-            f64::from(20.987_654_f32 / 0.25_f32)
-        )
+        (10.123_457_f32 / 0.25_f32, 20.987_654_f32 / 0.25_f32)
     );
     assert_eq!(bridge.commands[1].state.scale_x, 0.5);
     assert_eq!(bridge.commands[1].state.scale_y, 0.5);
@@ -719,10 +716,10 @@ fn native_flight_trajectory_is_strict_double_buffered_and_independent() {
     assert!(!bridge.commands[1].world_space);
     assert_eq!(
         (
-            (bridge.commands[1].state.translate_x as f32 + bridge.commands[1].x as f32)
-                * bridge.commands[1].state.scale_x as f32,
-            (bridge.commands[1].state.translate_y as f32 + bridge.commands[1].y as f32)
-                * bridge.commands[1].state.scale_y as f32,
+            (bridge.commands[1].state.translate_x + bridge.commands[1].x)
+                * bridge.commands[1].state.scale_x,
+            (bridge.commands[1].state.translate_y + bridge.commands[1].y)
+                * bridge.commands[1].state.scale_y,
         ),
         (
             ((10.123_457_f32 / 0.25_f32) - (2.0_f32 / 0.25_f32)) * (2.0_f32 * 0.25_f32),

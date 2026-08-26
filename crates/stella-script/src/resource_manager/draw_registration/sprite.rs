@@ -89,9 +89,9 @@ pub(crate) fn native_resource_sprite_command(
         geometry: None,
         shader: None,
         dirt: None,
-        x,
-        y,
-        state,
+        x: x as f32,
+        y: y as f32,
+        state: state.into(),
         world_space: false,
     })
 }

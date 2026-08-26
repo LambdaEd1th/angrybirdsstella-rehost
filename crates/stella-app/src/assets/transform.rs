@@ -113,25 +113,25 @@ pub(crate) fn text_glyph_transform(
 
 pub(crate) fn render_command_transform(command: &RenderCommand) -> SpriteTransform {
     let state = command.state;
-    let alpha = (state.alpha as f32).clamp(0.0, 1.0);
+    let alpha = state.alpha.clamp(0.0, 1.0);
     let base_x = if command.world_space {
-        state.translate_x as f32 + command.x as f32
+        state.translate_x + command.x
     } else {
-        (state.translate_x as f32 + command.x as f32) * state.scale_x as f32
+        (state.translate_x + command.x) * state.scale_x
     };
     let base_y = if command.world_space {
-        state.translate_y as f32 + command.y as f32
+        state.translate_y + command.y
     } else {
-        (state.translate_y as f32 + command.y as f32) * state.scale_y as f32
+        (state.translate_y + command.y) * state.scale_y
     };
     if let Some([m00, m01, m10, m11]) = state.matrix {
         return SpriteTransform {
             x: base_x,
             y: base_y,
-            m00: m00 as f32,
-            m01: m01 as f32,
-            m10: m10 as f32,
-            m11: m11 as f32,
+            m00,
+            m01,
+            m10,
+            m11,
             alpha,
         };
     }
@@ -143,9 +143,9 @@ pub(crate) fn render_command_transform(command: &RenderCommand) -> SpriteTransfo
         return SpriteTransform::from_scale_rotation(
             base_x,
             base_y,
-            state.scale_x as f32,
-            state.scale_y as f32,
-            state.angle as f32,
+            state.scale_x,
+            state.scale_y,
+            state.angle,
             alpha,
         );
     }
@@ -155,11 +155,11 @@ pub(crate) fn render_command_transform(command: &RenderCommand) -> SpriteTransfo
     // scales while projecting. This is Scale * Rotation, not Rotation *
     // Scale. AtlasSprite has already converted its own pivot into the draw
     // offset, so this correction applies only the renderer-state pivot.
-    let scale_x = state.scale_x as f32;
-    let scale_y = state.scale_y as f32;
-    let pivot_x = state.pivot_x as f32;
-    let pivot_y = state.pivot_y as f32;
-    let (sine, cosine) = (state.angle as f32).sin_cos();
+    let scale_x = state.scale_x;
+    let scale_y = state.scale_y;
+    let pivot_x = state.pivot_x;
+    let pivot_y = state.pivot_y;
+    let (sine, cosine) = state.angle.sin_cos();
     let pivot_correction_x = (-cosine).mul_add(pivot_x, sine.mul_add(pivot_y, pivot_x));
     let pivot_correction_y = (-sine).mul_add(pivot_x, (-cosine).mul_add(pivot_y, pivot_y));
     SpriteTransform {
