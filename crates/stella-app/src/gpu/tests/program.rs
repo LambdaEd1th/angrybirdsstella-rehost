@@ -143,6 +143,8 @@ fn ordinary_atlas_submission_preserves_the_surface_format_program_branch() {
         .unwrap();
     assert_eq!(frame.draws[0].program, NativeProgram::Sprite);
     assert_eq!(frame.draws[1].program, NativeProgram::SpriteAlpha);
+    assert_eq!(frame.texture_pairs.len(), 1);
+    assert_eq!(frame.draws[0].texture_pair, frame.draws[1].texture_pair);
 }
 
 #[test]

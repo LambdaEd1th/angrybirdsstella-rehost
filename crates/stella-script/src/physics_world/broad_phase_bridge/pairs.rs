@@ -55,11 +55,20 @@ impl RenderBridge {
                 });
             if allowed && self.broad_phase_contacts.insert(key.clone()) {
                 let order = self.allocate_physics_creation_order();
-                self.contact_creation_order.insert(key, order);
+                self.insert_native_contact_order(key, order);
             }
         }
-        self.contact_creation_order.retain(|key, _| {
-            self.broad_phase_contacts.contains(key) || self.active_contacts.contains_key(key)
-        });
+        let stale = self
+            .contact_creation_order
+            .keys()
+            .filter(|key| {
+                !self.broad_phase_contacts.contains(*key)
+                    && !self.active_contacts.contains_key(*key)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        for key in stale {
+            self.remove_native_contact_order(&key);
+        }
     }
 }

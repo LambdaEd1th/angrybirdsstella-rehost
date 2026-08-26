@@ -60,7 +60,7 @@ fn submitted_text_uses_bound_font_geometry_and_texture_not_active_name() {
 
     let frame = assets.prepare_gpu_frame(&[], &[command], &[], &[]).unwrap();
     assert_eq!(frame.draws.len(), 1);
-    assert_eq!(frame.draws[0].base_texture, bound_texture);
+    assert_eq!(frame.draw_texture_pair(0).0, bound_texture);
     assert_eq!(frame.vertices.len(), 6);
     let min_x = frame
         .vertices
@@ -118,7 +118,7 @@ fn font_v2_utf32_glyphs_reach_the_wgpu_quad_path() {
 
     let frame = assets.prepare_gpu_frame(&[], &[command], &[], &[]).unwrap();
     assert_eq!(frame.draws.len(), 1);
-    assert_eq!(frame.draws[0].base_texture, texture_source);
+    assert_eq!(frame.draw_texture_pair(0).0, texture_source);
     assert_eq!(frame.vertices.len(), 6);
 }
 
@@ -158,7 +158,7 @@ fn system_text_builds_premultiplied_label_and_uses_native_stroke_anchor_geometry
         .prepare_gpu_frame(&[], std::slice::from_ref(&command), &[], &[])
         .unwrap();
     assert_eq!(frame.draws.len(), 1);
-    let texture_key = frame.draws[0].base_texture.clone();
+    let texture_key = frame.draw_texture_pair(0).0.to_owned();
     assert!(texture_key.starts_with("<system-font:"));
     let texture = frame.transient_textures.get(&texture_key).unwrap();
     assert_eq!(texture.height(), (binding.label_line_height + 4) as u32);
@@ -369,9 +369,9 @@ fn last_system_font_release_separates_same_hash_deferred_label_lifetimes() {
     };
     let frame = assets.prepare_gpu_frame(&[], &commands, &[], &[]).unwrap();
     assert_eq!(frame.draws.len(), 2);
-    assert_ne!(frame.draws[0].base_texture, frame.draws[1].base_texture);
-    let old_texture = frame.draws[0].base_texture.clone();
-    let active_texture = frame.draws[1].base_texture.clone();
+    assert_ne!(frame.draw_texture_pair(0).0, frame.draw_texture_pair(1).0);
+    let old_texture = frame.draw_texture_pair(0).0.to_owned();
+    let active_texture = frame.draw_texture_pair(1).0.to_owned();
     assert!(frame.retired_textures.contains(&old_texture));
     assert_eq!(
         frame

@@ -10,7 +10,7 @@ use stella_assets::ka3d::CompositePart;
 use super::{ResourceRuntime, SpriteResourceEntry, SpriteResourceKind};
 use crate::{
     BoundCompositePart, SpriteCatalogRegion, SpriteCatalogSnapshot,
-    resource_manager::{NativeSpriteMetrics, SpriteGeometry, native_composite_metrics},
+    resource_manager::{NativeSpriteMetrics, SpriteGeometry, native_composite_metrics_from_parts},
 };
 
 impl ResourceRuntime {
@@ -303,14 +303,20 @@ impl ResourceRuntime {
                 })
             }
             SpriteResourceKind::Composite => {
-                let parts = self.active_bound_composite(asset_name)?;
+                // CompoSprite::updateBounds (`sub_100436D40`) walks its
+                // retained Entry*/AtlasSprite* vector directly. Keep the
+                // query on the corresponding borrowed resource arrays rather
+                // than deep-cloning every part, sprite name and atlas path.
+                let (parts, regions) = self.active_composite_bound_parts(asset_name)?;
                 Some(
-                    native_composite_metrics(&parts).unwrap_or(NativeSpriteMetrics {
-                        width: 0,
-                        height: 0,
-                        pivot_x: 0,
-                        pivot_y: 0,
-                    }),
+                    native_composite_metrics_from_parts(parts, regions).unwrap_or(
+                        NativeSpriteMetrics {
+                            width: 0,
+                            height: 0,
+                            pivot_x: 0,
+                            pivot_y: 0,
+                        },
+                    ),
                 )
             }
         }

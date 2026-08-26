@@ -28,12 +28,12 @@ pub(super) fn install(
             // +0xA4/+0xA8 before `_M_insert_unique`. The retained drawable is
             // therefore independent of later body position/angle changes.
             if object.ray.is_none() {
-                object.ray = Some(DrawablePolygonState {
+                object.ray = Some(Arc::new(DrawablePolygonState {
                     vertices: object.collision_local_vertices(),
                     x: f64::from(object.x as f32),
                     y: f64::from(object.y as f32),
                     color,
-                });
+                }));
             }
             Ok(())
         })?,

@@ -46,6 +46,26 @@ pub(super) fn install(
             bridge.state.scale_x = f64::from(world_scale * scale_x);
             bridge.state.scale_y = f64::from(world_scale * scale_y);
             bridge.state.matrix = None;
+            let atlas_pivot = bound_region.as_ref().map_or([0.0_f32; 2], |region| {
+                [
+                    f32::from(region.sprite.pivot_x),
+                    f32::from(region.sprite.pivot_y),
+                ]
+            });
+            // sub_100043990 preserves the current rotation/pivot while
+            // replacing translation and scale. sub_10008D428 subsequently
+            // computes fill coordinates from the unprojected position and
+            // Scale*Rotation basis; the atlas pivot is already represented by
+            // the region-local vertices used by the deferred renderer.
+            bridge.state.masked_texture_matrix = Some(RenderState::native_masked_texture_matrix(
+                x * 20.0_f32,
+                y * 20.0_f32,
+                scale_x,
+                scale_y,
+                bridge.state.angle as f32,
+                bridge.state.pivot_x as f32 - atlas_pivot[0],
+                bridge.state.pivot_y as f32 - atlas_pivot[1],
+            ));
             let state = bridge.state;
             bridge.push_render_command(RenderCommand {
                 order: 0,

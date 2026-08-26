@@ -3,11 +3,14 @@
 use crate::*;
 
 impl RenderBridge {
-    pub(crate) fn solve_prismatic_joint_position(
+    pub(crate) fn solve_prismatic_joint_position<
+        F: JointBodyView + ?Sized,
+        S: JointBodyView + ?Sized,
+    >(
         &mut self,
         joint: &PhysicsJoint,
-        first: &SceneObject,
-        second: &SceneObject,
+        first: &F,
+        second: &S,
     ) -> bool {
         const LINEAR_SLOP: f64 = 0.001;
         const TWO_LINEAR_SLOPS: f64 = 0.002;
@@ -38,7 +41,7 @@ impl RenderBridge {
             + inertia_b * geometry.a2 * geometry.a2;
         let perpendicular_error = geometry.delta.0 * geometry.perpendicular.0
             + geometry.delta.1 * geometry.perpendicular.1;
-        let raw_angular_error = second.angle - first.angle - joint.rest_angle;
+        let raw_angular_error = second.angle() - first.angle() - joint.rest_angle;
         let angular_error = raw_angular_error;
         let translation = geometry.delta.0 * geometry.axis.0 + geometry.delta.1 * geometry.axis.1;
         // Position constraints recompute limit activity from live translation.

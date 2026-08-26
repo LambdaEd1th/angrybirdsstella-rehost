@@ -1,5 +1,7 @@
 //! Native body/render state owned by Purple's scene-object bridge.
 
+use std::sync::Arc;
+
 use crate::*;
 
 /// Immutable payload inserted into GameLua's name-to-DrawablePolygon tree by
@@ -61,15 +63,21 @@ pub(crate) struct SceneObject {
     pub(crate) physics_creation_order: u64,
     pub(crate) body_allocation_slot: Option<u64>,
     pub(crate) fixture_proxy_ids: Vec<Option<i32>>,
-    pub(crate) sprite: String,
-    /// Resource pointer retained when the sprite was assigned. Both fields
-    /// are empty when native lookup returned null; that must remain missing
-    /// even if a resource with the same name loads later.
+    /// The target ABI's old libstdc++ string is a COW pointer. Keep the live
+    /// RenderObjectData name fields pointer-cheap and materialize an owned Rust
+    /// string only at the deferred wgpu command boundary.
+    pub(crate) sprite: Arc<str>,
+    /// Resource pointer retained when the sprite was assigned. Purple keeps
+    /// these as retained AtlasSprite/CompoSprite pointers rather than copying
+    /// the underlying resource graph into each render snapshot, so the Rust
+    /// bridge mirrors that ownership with `Arc`. Both fields are empty when
+    /// native lookup returned null; that must remain missing even if a
+    /// resource with the same name loads later.
     pub(crate) sprite_bound: bool,
-    pub(crate) sprite_region: Option<SpriteCatalogRegion>,
-    pub(crate) composite_sprite: Option<Vec<BoundCompositePart>>,
-    pub(crate) texture: Option<String>,
-    pub(crate) texture_binding: Option<MaskedTextureBinding>,
+    pub(crate) sprite_region: Option<Arc<SpriteCatalogRegion>>,
+    pub(crate) composite_sprite: Option<Arc<Vec<BoundCompositePart>>>,
+    pub(crate) texture: Option<Arc<str>>,
+    pub(crate) texture_binding: Option<Arc<MaskedTextureBinding>>,
     pub(crate) texture_scale: f64,
     pub(crate) x: f64,
     pub(crate) y: f64,
@@ -184,10 +192,10 @@ pub(crate) struct SceneObject {
     pub(crate) collision_materials: Vec<String>,
     pub(crate) water_density: f64,
     pub(crate) is_water: bool,
-    pub(crate) decoration: Option<ObjectDecoration>,
-    pub(crate) ray: Option<DrawablePolygonState>,
-    pub(crate) dirt: Option<DirtComponent>,
-    pub(crate) dirt_holes: Vec<DirtHole>,
+    pub(crate) decoration: Option<Arc<ObjectDecoration>>,
+    pub(crate) ray: Option<Arc<DrawablePolygonState>>,
+    pub(crate) dirt: Option<Arc<DirtComponent>>,
+    pub(crate) dirt_holes: Arc<Vec<DirtHole>>,
     pub(crate) motion_started: bool,
     pub(crate) sleep_time: f64,
     pub(crate) native_was_awake: bool,

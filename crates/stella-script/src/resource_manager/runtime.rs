@@ -179,6 +179,11 @@ pub(crate) struct ResourceRuntime {
     /// Native `Resources + 0x580` maps each name to a priority vector. Lookup
     /// observes only the final entry and then applies any requested type gate.
     pub(crate) sprite_entries: BTreeMap<String, Vec<SpriteResourceEntry>>,
+    /// Compatibility aliases for assets that the retired cloud asset service
+    /// supplied at runtime.  An alias is materialized only in sheets that own
+    /// its fallback target, so a later downloaded sheet with the real name
+    /// still wins through the native last-entry-wins resource stack.
+    pub(crate) sprite_aliases: BTreeMap<String, String>,
     pub(crate) bitmap_fonts: BTreeSet<String>,
     /// Bitmap IFont map values represented by their resolved source files.
     pub(crate) bitmap_font_paths: BTreeMap<String, String>,
@@ -257,6 +262,7 @@ impl ResourceRuntime {
             composite_set_values: BTreeMap::new(),
             composite_set_regions: BTreeMap::new(),
             sprite_entries: BTreeMap::new(),
+            sprite_aliases: BTreeMap::new(),
             bitmap_fonts: BTreeSet::new(),
             bitmap_font_paths: BTreeMap::new(),
             bitmap_font_descriptor_paths: BTreeMap::new(),

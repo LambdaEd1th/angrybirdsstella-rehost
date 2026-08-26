@@ -152,6 +152,7 @@ pub(super) fn decode_joint_geometry(
         first: first_name,
         second: second_name,
         joint_type,
+        coord_type,
         is_physical,
         first_anchor,
         second_anchor,

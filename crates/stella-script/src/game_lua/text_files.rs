@@ -11,3 +11,4 @@ mod paths;
 mod pipeline;
 
 pub(crate) use imports::{install_data_imports, install_string_loader};
+pub(crate) use pipeline::load_text_bytes;

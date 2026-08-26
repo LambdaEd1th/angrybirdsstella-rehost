@@ -8,7 +8,96 @@ use super::{ResourceRuntime, SpriteResourceEntry, SpriteResourceKind};
 use crate::SpriteCatalogRegion;
 
 impl ResourceRuntime {
-    pub(crate) fn replace_sprite_sheet_value(&mut self, owner: &str, sheet: SpriteSheet) {
+    pub(crate) fn register_sprite_aliases(&mut self, aliases: &[(&str, &str)]) {
+        let mut changed = false;
+        for &(alias, target) in aliases {
+            if self
+                .sprite_aliases
+                .insert(alias.to_owned(), target.to_owned())
+                .as_deref()
+                != Some(target)
+            {
+                changed = true;
+            }
+        }
+        if !changed {
+            return;
+        }
+
+        // Platform services are normally installed before the first script
+        // sheet is loaded. Keep the operation correct for tests and late
+        // service activation too by materialising aliases in existing sheets.
+        let aliases = self.sprite_aliases.clone();
+        let mut additions = Vec::new();
+        for (owner, sheet) in &mut self.sprite_sheet_values {
+            let existing = sheet
+                .sprites
+                .iter()
+                .map(|sprite| sprite.name.clone())
+                .collect::<std::collections::BTreeSet<_>>();
+            for (alias, target) in &aliases {
+                if existing.contains(alias) {
+                    continue;
+                }
+                let Some(target_index) = sheet
+                    .sprites
+                    .iter()
+                    .position(|sprite| sprite.name == *target)
+                else {
+                    continue;
+                };
+                let mut sprite = sheet.sprites[target_index].clone();
+                let texture_index = sheet
+                    .sprite_texture_indices
+                    .get(target_index)
+                    .copied()
+                    .unwrap_or(0);
+                sprite.name = alias.clone();
+                sheet.sprites.push(sprite);
+                sheet.sprite_texture_indices.push(texture_index);
+                additions.push((alias.clone(), owner.clone()));
+            }
+        }
+        for (alias, owner) in additions {
+            self.sprite_entries
+                .entry(alias)
+                .or_default()
+                .push(SpriteResourceEntry {
+                    kind: SpriteResourceKind::Atlas,
+                    owner: owner.clone(),
+                });
+            self.sprite_sheet_catalog_regions.remove(&owner);
+        }
+        self.mark_sprite_catalog_changed();
+    }
+
+    pub(crate) fn replace_sprite_sheet_value(&mut self, owner: &str, mut sheet: SpriteSheet) {
+        let existing = sheet
+            .sprites
+            .iter()
+            .map(|sprite| sprite.name.clone())
+            .collect::<std::collections::BTreeSet<_>>();
+        for (alias, target) in &self.sprite_aliases {
+            if existing.contains(alias) {
+                continue;
+            }
+            let Some(target_index) = sheet
+                .sprites
+                .iter()
+                .position(|sprite| sprite.name == *target)
+            else {
+                continue;
+            };
+            let mut sprite = sheet.sprites[target_index].clone();
+            let texture_index = sheet
+                .sprite_texture_indices
+                .get(target_index)
+                .copied()
+                .unwrap_or(0);
+            sprite.name = alias.clone();
+            sheet.sprites.push(sprite);
+            sheet.sprite_texture_indices.push(texture_index);
+        }
         self.sprite_sheet_texture_sources.remove(owner);
         self.sprite_sheet_catalog_regions.remove(owner);
         if let Some(old) = self.sprite_sheet_values.remove(owner) {

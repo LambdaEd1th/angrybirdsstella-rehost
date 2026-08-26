@@ -4,12 +4,17 @@ mod adapters;
 mod object;
 mod shape;
 
-use std::sync::{Arc, Mutex};
+use std::{
+    cell::RefCell,
+    rc::Rc,
+    sync::{Arc, Mutex},
+};
 
 use mlua::{Lua, Result as LuaResult, Table};
 
 use crate::{
-    BoundCompositePart, CollisionShape, RenderBridge, ResourceRuntime, SpriteCatalogRegion,
+    BoundCompositePart, CollisionShape, DrawCallbacks, RenderBridge, ResourceRuntime,
+    SpriteCatalogRegion,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -85,6 +90,7 @@ pub(super) fn install(
     render: Arc<Mutex<RenderBridge>>,
     resources: Arc<Mutex<ResourceRuntime>>,
     data_root: Arc<std::path::PathBuf>,
+    draw_callbacks: Rc<RefCell<DrawCallbacks>>,
 ) -> LuaResult<()> {
-    adapters::install(lua, globals, render, resources, data_root)
+    adapters::install(lua, globals, render, resources, data_root, draw_callbacks)
 }

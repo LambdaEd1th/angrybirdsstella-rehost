@@ -1,6 +1,86 @@
 use super::*;
 
 #[test]
+fn chapter02_level11_drawn_wheel_axles_keep_body_local_coordinates() {
+    let sandbox = ShippedDataSandbox::new("chapter02-l11-wheel-axles");
+    let runtime = StellaLua::new(&sandbox.data_root).unwrap();
+    runtime.boot("scripts/game.lua").unwrap();
+    runtime.execute_source("initializeGameCommon()").unwrap();
+    runtime
+        .execute_source(
+            r#"
+                SpriteSheetManager.useGroupSet('INGAME')
+                currentFolder = 'Chapter02'
+                currentPack = 'Chapter02'
+                currentLevel = 11
+                levelFolder = 'levels/Chapter02/'
+                levelName = 'Chapter02_L11'
+                loadLevelInternal(levelFolder .. levelName)
+                blocks.BlockComponentManager.triggerGlobalEvent(blocks.events.EID_START)
+                setPhysicsEnabled(true)
+                update = function() end
+            "#,
+        )
+        .unwrap();
+    runtime.update(1.0 / 60.0).unwrap();
+    runtime.draw().unwrap();
+    runtime
+        .execute_source(
+            r#"
+                wheelJointResults = {}
+                wheelJointCount = 0
+                for name, joint in pairs(objects.joints) do
+                    if string.find(name, 'BLOCK_LIGHT_ROUND') then
+                        wheelJointCount = wheelJointCount + 1
+                        local a, b, c, d = getJointAnchorPositions(joint)
+                        wheelJointResults[name] = {
+                            x1 = joint.x1, y1 = joint.y1,
+                            x2 = joint.x2, y2 = joint.y2,
+                            a = a, b = b, c = c, d = d,
+                            wheelX = objects.world[joint.end1].x,
+                            wheelY = objects.world[joint.end1].y,
+                        }
+                    end
+                end
+            "#,
+        )
+        .unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert_eq!(environment.get::<i64>("wheelJointCount").unwrap(), 3);
+    let results = environment.get::<mlua::Table>("wheelJointResults").unwrap();
+    for name in [
+        "BLOCK_LIGHT_ROUND_4X4_1_1BLOCK_WOOD_4X4_1_3",
+        "BLOCK_LIGHT_ROUND_4X4_1_2BLOCK_WOOD_4X4_1_5",
+        "BLOCK_LIGHT_ROUND_4X4_1_3BLOCK_WOOD_4X4_1_4",
+    ] {
+        let result = results.get::<mlua::Table>(name).unwrap();
+        assert_eq!(result.get::<f64>("x1").unwrap(), 0.0, "{name}");
+        assert_eq!(result.get::<f64>("y1").unwrap(), 0.0, "{name}");
+        let first = (
+            result.get::<f64>("a").unwrap(),
+            result.get::<f64>("c").unwrap(),
+        );
+        let second = (
+            result.get::<f64>("b").unwrap(),
+            result.get::<f64>("d").unwrap(),
+        );
+        let wheel = (
+            result.get::<f64>("wheelX").unwrap(),
+            result.get::<f64>("wheelY").unwrap(),
+        );
+        assert!(
+            (first.0 - wheel.0).hypot(first.1 - wheel.1) < 1.0e-6,
+            "{name} first anchor {first:?} left wheel center {wheel:?}"
+        );
+        assert!(
+            (first.0 - second.0).hypot(first.1 - second.1) < 0.01,
+            "{name} endpoints {first:?} and {second:?} no longer overlap"
+        );
+    }
+}
+
+#[test]
 fn revolute_motor_uses_type_three_and_accumulates_max_torque_once_per_step() {
     let runtime = unlocked_test_runtime();
     runtime
@@ -57,6 +137,40 @@ fn revolute_motor_uses_type_three_and_accumulates_max_torque_once_per_step() {
         bridge.scene["rotor"].angle,
         f64::from(native_step * native_velocity + native_step * second_step_velocity)
     );
+}
+
+#[test]
+fn awake_island_borrows_native_joint_edges_and_wakes_the_complete_sleeping_chain() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createCircle("a", "", 0, 0, 0.25, 1, 0, 0, true, false, 1)
+                createCircle("b", "", 4, 0, 0.25, 1, 0, 0, true, false, 1)
+                createCircle("c", "", 8, 0, 0.25, 1, 0, 0, true, false, 1)
+                createJoint({
+                    name = "ab", end1 = "a", end2 = "b",
+                    type = 3, x1 = 0, y1 = 0, x2 = 4, y2 = 0
+                })
+                createJoint({
+                    name = "bc", end1 = "b", end2 = "c",
+                    type = 3, x1 = 4, y1 = 0, x2 = 8, y2 = 0
+                })
+                "#,
+        )
+        .unwrap();
+
+    let mut bridge = runtime.render.lock().unwrap();
+    bridge.scene.get_mut("a").unwrap().velocity_x = 1.0;
+    bridge.scene.get_mut("b").unwrap().sleeping = true;
+    bridge.scene.get_mut("c").unwrap().sleeping = true;
+    bridge.assemble_box2d_islands();
+
+    assert!(!bridge.scene["b"].sleeping);
+    assert!(!bridge.scene["c"].sleeping);
+    assert_eq!(bridge.solver_islands.len(), 1);
+    assert_eq!(bridge.solver_islands[0].bodies, ["a", "b", "c"]);
+    assert_eq!(bridge.solver_islands[0].joints, ["ab", "bc"]);
 }
 
 #[test]

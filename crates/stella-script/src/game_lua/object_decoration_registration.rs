@@ -64,12 +64,12 @@ pub(super) fn install_decoration(
             let Some(object) = bridge.scene.get_mut(&name) else {
                 return Err(runtime_error(format!("Missing object: {name}")));
             };
-            object.decoration = Some(ObjectDecoration {
+            object.decoration = Some(Arc::new(ObjectDecoration {
                 amount,
                 sprite,
                 angle_increment: f64::from(angle_increment),
                 scale: f64::from(scale),
-            });
+            }));
             Ok(())
         })?,
     )

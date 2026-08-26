@@ -99,7 +99,7 @@ fn dirt_mesh_uses_native_physics_uv_scale_and_opaque_pipeline() {
     );
     assert_eq!(frame.draws.len(), 1);
     assert_eq!(frame.draws[0].program, NativeProgram::Sprite);
-    assert_eq!(frame.draws[0].fill_texture, "DIRT_TEXTURE.png");
+    assert_eq!(frame.draw_texture_pair(0).1, "DIRT_TEXTURE.png");
     assert_eq!(frame.uniforms[0].header[0], 1.0);
     assert_eq!(frame.uniforms[0].header[2], 3.0);
     assert_eq!(
@@ -164,6 +164,6 @@ fn dirt_mesh_uses_constructor_time_texture_pointers_after_catalog_shadowing() {
     };
     let frame = assets.prepare_gpu_frame(&[command], &[], &[], &[]).unwrap();
     assert_eq!(frame.draws.len(), 2);
-    assert_eq!(frame.draws[0].fill_texture, "first-bg.pvr");
-    assert_eq!(frame.draws[1].fill_texture, "first-fg.pvr");
+    assert_eq!(frame.draw_texture_pair(0).1, "first-bg.pvr");
+    assert_eq!(frame.draw_texture_pair(1).1, "first-fg.pvr");
 }

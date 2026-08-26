@@ -168,6 +168,15 @@ fn breakable_joints_keep_native_constraints_until_reverse_frame_tail_drain() {
     );
     assert!(bridge.joints.contains_key("z_first"));
     assert!(bridge.joints.contains_key("a_second"));
+    assert_eq!(
+        bridge
+            .native_joint_world_order
+            .values()
+            .rev()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["a_second", "z_first"]
+    );
     assert!(bridge.attached_joint_names("payload").is_empty());
     assert!(bridge.native_joint_endpoint_exports().is_empty());
     assert!(bridge.scene["anchor"].sleeping);
@@ -180,6 +189,7 @@ fn breakable_joints_keep_native_constraints_until_reverse_frame_tail_drain() {
         ["a_second", "z_first"]
     );
     assert!(bridge.joints.is_empty());
+    assert!(bridge.native_joint_world_order.is_empty());
     assert!(bridge.pending_native_joint_destructions.is_empty());
     assert!(!bridge.scene["anchor"].sleeping);
     assert!(!bridge.scene["payload"].sleeping);

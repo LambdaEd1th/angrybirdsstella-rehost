@@ -3,27 +3,27 @@
 use crate::*;
 
 impl RenderBridge {
-    pub(crate) fn initialize_distance_velocity_constraints(
+    pub(crate) fn initialize_distance_velocity_constraints<
+        F: JointBodyView + ?Sized,
+        S: JointBodyView + ?Sized,
+    >(
         &mut self,
-        joint: &PhysicsJoint,
-        first: &SceneObject,
-        second: &SceneObject,
+        joint: &mut PhysicsJoint,
+        first: &F,
+        second: &S,
         step: f64,
     ) {
-        self.scale_joint_impulses(&joint.name, step);
-        let Some(joint) = self.joints.get(&joint.name).cloned() else {
-            return;
-        };
+        Self::scale_joint_impulses(joint, step);
         if !joint.is_physical {
             return;
         }
-        let (r_a, r_b) = joint_anchor_offsets(&joint, first, second);
+        let (r_a, r_b) = joint_anchor_offsets(joint, first, second);
         let delta = joint_anchor_delta(first, second, r_a, r_b);
         let length = delta.0.hypot(delta.1);
         if length > f64::EPSILON {
             let impulse = joint.distance_impulse;
             self.apply_joint_velocity_impulse(
-                &joint,
+                joint,
                 first,
                 second,
                 delta.0 / length * impulse,
@@ -33,11 +33,14 @@ impl RenderBridge {
         }
     }
 
-    pub(crate) fn solve_distance_joint_velocity(
+    pub(crate) fn solve_distance_joint_velocity<
+        F: JointBodyView + ?Sized,
+        S: JointBodyView + ?Sized,
+    >(
         &mut self,
-        joint: &PhysicsJoint,
-        first: &SceneObject,
-        second: &SceneObject,
+        joint: &mut PhysicsJoint,
+        first: &F,
+        second: &S,
         step: f64,
     ) {
         let (r_a, r_b) = joint_anchor_offsets(joint, first, second);
@@ -87,9 +90,7 @@ impl RenderBridge {
         let relative_speed =
             (velocity_b.0 - velocity_a.0) * axis.0 + (velocity_b.1 - velocity_a.1) * axis.1;
         let impulse = -effective_mass * (relative_speed + bias + gamma * joint.distance_impulse);
-        if let Some(live_joint) = self.joints.get_mut(&joint.name) {
-            live_joint.distance_impulse += impulse;
-        }
+        joint.distance_impulse += impulse;
         self.apply_joint_velocity_impulse(
             joint,
             first,
@@ -100,11 +101,14 @@ impl RenderBridge {
         );
     }
 
-    pub(crate) fn solve_distance_joint_position(
+    pub(crate) fn solve_distance_joint_position<
+        F: JointBodyView + ?Sized,
+        S: JointBodyView + ?Sized,
+    >(
         &mut self,
         joint: &PhysicsJoint,
-        first: &SceneObject,
-        second: &SceneObject,
+        first: &F,
+        second: &S,
     ) -> bool {
         if joint.frequency > 0.0 {
             return true;

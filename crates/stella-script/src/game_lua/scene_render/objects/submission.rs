@@ -48,12 +48,16 @@ impl RenderBridge {
             && object.sprite_bound)
             .then(|| RenderCommand {
                 order: 0,
-                sprite: object.sprite.clone(),
-                texture: object.texture.clone(),
+                sprite: object.sprite.to_string(),
+                texture: object.texture.as_deref().map(str::to_owned),
                 texture_scale: object.texture_scale,
-                masked_texture_binding: object.texture_binding.clone(),
-                bound_region: object.sprite_region.clone(),
-                bound_composite: object.composite_sprite.clone(),
+                masked_texture_binding: object.texture_binding.as_deref().cloned(),
+                // Purple passes the retained RenderObjectData resource
+                // pointer into its immediate draw member. wgpu submits later,
+                // so materialize exactly one command-owned snapshot here;
+                // SceneObject -> SceneDrawObject above remains pointer-cheap.
+                bound_region: object.sprite_region.as_deref().cloned(),
+                bound_composite: object.composite_sprite.as_deref().cloned(),
                 shader: None,
                 clip_holes: object.dirt.as_ref().map_or_else(
                     || {
@@ -69,7 +73,7 @@ impl RenderBridge {
                     },
                     |_| Vec::new(),
                 ),
-                dirt: object.dirt.as_ref().map(DirtComponent::render_command),
+                dirt: object.dirt.as_deref().map(DirtComponent::render_command),
                 x: 0.0,
                 y: 0.0,
                 state: self.scene_object_state(object),
@@ -82,8 +86,12 @@ impl RenderBridge {
         let objects = self
             .scene_range_names()
             .into_iter()
-            .filter_map(|name| self.scene_draw_object(&name))
-            .filter(|object| object.visible)
+            .filter_map(|name| {
+                self.scene
+                    .get(&name)
+                    .filter(|object| object.visible)
+                    .map(SceneDrawObject::from)
+            })
             .collect::<Vec<_>>();
         let commands = objects
             .iter()
@@ -122,7 +130,7 @@ impl RenderBridge {
         if object.flash_animation {
             return;
         }
-        let Some(decoration) = object.decoration.as_ref() else {
+        let Some(decoration) = object.decoration.as_deref() else {
             return;
         };
         if decoration.sprite.is_empty() || decoration.amount <= 0 {

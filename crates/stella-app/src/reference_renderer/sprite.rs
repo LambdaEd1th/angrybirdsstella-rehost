@@ -9,6 +9,7 @@ pub(crate) fn draw_region(
     pivot_override: Option<[f64; 2]>,
     target: &mut [u32],
     masked_texture: Option<(&RgbaImage, f64)>,
+    masked_texture_matrix: Option<[f64; 6]>,
     shader: Option<&SpriteShader>,
     clip_holes: &[RenderHole],
 ) {
@@ -124,11 +125,25 @@ pub(crate) fn draw_region(
             let mask =
                 super::texture::sample_bilinear_clamped(texture, atlas_x - 0.5, atlas_y - 0.5);
             let (source, mask_alpha) = if let Some((fill, texture_scale)) = masked_texture {
+                let [fill_x, fill_y] = masked_texture_matrix.map_or(
+                    [source_x, source_y],
+                    |[tx, ty, m00, m01, m10, m11]| {
+                        [
+                            tx + m00.mul_add(local_x, m01 * local_y),
+                            ty + m10.mul_add(local_x, m11 * local_y),
+                        ]
+                    },
+                );
+                let texture_scale = if texture_scale < 0.0 {
+                    -texture_scale.abs().max(0.000001)
+                } else {
+                    texture_scale.abs().max(0.000001)
+                };
                 (
                     super::texture::sample_bilinear_repeat(
                         fill,
-                        source_x * texture_scale - 0.5,
-                        source_y * texture_scale - 0.5,
+                        fill_x / texture_scale - 0.5,
+                        fill_y / texture_scale - 0.5,
                     ),
                     f64::from(mask[3]) / 255.0,
                 )

@@ -46,42 +46,48 @@ impl AssetCatalog {
             region.sprite.height = capture_height as i16;
         }
 
-        enum FrameCommand<'a> {
-            Sprite(usize, &'a RenderCommand),
-            Text(&'a TextRenderCommand),
-            Rect(&'a RectRenderCommand),
-            Capture(&'a CaptureRenderCommand),
+        #[derive(Clone, Copy)]
+        enum FrameCommand {
+            Rect,
+            Sprite,
+            Text,
+            Capture,
         }
 
         let mut frame = PreparedFrame {
             resolution,
             ..PreparedFrame::default()
         };
-        let mut ordered = Vec::with_capacity(
-            commands.len() + text_commands.len() + rect_commands.len() + capture_commands.len(),
+        // RenderBridge allocates one monotonically increasing native draw
+        // order before appending to each typed queue. Purple consumes that
+        // immediate order directly. Merge the four already-sorted queues in
+        // O(n) instead of rebuilding and sorting a combined command vector on
+        // every frame. The rank preserves the old deterministic tie order for
+        // synthetic tests that manually reuse an order value.
+        debug_assert!(
+            commands
+                .windows(2)
+                .all(|pair| pair[0].order <= pair[1].order)
         );
-        let mut tie_breaker = 0usize;
-        for command in rect_commands {
-            ordered.push((command.order, tie_breaker, FrameCommand::Rect(command)));
-            tie_breaker += 1;
-        }
-        for (index, command) in commands.iter().enumerate() {
-            ordered.push((
-                command.order,
-                tie_breaker,
-                FrameCommand::Sprite(index, command),
-            ));
-            tie_breaker += 1;
-        }
-        for command in text_commands {
-            ordered.push((command.order, tie_breaker, FrameCommand::Text(command)));
-            tie_breaker += 1;
-        }
-        for command in capture_commands {
-            ordered.push((command.order, tie_breaker, FrameCommand::Capture(command)));
-            tie_breaker += 1;
-        }
-        ordered.sort_by_key(|(order, tie_breaker, _)| (*order, *tie_breaker));
+        debug_assert!(
+            text_commands
+                .windows(2)
+                .all(|pair| pair[0].order <= pair[1].order)
+        );
+        debug_assert!(
+            rect_commands
+                .windows(2)
+                .all(|pair| pair[0].order <= pair[1].order)
+        );
+        debug_assert!(
+            capture_commands
+                .windows(2)
+                .all(|pair| pair[0].order <= pair[1].order)
+        );
+        let mut rect_index = 0usize;
+        let mut sprite_index = 0usize;
+        let mut text_index = 0usize;
+        let mut capture_index = 0usize;
 
         let trace_render = std::env::var_os("STELLA_TRACE_RENDER").is_some();
         if trace_render {
@@ -93,20 +99,53 @@ impl AssetCatalog {
                 capture_commands.len()
             );
         }
-        for (_, _, command) in ordered {
+        loop {
+            let next = [
+                rect_commands
+                    .get(rect_index)
+                    .map(|command| (command.order, 0_u8, FrameCommand::Rect)),
+                commands
+                    .get(sprite_index)
+                    .map(|command| (command.order, 1_u8, FrameCommand::Sprite)),
+                text_commands
+                    .get(text_index)
+                    .map(|command| (command.order, 2_u8, FrameCommand::Text)),
+                capture_commands
+                    .get(capture_index)
+                    .map(|command| (command.order, 3_u8, FrameCommand::Capture)),
+            ]
+            .into_iter()
+            .flatten()
+            .min_by_key(|(order, rank, _)| (*order, *rank));
+            let Some((_, _, command)) = next else {
+                break;
+            };
             match command {
-                FrameCommand::Sprite(index, command) => {
-                    self.append_gpu_render_command(command, index, trace_render, &mut frame)?;
-                }
-                FrameCommand::Text(command) => {
-                    frame.current_clip = command.clip_rect;
-                    self.append_gpu_text(command, &mut frame)?;
-                }
-                FrameCommand::Rect(command) => {
+                FrameCommand::Rect => {
+                    let command = &rect_commands[rect_index];
+                    rect_index += 1;
                     frame.current_clip = command.clip_rect;
                     append_gpu_rect(&mut frame, command);
                 }
-                FrameCommand::Capture(command) => {
+                FrameCommand::Sprite => {
+                    let command = &commands[sprite_index];
+                    self.append_gpu_render_command(
+                        command,
+                        sprite_index,
+                        trace_render,
+                        &mut frame,
+                    )?;
+                    sprite_index += 1;
+                }
+                FrameCommand::Text => {
+                    let command = &text_commands[text_index];
+                    text_index += 1;
+                    frame.current_clip = command.clip_rect;
+                    self.append_gpu_text(command, &mut frame)?;
+                }
+                FrameCommand::Capture => {
+                    let command = &capture_commands[capture_index];
+                    capture_index += 1;
                     let texture = format!("<capture:{}>", command.name);
                     self.composites.remove(&command.name);
                     self.regions.insert(
@@ -231,6 +270,7 @@ impl AssetCatalog {
             0,
             state.draw_size,
             state.sprite_pivot,
+            state.masked_texture_matrix,
             command.texture.as_deref().map(|texture| {
                 (
                     texture,

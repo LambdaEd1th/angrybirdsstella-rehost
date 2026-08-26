@@ -22,27 +22,27 @@ impl RenderBridge {
         let mut sweep_starts = BTreeMap::new();
         let mut constraints = Vec::new();
         for contact in contacts {
-            let Some((first, second)) = self
-                .scene
-                .get(&contact.key.0)
-                .cloned()
-                .zip(self.scene.get(&contact.key.1).cloned())
-            else {
-                continue;
+            let constraint = {
+                let Some((first, second)) = self
+                    .scene
+                    .get(&contact.key.0)
+                    .zip(self.scene.get(&contact.key.1))
+                else {
+                    continue;
+                };
+                if first.sensor
+                    || second.sensor
+                    || !first.active
+                    || !second.active
+                    || !Self::native_objects_should_collide(first, second)
+                {
+                    continue;
+                }
+                PositionContactConstraint::from_manifold(first, second, contact.manifold)
             };
-            if first.sensor
-                || second.sensor
-                || !first.active
-                || !second.active
-                || !Self::native_objects_should_collide(&first, &second)
-            {
-                continue;
-            }
             self.contact_impulses.remove(&contact.key);
             self.solver_contact_impulses.remove(&contact.key);
             self.contact_velocity_bias.remove(&contact.key);
-            let constraint =
-                PositionContactConstraint::from_manifold(&first, &second, contact.manifold);
             constraints.push((contact, constraint));
             impulses.insert(contact.key.clone(), 0.0_f64);
         }
@@ -96,23 +96,29 @@ impl RenderBridge {
         }
         self.commit_contact_velocity_cache();
         self.end_contact_velocity_cache();
-        let mut bodies = BTreeSet::new();
+        // sub_10086EA54 retains the current TOI island body array, integrates
+        // it, then synchronizes fixtures only for entries whose body type is
+        // dynamic before one FindNewContacts call. Preserve first island
+        // occurrence here; a sorted set would erase that native order.
+        let mut seen_bodies = BTreeSet::new();
+        let mut bodies = Vec::new();
         for (contact, _) in &constraints {
-            if bodies.insert(contact.dynamic_body.clone())
+            if seen_bodies.insert(contact.dynamic_body.clone())
                 && let Some(object) = self.scene.get(&contact.dynamic_body)
             {
                 sweep_starts.insert(
                     contact.dynamic_body.clone(),
                     NativeSweepStart::capture(object),
                 );
+                bodies.push(contact.dynamic_body.clone());
             }
         }
         if let Some((first_contact, _)) = constraints.first() {
             let remaining_step = step * f64::from(1.0_f32 - first_contact.alpha);
             if remaining_step > 0.0 {
-                for body in bodies {
+                for body in &bodies {
                     self.integrate_island_positions(
-                        std::slice::from_ref(&body),
+                        std::slice::from_ref(body),
                         remaining_step,
                         max_translation,
                         max_rotation,
@@ -120,6 +126,7 @@ impl RenderBridge {
                 }
             }
         }
+        self.sync_native_broad_phase_bodies(bodies.iter().map(String::as_str));
         (impulses, sweep_starts)
     }
 }

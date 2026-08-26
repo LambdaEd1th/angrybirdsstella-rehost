@@ -19,11 +19,23 @@ impl RenderBridge {
     }
 
     fn native_attached_joint_names(&self, object: &str) -> Vec<String> {
-        self.joints
-            .values()
+        let mut names = self
+            .native_joint_world_order
+            .iter()
+            .rev()
+            .filter_map(|(_, name)| self.joints.get(name))
             .filter(|joint| joint.first == object || joint.second == object)
             .map(|joint| joint.name.clone())
-            .collect()
+            .collect::<Vec<_>>();
+        names.extend(
+            self.joints
+                .values()
+                .filter(|joint| {
+                    !joint.is_physical && (joint.first == object || joint.second == object)
+                })
+                .map(|joint| joint.name.clone()),
+        );
+        names
     }
 
     pub(crate) fn flag_contacts_for_filtering_between(&mut self, first: &str, second: &str) {
@@ -53,6 +65,8 @@ impl RenderBridge {
 
     fn destroy_native_joint_now(&mut self, name: &str) -> Option<PhysicsJoint> {
         let joint = self.joints.remove(name)?;
+        self.native_joint_world_order
+            .remove(&joint.physics_creation_order);
         if joint.is_physical {
             for object_name in [&joint.first, &joint.second] {
                 if let Some(object) = self.scene.get_mut(object_name) {

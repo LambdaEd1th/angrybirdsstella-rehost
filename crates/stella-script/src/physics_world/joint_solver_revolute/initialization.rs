@@ -3,17 +3,17 @@
 use crate::*;
 
 impl RenderBridge {
-    pub(crate) fn initialize_revolute_velocity_constraints(
+    pub(crate) fn initialize_revolute_velocity_constraints<
+        F: JointBodyView + ?Sized,
+        S: JointBodyView + ?Sized,
+    >(
         &mut self,
-        joint: &PhysicsJoint,
-        first: &SceneObject,
-        second: &SceneObject,
+        joint: &mut PhysicsJoint,
+        first: &F,
+        second: &S,
         step: f64,
     ) {
-        self.scale_joint_impulses(&joint.name, step);
-        let Some(joint) = self.joints.get(&joint.name).cloned() else {
-            return;
-        };
+        Self::scale_joint_impulses(joint, step);
         // Purple loads these exact Box2D float constants from 0x100A0CA20.
         const TWO_ANGULAR_SLOPS: f32 = f32::from_bits(0x3d8e_fa36);
         let inverse_angular_mass = first.inverse_inertia() as f32 + second.inverse_inertia() as f32;
@@ -22,7 +22,7 @@ impl RenderBridge {
         } else if (joint.upper_limit as f32 - joint.lower_limit as f32).abs() < TWO_ANGULAR_SLOPS {
             JointLimitState::Equal
         } else {
-            let angle = second.angle as f32 - first.angle as f32 - joint.rest_angle as f32;
+            let angle = second.angle() as f32 - first.angle() as f32 - joint.rest_angle as f32;
             if angle <= joint.lower_limit as f32 {
                 JointLimitState::AtLower
             } else if angle >= joint.upper_limit as f32 {
@@ -31,30 +31,26 @@ impl RenderBridge {
                 JointLimitState::Inactive
             }
         };
-        if let Some(live_joint) = self.joints.get_mut(&joint.name) {
-            if new_state != live_joint.limit_state {
-                live_joint.limit_impulse = 0.0;
-            }
-            live_joint.limit_state = new_state;
-            if !live_joint.motor_enabled
-                || inverse_angular_mass == 0.0_f32
-                || new_state == JointLimitState::Equal
-            {
-                live_joint.motor_impulse = 0.0;
-            }
+        if new_state != joint.limit_state {
+            joint.limit_impulse = 0.0;
+        }
+        joint.limit_state = new_state;
+        if !joint.motor_enabled
+            || inverse_angular_mass == 0.0_f32
+            || new_state == JointLimitState::Equal
+        {
+            joint.motor_impulse = 0.0;
         }
         if !joint.is_physical {
             return;
         }
-        if let Some(live_joint) = self.joints.get(&joint.name).cloned() {
-            self.apply_joint_velocity_impulse(
-                &live_joint,
-                first,
-                second,
-                live_joint.linear_impulse_x,
-                live_joint.linear_impulse_y,
-                f64::from(live_joint.motor_impulse as f32 + live_joint.limit_impulse as f32),
-            );
-        }
+        self.apply_joint_velocity_impulse(
+            joint,
+            first,
+            second,
+            joint.linear_impulse_x,
+            joint.linear_impulse_y,
+            f64::from(joint.motor_impulse as f32 + joint.limit_impulse as f32),
+        );
     }
 }

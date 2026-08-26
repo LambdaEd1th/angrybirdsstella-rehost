@@ -7,6 +7,7 @@ pub(crate) struct PhysicsJoint {
     pub(crate) first: String,
     pub(crate) second: String,
     pub(crate) joint_type: i32,
+    pub(crate) coord_type: i32,
     /// Whether the descriptor owns a Box2D constraint. Native type 5 is
     /// overloaded: a boolean `oneWayDestroy` field makes it a metadata-only
     /// destruction link, while the field's absence creates a prismatic joint.

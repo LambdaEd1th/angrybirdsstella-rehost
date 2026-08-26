@@ -48,10 +48,9 @@ impl RenderBridge {
                 (false, true, false, true) => key.1.clone(),
                 _ => continue,
             };
-            // Only the moving endpoint has a distinct start transform.  Use
-            // one temporary collision object for the start-overlap test;
-            // the persistent snapshot itself stays the same compact b2Sweep
-            // state used by Purple instead of cloning every render object.
+            // Only the moving endpoint has a distinct start transform. Purple
+            // passes the existing fixture pointers plus a compact b2Transform
+            // here; no RenderObjectData/body clone is constructed.
             let first_start = sweep_starts
                 .get(&key.0)
                 .copied()
@@ -60,17 +59,33 @@ impl RenderBridge {
                 .get(&key.1)
                 .copied()
                 .unwrap_or_else(|| NativeSweepStart::capture(second_end));
+            let first_end_transform = first_end.native_collision_transform();
+            let second_end_transform = second_end.native_collision_transform();
             let start_touching = if dynamic_body == key.0 {
-                let mut dynamic_start = first_end.clone();
-                dynamic_start.set_native_sweep_transform(first_start.center, first_start.angle);
-                dynamic_start
-                    .collision_fixture_manifold(second_end, key.2, key.3)
+                first_end
+                    .collision_fixture_manifold_at_transforms(
+                        second_end,
+                        key.2,
+                        key.3,
+                        first_end.native_collision_transform_at_sweep(
+                            first_start.center,
+                            first_start.angle,
+                        ),
+                        second_end_transform,
+                    )
                     .is_some()
             } else {
-                let mut dynamic_start = second_end.clone();
-                dynamic_start.set_native_sweep_transform(second_start.center, second_start.angle);
                 first_end
-                    .collision_fixture_manifold(&dynamic_start, key.2, key.3)
+                    .collision_fixture_manifold_at_transforms(
+                        second_end,
+                        key.2,
+                        key.3,
+                        first_end_transform,
+                        second_end.native_collision_transform_at_sweep(
+                            second_start.center,
+                            second_start.angle,
+                        ),
+                    )
                     .is_some()
             };
             if start_touching {
@@ -94,24 +109,6 @@ impl RenderBridge {
             if center_delta.0 == 0.0_f32 && center_delta.1 == 0.0_f32 && angle_delta == 0.0_f32 {
                 continue;
             }
-
-            let objects_at = |alpha: f32| {
-                let mut first = first_end.clone();
-                let mut second = second_end.clone();
-                let body = if dynamic_body == key.0 {
-                    &mut first
-                } else {
-                    &mut second
-                };
-                body.set_native_sweep_transform(
-                    (
-                        center_delta.0.mul_add(alpha, start_center.0),
-                        center_delta.1.mul_add(alpha, start_center.1),
-                    ),
-                    angle_delta.mul_add(alpha, dynamic_start.angle),
-                );
-                (first, second)
-            };
 
             let Some(proxy_a) = first_end.native_distance_proxy(key.2) else {
                 continue;
@@ -142,18 +139,42 @@ impl RenderBridge {
                         .insert(key.clone(), world_alpha);
                     (world_alpha, alpha)
                 };
-            let (first, second) = objects_at(alpha);
-            let Some(manifold) = first.collision_fixture_manifold(&second, key.2, key.3) else {
+            let impact_center = (
+                center_delta.0.mul_add(alpha, start_center.0),
+                center_delta.1.mul_add(alpha, start_center.1),
+            );
+            let impact_angle = angle_delta.mul_add(alpha, dynamic_start.angle);
+            let (first_transform, second_transform) = if dynamic_body == key.0 {
+                (
+                    first_end.native_collision_transform_at_sweep(impact_center, impact_angle),
+                    second_end_transform,
+                )
+            } else {
+                (
+                    first_end_transform,
+                    second_end.native_collision_transform_at_sweep(impact_center, impact_angle),
+                )
+            };
+            let Some(manifold) = first_end.collision_fixture_manifold_at_transforms(
+                second_end,
+                key.2,
+                key.3,
+                first_transform,
+                second_transform,
+            ) else {
                 continue;
             };
+            let event =
+                Self::native_contact_event(&key, first_end, second_end, manifold, false, true);
             hits.push((
                 world_alpha,
                 alpha,
                 key,
                 dynamic_body,
-                first,
-                second,
+                impact_center,
+                impact_angle,
                 manifold,
+                event,
             ));
         }
 
@@ -162,18 +183,11 @@ impl RenderBridge {
                 .total_cmp(&right.0)
                 .then_with(|| left.2.cmp(&right.2))
         });
-        let (_, alpha, key, dynamic_body, first, second, manifold) = hits.into_iter().next()?;
+        let (_, alpha, key, dynamic_body, impact_center, impact_angle, manifold, event) =
+            hits.into_iter().next()?;
         *toi_state.counts.entry(key.clone()).or_insert(0) += 1;
-        let transform = if dynamic_body == key.0 {
-            &first
-        } else {
-            &second
-        };
         if let Some(object) = self.scene.get_mut(&dynamic_body) {
-            object.set_native_sweep_transform(
-                transform.native_world_center(),
-                transform.angle as f32,
-            );
+            object.set_native_sweep_transform(impact_center, impact_angle);
             object.wake();
         }
         self.active_contacts.insert(key.clone(), false);
@@ -182,7 +196,6 @@ impl RenderBridge {
         self.solver_contact_impulses.remove(&key);
         self.contact_velocity_bias.remove(&key);
         self.wake_contact_bodies(&key);
-        let event = Self::native_contact_event(&key, &first, &second, manifold, false, true);
         Some(vec![(
             NativeToiContact {
                 key,
@@ -203,50 +216,55 @@ impl RenderBridge {
         dynamic_body: &str,
         alpha: f32,
     ) -> Option<(NativeToiContact, ContactEvent)> {
-        let mut candidates = self
-            .broad_phase_contacts
+        let candidates = self
+            .native_contact_world_order
             .iter()
+            .rev()
+            .map(|(_, key)| key)
             .filter(|candidate| {
-                !self.active_contacts.contains_key(*candidate)
+                self.broad_phase_contacts.contains(*candidate)
+                    && !self.active_contacts.contains_key(*candidate)
                     && (candidate.0 == dynamic_body || candidate.1 == dynamic_body)
             })
             .cloned()
             .collect::<Vec<_>>();
-        candidates.sort_unstable_by(|left, right| {
-            self.contact_creation_order
-                .get(right)
-                .copied()
-                .unwrap_or(0)
-                .cmp(&self.contact_creation_order.get(left).copied().unwrap_or(0))
-                .then_with(|| left.cmp(right))
-        });
         for extra_key in candidates {
-            let Some((extra_first, extra_second)) = self
-                .scene
-                .get(&extra_key.0)
-                .cloned()
-                .zip(self.scene.get(&extra_key.1).cloned())
-            else {
-                continue;
-            };
-            let other_is_static = if extra_key.0 == dynamic_body {
-                !extra_second.moves_during_step()
-            } else {
-                !extra_first.moves_during_step()
-            };
-            if !other_is_static
-                || extra_first.sensor
-                || extra_second.sensor
-                || !extra_first.active
-                || !extra_second.active
-                || !Self::native_objects_should_collide(&extra_first, &extra_second)
-            {
-                continue;
-            }
-            let Some(extra_manifold) =
-                extra_first.collision_fixture_manifold(&extra_second, extra_key.2, extra_key.3)
-            else {
-                continue;
+            let (extra_manifold, extra_event) = {
+                let Some((extra_first, extra_second)) = self
+                    .scene
+                    .get(&extra_key.0)
+                    .zip(self.scene.get(&extra_key.1))
+                else {
+                    continue;
+                };
+                let other_is_static = if extra_key.0 == dynamic_body {
+                    !extra_second.moves_during_step()
+                } else {
+                    !extra_first.moves_during_step()
+                };
+                if !other_is_static
+                    || extra_first.sensor
+                    || extra_second.sensor
+                    || !extra_first.active
+                    || !extra_second.active
+                    || !Self::native_objects_should_collide(extra_first, extra_second)
+                {
+                    continue;
+                }
+                let Some(extra_manifold) =
+                    extra_first.collision_fixture_manifold(extra_second, extra_key.2, extra_key.3)
+                else {
+                    continue;
+                };
+                let extra_event = Self::native_contact_event(
+                    &extra_key,
+                    extra_first,
+                    extra_second,
+                    extra_manifold,
+                    false,
+                    true,
+                );
+                (extra_manifold, extra_event)
             };
             self.active_contacts.insert(extra_key.clone(), false);
             self.contact_manifolds
@@ -255,14 +273,6 @@ impl RenderBridge {
             self.solver_contact_impulses.remove(&extra_key);
             self.contact_velocity_bias.remove(&extra_key);
             self.wake_contact_bodies(&extra_key);
-            let extra_event = Self::native_contact_event(
-                &extra_key,
-                &extra_first,
-                &extra_second,
-                extra_manifold,
-                false,
-                true,
-            );
             return Some((
                 NativeToiContact {
                     key: extra_key,

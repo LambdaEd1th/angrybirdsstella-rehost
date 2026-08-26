@@ -127,6 +127,39 @@ impl StellaLua {
         )
     }
 
+    /// Exchange all deferred frame queues with host-owned buffers.
+    ///
+    /// Purple submits each draw immediately, so it has no per-frame command
+    /// allocation corresponding to the wgpu host's deferred queues. Swapping
+    /// returns the preceding host allocations to `RenderBridge`; the next
+    /// [`Self::draw`] clears their old elements and reuses their capacity while
+    /// the host owns the newly completed frame.
+    pub fn swap_frame_commands(
+        &self,
+        render_commands: &mut Vec<RenderCommand>,
+        text_commands: &mut Vec<TextRenderCommand>,
+        rect_commands: &mut Vec<RectRenderCommand>,
+        capture_commands: &mut Vec<CaptureRenderCommand>,
+    ) {
+        let mut bridge = self.render.lock().expect("render bridge lock poisoned");
+        std::mem::swap(render_commands, &mut bridge.commands);
+        std::mem::swap(text_commands, &mut bridge.text_commands);
+        std::mem::swap(rect_commands, &mut bridge.rect_commands);
+        std::mem::swap(capture_commands, &mut bridge.capture_commands);
+    }
+
+    /// Report whether the current immediate-order stream contains a framebuffer
+    /// capture. The deterministic host can leave ordinary draw queues in place
+    /// until the final frame, retaining Purple's no-intermediate-consumer path.
+    pub fn has_capture_commands(&self) -> bool {
+        !self
+            .render
+            .lock()
+            .expect("render bridge lock poisoned")
+            .capture_commands
+            .is_empty()
+    }
+
     pub fn take_text_commands(&self) -> Vec<TextRenderCommand> {
         std::mem::take(
             &mut self

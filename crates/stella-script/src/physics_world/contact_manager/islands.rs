@@ -12,169 +12,185 @@ impl RenderBridge {
     /// Static bodies terminate traversal, so two dynamic islands resting on
     /// the same platform are not accidentally merged.
     pub(crate) fn assemble_box2d_islands(&mut self) {
-        let mut contact_keys = self
-            .contact_manifolds
-            .keys()
-            .filter(|key| self.active_contacts.get(*key) == Some(&false))
-            .cloned()
-            .collect::<Vec<_>>();
-        contact_keys.sort_unstable_by(|left, right| {
-            self.contact_creation_order
-                .get(right)
-                .copied()
-                .unwrap_or(0)
-                .cmp(&self.contact_creation_order.get(left).copied().unwrap_or(0))
-                .then_with(|| left.cmp(right))
-        });
-        let mut joints = self
-            .joints
-            .values()
-            .filter(|joint| joint.is_physical)
-            .cloned()
-            .collect::<Vec<_>>();
-        joints.sort_unstable_by(|left, right| {
-            right
-                .physics_creation_order
-                .cmp(&left.physics_creation_order)
-                .then_with(|| left.name.cmp(&right.name))
-        });
-        // b2Body owns contact/joint edge lists.  Reconstruct those lists once
-        // in the same creation order instead of rescanning every world edge
-        // for every body visited by the DFS.
-        let mut contact_edges = BTreeMap::<String, Vec<usize>>::new();
-        for (index, key) in contact_keys.iter().enumerate() {
-            contact_edges.entry(key.0.clone()).or_default().push(index);
-            contact_edges.entry(key.1.clone()).or_default().push(index);
-        }
-        let mut joint_edges = BTreeMap::<String, Vec<usize>>::new();
-        for (index, joint) in joints.iter().enumerate() {
-            joint_edges
-                .entry(joint.first.clone())
-                .or_default()
-                .push(index);
-            joint_edges
-                .entry(joint.second.clone())
-                .or_default()
-                .push(index);
-        }
-        let mut seeds = self
-            .scene
-            .iter()
-            .filter(|(_, object)| {
-                object.moves_during_step()
-                    && object.active
-                    && object.motion_started
-                    && !object.sleeping
-            })
-            .map(|(name, _)| name.clone())
-            .collect::<Vec<_>>();
-        seeds.sort_unstable_by(|left, right| {
-            self.scene[right]
-                .physics_creation_order
-                .cmp(&self.scene[left].physics_creation_order)
-                .then_with(|| left.cmp(right))
-        });
-
-        let mut visited_non_static = BTreeSet::new();
-        let mut selected_contacts = BTreeSet::new();
-        let mut selected_joints = BTreeSet::new();
-        let mut islands = Vec::new();
-        for seed in seeds {
-            if !visited_non_static.insert(seed.clone()) {
-                continue;
+        let mut islands = std::mem::take(&mut self.solver_islands);
+        islands.clear();
+        let mut synchronized_bodies = std::mem::take(&mut self.solver_synchronized_bodies);
+        synchronized_bodies.clear();
+        {
+            // Purple walks the stable contact/joint edge pointers owned by each
+            // body and appends only selected pointers to b2Island scratch
+            // arrays. Borrow the equivalent world records here: copying the
+            // complete contact/joint graph (and every endpoint string) is not
+            // part of `sub_10086E634`.
+            let contact_keys = self
+                .native_contact_world_order
+                .iter()
+                .rev()
+                .map(|(_, key)| key)
+                .filter(|key| {
+                    self.contact_manifolds.contains_key(*key)
+                        && self.active_contacts.get(*key) == Some(&false)
+                })
+                .collect::<Vec<_>>();
+            let joints = self
+                .native_joint_world_order
+                .iter()
+                .rev()
+                .filter_map(|(_, name)| self.joints.get(name))
+                .collect::<Vec<_>>();
+            // b2Body owns contact/joint edge lists. Reconstruct the pointer
+            // topology once in native creation order with borrowed name keys.
+            let mut contact_edges = BTreeMap::<&str, Vec<usize>>::new();
+            for (index, key) in contact_keys.iter().enumerate() {
+                contact_edges.entry(key.0.as_str()).or_default().push(index);
+                contact_edges.entry(key.1.as_str()).or_default().push(index);
             }
-            let mut stack = vec![seed];
-            let mut island_seen = BTreeSet::new();
-            let mut island = SolverIsland::default();
-            while let Some(name) = stack.pop() {
-                if !island_seen.insert(name.clone()) {
-                    continue;
-                }
-                let Some(object) = self.scene.get_mut(&name) else {
+            let mut joint_edges = BTreeMap::<&str, Vec<usize>>::new();
+            for (index, joint) in joints.iter().enumerate() {
+                joint_edges
+                    .entry(joint.first.as_str())
+                    .or_default()
+                    .push(index);
+                joint_edges
+                    .entry(joint.second.as_str())
+                    .or_default()
+                    .push(index);
+            }
+
+            let mut visited_non_static = BTreeSet::<&str>::new();
+            let mut selected_contacts = vec![false; contact_keys.len()];
+            let mut selected_joints = vec![false; joints.len()];
+            let mut stack = Vec::<&str>::new();
+            // b2World::Solve starts at the intrusive body-list head and
+            // follows b2Body+0x68. Reverse creation-index iteration is that
+            // exact order; it does not first copy or sort a seed-name vector.
+            for (_, seed) in self.native_body_world_order.iter().rev() {
+                let Some(seed_object) = self.scene.get(seed) else {
                     continue;
                 };
-                if !object.active {
+                if !seed_object.moves_during_step()
+                    || !seed_object.active
+                    || !seed_object.motion_started
+                    || seed_object.sleeping
+                    || !visited_non_static.insert(seed.as_str())
+                {
                     continue;
                 }
-                if object.moves_during_step() && object.sleeping {
-                    object.wake();
-                }
-                island.bodies.push(name.clone());
-
-                // b2World::Solve adds a static endpoint to the island body
-                // array, then stops traversal through it. Its island flag is
-                // cleared after Solve so another island may share it.
-                if !object.moves_during_step() {
-                    continue;
-                }
-
-                for &edge_index in contact_edges.get(&name).into_iter().flatten() {
-                    let key = &contact_keys[edge_index];
-                    let other = if key.0 == name {
-                        Some(&key.1)
-                    } else if key.1 == name {
-                        Some(&key.0)
-                    } else {
-                        None
-                    };
-                    let Some(other) = other else {
-                        continue;
-                    };
-                    let Some(other_object) = self.scene.get(other) else {
-                        continue;
-                    };
-                    if !other_object.active {
+                stack.clear();
+                stack.push(seed.as_str());
+                let mut island_seen = BTreeSet::<&str>::new();
+                let mut island = SolverIsland::default();
+                while let Some(name) = stack.pop() {
+                    if !island_seen.insert(name) {
                         continue;
                     }
-                    if selected_contacts.insert(key.clone()) {
-                        island.contacts.push(key.clone());
+                    let Some(object) = self.scene.get(name) else {
+                        continue;
+                    };
+                    if !object.active {
+                        continue;
                     }
-                    if other_object.moves_during_step() {
-                        if visited_non_static.insert(other.clone()) {
-                            stack.push(other.clone());
+                    island.bodies.push(name.to_owned());
+
+                    // A static endpoint is appended, then terminates this DFS.
+                    // Native clears its island bit after Solve so another
+                    // dynamic island may share the same platform.
+                    if !object.moves_during_step() {
+                        continue;
+                    }
+
+                    for &edge_index in contact_edges.get(name).into_iter().flatten() {
+                        let key = contact_keys[edge_index];
+                        let other = if key.0 == name {
+                            Some(key.1.as_str())
+                        } else if key.1 == name {
+                            Some(key.0.as_str())
+                        } else {
+                            None
+                        };
+                        let Some(other) = other else {
+                            continue;
+                        };
+                        let Some(other_object) = self.scene.get(other) else {
+                            continue;
+                        };
+                        if !other_object.active {
+                            continue;
                         }
-                    } else if !island_seen.contains(other) {
-                        stack.push(other.clone());
+                        if !selected_contacts[edge_index] {
+                            selected_contacts[edge_index] = true;
+                            island.contacts.push(key.clone());
+                        }
+                        if other_object.moves_during_step() {
+                            if visited_non_static.insert(other) {
+                                stack.push(other);
+                            }
+                        } else if !island_seen.contains(other) {
+                            stack.push(other);
+                        }
+                    }
+
+                    for &edge_index in joint_edges.get(name).into_iter().flatten() {
+                        let joint = joints[edge_index];
+                        let other = if joint.first == name {
+                            Some(joint.second.as_str())
+                        } else if joint.second == name {
+                            Some(joint.first.as_str())
+                        } else {
+                            None
+                        };
+                        let Some(other) = other else {
+                            continue;
+                        };
+                        let Some(other_object) = self.scene.get(other) else {
+                            continue;
+                        };
+                        if !other_object.active {
+                            continue;
+                        }
+                        if !selected_joints[edge_index] {
+                            selected_joints[edge_index] = true;
+                            island.joints.push(joint.name.clone());
+                        }
+                        if other_object.moves_during_step() {
+                            if visited_non_static.insert(other) {
+                                stack.push(other);
+                            }
+                        } else if !island_seen.contains(other) {
+                            stack.push(other);
+                        }
                     }
                 }
-
-                for &edge_index in joint_edges.get(&name).into_iter().flatten() {
-                    let joint = &joints[edge_index];
-                    let other = if joint.first == name {
-                        Some(&joint.second)
-                    } else if joint.second == name {
-                        Some(&joint.first)
-                    } else {
-                        None
-                    };
-                    let Some(other) = other else {
-                        continue;
-                    };
-                    let Some(other_object) = self.scene.get(other) else {
-                        continue;
-                    };
-                    if !other_object.active {
-                        continue;
-                    }
-                    if selected_joints.insert(joint.name.clone()) {
-                        island.joints.push(joint.name.clone());
-                    }
-                    if other_object.moves_during_step() {
-                        if visited_non_static.insert(other.clone()) {
-                            stack.push(other.clone());
-                        }
-                    } else if !island_seen.contains(other) {
-                        stack.push(other.clone());
-                    }
+                if !island.bodies.is_empty() {
+                    islands.push(island);
                 }
             }
-            if !island.bodies.is_empty() {
-                islands.push(island);
+
+            synchronized_bodies.extend(
+                self.native_body_world_order
+                    .iter()
+                    .rev()
+                    .filter(|(_, name)| visited_non_static.contains(name.as_str()))
+                    .map(|(_, name)| name.clone()),
+            );
+        }
+
+        // The graph above is deliberately immutable. Wake selected live
+        // non-static bodies after its borrowed pointer view expires and before
+        // the first island solve; no callback or solver work can observe a
+        // different order at this boundary.
+        for name in islands.iter().flat_map(|island| &island.bodies) {
+            if let Some(object) = self.scene.get_mut(name)
+                && object.moves_during_step()
+                && object.sleeping
+            {
+                object.wake();
             }
         }
 
-        self.velocity_contacts = selected_contacts
+        self.velocity_contacts = islands
             .iter()
+            .flat_map(|island| &island.contacts)
             .filter_map(|key| {
                 self.contact_manifolds
                     .get(key)
@@ -199,6 +215,7 @@ impl RenderBridge {
                     })
             })
             .collect();
+        self.solver_synchronized_bodies = synchronized_bodies;
         self.solver_islands = islands;
     }
 }

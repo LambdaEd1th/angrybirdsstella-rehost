@@ -78,20 +78,21 @@ pub(super) fn install(
                 let mut callbacks = callback_store.borrow_mut();
                 let world_identity = object_world(lua)?.to_pointer() as usize;
                 if callbacks.object_world_identity != Some(world_identity) {
-                    callbacks.pre.clear();
-                    callbacks.post.clear();
+                    callbacks.records.clear();
                     callbacks.object_world_identity = Some(world_identity);
                 }
-                let target = if pre_draw {
-                    &mut callbacks.pre
-                } else {
-                    &mut callbacks.post
+                // sub_10004E3C0/sub_10004E570 call getRenderObject before
+                // touching the callback holder. A missing name raises the same
+                // native error instead of creating a detached callback entry.
+                let Some(record) = callbacks.records.get_mut(&name) else {
+                    return Err(LuaError::RuntimeError(format!("Missing object: {name}")));
                 };
-                if let Some(function) = function {
-                    target.insert(name, function);
+                let target = if pre_draw {
+                    &mut record.pre
                 } else {
-                    target.remove(&name);
-                }
+                    &mut record.post
+                };
+                *target = function;
                 Ok(())
             })?,
         )?;

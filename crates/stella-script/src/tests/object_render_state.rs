@@ -668,7 +668,7 @@ fn sprite_and_physics_scale_preserve_native_lookup_and_reflection_order() {
     assert_eq!(environment.get::<f64>("bad_coeff_height").unwrap(), 6.0);
 
     let bridge = runtime.render.lock().unwrap();
-    assert_eq!(bridge.scene["body"].sprite, "NEW_SPRITE");
+    assert_eq!(bridge.scene["body"].sprite.as_ref(), "NEW_SPRITE");
     assert_eq!(
         (
             bridge.scene["visual"].scale_x,

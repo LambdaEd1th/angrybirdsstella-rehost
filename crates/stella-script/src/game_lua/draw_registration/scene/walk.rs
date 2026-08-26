@@ -27,13 +27,8 @@ impl NativeSceneWalk {
         }
     }
 
-    fn advance_z(&mut self) -> bool {
-        let next = self
-            .render
-            .lock()
-            .expect("render bridge lock poisoned")
-            .scene_render_index
-            .next_z_in_range(self.minimum_z, self.maximum_z, self.z);
+    fn advance_z(&mut self, index: &NativeSceneRenderIndex) -> bool {
+        let next = index.next_z_in_range(self.minimum_z, self.maximum_z, self.z);
         self.z = next;
         self.sheet = None;
         self.name_index = 0;
@@ -47,15 +42,21 @@ impl Iterator for NativeSceneWalk {
     /// `None` names mark every persistent outer z node, including empty ones.
     /// Names are then fetched by live vector index so callback mutations have
     /// the same shift/append behavior as Purple's pointer loop.
-    type Item = (i32, Option<String>);
+    type Item = (i32, Option<Arc<str>>);
 
     fn next(&mut self) -> Option<Self::Item> {
+        // One bridge acquisition corresponds to one resumed native tree walk.
+        // The lock is still released before yielding to Lua, and the next call
+        // re-reads the live vector length exactly like 0x10004C340.
+        let render = Arc::clone(&self.render);
+        let bridge = render.lock().expect("render bridge lock poisoned");
+        let index = &bridge.scene_render_index;
         loop {
             let Some(z) = self.z else {
                 if self.finished {
                     return None;
                 }
-                if !self.advance_z() {
+                if !self.advance_z(index) {
                     return None;
                 }
                 continue;
@@ -67,14 +68,9 @@ impl Iterator for NativeSceneWalk {
             let sheet = match self.sheet {
                 Some(sheet) => sheet,
                 None => {
-                    let first = self
-                        .render
-                        .lock()
-                        .expect("render bridge lock poisoned")
-                        .scene_render_index
-                        .first_sheet(z);
+                    let first = index.first_sheet(z);
                     let Some(first) = first else {
-                        self.advance_z();
+                        self.advance_z(index);
                         continue;
                     };
                     self.sheet = Some(first);
@@ -82,25 +78,15 @@ impl Iterator for NativeSceneWalk {
                     first
                 }
             };
-            let name = self
-                .render
-                .lock()
-                .expect("render bridge lock poisoned")
-                .scene_render_index
-                .name_at(z, sheet, self.name_index);
+            let name = index.name_at(z, sheet, self.name_index);
             if let Some(name) = name {
                 self.name_index += 1;
                 return Some((z, Some(name)));
             }
-            self.sheet = self
-                .render
-                .lock()
-                .expect("render bridge lock poisoned")
-                .scene_render_index
-                .next_sheet(z, sheet);
+            self.sheet = index.next_sheet(z, sheet);
             self.name_index = 0;
             if self.sheet.is_none() {
-                self.advance_z();
+                self.advance_z(index);
             }
         }
     }

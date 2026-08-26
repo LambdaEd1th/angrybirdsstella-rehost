@@ -611,7 +611,7 @@ fn joint_anchors_use_body_transform_without_reapplying_fixture_scale() {
 }
 
 #[test]
-fn frame_update_exports_physical_joint_world_anchors_but_preserves_weld_fields() {
+fn frame_update_exports_nonlocal_joint_anchors_but_preserves_coord_type_two_fields() {
     let runtime = unlocked_test_runtime();
     runtime
         .execute_source(
@@ -619,13 +619,18 @@ fn frame_update_exports_physical_joint_world_anchors_but_preserves_weld_fields()
                 createBox("first", "", 1, 2, 1, 1, 1, 0, 0, true, false, 1)
                 createBox("second", "", 10, 20, 1, 1, 1, 0, 0, true, false, 1)
                 createJoint({
-                    name = "distance_export", end1 = "first", end2 = "second",
-                    type = 1, coordType = 2, x1 = 0.25, y1 = -0.5,
+                    name = "center_export", end1 = "first", end2 = "second",
+                    type = 1, coordType = 0, x1 = 21, y1 = 22,
+                    x2 = 23, y2 = 24
+                })
+                createJoint({
+                    name = "local_preserved", end1 = "first", end2 = "second",
+                    type = 3, coordType = 2, x1 = 0.25, y1 = -0.5,
                     x2 = -0.75, y2 = 1.25
                 })
                 createJoint({
                     name = "weld_export", end1 = "first", end2 = "second",
-                    type = 2, coordType = 2, x1 = 31, y1 = 32, x2 = 33, y2 = 34
+                    type = 2, coordType = 0, x1 = 31, y1 = 32, x2 = 33, y2 = 34
                 })
                 createJoint({
                     name = "metadata_only", end1 = "first", end2 = "second",
@@ -638,51 +643,80 @@ fn frame_update_exports_physical_joint_world_anchors_but_preserves_weld_fields()
         )
         .unwrap();
 
-    let expected = {
+    let (expected_center, expected_weld) = {
         let mut bridge = runtime.render.lock().unwrap();
         bridge.scene.get_mut("first").unwrap().angle = 0.375;
         bridge.scene.get_mut("second").unwrap().angle = -0.625;
-        let joint = &bridge.joints["distance_export"];
-        (
+        let center = &bridge.joints["center_export"];
+        let center_anchors = (
             bridge.scene["first"].native_transform_body_point((
-                joint.first_anchor.0 as f32,
-                joint.first_anchor.1 as f32,
+                center.first_anchor.0 as f32,
+                center.first_anchor.1 as f32,
             )),
             bridge.scene["second"].native_transform_body_point((
-                joint.second_anchor.0 as f32,
-                joint.second_anchor.1 as f32,
+                center.second_anchor.0 as f32,
+                center.second_anchor.1 as f32,
             )),
-        )
+        );
+        let weld = &bridge.joints["weld_export"];
+        let weld_anchors = (
+            bridge.scene["first"].native_transform_body_point((
+                weld.first_anchor.0 as f32,
+                weld.first_anchor.1 as f32,
+            )),
+            bridge.scene["second"].native_transform_body_point((
+                weld.second_anchor.0 as f32,
+                weld.second_anchor.1 as f32,
+            )),
+        );
+        (center_anchors, weld_anchors)
     };
 
     runtime.update(0.0).unwrap();
     let environment = game_environment(runtime.lua()).unwrap();
     let objects: mlua::Table = environment.get("objects").unwrap();
     let joints: mlua::Table = objects.get("joints").unwrap();
-    let distance: mlua::Table = joints.get("distance_export").unwrap();
-    assert_eq!(distance.get::<f64>("x1").unwrap(), f64::from(expected.0.0));
-    assert_eq!(distance.get::<f64>("y1").unwrap(), f64::from(expected.0.1));
-    assert_eq!(distance.get::<f64>("x2").unwrap(), f64::from(expected.1.0));
-    assert_eq!(distance.get::<f64>("y2").unwrap(), f64::from(expected.1.1));
+    let center: mlua::Table = joints.get("center_export").unwrap();
+    assert_eq!(
+        center.get::<f64>("x1").unwrap(),
+        f64::from(expected_center.0.0)
+    );
+    assert_eq!(
+        center.get::<f64>("y1").unwrap(),
+        f64::from(expected_center.0.1)
+    );
+    assert_eq!(
+        center.get::<f64>("x2").unwrap(),
+        f64::from(expected_center.1.0)
+    );
+    assert_eq!(
+        center.get::<f64>("y2").unwrap(),
+        f64::from(expected_center.1.1)
+    );
 
     let weld: mlua::Table = joints.get("weld_export").unwrap();
-    assert_eq!(weld.get::<f64>("x1").unwrap(), 31.0);
-    assert_eq!(weld.get::<f64>("y1").unwrap(), 32.0);
-    assert_eq!(weld.get::<f64>("x2").unwrap(), 33.0);
-    assert_eq!(weld.get::<f64>("y2").unwrap(), 34.0);
+    assert_eq!(weld.get::<f64>("x1").unwrap(), f64::from(expected_weld.0.0));
+    assert_eq!(weld.get::<f64>("y1").unwrap(), f64::from(expected_weld.0.1));
+    assert_eq!(weld.get::<f64>("x2").unwrap(), f64::from(expected_weld.1.0));
+    assert_eq!(weld.get::<f64>("y2").unwrap(), f64::from(expected_weld.1.1));
+    let local: mlua::Table = joints.get("local_preserved").unwrap();
+    assert_eq!(local.get::<f64>("x1").unwrap(), 0.25);
+    assert_eq!(local.get::<f64>("y1").unwrap(), -0.5);
+    assert_eq!(local.get::<f64>("x2").unwrap(), -0.75);
+    assert_eq!(local.get::<f64>("y2").unwrap(), 1.25);
     let metadata: mlua::Table = joints.get("metadata_only").unwrap();
     assert_eq!(metadata.get::<f64>("x1").unwrap(), 41.0);
 
-    distance.set("x1", -99.0).unwrap();
+    center.set("x1", -99.0).unwrap();
     runtime
         .execute_source("setPhysicsEnabled(false, 'pause')")
         .unwrap();
     runtime.update(0.0).unwrap();
-    assert_eq!(distance.get::<f64>("x1").unwrap(), -99.0);
+    assert_eq!(center.get::<f64>("x1").unwrap(), -99.0);
 }
 
 #[test]
-fn weld_frame_export_still_requires_its_native_lua_descriptor_lookup() {
+fn coord_type_two_frame_export_still_requires_its_native_lua_descriptor_lookup() {
     let runtime = unlocked_test_runtime();
     runtime
         .execute_source(
@@ -690,10 +724,10 @@ fn weld_frame_export_still_requires_its_native_lua_descriptor_lookup() {
                 createBox("first", "", 0, 0, 1, 1, 1, 0, 0, true, false, 1)
                 createBox("second", "", 2, 0, 1, 1, 1, 0, 0, true, false, 1)
                 createJoint({
-                    name = "weld", end1 = "first", end2 = "second", type = 2,
+                    name = "body_local", end1 = "first", end2 = "second", type = 3,
                     coordType = 2, x1 = 0, y1 = 0, x2 = 0, y2 = 0
                 })
-                objects.joints.weld = nil
+                objects.joints.body_local = nil
                 clearLuaForceFunctions = function() end
                 update = function() end
             "#,
@@ -721,7 +755,7 @@ fn distance_joint_uses_native_short_axis_thresholds() {
         .unwrap();
 
     let mut bridge = runtime.render.lock().unwrap();
-    let joint = bridge.joints["distance"].clone();
+    let mut joint = bridge.joints["distance"].clone();
     {
         let payload = bridge.scene.get_mut("payload").unwrap();
         payload.x = 0.0005;
@@ -730,7 +764,7 @@ fn distance_joint_uses_native_short_axis_thresholds() {
     }
     let first = bridge.scene["anchor"].clone();
     let second = bridge.scene["payload"].clone();
-    bridge.solve_distance_joint_velocity(&joint, &first, &second, 1.0 / 30.0);
+    bridge.solve_distance_joint_velocity(&mut joint, &first, &second, 1.0 / 30.0);
     assert_eq!(bridge.scene["payload"].velocity_x, 1.0);
 
     {

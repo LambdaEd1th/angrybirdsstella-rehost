@@ -123,7 +123,7 @@ pub(crate) fn ensure_dirt_component(
         for hole in object.dirt_holes.iter().copied() {
             dirt.cut(hole);
         }
-        object.dirt = Some(dirt);
+        object.dirt = Some(Arc::new(dirt));
         if std::env::var_os("STELLA_TRACE_DIRT").is_some() {
             eprintln!(
                 "dirt component {object_name}: background={background:?} foreground={foreground:?}"

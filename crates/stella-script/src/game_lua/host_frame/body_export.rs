@@ -20,18 +20,17 @@ struct NativeBodyLuaMotion {
 }
 
 impl NativeBodyLuaState {
-    pub(super) fn collect(bridge: &RenderBridge) -> Vec<Self> {
+    pub(super) fn collect_and_advance(
+        bridge: &mut RenderBridge,
+        delta: f64,
+    ) -> (Vec<Self>, (bool, bool, bool)) {
         let [x_min, x_max, y_min, y_max] = bridge.level_limits;
-        bridge
-            .scene
-            .iter()
-            .filter_map(|(name, object)| {
-                if !object.has_physics_body() {
-                    return None;
-                }
-                let awake = !object.sleeping;
-                let reports_motion = object.kinematic_body || object.inverse_mass > 0.0;
-                let motion = (reports_motion && (object.native_was_awake || awake)).then(|| {
+        let mut states = Vec::with_capacity(bridge.scene.len());
+        let motion = bridge.advance_native_scene_frame_with(delta, |name, object| {
+            let awake = !object.sleeping;
+            let reports_motion = object.kinematic_body || object.inverse_mass > 0.0;
+            let motion =
+                (reports_motion && (object.native_was_awake || awake)).then(|| {
                     let velocity_x = object.velocity_x as f32;
                     let velocity_y = object.velocity_y as f32;
                     NativeBodyLuaMotion {
@@ -48,23 +47,23 @@ impl NativeBodyLuaState {
                             .then_some((velocity_x, velocity_y, object.render_angle as f32)),
                     }
                 });
-                let (sine, cosine) = (object.angle as f32).sin_cos();
-                Some(Self {
-                    name: name.clone(),
-                    out_of_boundaries: motion.is_some()
-                        && object.inverse_mass > 0.0
-                        && (object.render_x < x_min
-                            || object.render_x > x_max
-                            || object.render_y < y_min
-                            || object.render_y > y_max),
-                    motion,
-                    // The live Box2D sweep angle is unbounded. Purple exports
-                    // b2Transform::q through atan2f(s, c), not sweep.a.
-                    angle: sine.atan2(cosine),
-                    sleeping: object.sleeping,
-                })
-            })
-            .collect()
+            let (sine, cosine) = (object.angle as f32).sin_cos();
+            states.push(Self {
+                name: name.to_owned(),
+                out_of_boundaries: motion.is_some()
+                    && object.inverse_mass > 0.0
+                    && (object.render_x < x_min
+                        || object.render_x > x_max
+                        || object.render_y < y_min
+                        || object.render_y > y_max),
+                motion,
+                // The live Box2D sweep angle is unbounded. Purple exports
+                // b2Transform::q through atan2f(s, c), not sweep.a.
+                angle: sine.atan2(cosine),
+                sleeping: object.sleeping,
+            });
+        });
+        (states, motion)
     }
 }
 

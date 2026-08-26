@@ -1,11 +1,28 @@
 //! Native CompoSprite integer bounds used by sprite components and callbacks.
 
-use crate::{BoundCompositePart, native_fcvtzs_f32};
+use stella_assets::ka3d::CompositePart;
+
+use crate::{BoundCompositePart, SpriteCatalogRegion, native_fcvtzs_f32};
 
 use super::NativeSpriteMetrics;
 
 pub(crate) fn native_composite_metrics(
     parts: &[BoundCompositePart],
+) -> Option<NativeSpriteMetrics> {
+    native_composite_metrics_iter(parts.iter().map(|bound| (&bound.part, &bound.region)))
+}
+
+pub(crate) fn native_composite_metrics_from_parts(
+    parts: &[CompositePart],
+    regions: &[SpriteCatalogRegion],
+) -> Option<NativeSpriteMetrics> {
+    (parts.len() == regions.len())
+        .then(|| native_composite_metrics_iter(parts.iter().zip(regions)))
+        .flatten()
+}
+
+fn native_composite_metrics_iter<'a>(
+    parts: impl IntoIterator<Item = (&'a CompositePart, &'a SpriteCatalogRegion)>,
 ) -> Option<NativeSpriteMetrics> {
     // CompoSprite::updateBounds (`sub_100436D40`) transforms all four raw
     // AtlasSprite corners, truncates every coordinate through FCVTZS, then
@@ -16,10 +33,9 @@ pub(crate) fn native_composite_metrics(
     let mut maximum_x = i32::MIN;
     let mut maximum_y = i32::MIN;
     let mut submitted = false;
-    for bound in parts.iter().filter(|bound| bound.part.visible) {
+    for (part, region) in parts.into_iter().filter(|(part, _)| part.visible) {
         submitted = true;
-        let part = &bound.part;
-        let sprite = &bound.region.sprite;
+        let sprite = &region.sprite;
         let (sine, cosine) = part.angle.sin_cos();
         let (basis_x_x, basis_x_y) = native_normalize_2d(cosine, sine);
         let (basis_y_x, basis_y_y) = native_normalize_2d(-sine, cosine);
@@ -77,4 +93,91 @@ fn native_normalize_2d(x: f32, y: f32) -> (f32, f32) {
         0.0_f32
     };
     (inverse * x, inverse * y)
+}
+
+#[cfg(test)]
+mod tests {
+    use stella_assets::ka3d::SpriteRegion;
+
+    use super::*;
+
+    fn region(
+        name: &str,
+        width: i16,
+        height: i16,
+        pivot_x: i16,
+        pivot_y: i16,
+    ) -> SpriteCatalogRegion {
+        SpriteCatalogRegion {
+            native_sheet_id: 7,
+            texture_source: format!("{name}.pvr"),
+            sprite: SpriteRegion {
+                name: name.to_owned(),
+                x: 0,
+                y: 0,
+                width,
+                height,
+                pivot_x,
+                pivot_y,
+                atlas_rotation: 0,
+            },
+        }
+    }
+
+    #[test]
+    fn borrowed_composite_metrics_match_owned_bound_entries() {
+        let parts = vec![
+            CompositePart {
+                sprite: "first".to_owned(),
+                x: 10.25,
+                y: -4.75,
+                scale_x: 1.5,
+                scale_y: 0.625,
+                flip_x: -1.0,
+                flip_y: 1.0,
+                angle: 0.375,
+                visible: true,
+            },
+            CompositePart {
+                sprite: "hidden".to_owned(),
+                x: 9_999.0,
+                y: -9_999.0,
+                scale_x: 1.0,
+                scale_y: 1.0,
+                flip_x: 1.0,
+                flip_y: 1.0,
+                angle: 0.0,
+                visible: false,
+            },
+        ];
+        let regions = vec![region("first", 31, 19, 7, -3), region("hidden", 5, 9, 1, 2)];
+        let owned = parts
+            .iter()
+            .cloned()
+            .zip(regions.iter().cloned())
+            .map(|(part, region)| BoundCompositePart { part, region })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            native_composite_metrics_from_parts(&parts, &regions),
+            native_composite_metrics(&owned)
+        );
+    }
+
+    #[test]
+    fn borrowed_composite_metrics_reject_misaligned_retained_arrays() {
+        let parts = vec![CompositePart {
+            sprite: "orphan".to_owned(),
+            x: 0.0,
+            y: 0.0,
+            scale_x: 1.0,
+            scale_y: 1.0,
+            flip_x: 1.0,
+            flip_y: 1.0,
+            angle: 0.0,
+            visible: true,
+        }];
+
+        assert_eq!(native_composite_metrics_from_parts(&parts, &[]), None);
+    }
 }

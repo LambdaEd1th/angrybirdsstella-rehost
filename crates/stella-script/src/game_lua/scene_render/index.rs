@@ -5,22 +5,26 @@
 
 use std::collections::BTreeMap;
 use std::ops::Bound::{Excluded, Included, Unbounded};
+use std::sync::Arc;
 
 use crate::SceneObject;
 
 #[derive(Debug, Default)]
 pub(crate) struct NativeSceneRenderIndex {
-    z_buckets: BTreeMap<i32, BTreeMap<u64, Vec<String>>>,
+    /// Purple's iOS libstdc++ stores an eight-byte COW `std::string` handle in
+    /// each leaf vector. `Arc<str>` preserves that pointer-cheap copy contract
+    /// while callbacks force us to release the bridge lock between entries.
+    z_buckets: BTreeMap<i32, BTreeMap<u64, Vec<Arc<str>>>>,
 }
 
 impl NativeSceneRenderIndex {
-    pub(crate) fn append(&mut self, z: i32, sheet: u64, name: String) {
+    pub(crate) fn append(&mut self, z: i32, sheet: u64, name: impl Into<Arc<str>>) {
         self.z_buckets
             .entry(z)
             .or_default()
             .entry(sheet)
             .or_default()
-            .push(name);
+            .push(name.into());
     }
 
     /// Match Purple's `operator[]` followed by `std::__find`/vector erase.
@@ -32,7 +36,7 @@ impl NativeSceneRenderIndex {
             .or_default()
             .entry(sheet)
             .or_default();
-        if let Some(index) = names.iter().position(|entry| entry == name) {
+        if let Some(index) = names.iter().position(|entry| entry.as_ref() == name) {
             names.remove(index);
         }
     }
@@ -93,7 +97,7 @@ impl NativeSceneRenderIndex {
             .map(|(&sheet, _)| sheet)
     }
 
-    pub(crate) fn name_at(&self, z: i32, sheet: u64, index: usize) -> Option<String> {
+    pub(crate) fn name_at(&self, z: i32, sheet: u64, index: usize) -> Option<Arc<str>> {
         self.z_buckets.get(&z)?.get(&sheet)?.get(index).cloned()
     }
 
@@ -105,9 +109,9 @@ impl NativeSceneRenderIndex {
         self.z_buckets
             .range((Included(minimum), Excluded(maximum)))
             .flat_map(|(&z, sheets)| {
-                sheets
-                    .values()
-                    .flat_map(move |names| names.iter().cloned().map(move |name| (z, name)))
+                sheets.values().flat_map(move |names| {
+                    names.iter().map(move |name| (z, name.as_ref().to_owned()))
+                })
             })
             .collect()
     }

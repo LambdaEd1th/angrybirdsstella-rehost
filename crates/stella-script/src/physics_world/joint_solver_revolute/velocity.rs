@@ -3,11 +3,14 @@
 use crate::*;
 
 impl RenderBridge {
-    pub(crate) fn solve_revolute_joint_velocity(
+    pub(crate) fn solve_revolute_joint_velocity<
+        F: JointBodyView + ?Sized,
+        S: JointBodyView + ?Sized,
+    >(
         &mut self,
-        joint: &PhysicsJoint,
-        first: &SceneObject,
-        second: &SceneObject,
+        joint: &mut PhysicsJoint,
+        first: &F,
+        second: &S,
         step: f64,
     ) {
         let (r_a, r_b) = joint_anchor_offsets(joint, first, second);
@@ -31,10 +34,12 @@ impl RenderBridge {
         } else {
             0.0_f32
         };
-        let mut velocity_a = (first.velocity_x as f32, first.velocity_y as f32);
-        let mut velocity_b = (second.velocity_x as f32, second.velocity_y as f32);
-        let mut angular_velocity_a = first.angular_velocity as f32;
-        let mut angular_velocity_b = second.angular_velocity as f32;
+        let first_velocity = first.velocity();
+        let second_velocity = second.velocity();
+        let mut velocity_a = (first_velocity.0 as f32, first_velocity.1 as f32);
+        let mut velocity_b = (second_velocity.0 as f32, second_velocity.1 as f32);
+        let mut angular_velocity_a = first.angular_velocity() as f32;
+        let mut angular_velocity_b = second.angular_velocity() as f32;
         let mut new_motor_impulse = joint.motor_impulse as f32;
         if joint.motor_enabled
             && joint.limit_state != JointLimitState::Equal
@@ -108,14 +113,10 @@ impl RenderBridge {
                     ((full.0, full.1), full.2, candidate)
                 }
             };
-        if let Some(live_joint) = self.joints.get_mut(&joint.name) {
-            live_joint.linear_impulse_x =
-                f64::from(live_joint.linear_impulse_x as f32 + linear_delta.0);
-            live_joint.linear_impulse_y =
-                f64::from(live_joint.linear_impulse_y as f32 + linear_delta.1);
-            live_joint.limit_impulse = f64::from(new_limit_impulse);
-            live_joint.motor_impulse = f64::from(new_motor_impulse);
-        }
+        joint.linear_impulse_x = f64::from(joint.linear_impulse_x as f32 + linear_delta.0);
+        joint.linear_impulse_y = f64::from(joint.linear_impulse_y as f32 + linear_delta.1);
+        joint.limit_impulse = f64::from(new_limit_impulse);
+        joint.motor_impulse = f64::from(new_motor_impulse);
 
         velocity_a.0 = (-mass_a).mul_add(linear_delta.0, velocity_a.0);
         velocity_a.1 = (-mass_a).mul_add(linear_delta.1, velocity_a.1);

@@ -40,6 +40,11 @@ fn every_shipped_level_constructs_updates_and_reaches_native_draw() {
         .unwrap();
     let levels = shipped_level_names(&sandbox.data_root);
     assert_eq!(levels.len(), 149);
+    let update_frames = std::env::var("STELLA_ALL_LEVEL_FRAMES")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|frames| *frames != 0)
+        .unwrap_or(1);
 
     for level in &levels {
         runtime
@@ -55,7 +60,7 @@ fn every_shipped_level_constructs_updates_and_reaches_native_draw() {
                 object.sprite_bound
                     && !object.sprite.is_empty()
                     && object.sprite_region.is_none()
-                    && object.composite_sprite.as_ref().is_none_or(Vec::is_empty)
+                    && object.composite_sprite.as_deref().is_none_or(Vec::is_empty)
             })
             .map(|object| object.sprite.clone())
             .collect::<BTreeSet<_>>();
@@ -88,9 +93,11 @@ fn every_shipped_level_constructs_updates_and_reaches_native_draw() {
                 )
                 .unwrap();
         }
-        runtime
-            .update(1.0 / 60.0)
-            .unwrap_or_else(|error| panic!("{level} failed its first update: {error}"));
+        for frame in 0..update_frames {
+            runtime.update(1.0 / 60.0).unwrap_or_else(|error| {
+                panic!("{level} failed update frame {}: {error}", frame + 1)
+            });
+        }
         if lacks_active_body {
             runtime
                 .execute_source(
@@ -108,6 +115,26 @@ fn every_shipped_level_constructs_updates_and_reaches_native_draw() {
                 .call_global("drawGameNative")
                 .unwrap_or_else(|error| panic!("{level} failed native draw: {error}")),
             "{level} lost the native draw entry"
+        );
+        let invalid_masked_commands = runtime
+            .render
+            .lock()
+            .expect("render bridge lock poisoned")
+            .commands
+            .iter()
+            .filter(|command| command.texture.is_some())
+            .filter(|command| {
+                command
+                    .state
+                    .masked_texture_matrix
+                    .is_none_or(|matrix| !matrix.into_iter().all(f64::is_finite))
+            })
+            .map(|command| command.sprite.clone())
+            .collect::<BTreeSet<_>>();
+        assert!(
+            invalid_masked_commands.is_empty(),
+            "{level} emitted textured masks without a finite native fill matrix: \
+             {invalid_masked_commands:?}"
         );
         runtime.take_render_commands();
         assert!(

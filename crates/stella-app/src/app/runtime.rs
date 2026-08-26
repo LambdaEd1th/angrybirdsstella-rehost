@@ -53,10 +53,12 @@ impl StellaApp {
         }
         self.assets
             .apply_composite_updates(self.runtime.take_composite_updates());
-        self.render_commands = self.runtime.take_render_commands();
-        self.text_commands = self.runtime.take_text_commands();
-        self.rect_commands = self.runtime.take_rect_commands();
-        self.capture_commands = self.runtime.take_capture_commands();
+        self.runtime.swap_frame_commands(
+            &mut self.render_commands,
+            &mut self.text_commands,
+            &mut self.rect_commands,
+            &mut self.capture_commands,
+        );
         self.screenshot_share_requests
             .extend(self.runtime.take_screenshot_share_requests());
         self.background_color = self.runtime.background_color();

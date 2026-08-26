@@ -123,13 +123,13 @@ impl StellaLua {
             if !bridge.physics_enabled {
                 (None, Vec::new(), [0.0_f32; 3])
             } else {
-                // The previous awake bit participates in both Purple's body
-                // export predicate and this pass, so snapshot the Lua payload
-                // before advance_native_scene_frame updates that bit.
                 let scene_nonempty = !bridge.scene.is_empty();
-                let body_states = NativeBodyLuaState::collect(&bridge);
-                let (has_moving_objects, has_awake_objects, has_moving_zero_tolerance) =
-                    bridge.advance_native_scene_frame(scaled_delta);
+                // Purple exports and aggregates motion in one ordered scene
+                // traversal. Snapshot each body before the shared pass updates
+                // its cached previous-awake bit.
+                let (body_states, motion) =
+                    NativeBodyLuaState::collect_and_advance(&mut bridge, scaled_delta);
+                let (has_moving_objects, has_awake_objects, has_moving_zero_tolerance) = motion;
                 let joint_endpoint_exports = bridge.native_joint_endpoint_exports();
                 let rolling_audio_levels = bridge.native_rolling_audio_levels();
                 (
@@ -169,15 +169,15 @@ impl StellaLua {
             environment.set("hasMovingObjectsZeroTolerance", has_moving_zero_tolerance)?;
         }
         // 0x10005F944..0x10005FA98 reads both b2Joint anchors before looking
-        // up the Lua descriptor. Weld/type-two descriptors are still looked
-        // up but deliberately retain their authored coordinate fields.
+        // up the Lua descriptor. Body-local/coordType-two descriptors are
+        // still looked up but deliberately retain their authored fields.
         if !joint_endpoint_exports.is_empty() {
             let objects = native_lua_object(&self.lua, NativeLuaObject::Objects)?
                 .ok_or_else(|| LuaError::RuntimeError("objects is not a table".to_owned()))?;
             let joints: mlua::Table = objects.get("joints")?;
             for joint in joint_endpoint_exports {
                 let descriptor: mlua::Table = joints.get(joint.name)?;
-                if joint.joint_type == 2 {
+                if joint.coord_type == 2 {
                     continue;
                 }
                 descriptor.set("x1", f64::from(joint.first.0))?;
@@ -306,11 +306,11 @@ impl StellaLua {
     /// notification particles, loading-screen state machine, subsystems, and
     /// menu particles.
     pub fn draw(&self) -> Result<bool, ScriptError> {
-        // LevelLoad clears `objects.world` directly before constructing the
-        // next native scene. The original GameScene owns the corresponding
-        // C++ objects, so its scene transition drops them as well. Keep the
-        // Rust mirror tied to that authoritative Lua lifetime boundary.
-        self.sync_scene_lifetime()?;
+        // sub_10004BAB4 enters the retained GameLua+0x310 scene tree directly.
+        // It never scans `objects.world` for deleted names. LevelLoad and the
+        // registered removeObject member already own the two native teardown
+        // boundaries, while constructor commit handles an explicitly replaced
+        // world table before publishing a new RenderObjectData record.
         {
             let mut bridge = self.render.lock().expect("render bridge lock poisoned");
             bridge.commands.clear();

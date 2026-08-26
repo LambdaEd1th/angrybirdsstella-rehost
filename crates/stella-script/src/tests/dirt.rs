@@ -325,8 +325,8 @@ fn native_dirt_destroys_fixture_heads_before_newer_contacts_on_older_fixtures() 
         bridge.active_contacts.insert(tail.clone(), false);
         bridge.broad_phase_contacts.insert(head.clone());
         bridge.broad_phase_contacts.insert(tail.clone());
-        bridge.contact_creation_order.insert(head, 10);
-        bridge.contact_creation_order.insert(tail, 100);
+        bridge.insert_native_contact_order(head, 10);
+        bridge.insert_native_contact_order(tail, 100);
     }
 
     runtime

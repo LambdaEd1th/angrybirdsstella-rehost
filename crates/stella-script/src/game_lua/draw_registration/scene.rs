@@ -15,6 +15,12 @@ pub(super) fn install(
     resource_runtime: Arc<Mutex<ResourceRuntime>>,
     data_root: Arc<PathBuf>,
 ) -> LuaResult<()> {
+    // Diagnostic switches are process-launch configuration. Resolve them
+    // once while installing the native member; querying libc getenv for
+    // every RenderObjectData leaf was rehost-only work inside the hottest
+    // scene walk and has no counterpart in sub_10004BAB4.
+    let trace_draw_callbacks = std::env::var_os("STELLA_TRACE_DRAW_CALLBACKS").is_some();
+    let trace_animation = std::env::var_os("STELLA_TRACE_ANIMATION").is_some();
     globals.set(
         "drawGameNative",
         lua.create_function(move |lua, _: MultiValue| {
@@ -137,32 +143,46 @@ pub(super) fn install(
                     }
                     continue;
                 };
-                let Some(callback_state_object) = render
+                let Some((callback_state_object, initial_draw_object)) = render
                     .lock()
                     .expect("render bridge lock poisoned")
-                    .scene_draw_object(&name)
+                    .scene_callback_draw_object(name.as_ref())
                 else {
                     continue;
                 };
-                if !callback_state_object.visible {
-                    continue;
-                }
-                // sub_100528834 retrieves the original Lua object table from
-                // its registry reference; callbacks do not receive a name.
-                let callback_object = object_world(lua)?.raw_get::<Value>(name.as_str())?;
-                let (pre, post) = {
-                    let callbacks = draw_callbacks.borrow();
-                    (
-                        callbacks.pre.get(&name).cloned(),
-                        callbacks.post.get(&name).cloned(),
-                    )
+                let callback_horizontal_flip = callback_state_object.horizontal_flip;
+                // RenderObjectData+0x20 owns the exact table through a Lua
+                // registry reference. Keep a compatibility fallback for
+                // tests or extension-created scene records that bypass the
+                // recovered constructors, but retain its first table too.
+                let (callback_object, pre, post) = {
+                    let mut callbacks = draw_callbacks.borrow_mut();
+                    if let Some(record) = callbacks.records.get(name.as_ref()) {
+                        (
+                            Value::Table(record.object.clone()),
+                            record.pre.clone(),
+                            record.post.clone(),
+                        )
+                    } else {
+                        let object = object_world(lua)?.raw_get::<Value>(name.as_ref())?;
+                        if let Value::Table(table) = &object {
+                            callbacks.records.insert(
+                                name.to_string(),
+                                DrawCallbackRecord {
+                                    object: table.clone(),
+                                    pre: None,
+                                    post: None,
+                                },
+                            );
+                        }
+                        (object, None, None)
+                    }
                 };
                 let previous = render
                     .lock()
                     .expect("render bridge lock poisoned")
-                    .begin_scene_object_draw(&callback_state_object);
-                if std::env::var_os("STELLA_TRACE_DRAW_CALLBACKS").is_some()
-                    && (pre.is_some() || post.is_some())
+                    .begin_scene_object_draw_callback(callback_state_object);
+                if trace_draw_callbacks && (pre.is_some() || post.is_some())
                 {
                     eprintln!(
                         "draw-callback name={name:?} pre={} post={} object={}",
@@ -171,12 +191,12 @@ pub(super) fn install(
                         describe_value(&callback_object)
                     );
                 }
-                if let Some(function) = pre {
+                if let Some(function) = pre.as_ref() {
                     // sub_10004BAB4 pushes RenderObjectData+0x139, the
                     // horizontal-flip byte, immediately before the callback.
                     function.call::<()>((
                         callback_object.clone(),
-                        callback_state_object.horizontal_flip,
+                        callback_horizontal_flip,
                     ))?;
                 }
                 // The native dispatcher retains only the object pointer while
@@ -184,10 +204,15 @@ pub(super) fn install(
                 // scale, transform and decoration fields from that live
                 // record. Reacquire the compact draw snapshot here so a Lua
                 // visual mutation affects the same submission.
-                let Some(object) = render
-                    .lock()
-                    .expect("render bridge lock poisoned")
-                    .scene_draw_object(&name)
+                let object = if pre.is_some() {
+                    render
+                        .lock()
+                        .expect("render bridge lock poisoned")
+                        .scene_draw_object(name.as_ref())
+                } else {
+                    Some(initial_draw_object)
+                };
+                let Some(object) = object
                 else {
                     render
                         .lock()
@@ -205,7 +230,7 @@ pub(super) fn install(
                         .lock()
                         .expect("animation runtime lock poisoned")
                         .playback
-                        .get(&name)
+                        .get(name.as_ref())
                         .map(|playback| playback.current_action.clone())
                         .unwrap_or_default();
                     let transform = render
@@ -216,13 +241,13 @@ pub(super) fn install(
                         let mut runtime = animation_runtime
                             .lock()
                             .expect("animation runtime lock poisoned");
-                        runtime.transforms.insert(name.clone(), transform);
+                        runtime.transforms.insert(name.to_string(), transform);
                         runtime
                             .matrices
-                            .insert(name.clone(), AnimationAffine::from_transform(transform));
-                        animation_render_commands(&runtime, &name)
+                            .insert(name.to_string(), AnimationAffine::from_transform(transform));
+                        animation_render_commands(&runtime, name.as_ref())
                     };
-                    if std::env::var_os("STELLA_TRACE_ANIMATION").is_some() {
+                    if trace_animation {
                         let (physics_slot, physics_alpha) = {
                             let bridge = render.lock().expect("render bridge lock poisoned");
                             (
@@ -282,7 +307,7 @@ pub(super) fn install(
                         .lock()
                         .expect("render bridge lock poisoned")
                         .scene
-                        .get(&name)
+                        .get(name.as_ref())
                         .map(|object| object.horizontal_flip)
                         .unwrap_or(object.horizontal_flip);
                     function.call::<()>((callback_object, horizontal_flip))?;

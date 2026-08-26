@@ -3,18 +3,61 @@
 use crate::*;
 
 pub(crate) fn announce_registrations(lua: &Lua) -> LuaResult<()> {
-    // GameLua constructs these native services in this order. Their common
-    // service interface publishes the lowercase name, and RovioCloudManager
-    // responds to EID_CLOUD_SERVICE_REGISTERED by loading the corresponding
-    // GameLua facade. Assets.lua retains the native publication separately as
-    // `_G.Assets` and calls its loadFiles member through that explicit path.
-    for (service_name, table_name) in [("social", "SocialManager"), ("assets", "Assets")] {
+    // sub_1000AF9C0 registers all nine services in this exact order. The
+    // service-name vtable leaves return `analytics` (sub_1000AB6BC), `push`
+    // (sub_1000A0188) and `time` (sub_1000BD540) for the three services that
+    // surrounded the previously recovered six. RemoteNotificationsService is
+    // event-only and publishes no Lua table; the other services expose their
+    // native tables before the common registration callback runs. Assets.lua
+    // retains the native publication separately as `_G.Assets`.
+    for (service_name, table_name) in [
+        ("analytics", Some("Analytics")),
+        ("push", None),
+        ("identityLevel2", Some("SkynestAccount")),
+        ("storage", Some("SkynestStorage")),
+        ("ads", Some("RovioAds")),
+        ("channel", Some("RovioChannel")),
+        ("assets", Some("Assets")),
+        ("social", Some("SocialManager")),
+        ("time", Some("ServerTime")),
+    ] {
+        if service_name == "channel" {
+            // The native cloud manager's availability callback reaches
+            // RovioChannel::onEnableService (sub_1000AE354) before the Lua
+            // facade observes the service registration.
+            super::channel::enable_service(lua)?;
+        }
         announce_registration(lua, service_name, table_name)?;
     }
+    load_late_ads_facade(lua)?;
+    // The native account constructor starts an automatic login independently
+    // of service announcement. Complete its offline equivalent only after all
+    // facades and event listeners exist, matching the asynchronous provider
+    // completion boundary and preventing a permanent ConnectionScreen.
+    super::skynest_account::complete_initial_login(lua)?;
     Ok(())
 }
 
-fn announce_registration(lua: &Lua, service_name: &str, table_name: &str) -> LuaResult<()> {
+fn load_late_ads_facade(lua: &Lua) -> LuaResult<()> {
+    let environment = game_environment(lua)?;
+    if !matches!(environment.get::<Value>("adSystem")?, Value::Nil) {
+        return Ok(());
+    }
+    let Value::Function(load_lua_file) = environment.get::<Value>("loadLuaFile")? else {
+        return Ok(());
+    };
+    let Value::String(common_script_path) = environment.get::<Value>("commonScriptPath")? else {
+        return Ok(());
+    };
+    let script = format!("{}/cloud/ads/Ads.lua", common_script_path.to_string_lossy());
+    // Purple has every native service registered before RovioCloudManager.lua
+    // executes, so its top-level ads availability branch loads this chunk.
+    // Rust announces after the dispatcher exists; reproduce that already-
+    // available startup branch once after publishing the late `ads` event.
+    load_lua_file.call::<()>(script)
+}
+
+fn announce_registration(lua: &Lua, service_name: &str, table_name: Option<&str>) -> LuaResult<()> {
     let environment = game_environment(lua)?;
     let Value::Table(cloud_manager) = environment.get::<Value>("RovioCloudManager")? else {
         return Ok(());
@@ -38,6 +81,9 @@ fn announce_registration(lua: &Lua, service_name: &str, table_name: &str) -> Lua
     event.set("serviceName", service_name)?;
     notify.call::<()>((event_manager, event))?;
 
+    let Some(table_name) = table_name else {
+        return Ok(());
+    };
     let Value::Table(native_service) = lua.globals().get::<Value>(table_name)? else {
         return Ok(());
     };

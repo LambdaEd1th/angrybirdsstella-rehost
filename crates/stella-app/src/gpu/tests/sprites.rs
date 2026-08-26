@@ -135,7 +135,7 @@ fn native_explicit_quad_reaches_gpu_in_recovered_triangle_and_uv_order() {
         assert_eq!(vertex.uv, uv[index].map(|value| value as f32));
     }
     assert_eq!(frame.uniforms[0].header[0], 0.25);
-    assert_eq!(frame.draws[0].base_texture, texture_name);
+    assert_eq!(frame.draw_texture_pair(0).0, texture_name);
     assert_eq!(frame.draws[0].program, NativeProgram::SpriteAlpha);
 }
 
@@ -214,7 +214,7 @@ fn native_atlas_quad_keeps_positions_and_signed_rotated_region_uvs() {
         assert_eq!(vertex.uv, uv[index]);
     }
     assert_eq!(frame.uniforms[0].header[0], 0.375);
-    assert_eq!(frame.draws[0].base_texture, texture_name);
+    assert_eq!(frame.draw_texture_pair(0).0, texture_name);
     assert_eq!(frame.draws[0].program, NativeProgram::SpriteAlpha);
 }
 
@@ -377,7 +377,7 @@ fn retained_animation_region_draws_after_active_resource_catalog_release() {
     };
 
     let frame = assets.prepare_gpu_frame(&[command], &[], &[], &[]).unwrap();
-    assert_eq!(frame.draws[0].base_texture, texture_name);
+    assert_eq!(frame.draw_texture_pair(0).0, texture_name);
     assert_eq!(frame.vertices[0].position, [16.0, 27.0]);
     assert_eq!(frame.vertices[5].position, [24.0, 33.0]);
 }
@@ -405,7 +405,7 @@ fn selected_sprite_uses_its_submission_time_mask_texture_pointer() {
         order: 0,
         sprite: "SELECTED".to_owned(),
         texture: Some("MASK".to_owned()),
-        texture_scale: 1.0,
+        texture_scale: 0.25,
         masked_texture_binding: Some(MaskedTextureBinding::Source(retained_mask.clone())),
         bound_region: Some(SpriteCatalogRegion {
             native_sheet_id: 1,
@@ -427,14 +427,22 @@ fn selected_sprite_uses_its_submission_time_mask_texture_pointer() {
         dirt: None,
         x: 20.0,
         y: 30.0,
-        state: stella_script::RenderState::default(),
+        state: stella_script::RenderState {
+            masked_texture_matrix: Some([100.0, 200.0, 2.0, 0.0, 0.0, 3.0]),
+            ..stella_script::RenderState::default()
+        },
         world_space: true,
     };
 
     let frame = assets.prepare_gpu_frame(&[command], &[], &[], &[]).unwrap();
-    assert_eq!(frame.draws[0].base_texture, base_texture);
-    assert_eq!(frame.draws[0].fill_texture, retained_mask);
+    assert_eq!(frame.draw_texture_pair(0).0, base_texture);
+    assert_eq!(frame.draw_texture_pair(0).1, retained_mask);
     assert_eq!(frame.draws[0].program, NativeProgram::SpriteAlphaMasked);
+    assert_eq!(frame.uniforms[0].header[1], 0.25);
+    assert_eq!(frame.vertices[0].source, [92.0, 191.0]);
+    assert_eq!(frame.vertices[1].source, [108.0, 191.0]);
+    assert_eq!(frame.vertices[2].source, [92.0, 209.0]);
+    assert_eq!(frame.vertices[5].source, [108.0, 209.0]);
 }
 
 #[test]
@@ -494,7 +502,7 @@ fn retained_scene_composite_draws_its_frozen_child_after_catalog_release() {
     };
 
     let frame = assets.prepare_gpu_frame(&[command], &[], &[], &[]).unwrap();
-    assert_eq!(frame.draws[0].base_texture, texture_name);
+    assert_eq!(frame.draw_texture_pair(0).0, texture_name);
     assert_eq!(frame.vertices[0].position, [21.0, 34.0]);
     assert_eq!(frame.vertices[5].position, [29.0, 40.0]);
 }

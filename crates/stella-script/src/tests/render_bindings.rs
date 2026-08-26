@@ -642,6 +642,20 @@ fn selected_texturized_object_installs_divided_native_gl_state() {
         (7.0, 11.0)
     );
     assert_eq!(selected.state.alpha, f64::from(0.3_f32));
+    let (sine, cosine) = 0.5_f32.sin_cos();
+    let expected_origin_x = (40.0_f32 + cosine * -7.0_f32 + -sine * -11.0_f32) * 0.5_f32;
+    let expected_origin_y = (160.0_f32 + sine * -7.0_f32 + cosine * -11.0_f32) * 0.25_f32;
+    assert_eq!(
+        selected.state.masked_texture_matrix,
+        Some([
+            f64::from(expected_origin_x),
+            f64::from(expected_origin_y),
+            f64::from(0.5_f32 * cosine),
+            f64::from(0.5_f32 * -sine),
+            f64::from(0.25_f32 * sine),
+            f64::from(0.25_f32 * cosine),
+        ])
+    );
     assert!(!selected.world_space);
     assert_eq!(bridge.state.translate_x, -8.0);
     assert_eq!(bridge.state.scale_y, 0.5);

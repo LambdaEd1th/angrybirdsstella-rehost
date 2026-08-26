@@ -1,6 +1,31 @@
 //! Atlas region UV construction, pivot setup and four-vertex transform.
 
 use super::{super::*, shader::shader_uniform};
+use crate::gpu::frame::batch::screen_to_clip;
+
+fn native_masked_quad_visible(positions: &[[f32; 2]; 4], resolution: GameResolution) -> bool {
+    // TexturizedSprite's batch append (`sub_10008D428`) transforms the quad
+    // to clip space first, then rejects it unless max x/y are >= -1 and min
+    // x/y are < 1. Preserve those inclusive/strict edges and float32 FMADDs.
+    let clip = positions.map(|position| screen_to_clip(position, resolution));
+    let min_x = clip
+        .iter()
+        .map(|position| position[0])
+        .fold(f32::INFINITY, f32::min);
+    let min_y = clip
+        .iter()
+        .map(|position| position[1])
+        .fold(f32::INFINITY, f32::min);
+    let max_x = clip
+        .iter()
+        .map(|position| position[0])
+        .fold(f32::NEG_INFINITY, f32::max);
+    let max_y = clip
+        .iter()
+        .map(|position| position[1])
+        .fold(f32::NEG_INFINITY, f32::max);
+    max_x >= -1.0 && max_y >= -1.0 && min_x < 1.0 && min_y < 1.0
+}
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::gpu) fn append_gpu_region(
@@ -16,6 +41,7 @@ pub(in crate::gpu) fn append_gpu_region(
     fill_width: u32,
     fill_height: u32,
     texture_scale: f64,
+    masked_texture_matrix: Option<[f64; 6]>,
     source_mode: f32,
     program: NativeProgram,
     shader: Option<&SpriteShader>,
@@ -49,6 +75,11 @@ pub(in crate::gpu) fn append_gpu_region(
         let local_y = y - pivot_y;
         transform.transform_point(local_x, local_y)
     });
+    if program == NativeProgram::SpriteAlphaMasked
+        && !native_masked_quad_visible(&positions, frame.resolution)
+    {
+        return;
+    }
     if std::env::var_os("STELLA_TRACE_GPU_REGIONS").is_some() {
         let min_x = positions
             .iter()
@@ -71,8 +102,13 @@ pub(in crate::gpu) fn append_gpu_region(
             region.name
         );
     }
-    let source = source_points.map(|(x, y)| [x, y]);
     let local = display_points.map(|(x, y)| [x - pivot_x, y - pivot_y]);
+    let source = if let Some([tx, ty, m00, m01, m10, m11]) = masked_texture_matrix {
+        let [tx, ty, m00, m01, m10, m11] = [tx, ty, m00, m01, m10, m11].map(|value| value as f32);
+        local.map(|[x, y]| [tx + m00.mul_add(x, m01 * y), ty + m10.mul_add(x, m11 * y)])
+    } else {
+        source_points.map(|(x, y)| [x, y])
+    };
     let uv = region.native_uvs(base_width as f32, base_height as f32);
     let mut uniform = shader_uniform(shader);
     uniform.header[0] = transform.alpha;
@@ -95,4 +131,35 @@ pub(in crate::gpu) fn append_gpu_region(
         fill_texture,
         program,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn masked_quad_culling_keeps_native_clip_edge_strictness() {
+        let resolution = GameResolution::default();
+        assert!(native_masked_quad_visible(
+            &[[0.0, 10.0], [20.0, 10.0], [0.0, 30.0], [20.0, 30.0]],
+            resolution,
+        ));
+        assert!(native_masked_quad_visible(
+            &[[-20.0, 10.0], [0.0, 10.0], [-20.0, 30.0], [0.0, 30.0],],
+            resolution,
+        ));
+        assert!(!native_masked_quad_visible(
+            &[
+                [GAME_WIDTH as f32, 10.0],
+                [GAME_WIDTH as f32 + 20.0, 10.0],
+                [GAME_WIDTH as f32, 30.0],
+                [GAME_WIDTH as f32 + 20.0, 30.0],
+            ],
+            resolution,
+        ));
+        assert!(!native_masked_quad_visible(
+            &[[10.0, -20.0], [30.0, -20.0], [10.0, 0.0], [30.0, 0.0],],
+            resolution,
+        ));
+    }
 }

@@ -36,11 +36,13 @@ pub(super) fn insert(render: &Arc<Mutex<RenderBridge>>, prepared: PreparedConstr
         .has_body()
         .then(|| bridge.allocate_body_allocation_slot());
     let initial_pose = NativeInterpolationPose::new(request.x, request.y, 0.0);
+    let sprite_region = sprite_region.map(Arc::new);
+    let composite_sprite = composite_sprite.map(Arc::new);
     let mut scene_object = SceneObject {
         physics_creation_order,
         body_allocation_slot,
         fixture_proxy_ids: vec![None; fixture_count],
-        sprite: request.sprite,
+        sprite: request.sprite.into(),
         sprite_bound,
         sprite_region,
         composite_sprite,
@@ -150,7 +152,7 @@ pub(super) fn insert(render: &Arc<Mutex<RenderBridge>>, prepared: PreparedConstr
         decoration: None,
         ray: None,
         dirt: None,
-        dirt_holes: Vec::new(),
+        dirt_holes: Arc::new(Vec::new()),
         // b2BodyDef uses allowSleep=true, awake=true and active=true in
         // sub_100034740/sub_100034FB0. Controllable bodies are deactivated
         // afterwards but retain that awake state.
@@ -171,6 +173,19 @@ pub(super) fn insert(render: &Arc<Mutex<RenderBridge>>, prepared: PreparedConstr
         bridge
             .scene_render_index
             .append(z_bucket, sheet, name.clone());
+    }
+    if let Some(previous_order) = bridge
+        .scene
+        .get(&name)
+        .filter(|object| object.body_allocation_slot.is_some())
+        .map(|object| object.physics_creation_order)
+    {
+        bridge.native_body_world_order.remove(&previous_order);
+    }
+    if scene_object.body_allocation_slot.is_some() {
+        bridge
+            .native_body_world_order
+            .insert(physics_creation_order, name.clone());
     }
     bridge.scene.insert(name.clone(), scene_object);
     bridge.install_object_broad_phase_proxies(&name, false);

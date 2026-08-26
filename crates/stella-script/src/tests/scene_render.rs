@@ -458,6 +458,10 @@ fn native_scene_draw_callbacks_wrap_object_draw_and_can_be_cleared() {
                     post_count = post_count + 1
                 end)
                 missing_callback_name_fails = not pcall(native_setPreDrawFunction)
+                unknown_callback_ok, unknown_callback_error = pcall(
+                    native_setPreDrawFunction, "does_not_exist", function() end
+                )
+                unknown_callback_error = tostring(unknown_callback_error)
                 invalid_callback_fails = not pcall(
                     native_setPreDrawFunction, "callback_body", 123
                 )
@@ -472,6 +476,13 @@ fn native_scene_draw_callbacks_wrap_object_draw_and_can_be_cleared() {
         environment
             .get::<bool>("missing_callback_name_fails")
             .unwrap()
+    );
+    assert!(!environment.get::<bool>("unknown_callback_ok").unwrap());
+    assert!(
+        environment
+            .get::<String>("unknown_callback_error")
+            .unwrap()
+            .contains("Missing object: does_not_exist")
     );
     assert!(environment.get::<bool>("invalid_callback_fails").unwrap());
     assert_eq!(
@@ -493,6 +504,51 @@ fn native_scene_draw_callbacks_wrap_object_draw_and_can_be_cleared() {
         .unwrap();
     assert_eq!(environment.get::<i64>("pre_count").unwrap(), 1);
     assert_eq!(environment.get::<i64>("post_count").unwrap(), 1);
+}
+
+#[test]
+fn native_scene_draw_retains_the_constructor_object_table() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .execute_source(
+            r#"
+                createNonPhysicsObject("retained", "RED_CROSS", 1, 2, 3)
+                original = objects.world.retained
+                original.marker = "constructor-table"
+                objects.world.retained = { name = "retained", marker = "replacement" }
+                native_setPreDrawFunction("retained", function(object)
+                    callback_marker = object.marker
+                    callback_is_original = object == original
+                end)
+                drawGameNative()
+                "#,
+        )
+        .unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert_eq!(
+        environment.get::<String>("callback_marker").unwrap(),
+        "constructor-table"
+    );
+    assert!(environment.get::<bool>("callback_is_original").unwrap());
+}
+
+#[test]
+fn native_remove_object_releases_its_retained_lua_draw_state_immediately() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .execute_source(
+            r#"
+                createNonPhysicsObject("removed_ref", "RED_CROSS", 1, 2, 3)
+                native_setPreDrawFunction("removed_ref", function() end)
+                native_setPostDrawFunction("removed_ref", function() end)
+                removeObject("removed_ref")
+                "#,
+        )
+        .unwrap();
+
+    let callbacks = runtime.draw_callbacks.borrow();
+    assert!(!callbacks.records.contains_key("removed_ref"));
 }
 
 #[test]
@@ -777,6 +833,38 @@ fn native_scene_index_retains_old_sheet_pointer_until_explicit_sprite_rebind() {
 }
 
 #[test]
+fn native_scene_draw_snapshot_retains_resource_pointer_until_command_materialization() {
+    let runtime = StellaLua::new(std::env::temp_dir()).unwrap();
+    register_test_sprite_sheet(&runtime, &["BODY"]);
+    runtime
+        .execute_source(r#"createNonPhysicsObject("body", "BODY", 0, 0, 3)"#)
+        .unwrap();
+
+    let bridge = runtime.render.lock().unwrap();
+    let scene_object = bridge.scene.get("body").unwrap();
+    let retained = scene_object.sprite_region.as_ref().unwrap();
+    let first_leaf = bridge
+        .scene_render_index
+        .name_at(3, retained.native_sheet_id, 0)
+        .unwrap();
+    let second_leaf = bridge
+        .scene_render_index
+        .name_at(3, retained.native_sheet_id, 0)
+        .unwrap();
+    assert!(Arc::ptr_eq(&first_leaf, &second_leaf));
+    let snapshot = bridge.scene_draw_object("body").unwrap();
+    assert!(Arc::ptr_eq(&scene_object.sprite, &snapshot.sprite));
+    let snapshot_region = snapshot.sprite_region.as_ref().unwrap();
+    assert!(Arc::ptr_eq(retained, snapshot_region));
+
+    let command = bridge.scene_object_command(&snapshot).unwrap();
+    assert_eq!(
+        command.bound_region.as_ref().unwrap().native_sheet_id,
+        retained.native_sheet_id
+    );
+}
+
+#[test]
 fn native_duplicate_constructor_replaces_name_pointer_but_retains_old_render_leaf() {
     let runtime = StellaLua::new("/tmp").unwrap();
     register_test_sprite_sheet(&runtime, &["OLD", "NEW"]);
@@ -832,7 +920,6 @@ fn replacing_objects_world_retires_same_named_native_scene_before_rebuild() {
         )
         .unwrap();
 
-    runtime.sync_scene_lifetime().unwrap();
     runtime.execute_source("drawGameNative()").unwrap();
 
     let environment = game_environment(runtime.lua()).unwrap();
@@ -879,8 +966,7 @@ fn failed_level_load_clears_native_scene_and_callbacks_before_file_open() {
     assert!(bridge.scene_range_names().is_empty());
     drop(bridge);
     let callbacks = runtime.draw_callbacks.borrow();
-    assert!(callbacks.pre.is_empty());
-    assert!(callbacks.post.is_empty());
+    assert!(callbacks.records.is_empty());
 }
 
 #[test]
@@ -1003,7 +1089,7 @@ fn native_scene_composite_callback_uses_integer_bounds_pivot_and_ignores_object_
         object.sprite_region = None;
         object.pivot_offset_x = 100.0;
         object.pivot_offset_y = 200.0;
-        object.composite_sprite = Some(vec![BoundCompositePart {
+        object.composite_sprite = Some(Arc::new(vec![BoundCompositePart {
             part: stella_assets::ka3d::CompositePart {
                 sprite: "PART".to_owned(),
                 x: 10.0,
@@ -1029,7 +1115,7 @@ fn native_scene_composite_callback_uses_integer_bounds_pivot_and_ignores_object_
                     atlas_rotation: 0,
                 },
             },
-        }]);
+        }]));
     }
 
     let bridge = runtime.render.lock().unwrap();
@@ -1261,6 +1347,10 @@ fn native_texture_state_reaches_scene_render_commands() {
                 texture_missing_error = tostring(texture_missing_error)
                 objects.world.textured.textureScale = 77
                 setTextureScale("textured", 0.0932025)
+                setScale("textured", 2, 3)
+                setRotation("textured", 0.4)
+                setSpriteRotation("textured", 0.2)
+                setPivotOffset("textured", 4, 5)
                 texture_scale_mirror = objects.world.textured.textureScale
                 texture_scale_name_rejected = not pcall(setTextureScale, false, 1)
                 texture_scale_value_rejected = not pcall(
@@ -1314,6 +1404,81 @@ fn native_texture_state_reaches_scene_render_commands() {
         Some("THEME_HOMETREE_BG_TEXTURE_1")
     );
     assert_eq!(bridge.commands[0].texture_scale, f64::from(0.0932025_f32));
+    let expected_matrix = RenderState::native_masked_texture_matrix(
+        20.0,
+        40.0,
+        2.0,
+        3.0,
+        0.4_f32 + 0.2_f32,
+        4.0,
+        5.0,
+    );
+    assert_eq!(
+        bridge.commands[0].state.masked_texture_matrix,
+        Some(expected_matrix)
+    );
+    let original_screen_x = bridge.commands[0].state.translate_x;
+    drop(bridge);
+
+    runtime.render.lock().unwrap().commands.clear();
+    runtime
+        .execute_source(
+            r#"
+                setTopLeft(300, 400)
+                setWorldScale(0.5)
+                drawGameNative()
+            "#,
+        )
+        .unwrap();
+    let bridge = runtime.render.lock().unwrap();
+    assert_ne!(bridge.commands[0].state.translate_x, original_screen_x);
+    assert_eq!(
+        bridge.commands[0].state.masked_texture_matrix,
+        Some(expected_matrix),
+        "camera movement must not make the terrain texture swim"
+    );
+}
+
+#[test]
+fn chapter02_themed_terrain_keeps_native_world_anchored_fill_matrices() {
+    let sandbox = ShippedDataSandbox::new("chapter02-themed-terrain-fill");
+    let runtime = StellaLua::new(&sandbox.data_root).unwrap();
+    runtime.boot("scripts/game.lua").unwrap();
+    runtime.execute_source("initializeEventSystem()").unwrap();
+    runtime
+        .execute_source(
+            r#"
+                SpriteSheetManager.useGroupSet('INGAME')
+                currentFolder = 'Chapter02'
+                currentPack = 'Chapter02'
+                currentLevel = 1
+                levelFolder = 'levels/Chapter02/'
+                levelName = 'Chapter02_L01'
+                loadLevelInternal(levelFolder .. levelName)
+                blocks.BlockComponentManager.triggerGlobalEvent(blocks.events.EID_START)
+                drawGameNative()
+            "#,
+        )
+        .unwrap();
+
+    let bridge = runtime.render.lock().unwrap();
+    let terrain = bridge
+        .commands
+        .iter()
+        .filter(|command| command.texture.as_deref() == Some("THEME_HOMETREE_BOTTOM_TEXTURE_1"))
+        .collect::<Vec<_>>();
+    assert!(terrain.len() >= 2, "Chapter02_L01 lost its themed terrain");
+    assert!(terrain.iter().all(|command| {
+        command.texture_scale == f64::from(0.0932025_f32)
+            && command.state.masked_texture_matrix.is_some()
+    }));
+    let first_origin = terrain[0].state.masked_texture_matrix.unwrap()[..2].to_vec();
+    assert!(
+        terrain
+            .iter()
+            .skip(1)
+            .any(|command| { command.state.masked_texture_matrix.unwrap()[..2] != first_origin })
+    );
 }
 
 #[test]

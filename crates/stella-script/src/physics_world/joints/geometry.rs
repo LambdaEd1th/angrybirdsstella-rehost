@@ -1,6 +1,6 @@
 //! Shared anchor, axis and point-velocity geometry used by joint subclasses.
 
-use crate::{RenderBridge, SceneObject};
+use crate::{JointBodyView, RenderBridge};
 
 use super::model::PhysicsJoint;
 
@@ -27,10 +27,10 @@ pub(crate) fn trace_physics_body(bridge: &RenderBridge, phase: &str) {
     );
 }
 
-pub(crate) fn joint_anchor_offsets(
+pub(crate) fn joint_anchor_offsets<F: JointBodyView + ?Sized, S: JointBodyView + ?Sized>(
     joint: &PhysicsJoint,
-    first: &SceneObject,
-    second: &SceneObject,
+    first: &F,
+    second: &S,
 ) -> ((f64, f64), (f64, f64)) {
     let first_anchor = first
         .native_transform_body_point((joint.first_anchor.0 as f32, joint.first_anchor.1 as f32));
@@ -50,9 +50,9 @@ pub(crate) fn joint_anchor_offsets(
     )
 }
 
-pub(crate) fn joint_anchor_delta(
-    first: &SceneObject,
-    second: &SceneObject,
+pub(crate) fn joint_anchor_delta<F: JointBodyView + ?Sized, S: JointBodyView + ?Sized>(
+    first: &F,
+    second: &S,
     first_offset: (f64, f64),
     second_offset: (f64, f64),
 ) -> (f64, f64) {
@@ -95,14 +95,14 @@ pub(crate) fn inverse_rotate_vector(vector: (f64, f64), angle: f64) -> (f64, f64
     )
 }
 
-pub(crate) fn prismatic_geometry(
+pub(crate) fn prismatic_geometry<F: JointBodyView + ?Sized, S: JointBodyView + ?Sized>(
     joint: &PhysicsJoint,
-    first: &SceneObject,
-    second: &SceneObject,
+    first: &F,
+    second: &S,
 ) -> PrismaticGeometry {
     let (r_a, r_b) = joint_anchor_offsets(joint, first, second);
     let delta = joint_anchor_delta(first, second, r_a, r_b);
-    let axis = rotate_vector(joint.local_axis, first.angle);
+    let axis = rotate_vector(joint.local_axis, first.angle());
     let perpendicular = (-axis.1, axis.0);
     let delta_plus_r_a = (delta.0 + r_a.0, delta.1 + r_a.1);
     PrismaticGeometry {
@@ -116,11 +116,15 @@ pub(crate) fn prismatic_geometry(
     }
 }
 
-pub(crate) fn point_velocity(object: &SceneObject, radius: (f64, f64)) -> (f64, f64) {
-    let angular_velocity = object.angular_velocity as f32;
+pub(crate) fn point_velocity(
+    object: &(impl JointBodyView + ?Sized),
+    radius: (f64, f64),
+) -> (f64, f64) {
+    let angular_velocity = object.angular_velocity() as f32;
+    let velocity = object.velocity();
     let radius = (radius.0 as f32, radius.1 as f32);
     (
-        f64::from((-angular_velocity).mul_add(radius.1, object.velocity_x as f32)),
-        f64::from(angular_velocity.mul_add(radius.0, object.velocity_y as f32)),
+        f64::from((-angular_velocity).mul_add(radius.1, velocity.0 as f32)),
+        f64::from(angular_velocity.mul_add(radius.0, velocity.1 as f32)),
     )
 }

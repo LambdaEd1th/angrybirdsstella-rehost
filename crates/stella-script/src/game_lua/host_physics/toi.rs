@@ -17,7 +17,6 @@ impl StellaLua {
         loop {
             let pending = {
                 let mut bridge = self.render.lock().expect("render bridge lock poisoned");
-                bridge.sync_native_broad_phase();
                 bridge.advance_continuous_tunneling(
                     toi_sweep_starts,
                     &toi_sweep_alphas,
@@ -71,7 +70,6 @@ impl StellaLua {
                     MAX_TRANSLATION,
                     MAX_ROTATION,
                 );
-                bridge.sync_native_broad_phase();
                 (impulses, sweep_starts.get(&selected.dynamic_body).copied())
             };
             if let Some(next_sweep_start) = next_sweep_start {

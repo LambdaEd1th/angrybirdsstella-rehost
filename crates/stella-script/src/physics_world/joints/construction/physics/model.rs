@@ -5,6 +5,7 @@ pub(super) struct JointGeometry {
     pub(super) first: String,
     pub(super) second: String,
     pub(super) joint_type: i32,
+    pub(super) coord_type: i32,
     pub(super) is_physical: bool,
     pub(super) first_anchor: (f64, f64),
     pub(super) second_anchor: (f64, f64),

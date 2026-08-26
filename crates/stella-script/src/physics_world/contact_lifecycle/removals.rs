@@ -15,8 +15,13 @@ impl RenderBridge {
         self.native_sensor_overlaps.clear();
         self.inside_gravity_objects.clear();
         self.solver_islands.clear();
+        self.solver_synchronized_bodies.clear();
+        self.native_body_world_order.clear();
+        self.contact_creation_order.clear();
+        self.native_contact_world_order.clear();
         self.pending_object_destructions.clear();
         self.joints.clear();
+        self.native_joint_world_order.clear();
         self.pending_native_joint_destructions.clear();
         self.tracks.clear();
         self.object_world_identity = None;
@@ -53,6 +58,10 @@ impl RenderBridge {
         let Some(object) = self.scene.remove(name) else {
             return false;
         };
+        if object.body_allocation_slot.is_some() {
+            self.native_body_world_order
+                .remove(&object.physics_creation_order);
+        }
         let z_bucket = native_fcvtzs_f32(object.z_order as f32);
         let sheet = native_scene_sheet_id(&object);
         self.scene_render_index.erase_first(z_bucket, sheet, name);

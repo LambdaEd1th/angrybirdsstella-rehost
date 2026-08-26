@@ -53,8 +53,7 @@ impl Default for DrawUniform {
 
 struct PreparedDraw {
     vertices: Range<u32>,
-    base_texture: String,
-    fill_texture: String,
+    texture_pair: usize,
     program: NativeProgram,
     scissor: Option<[u32; 4]>,
 }
@@ -71,11 +70,20 @@ pub(crate) struct PreparedFrame {
     vertices: Vec<GpuVertex>,
     uniforms: Vec<DrawUniform>,
     draws: Vec<PreparedDraw>,
+    texture_pairs: Vec<(String, String)>,
     operations: Vec<PreparedOperation>,
     required_textures: HashSet<String>,
     transient_textures: HashMap<String, Arc<TextureAsset>>,
     retired_textures: HashSet<String>,
     current_clip: Option<[i32; 4]>,
+}
+
+#[cfg(test)]
+impl PreparedFrame {
+    fn draw_texture_pair(&self, draw_index: usize) -> (&str, &str) {
+        let pair = &self.texture_pairs[self.draws[draw_index].texture_pair];
+        (&pair.0, &pair.1)
+    }
 }
 
 struct GpuTexture {

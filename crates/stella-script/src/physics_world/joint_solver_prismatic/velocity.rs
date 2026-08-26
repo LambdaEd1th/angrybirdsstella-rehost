@@ -3,11 +3,14 @@
 use crate::*;
 
 impl RenderBridge {
-    pub(crate) fn solve_prismatic_joint_velocity(
+    pub(crate) fn solve_prismatic_joint_velocity<
+        F: JointBodyView + ?Sized,
+        S: JointBodyView + ?Sized,
+    >(
         &mut self,
-        joint: &PhysicsJoint,
-        first: &SceneObject,
-        second: &SceneObject,
+        joint: &mut PhysicsJoint,
+        first: &F,
+        second: &S,
         step: f64,
     ) {
         let geometry = prismatic_geometry(joint, first, second);
@@ -28,10 +31,10 @@ impl RenderBridge {
             + inertia_a * geometry.a1 * geometry.a1
             + inertia_b * geometry.a2 * geometry.a2;
 
-        let mut velocity_a = (first.velocity_x, first.velocity_y);
-        let mut velocity_b = (second.velocity_x, second.velocity_y);
-        let mut angular_a = first.angular_velocity;
-        let mut angular_b = second.angular_velocity;
+        let mut velocity_a = first.velocity();
+        let mut velocity_b = second.velocity();
+        let mut angular_a = first.angular_velocity();
+        let mut angular_b = second.angular_velocity();
         let mut motor_delta = 0.0;
         let mut new_motor_impulse = joint.motor_impulse;
         if joint.motor_enabled && joint.limit_state != JointLimitState::Equal && k33 > f64::EPSILON
@@ -101,12 +104,10 @@ impl RenderBridge {
                     .unwrap_or((0.0, 0.0));
         }
 
-        if let Some(live_joint) = self.joints.get_mut(&joint.name) {
-            live_joint.linear_impulse_x = old_perpendicular + perpendicular_delta;
-            live_joint.angular_impulse = old_angular + angular_delta;
-            live_joint.limit_impulse = new_limit_impulse;
-            live_joint.motor_impulse = new_motor_impulse;
-        }
+        joint.linear_impulse_x = old_perpendicular + perpendicular_delta;
+        joint.angular_impulse = old_angular + angular_delta;
+        joint.limit_impulse = new_limit_impulse;
+        joint.motor_impulse = new_motor_impulse;
         self.apply_prismatic_velocity_impulse(
             joint,
             first,

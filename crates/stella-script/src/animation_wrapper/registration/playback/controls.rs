@@ -1,43 +1,15 @@
 //! Playback state controls registered by `sub_10000EC80`.
 
-use std::path::Path;
+mod helpers;
+mod start;
+mod state;
+mod stop;
+
 use std::sync::{Arc, Mutex};
 
-use mlua::{Lua, MultiValue, Result as LuaResult, Table};
+use mlua::{Lua, Result as LuaResult, Table};
 
 use crate::*;
-
-fn apply_targets(
-    runtime: &mut AnimationRuntime,
-    resources: Option<&ResourceRuntime>,
-    data_root: Option<&Path>,
-    tag: &str,
-    mode: u8,
-) {
-    if let (Some(resources), Some(data_root)) = (resources, data_root) {
-        super::update::apply_native_targets_with_resources(
-            runtime, resources, data_root, tag, mode,
-        );
-    } else {
-        super::update::apply_native_targets(runtime, tag, mode);
-    }
-}
-
-fn advance_scene(
-    runtime: &mut AnimationRuntime,
-    resources: Option<&ResourceRuntime>,
-    data_root: Option<&Path>,
-    tag: &str,
-    delta_time: f64,
-) {
-    if let (Some(resources), Some(data_root)) = (resources, data_root) {
-        super::update::advance_native_scene_with_resources(
-            runtime, resources, data_root, tag, delta_time,
-        );
-    } else {
-        super::update::advance_native_scene(runtime, tag, delta_time);
-    }
-}
 
 #[cfg(test)]
 pub(in super::super) fn install_controls(
@@ -71,309 +43,38 @@ fn install_controls_inner(
     resource_runtime: Option<Arc<Mutex<ResourceRuntime>>>,
     data_root: Option<Arc<std::path::PathBuf>>,
 ) -> LuaResult<()> {
-    let runtime = Arc::clone(&animation_runtime);
-    animation_native.set(
-        "isPlaying",
-        lua.create_function(move |_, args: MultiValue| {
-            let tag = native_required_string(&args, 0, "isPlaying")?;
-            Ok(runtime
-                .lock()
-                .expect("animation runtime lock poisoned")
-                .playback
-                .get(&tag)
-                .and_then(AnimationPlayback::current_control)
-                .is_some_and(|control| control.playing && !control.paused))
-        })?,
+    // Preserve the exact publication order recovered from sub_10000EC80.
+    state::install_is_playing(lua, animation_native, Arc::clone(&animation_runtime))?;
+    start::install_start(
+        lua,
+        animation_native,
+        Arc::clone(&animation_runtime),
+        resource_runtime.clone(),
+        data_root.clone(),
     )?;
-    let runtime = Arc::clone(&animation_runtime);
-    let resources = resource_runtime.clone();
-    let sprite_data_root = data_root.clone();
-    animation_native.set(
-        "start",
-        lua.create_function(move |_, args: MultiValue| {
-            let tag = native_required_string(&args, 0, "start")?;
-            let action = native_required_string(&args, 1, "start")?;
-            let mode = native_required_string(&args, 2, "start")?;
-            let resources = resources
-                .as_ref()
-                .map(|resources| resources.lock().expect("resource runtime lock poisoned"));
-            let mut runtime = runtime.lock().expect("animation runtime lock poisoned");
-            let known_action = runtime
-                .definitions
-                .get(&tag)
-                .is_some_and(|definition| definition.actions.contains_key(&action));
-            if !known_action {
-                return Ok(());
-            }
-            let duration = runtime
-                .actions
-                .get(&tag)
-                .and_then(|actions| actions.get(&action))
-                .copied()
-                .map(|duration| f64::from(duration as f32))
-                .unwrap_or(0.0);
-            let playback = runtime
-                .playback
-                .entry(tag.clone())
-                .or_insert_with(|| AnimationPlayback::detached(action.clone(), duration));
-            playback.detached_current = None;
-            if let Some(index) = playback.active_control_index(&action) {
-                // sub_100410A18 resets an existing named control in place.
-                // Its speed and installed callback survive, and its vector
-                // position (therefore target precedence) does not change.
-                let control = &mut playback.controls[index];
-                control.elapsed = 0.0;
-                control.previous_elapsed = 0.0;
-                control.duration = duration;
-                control.paused = false;
-                control.playing = true;
-                control.finished_pending_removal = false;
-            } else {
-                playback.controls.push(AnimationControl {
-                    action: action.clone(),
-                    elapsed: 0.0,
-                    previous_elapsed: 0.0,
-                    duration,
-                    speed: 1.0,
-                    paused: false,
-                    playing: true,
-                    callback_installed: false,
-                    finished_pending_removal: false,
-                });
-            }
-
-            // sub_100012F18 starts the native control, performs the hidden
-            // float32 0.00001-second update and a mode-4 forced application,
-            // then overwrites the wrapper's shared action/mode fields and
-            // installs the completion callback.
-            advance_scene(
-                &mut runtime,
-                resources.as_deref(),
-                sprite_data_root.as_deref().map(std::path::PathBuf::as_path),
-                &tag,
-                f64::from(0.00001_f32),
-            );
-            apply_targets(
-                &mut runtime,
-                resources.as_deref(),
-                sprite_data_root.as_deref().map(std::path::PathBuf::as_path),
-                &tag,
-                4,
-            );
-            let playback = runtime
-                .playback
-                .get_mut(&tag)
-                .expect("newly started animation playback disappeared");
-            playback.current_action = action.clone();
-            playback.mode = mode.clone();
-            if let Some(index) = playback.active_control_index(&action) {
-                playback.controls[index].callback_installed = true;
-            }
-            if std::env::var_os("STELLA_TRACE_ANIMATION").is_some() {
-                eprintln!(
-                    "animation-native start tag={tag} action={action} mode={mode} duration={duration:.4} controls={}",
-                    playback.controls.len()
-                );
-            }
-            // sub_10001CAF0 returns zero Lua results.
-            Ok(())
-        })?,
+    stop::install_stop(
+        lua,
+        animation_native,
+        Arc::clone(&animation_runtime),
+        resource_runtime.clone(),
+        data_root.clone(),
     )?;
-    let runtime = Arc::clone(&animation_runtime);
-    let resources = resource_runtime.clone();
-    let sprite_data_root = data_root.clone();
-    animation_native.set(
-        "stop",
-        lua.create_function(move |_, args: MultiValue| {
-            let tag = native_required_string(&args, 0, "stop")?;
-            let action = native_required_string(&args, 1, "stop")?;
-            let resources = resources
-                .as_ref()
-                .map(|resources| resources.lock().expect("resource runtime lock poisoned"));
-            let mut runtime = runtime.lock().expect("animation runtime lock poisoned");
-            if action.is_empty() {
-                let control_count = runtime
-                    .playback
-                    .get(&tag)
-                    .map_or(0, |playback| playback.controls.len());
-                for index in 0..control_count {
-                    if let Some(control) = runtime
-                        .playback
-                        .get_mut(&tag)
-                        .and_then(|playback| playback.controls.get_mut(index))
-                    {
-                        control.elapsed = 0.0;
-                        control.previous_elapsed = 0.0;
-                        control.playing = false;
-                        control.paused = false;
-                        control.finished_pending_removal = false;
-                    }
-                    apply_targets(
-                        &mut runtime,
-                        resources.as_deref(),
-                        sprite_data_root.as_deref().map(std::path::PathBuf::as_path),
-                        &tag,
-                        2,
-                    );
-                }
-            } else {
-                let (found, removed_current) =
-                    runtime
-                        .playback
-                        .get_mut(&tag)
-                        .map_or((false, None), |playback| {
-                            let Some(index) = playback.active_control_index(&action) else {
-                                return (false, None);
-                            };
-                            let mut control = playback.controls.swap_remove(index);
-                            control.elapsed = 0.0;
-                            control.previous_elapsed = 0.0;
-                            control.playing = false;
-                            control.paused = false;
-                            control.finished_pending_removal = false;
-                            let current =
-                                (control.action == playback.current_action).then_some(control);
-                            (true, current)
-                        });
-                if let Some(control) = removed_current
-                    && let Some(playback) = runtime.playback.get_mut(&tag)
-                {
-                    playback.detached_current = Some(control);
-                }
-                if found {
-                    apply_targets(
-                        &mut runtime,
-                        resources.as_deref(),
-                        sprite_data_root.as_deref().map(std::path::PathBuf::as_path),
-                        &tag,
-                        2,
-                    );
-                }
-            }
-            Ok(())
-        })?,
+    stop::install_stop_all(
+        lua,
+        animation_native,
+        Arc::clone(&animation_runtime),
+        resource_runtime.clone(),
+        data_root.clone(),
     )?;
-    let runtime = Arc::clone(&animation_runtime);
-    let resources = resource_runtime.clone();
-    let sprite_data_root = data_root.clone();
-    animation_native.set(
-        "stopAll",
-        lua.create_function(move |_, _: MultiValue| {
-            let resources = resources
-                .as_ref()
-                .map(|resources| resources.lock().expect("resource runtime lock poisoned"));
-            let mut runtime = runtime.lock().expect("animation runtime lock poisoned");
-            let tags = runtime.playback.keys().cloned().collect::<Vec<_>>();
-            for tag in tags {
-                let control_count = runtime.playback[&tag].controls.len();
-                for index in 0..control_count {
-                    let control = &mut runtime
-                        .playback
-                        .get_mut(&tag)
-                        .expect("animation playback disappeared")
-                        .controls[index];
-                    control.elapsed = 0.0;
-                    control.previous_elapsed = 0.0;
-                    control.playing = false;
-                    control.paused = false;
-                    control.finished_pending_removal = false;
-                    apply_targets(
-                        &mut runtime,
-                        resources.as_deref(),
-                        sprite_data_root.as_deref().map(std::path::PathBuf::as_path),
-                        &tag,
-                        2,
-                    );
-                }
-            }
-            Ok(())
-        })?,
-    )?;
-    for (method, paused) in [("pause", true), ("resume", false)] {
-        let runtime = Arc::clone(&animation_runtime);
-        animation_native.set(
-            method,
-            lua.create_function(move |_, args: MultiValue| {
-                let tag = native_required_string(&args, 0, method)?;
-                if let Some(playback) = runtime
-                    .lock()
-                    .expect("animation runtime lock poisoned")
-                    .playback
-                    .get_mut(&tag)
-                    && let Some(control) = playback.current_control_mut()
-                {
-                    control.paused = paused;
-                    control.playing = !paused;
-                    if !paused {
-                        // sub_100013B9C restores state 3 even when the tag's
-                        // retained control was previously stopped/detached.
-                        control.finished_pending_removal = false;
-                    }
-                }
-                Ok(())
-            })?,
-        )?;
-    }
-    let runtime = Arc::clone(&animation_runtime);
-    animation_native.set(
-        "setSpeed",
-        lua.create_function(move |_, args: MultiValue| {
-            // setSpeed and seek share generated adapter sub_10001C8C0:
-            // slot 1 is a strict string and slot 2 a strict NUMBER.
-            let tag = native_required_string(&args, 0, "setSpeed")?;
-            let speed = f64::from(native_required_number(&args, 1, "setSpeed")? as f32);
-            if let Some(playback) = runtime
-                .lock()
-                .expect("animation runtime lock poisoned")
-                .playback
-                .get_mut(&tag)
-                && let Some(control) = playback.current_control_mut()
-            {
-                // sub_100013D08 stores the float verbatim, including negative
-                // values used for reverse playback.
-                control.speed = speed;
-            }
-            Ok(())
-        })?,
-    )?;
-    let runtime = Arc::clone(&animation_runtime);
-    let resources = resource_runtime;
-    let sprite_data_root = data_root;
-    animation_native.set(
-        "seek",
-        lua.create_function(move |_, args: MultiValue| {
-            let tag = native_required_string(&args, 0, "seek")?;
-            let time = f64::from(native_required_number(&args, 1, "seek")? as f32);
-            let resources = resources
-                .as_ref()
-                .map(|resources| resources.lock().expect("resource runtime lock poisoned"));
-            let mut runtime = runtime.lock().expect("animation runtime lock poisoned");
-            let found = if let Some(control) = runtime
-                .playback
-                .get_mut(&tag)
-                .and_then(AnimationPlayback::current_control_mut)
-            {
-                // sub_10001396C resolves the scene and sub_10040E798 stores
-                // the adapter's float32 seek time verbatim before a mode-2
-                // forced application of every discrete state.
-                control.elapsed = time;
-                true
-            } else {
-                false
-            };
-            if found {
-                apply_targets(
-                    &mut runtime,
-                    resources.as_deref(),
-                    sprite_data_root.as_deref().map(std::path::PathBuf::as_path),
-                    &tag,
-                    2,
-                );
-            }
-            Ok(())
-        })?,
-    )?;
-    Ok(())
+    state::install_pause_resume(lua, animation_native, Arc::clone(&animation_runtime))?;
+    state::install_set_speed(lua, animation_native, Arc::clone(&animation_runtime))?;
+    state::install_seek(
+        lua,
+        animation_native,
+        animation_runtime,
+        resource_runtime,
+        data_root,
+    )
 }
 
 #[cfg(test)]
@@ -512,6 +213,46 @@ mod tests {
         let runtime = runtime.lock().unwrap();
         let local = animation_entity_local_transform(&runtime, "scene", "root").unwrap();
         assert_eq!((local.x, local.y, local.angle), (10.0, 20.0, 0.5));
+    }
+
+    #[test]
+    fn named_stop_uses_the_native_swap_with_last_removal_order() {
+        let lua = Lua::new();
+        let animation_native = lua.create_table().unwrap();
+        let actions = ["base", "overlay", "newest"]
+            .into_iter()
+            .map(|name| (name.to_owned(), AnimationAction::default()))
+            .collect::<BTreeMap<_, _>>();
+        let mut runtime = AnimationRuntime::default();
+        runtime.actions.insert(
+            "scene".to_owned(),
+            actions.keys().map(|name| (name.clone(), 1.0)).collect(),
+        );
+        runtime.definitions.insert(
+            "scene".to_owned(),
+            AnimationDefinition {
+                actions,
+                ..AnimationDefinition::default()
+            },
+        );
+        let runtime = Arc::new(Mutex::new(runtime));
+        install_controls(&lua, &animation_native, Arc::clone(&runtime)).unwrap();
+        let start = animation_native.get::<mlua::Function>("start").unwrap();
+        let stop = animation_native.get::<mlua::Function>("stop").unwrap();
+
+        for action in ["base", "overlay", "newest"] {
+            start.call::<()>(("scene", action, "once")).unwrap();
+        }
+        stop.call::<()>(("scene", "base")).unwrap();
+
+        assert_eq!(
+            runtime.lock().unwrap().playback["scene"]
+                .controls
+                .iter()
+                .map(|control| control.action.as_str())
+                .collect::<Vec<_>>(),
+            ["newest", "overlay"]
+        );
     }
 
     #[test]

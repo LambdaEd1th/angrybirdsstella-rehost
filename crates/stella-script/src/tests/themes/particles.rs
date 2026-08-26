@@ -90,8 +90,8 @@ fn theme_particle_spawner_updates_parallax_fields_and_draws_before_layer() {
         (particle.state.translate_x as f32 + particle.x as f32) * particle.state.scale_x as f32;
     let projected_y =
         (particle.state.translate_y as f32 + particle.y as f32) * particle.state.scale_y as f32;
-    assert_eq!(projected_x, 127.618_75_f32);
-    assert_eq!(projected_y, 101.243_76_f32);
+    assert_eq!(projected_x, 128.381_26_f32);
+    assert_eq!(projected_y, 102.006_25_f32);
     assert_eq!(particle.state.scale_x, 23.75);
     assert_eq!(particle.state.scale_y, 23.75);
 }

@@ -60,16 +60,18 @@ impl StellaApp {
                 .audio_clock
                 .synchronize(&audio_state, DISPLAY_LINK_STEP);
             self.runtime.finish_audio_playbacks(&finished);
-            let captures = self.runtime.take_capture_commands();
+            let has_captures = self.runtime.has_capture_commands();
             let screenshot_shares = self.runtime.take_screenshot_share_requests();
-            if !captures.is_empty() || !screenshot_shares.is_empty() {
+            if has_captures || !screenshot_shares.is_empty() {
                 self.synchronize_sprite_catalog()?;
                 self.assets
                     .apply_composite_updates(self.runtime.take_composite_updates());
-                self.render_commands = self.runtime.take_render_commands();
-                self.text_commands = self.runtime.take_text_commands();
-                self.rect_commands = self.runtime.take_rect_commands();
-                self.capture_commands = captures;
+                self.runtime.swap_frame_commands(
+                    &mut self.render_commands,
+                    &mut self.text_commands,
+                    &mut self.rect_commands,
+                    &mut self.capture_commands,
+                );
                 self.background_color = self.runtime.background_color();
                 let prepared = self.assets.prepare_gpu_frame_at_resolution(
                     self.resolution,
@@ -95,10 +97,12 @@ impl StellaApp {
         self.assets
             .apply_composite_updates(self.runtime.take_composite_updates());
         if !consumed_final_frame {
-            self.render_commands = self.runtime.take_render_commands();
-            self.text_commands = self.runtime.take_text_commands();
-            self.rect_commands = self.runtime.take_rect_commands();
-            self.capture_commands = self.runtime.take_capture_commands();
+            self.runtime.swap_frame_commands(
+                &mut self.render_commands,
+                &mut self.text_commands,
+                &mut self.rect_commands,
+                &mut self.capture_commands,
+            );
             self.background_color = self.runtime.background_color();
         }
         let frame = self.assets.prepare_gpu_frame_at_resolution(

@@ -74,6 +74,7 @@ impl AssetCatalog {
             options.sprite_pivot,
             target,
             fill.map(|(texture, scale)| (&texture.image, scale)),
+            options.masked_texture_matrix,
             options.shader,
             options.clip_holes,
         );

@@ -14,6 +14,16 @@ pub(super) fn insert_joint(
     let filter_second = geometry.second.clone();
     let is_physical = geometry.is_physical;
     let collide_connected = parameters.collide_connected;
+    if let Some(previous) = bridge.joints.get(&geometry.name) {
+        bridge
+            .native_joint_world_order
+            .remove(&previous.physics_creation_order);
+    }
+    if is_physical {
+        bridge
+            .native_joint_world_order
+            .insert(physics_creation_order, geometry.name.clone());
+    }
     bridge.joints.insert(
         geometry.name.clone(),
         PhysicsJoint {
@@ -22,6 +32,7 @@ pub(super) fn insert_joint(
             first: geometry.first,
             second: geometry.second,
             joint_type: geometry.joint_type,
+            coord_type: geometry.coord_type,
             is_physical,
             first_anchor: geometry.first_anchor,
             second_anchor: geometry.second_anchor,

@@ -33,8 +33,8 @@ pub(crate) use geometry::load_sprite_geometry;
 pub(super) use geometry::{
     NativeSpriteMetrics, NativeSpritePlacement, ParsedSpriteDraw, SpriteGeometry,
     SpriteHorizontalAnchor, SpriteVerticalAnchor, composite_part_lua_table,
-    native_composite_metrics, parse_draw_sprite_args, sprite_draw_anchor_offset_from_geometry,
-    update_composite_part_from_lua,
+    native_composite_metrics, native_composite_metrics_from_parts, parse_draw_sprite_args,
+    sprite_draw_anchor_offset_from_geometry, update_composite_part_from_lua,
 };
 pub(super) use localization::{
     LocaleRuntime, load_localized_strings, localization_table_has_locale,

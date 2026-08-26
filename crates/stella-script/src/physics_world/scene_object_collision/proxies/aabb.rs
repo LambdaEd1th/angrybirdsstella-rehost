@@ -26,24 +26,67 @@ impl SceneObject {
     }
 
     pub(crate) fn collision_fixture_aabbs(&self) -> Vec<(f32, f32, f32, f32)> {
-        if let Some((center, radius)) = self.collision_circle() {
-            return vec![native_circle_aabb(center, radius)];
-        }
-        let polygon_aabbs = self
-            .collision_polygons()
-            .into_iter()
-            .filter_map(|vertices| native_fixture_aabb(&vertices, BOX2D_POLYGON_RADIUS as f32))
-            .collect::<Vec<_>>();
-        if !polygon_aabbs.is_empty() {
-            return polygon_aabbs;
-        }
-        self.collision_segments()
-            .into_iter()
-            .filter_map(|segment| {
-                native_fixture_aabb(&[segment.0, segment.1], BOX2D_POLYGON_RADIUS as f32)
-            })
+        (0..self.collision_shape.fixture_count())
+            .filter_map(|fixture| self.collision_fixture_aabb(fixture))
             .collect()
     }
+
+    /// Compute one fixture bound directly from its retained local vertices.
+    /// b2Fixture::Synchronize walks the intrusive fixture/proxy array and
+    /// calls ComputeAABB per child; it never materializes cloned vectors for
+    /// every polygon in the body. Keeping that unit here also lets the solver
+    /// update a proxy without allocating an intermediate body-wide AABB list.
+    pub(crate) fn collision_fixture_aabb(&self, fixture: usize) -> Option<NativeAabb> {
+        match &self.collision_shape {
+            CollisionShape::None => None,
+            CollisionShape::Circle { .. } if fixture == 0 => self
+                .collision_circle()
+                .map(|(center, radius)| native_circle_aabb(center, radius)),
+            CollisionShape::Circle { .. } => None,
+            CollisionShape::Box { width, height } if fixture == 0 => {
+                let half_width = *width * 0.5;
+                let half_height = *height * 0.5;
+                native_transformed_fixture_aabb(
+                    self,
+                    &[
+                        (-half_width, -half_height),
+                        (half_width, -half_height),
+                        (half_width, half_height),
+                        (-half_width, half_height),
+                    ],
+                )
+            }
+            CollisionShape::Box { .. } => None,
+            CollisionShape::Polygon { vertices, fixtures } => {
+                let vertices = if fixtures.is_empty() {
+                    (fixture == 0).then_some(vertices)
+                } else {
+                    fixtures.get(fixture)
+                }?;
+                (vertices.len() >= 3).then(|| native_transformed_fixture_aabb(self, vertices))?
+            }
+            CollisionShape::Line { vertices } => {
+                let segment = vertices.get(fixture..fixture.checked_add(2)?)?;
+                let start = self.transform_collision_point(segment[0]);
+                let end = self.transform_collision_point(segment[1]);
+                ((end.0 - start.0).hypot(end.1 - start.1) > f64::EPSILON)
+                    .then(|| native_fixture_aabb(&[start, end], BOX2D_POLYGON_RADIUS as f32))?
+            }
+        }
+    }
+}
+
+fn native_transformed_fixture_aabb(
+    object: &SceneObject,
+    vertices: &[(f64, f64)],
+) -> Option<NativeAabb> {
+    native_fixture_aabb_iter(
+        vertices
+            .iter()
+            .copied()
+            .map(|point| object.transform_collision_point(point)),
+        BOX2D_POLYGON_RADIUS as f32,
+    )
 }
 
 fn native_circle_aabb(center: (f64, f64), radius: f64) -> (f32, f32, f32, f32) {
@@ -58,14 +101,21 @@ fn native_circle_aabb(center: (f64, f64), radius: f64) -> (f32, f32, f32, f32) {
 }
 
 fn native_fixture_aabb(vertices: &[(f64, f64)], radius: f32) -> Option<(f32, f32, f32, f32)> {
-    let &(first_x, first_y) = vertices.first()?;
+    native_fixture_aabb_iter(vertices.iter().copied(), radius)
+}
+
+fn native_fixture_aabb_iter(
+    mut vertices: impl Iterator<Item = (f64, f64)>,
+    radius: f32,
+) -> Option<NativeAabb> {
+    let (first_x, first_y) = vertices.next()?;
     let (mut left, mut down, mut right, mut up) = (
         first_x as f32,
         first_y as f32,
         first_x as f32,
         first_y as f32,
     );
-    for &(x, y) in &vertices[1..] {
+    for (x, y) in vertices {
         let (x, y) = (x as f32, y as f32);
         left = left.min(x);
         down = down.min(y);

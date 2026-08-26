@@ -59,10 +59,10 @@ pub(crate) fn install(
                 .scene
                 .get_mut(&name)
                 .ok_or_else(|| runtime_error(format!("Missing object: {name}")))?;
-            object.sprite = sprite;
+            object.sprite = sprite.into();
             object.sprite_bound = true;
-            object.sprite_region = sprite_region;
-            object.composite_sprite = composite_sprite;
+            object.sprite_region = sprite_region.map(Arc::new);
+            object.composite_sprite = composite_sprite.map(Arc::new);
             Ok(())
         })?,
     )?;

@@ -3,22 +3,22 @@
 use crate::*;
 
 impl RenderBridge {
-    pub(crate) fn initialize_prismatic_velocity_constraints(
+    pub(crate) fn initialize_prismatic_velocity_constraints<
+        F: JointBodyView + ?Sized,
+        S: JointBodyView + ?Sized,
+    >(
         &mut self,
-        joint: &PhysicsJoint,
-        first: &SceneObject,
-        second: &SceneObject,
+        joint: &mut PhysicsJoint,
+        first: &F,
+        second: &S,
         step: f64,
     ) {
-        self.scale_joint_impulses(&joint.name, step);
-        let Some(joint) = self.joints.get(&joint.name).cloned() else {
-            return;
-        };
+        Self::scale_joint_impulses(joint, step);
         if !joint.is_physical {
             return;
         }
         const TWO_LINEAR_SLOPS: f64 = 0.002;
-        let geometry = prismatic_geometry(&joint, first, second);
+        let geometry = prismatic_geometry(joint, first, second);
         let translation = geometry.delta.0 * geometry.axis.0 + geometry.delta.1 * geometry.axis.1;
         let new_state = if !joint.limits_enabled {
             JointLimitState::Inactive
@@ -31,25 +31,21 @@ impl RenderBridge {
         } else {
             JointLimitState::Inactive
         };
-        if let Some(live_joint) = self.joints.get_mut(&joint.name) {
-            if new_state != live_joint.limit_state {
-                live_joint.limit_impulse = 0.0;
-            }
-            live_joint.limit_state = new_state;
-            if !live_joint.motor_enabled || new_state == JointLimitState::Equal {
-                live_joint.motor_impulse = 0.0;
-            }
+        if new_state != joint.limit_state {
+            joint.limit_impulse = 0.0;
         }
-        if let Some(live_joint) = self.joints.get(&joint.name).cloned() {
-            self.warm_start_prismatic_joint(&live_joint, first, second);
+        joint.limit_state = new_state;
+        if !joint.motor_enabled || new_state == JointLimitState::Equal {
+            joint.motor_impulse = 0.0;
         }
+        self.warm_start_prismatic_joint(joint, first, second);
     }
 
-    fn warm_start_prismatic_joint(
+    fn warm_start_prismatic_joint<F: JointBodyView + ?Sized, S: JointBodyView + ?Sized>(
         &mut self,
         joint: &PhysicsJoint,
-        first: &SceneObject,
-        second: &SceneObject,
+        first: &F,
+        second: &S,
     ) {
         let geometry = prismatic_geometry(joint, first, second);
         self.apply_prismatic_velocity_impulse(

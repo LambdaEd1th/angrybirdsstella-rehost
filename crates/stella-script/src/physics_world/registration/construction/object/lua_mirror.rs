@@ -1,12 +1,12 @@
 //! Immediate `objects.world` mirror written by every native constructor.
 
-use mlua::{Lua, Result as LuaResult};
+use mlua::{Lua, Result as LuaResult, Table};
 
 use crate::object_world;
 
 use super::super::{ConstructorKind, PreparedConstruction};
 
-pub(super) fn replace(lua: &Lua, prepared: &PreparedConstruction) -> LuaResult<()> {
+pub(super) fn replace(lua: &Lua, prepared: &PreparedConstruction) -> LuaResult<Table> {
     let request = &prepared.request;
     let world = object_world(lua)?;
     // Every constructor calls sub_100529C84 for a fresh table before
@@ -52,5 +52,6 @@ pub(super) fn replace(lua: &Lua, prepared: &PreparedConstruction) -> LuaResult<(
     entry.set("animThresholdTimer", 0.0_f64)?;
     entry.set("collisionEnabled", request.collision_enabled)?;
     entry.set("alpha", 1.0_f64)?;
-    world.raw_set(request.name.as_str(), entry)
+    world.raw_set(request.name.as_str(), entry.clone())?;
+    Ok(entry)
 }

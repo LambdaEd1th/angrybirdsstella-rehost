@@ -1,5 +1,6 @@
 //! Native contact listener records and endpoint wake transition.
 
+use super::NativeContactEventKinematics;
 use crate::*;
 
 impl RenderBridge {
@@ -19,6 +20,22 @@ impl RenderBridge {
         sensor: bool,
         began: bool,
     ) -> ContactEvent {
+        Self::native_contact_event_from_kinematics(
+            contact_key,
+            manifold,
+            sensor,
+            began,
+            NativeContactEventKinematics::capture(first, second),
+        )
+    }
+
+    pub(super) fn native_contact_event_from_kinematics(
+        contact_key: &ContactKey,
+        manifold: ContactManifold,
+        sensor: bool,
+        began: bool,
+        kinematics: NativeContactEventKinematics,
+    ) -> ContactEvent {
         ContactEvent {
             first: contact_key.0.clone(),
             second: contact_key.1.clone(),
@@ -32,20 +49,12 @@ impl RenderBridge {
             normal_y: manifold.normal_y,
             point_x: manifold.point_x,
             point_y: manifold.point_y,
-            first_mass: if first.dynamic_body {
-                f64::from(first.body_mass)
-            } else {
-                0.0
-            },
-            first_velocity_x: first.velocity_x,
-            first_velocity_y: first.velocity_y,
-            second_mass: if second.dynamic_body {
-                f64::from(second.body_mass)
-            } else {
-                0.0
-            },
-            second_velocity_x: second.velocity_x,
-            second_velocity_y: second.velocity_y,
+            first_mass: kinematics.first_mass,
+            first_velocity_x: kinematics.first_velocity_x,
+            first_velocity_y: kinematics.first_velocity_y,
+            second_mass: kinematics.second_mass,
+            second_velocity_x: kinematics.second_velocity_x,
+            second_velocity_y: kinematics.second_velocity_y,
         }
     }
 

@@ -223,6 +223,70 @@ fn mixed_draw_command_classes_share_one_native_submission_sequence() {
 }
 
 #[test]
+fn host_frame_exchange_recycles_all_deferred_queue_allocations() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    register_test_sprite_sheet(&runtime, &["RECYCLED_SPRITE"]);
+    runtime
+        .execute_source(
+            r#"
+                draw = function()
+                    res.drawSprite("RECYCLED_SPRITE", 1, 2)
+                    drawRect(255, 255, 255, 1, 0, 0, 3, 4, true)
+                    res.captureSprite("RECYCLED_CAPTURE")
+                end
+            "#,
+        )
+        .unwrap();
+    runtime.draw().unwrap();
+
+    let mut sprites = Vec::with_capacity(64);
+    let mut text = Vec::with_capacity(32);
+    let mut rectangles = Vec::with_capacity(16);
+    let mut captures = Vec::with_capacity(8);
+    runtime.swap_frame_commands(&mut sprites, &mut text, &mut rectangles, &mut captures);
+    assert_eq!(sprites.len(), 1);
+    assert_eq!(rectangles.len(), 1);
+    assert_eq!(captures.len(), 1);
+    assert_eq!(
+        (sprites[0].order, rectangles[0].order, captures[0].order),
+        (0, 1, 2)
+    );
+    {
+        let bridge = runtime.render.lock().unwrap();
+        assert_eq!(bridge.commands.capacity(), 64);
+        assert_eq!(bridge.text_commands.capacity(), 32);
+        assert_eq!(bridge.rect_commands.capacity(), 16);
+        assert_eq!(bridge.capture_commands.capacity(), 8);
+        assert!(bridge.commands.is_empty());
+        assert!(bridge.text_commands.is_empty());
+        assert!(bridge.rect_commands.is_empty());
+        assert!(bridge.capture_commands.is_empty());
+    }
+
+    // The next frame fills the returned host buffers without growing them.
+    runtime.draw().unwrap();
+    {
+        let bridge = runtime.render.lock().unwrap();
+        assert_eq!(bridge.commands.capacity(), 64);
+        assert_eq!(bridge.rect_commands.capacity(), 16);
+        assert_eq!(bridge.capture_commands.capacity(), 8);
+    }
+    runtime.swap_frame_commands(&mut sprites, &mut text, &mut rectangles, &mut captures);
+    assert_eq!(
+        (sprites[0].order, rectangles[0].order, captures[0].order),
+        (0, 1, 2)
+    );
+
+    // The old completed frame is now back in the bridge. Native draw startup
+    // drops its elements while preserving that allocation for reuse.
+    runtime.draw().unwrap();
+    let bridge = runtime.render.lock().unwrap();
+    assert_eq!(bridge.commands.len(), 1);
+    assert_eq!(bridge.rect_commands.len(), 1);
+    assert_eq!(bridge.capture_commands.len(), 1);
+}
+
+#[test]
 fn clear_screen_draws_at_the_call_point_and_preserves_prior_capture() {
     let runtime = StellaLua::new("/tmp").unwrap();
     runtime

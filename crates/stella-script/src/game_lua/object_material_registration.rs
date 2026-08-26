@@ -54,8 +54,8 @@ pub(crate) fn install(
                 .ok_or_else(|| runtime_error(format!("Missing object: {name}")))?;
             // sub_10004CC74 writes the resource name at +0x70, resolves the
             // texture pointer into +0x80, and performs no Lua reflection.
-            object.texture = Some(texture);
-            object.texture_binding = Some(texture_binding);
+            object.texture = Some(texture.into());
+            object.texture_binding = Some(Arc::new(texture_binding));
             Ok(())
         })?,
     )?;

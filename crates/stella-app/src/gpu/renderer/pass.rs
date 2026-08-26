@@ -44,9 +44,9 @@ impl GpuRenderer {
                 .write_buffer(&self.vertex_buffer, 0, vertex_bytes);
         }
         let bind_groups = frame
-            .draws
+            .texture_pairs
             .iter()
-            .map(|draw| self.texture_bind_group(&draw.base_texture, &draw.fill_texture))
+            .map(|(base, fill)| self.texture_bind_group(base, fill))
             .collect::<Result<Vec<_>>>()?;
         let mut encoder = self
             .device
@@ -93,12 +93,12 @@ impl GpuRenderer {
                     pass.set_bind_group(0, &self.draw_storage_bind_group, &[]);
                     let mut current_program = None;
                     let mut current_scissor = None;
+                    let mut current_texture_pair = None;
                     for operation in &frame.operations[first_draw_operation..operation_index] {
                         let PreparedOperation::Draw(draw_index) = operation else {
                             continue;
                         };
                         let draw = &frame.draws[*draw_index];
-                        let bind_group = &bind_groups[*draw_index];
                         if current_program != Some(draw.program) {
                             let pipeline = match draw.program {
                                 NativeProgram::Plain => &self.plain_program,
@@ -125,7 +125,10 @@ impl GpuRenderer {
                             }
                             current_scissor = Some(draw.scissor);
                         }
-                        pass.set_bind_group(1, bind_group, &[]);
+                        if current_texture_pair != Some(draw.texture_pair) {
+                            pass.set_bind_group(1, &bind_groups[draw.texture_pair], &[]);
+                            current_texture_pair = Some(draw.texture_pair);
+                        }
                         pass.draw(draw.vertices.clone(), 0..1);
                     }
                 }

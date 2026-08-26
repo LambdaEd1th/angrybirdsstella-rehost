@@ -1,13 +1,20 @@
 //! Platform-owned service tables registered by the GameLua constructor.
 
+mod ads;
 mod align;
 mod analytics;
+mod app_store_launcher;
 mod assets;
+mod channel;
 mod cloud_service;
 mod force_update;
 mod game_server;
 mod gamer_services;
+mod qr_scanner;
+mod skynest_account;
+mod skynest_storage;
 mod social;
+mod zappar;
 
 use crate::*;
 
@@ -21,6 +28,8 @@ pub(crate) fn install(
     animation_runtime: Arc<Mutex<AnimationRuntime>>,
     resource_runtime: Arc<Mutex<ResourceRuntime>>,
 ) -> LuaResult<()> {
+    ads::install(lua, globals)?;
+    app_store_launcher::install(lua, globals, Arc::clone(&data_root), Arc::clone(&render))?;
     force_update::install(lua, globals, Arc::clone(&render))?;
     animation_wrapper::install(
         lua,
@@ -35,8 +44,19 @@ pub(crate) fn install(
     )?;
     analytics::install(lua, globals)?;
     gamer_services::install(lua, globals)?;
+    qr_scanner::install(lua, globals)?;
+    zappar::install(lua, globals)?;
+    let skynest_state = Arc::new(Mutex::new(skynest_account::OfflineState::default()));
+    skynest_account::install(lua, globals, Arc::clone(&skynest_state))?;
+    skynest_storage::install(lua, globals, skynest_state)?;
     social::install(lua, globals)?;
-    assets::install(lua, globals, Arc::clone(&data_root), resource_runtime)?;
+    assets::install(
+        lua,
+        globals,
+        Arc::clone(&data_root),
+        Arc::clone(&resource_runtime),
+    )?;
+    channel::install(lua, globals, resource_runtime)?;
     game_lua::install_simple_random(lua, globals)?;
     align::install(lua, globals)?;
     Ok(())

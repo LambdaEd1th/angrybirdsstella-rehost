@@ -5,7 +5,7 @@ use std::{fs, path::Path};
 use super::paths::resolve_text_table;
 use crate::{ScriptError, app_data_path, runtime_error};
 
-pub(super) fn load_text_bytes(
+pub(crate) fn load_text_bytes(
     data_root: &Path,
     requested: &str,
     encrypted: bool,

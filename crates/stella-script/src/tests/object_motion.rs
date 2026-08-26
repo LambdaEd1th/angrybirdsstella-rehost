@@ -360,7 +360,7 @@ fn not_collided_only_suppresses_two_controllable_object_bounce() {
 }
 
 #[test]
-fn direct_world_removal_expires_native_scene_mirror() {
+fn direct_world_removal_does_not_destroy_native_scene_owner() {
     let runtime = unlocked_test_runtime();
     runtime
         .execute_source(
@@ -371,8 +371,9 @@ fn direct_world_removal_expires_native_scene_mirror() {
                 "#,
         )
         .unwrap();
-    runtime.sync_scene_lifetime().unwrap();
     let bridge = runtime.render.lock().unwrap();
-    assert!(!bridge.scene.contains_key("old"));
+    // Purple's draw and physics paths retain RenderObjectData independently
+    // of its Lua mirror. Only removeObject or level teardown destroys it.
+    assert!(bridge.scene.contains_key("old"));
     assert!(bridge.scene.contains_key("live"));
 }

@@ -294,7 +294,7 @@ fn native_theme_culling_uses_center_bounds_instead_of_atlas_pivot_bounds() {
                         asymmetric = {
                             bgLayers = {{
                                 sprite = "ASYMMETRIC",
-                                offsetX = 1100,
+                                offsetX = 1024,
                                 offsetY = 0,
                                 scale = 1,
                                 zDistance = 0
@@ -336,7 +336,92 @@ fn native_theme_culling_uses_center_bounds_instead_of_atlas_pivot_bounds() {
         .iter()
         .find(|command| command.sprite == "ASYMMETRIC")
         .expect("native center bounds still intersect the right edge");
-    assert_eq!((command.x, command.y), (1050.0, 384.0));
+    assert_eq!((command.x, command.y), (1074.0, 384.0));
+    assert_eq!(
+        (command.state.translate_x, command.state.translate_y),
+        (-50.0, -50.0)
+    );
+    assert_eq!(command.state.sprite_pivot, Some([0.0, 0.0]));
+}
+
+#[test]
+fn native_theme_centers_an_asymmetric_composite_around_the_culling_origin() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    register_test_sprite_sheet_with_sizes(&runtime, &[("COMPOSITE_PART", 100, 40)]);
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let file_name = format!("stella-theme-composite-{}-{unique}.dat", std::process::id());
+    let path = runtime.data_root().join(&file_name);
+    fs::write(
+        &path,
+        test_composite_set_with_part("ASYMMETRIC_COMPOSITE", "COMPOSITE_PART"),
+    )
+    .unwrap();
+    runtime
+        .execute_source(&format!(
+            r#"
+                res.createCompoSpriteSet("{file_name}")
+                res.setCompoSpriteEntry("ASYMMETRIC_COMPOSITE", 0, {{
+                    x = 30,
+                    y = -10
+                }})
+                blockTable = {{
+                    themes = {{
+                        asymmetric_composite = {{
+                            bgLayers = {{{{
+                                sprite = "ASYMMETRIC_COMPOSITE",
+                                offsetX = 0,
+                                offsetY = 0,
+                                scale = 1,
+                                zDistance = 0
+                            }}}}
+                        }}
+                    }}
+                }}
+                setWorldScale(1)
+                setMaxWorldScale(1)
+                setTheme("asymmetric_composite")
+                "#
+        ))
+        .unwrap();
+    fs::remove_file(path).unwrap();
+    {
+        let mut bridge = runtime.render.lock().unwrap();
+        let geometry = bridge.theme_background_layers[0].geometry;
+        assert_eq!(
+            (
+                geometry.min_x,
+                geometry.min_y,
+                geometry.max_x,
+                geometry.max_y,
+            ),
+            (-20.0, -30.0, 80.0, 10.0)
+        );
+        bridge.resolution_camera_scale = 1.0;
+        bridge.theme_camera = ThemeCameraReference {
+            valid: true,
+            x: 0.0,
+            y: 384.0,
+            scale: 1.0,
+            ..ThemeCameraReference::default()
+        };
+    }
+
+    runtime.execute_source("drawBackgroundNative(-1)").unwrap();
+    let bridge = runtime.render.lock().unwrap();
+    let command = bridge
+        .commands
+        .iter()
+        .find(|command| command.sprite == "ASYMMETRIC_COMPOSITE")
+        .expect("the asymmetric composite intersects the viewport");
+    assert_eq!((command.x, command.y), (30.0, 374.0));
+    assert_eq!(
+        (command.state.translate_x, command.state.translate_y),
+        (-30.0, 10.0)
+    );
+    assert_eq!(command.state.sprite_pivot, None);
 }
 
 #[test]
@@ -397,7 +482,7 @@ fn native_theme_repeats_accumulate_float32_world_coordinates() {
 
     // Literal register sequence: the centered authored offset is divided by
     // the reference scale, then every FADD updates that world-space S value.
-    let mut expected_world = -1000.5_f32 / 3.0_f32;
+    let mut expected_world = -999.5_f32 / 3.0_f32;
     let step_world = 7.0_f32 / 3.0_f32;
     for _ in 0..143 {
         expected_world += step_world;

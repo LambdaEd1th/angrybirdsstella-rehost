@@ -3,17 +3,22 @@
 mod lua_mirror;
 mod scene;
 
-use std::sync::{Arc, Mutex};
+use std::{
+    cell::RefCell,
+    rc::Rc,
+    sync::{Arc, Mutex},
+};
 
 use mlua::{Lua, Result as LuaResult};
 
-use crate::{RenderBridge, object_world};
+use crate::{DrawCallbackRecord, DrawCallbacks, RenderBridge, object_world};
 
 use super::PreparedConstruction;
 
 pub(super) fn commit(
     lua: &Lua,
     render: &Arc<Mutex<RenderBridge>>,
+    draw_callbacks: &Rc<RefCell<DrawCallbacks>>,
     prepared: PreparedConstruction,
 ) -> LuaResult<()> {
     let world_identity = object_world(lua)?.to_pointer() as usize;
@@ -21,7 +26,22 @@ pub(super) fn commit(
         .lock()
         .expect("render bridge lock poisoned")
         .synchronize_object_world_owner(world_identity);
-    lua_mirror::replace(lua, &prepared)?;
+    let object = lua_mirror::replace(lua, &prepared)?;
+    {
+        let mut callbacks = draw_callbacks.borrow_mut();
+        if callbacks.object_world_identity != Some(world_identity) {
+            callbacks.records.clear();
+            callbacks.object_world_identity = Some(world_identity);
+        }
+        callbacks.records.insert(
+            prepared.request.name.clone(),
+            DrawCallbackRecord {
+                object,
+                pre: None,
+                post: None,
+            },
+        );
+    }
     scene::insert(render, prepared);
     Ok(())
 }

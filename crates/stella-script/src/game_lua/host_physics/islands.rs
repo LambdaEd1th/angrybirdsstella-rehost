@@ -26,7 +26,11 @@ impl StellaLua {
 
         // sub_10086E634 invokes b2Island::Solve immediately after each DFS,
         // before advancing to the next world-list seed.
-        let islands = bridge.solver_islands.clone();
+        // Purple's b2Island arrays are per-Step scratch storage. Move the
+        // assembled arrays into this solve instead of deep-cloning every
+        // body/contact/joint name before the first iteration.
+        let mut islands = std::mem::take(&mut bridge.solver_islands);
+        let mut synchronized_bodies = std::mem::take(&mut bridge.solver_synchronized_bodies);
         for island in &islands {
             bridge.integrate_island_velocities(&island.bodies, gravity, PHYSICS_STEP);
             trace_physics_body(&bridge, "after-force");
@@ -97,7 +101,17 @@ impl StellaLua {
         }
         contact_events.retain(|event| event.began || event.ended || event.impulse > f64::EPSILON);
         trace_physics_body(&bridge, "after-velocity");
-        bridge.sync_native_broad_phase();
+        // sub_10086E634 walks the native world body list after all islands and
+        // calls SynchronizeFixtures only when the body still carries its
+        // island flag and its type is non-static. Assembly retained that
+        // exact head-to-tail subset; do not reconstruct and sort it by name.
+        bridge.sync_native_broad_phase_bodies(synchronized_bodies.iter().map(String::as_str));
+        // Return the outer vectors as scratch capacity for the next fixed
+        // step. The contained native island records are no longer live.
+        islands.clear();
+        synchronized_bodies.clear();
+        bridge.solver_islands = islands;
+        bridge.solver_synchronized_bodies = synchronized_bodies;
         (contact_events, sweep_starts)
     }
 }

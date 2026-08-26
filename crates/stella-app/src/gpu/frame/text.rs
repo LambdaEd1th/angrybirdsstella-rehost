@@ -132,6 +132,7 @@ impl AssetCatalog {
                 1,
                 1,
                 1.0,
+                None,
                 0.0,
                 native_sprite_program(surface_format, transform.alpha),
                 None,

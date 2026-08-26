@@ -1,5 +1,67 @@
 use super::*;
 
+fn assert_same_manifold(actual: ContactManifold, expected: ContactManifold) {
+    assert_eq!(
+        std::mem::discriminant(&actual.manifold_type),
+        std::mem::discriminant(&expected.manifold_type)
+    );
+    assert_eq!(actual.normal_x.to_bits(), expected.normal_x.to_bits());
+    assert_eq!(actual.normal_y.to_bits(), expected.normal_y.to_bits());
+    assert_eq!(actual.penetration.to_bits(), expected.penetration.to_bits());
+    assert_eq!(actual.point_x.to_bits(), expected.point_x.to_bits());
+    assert_eq!(actual.point_y.to_bits(), expected.point_y.to_bits());
+    assert_eq!(actual.feature_id, expected.feature_id);
+    match (actual.secondary, expected.secondary) {
+        (Some(actual), Some(expected)) => {
+            assert_eq!(actual.penetration.to_bits(), expected.penetration.to_bits());
+            assert_eq!(actual.point_x.to_bits(), expected.point_x.to_bits());
+            assert_eq!(actual.point_y.to_bits(), expected.point_y.to_bits());
+            assert_eq!(actual.feature_id, expected.feature_id);
+        }
+        (None, None) => {}
+        pair => panic!("secondary contact mismatch: {pair:?}"),
+    }
+}
+
+#[test]
+fn toi_fixture_transform_matches_a_temporary_body_pose_without_cloning_it() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createBox("moving", "", 0, 0, 1, 1, 1, 0, 0, true, false, 1)
+                createCircle("fixed", "", 0.58, 0.1, 0.22, 1, 0, 0, true, false, 1)
+                "#,
+        )
+        .unwrap();
+
+    let bridge = runtime.render.lock().unwrap();
+    let moving = &bridge.scene["moving"];
+    let fixed = &bridge.scene["fixed"];
+    let center = (0.08_f32, -0.03_f32);
+    let angle = 0.27_f32;
+
+    // This is the old rehost boundary: cloning the complete scene object and
+    // changing its sweep pose solely to obtain fixture geometry.
+    let expected = {
+        let mut temporary = moving.clone();
+        temporary.set_native_sweep_transform(center, angle);
+        temporary
+            .collision_fixture_manifold(fixed, 0, 0)
+            .expect("temporary pose must overlap")
+    };
+    let actual = moving
+        .collision_fixture_manifold_at_transforms(
+            fixed,
+            0,
+            0,
+            moving.native_collision_transform_at_sweep(center, angle),
+            fixed.native_collision_transform(),
+        )
+        .expect("compact transform must overlap");
+    assert_same_manifold(actual, expected);
+}
+
 #[test]
 fn continuous_step_stops_a_fast_circle_at_a_static_thin_edge() {
     let runtime = unlocked_test_runtime();
@@ -11,6 +73,7 @@ fn continuous_step_stops_a_fast_circle_at_a_static_thin_edge() {
                 addVertex(0, 1)
                 createLineShape("wall", "", 0, 0, 0, 2, 0, 0, 0, true, false, 1)
                 createCircle("body", "", -0.08, 0, 0.01, 1, 0, 0, true, false, 1)
+                createCircle("unrelated", "", 10, 0, 0.01, 1, 0, 0, true, false, 1)
                 "#,
         )
         .unwrap();
@@ -35,6 +98,10 @@ fn continuous_step_stops_a_fast_circle_at_a_static_thin_edge() {
             .is_none()
     );
     bridge.sync_native_broad_phase();
+    let old_unrelated_aabb = bridge.body_proxy_states["unrelated"].tight_aabbs[0];
+    // This body is active but is not part of the selected TOI island. Native
+    // SolveTOI therefore leaves its proxy untouched in the post-island loop.
+    bridge.scene.get_mut("unrelated").unwrap().x = 12.0;
     let key = ("body".to_owned(), "wall".to_owned(), 0, 0);
     assert!(bridge.broad_phase_contacts.contains(&key));
 
@@ -72,6 +139,14 @@ fn continuous_step_stops_a_fast_circle_at_a_static_thin_edge() {
     assert!((bridge.scene["body"].x + 0.010_875).abs() < 0.0002);
     assert!(bridge.scene["body"].velocity_x.abs() < 1e-6);
     assert!(bridge.active_contacts.contains_key(&key));
+    assert_eq!(
+        bridge.body_proxy_states["body"].tight_aabbs[0],
+        bridge.scene["body"].collision_fixture_aabbs()[0]
+    );
+    assert_eq!(
+        bridge.body_proxy_states["unrelated"].tight_aabbs[0],
+        old_unrelated_aabb
+    );
 }
 
 #[test]

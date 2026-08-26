@@ -6,6 +6,7 @@ pub(super) fn install_remove(
     lua: &Lua,
     globals: &mlua::Table,
     render: Arc<Mutex<RenderBridge>>,
+    draw_callbacks: Rc<RefCell<DrawCallbacks>>,
 ) -> LuaResult<()> {
     globals.set(
         "removeObject",
@@ -13,6 +14,12 @@ pub(super) fn install_remove(
             let name = native_required_string(&args, 0, "removeObject")?;
             let removed =
                 remove_native_objects_with_joint_callbacks(lua, &render, vec![name.clone()])?;
+            {
+                let mut callbacks = draw_callbacks.borrow_mut();
+                for removed_name in &removed {
+                    callbacks.records.remove(removed_name);
+                }
+            }
             let world = object_world(lua)?;
             if removed.is_empty() {
                 world.raw_set(name.as_str(), Value::Nil)?;

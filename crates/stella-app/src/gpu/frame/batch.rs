@@ -66,12 +66,6 @@ impl PreparedFrame {
                 },
             ));
         let vertex_count = self.vertices.len() as u32 - first_vertex;
-        if base_texture != WHITE_TEXTURE {
-            self.required_textures.insert(base_texture.clone());
-        }
-        if fill_texture != WHITE_TEXTURE {
-            self.required_textures.insert(fill_texture.clone());
-        }
         // Purple's GL context keeps adjacent submissions with the same
         // program, texture pair and clip in one vertex batch.  Each vertex
         // already carries its own storage-uniform index, so wgpu can retain
@@ -80,28 +74,49 @@ impl PreparedFrame {
         // shipped 16-pixel sky strips: ThemeManager legitimately emits a few
         // hundred adjacent columns, but they are not a few hundred native GL
         // draw calls.
-        let previous_draw = self.operations.last().and_then(|operation| {
+        let previous_draw_index = self.operations.last().and_then(|operation| {
             let PreparedOperation::Draw(index) = operation else {
                 return None;
             };
-            self.draws.get_mut(*index)
+            Some(*index)
         });
-        if let Some(previous) = previous_draw
-            && previous.vertices.end == first_vertex
-            && previous.base_texture == base_texture
-            && previous.fill_texture == fill_texture
-            && previous.program == program
-            && previous.scissor == scissor
-        {
-            previous.vertices.end += vertex_count;
-            return;
+        if let Some(index) = previous_draw_index {
+            let previous = &self.draws[index];
+            let previous_pair = &self.texture_pairs[previous.texture_pair];
+            if previous.vertices.end == first_vertex
+                && previous_pair.0 == base_texture
+                && previous_pair.1 == fill_texture
+                && previous.program == program
+                && previous.scissor == scissor
+            {
+                self.draws[index].vertices.end += vertex_count;
+                return;
+            }
         }
 
+        // Native GL_State retains texture bindings across submissions. Keep
+        // one owned copy of each texture pair per prepared frame so the wgpu
+        // pass can resolve/cache it once instead of allocating and hashing a
+        // fresh `(String, String)` key for every draw batch.
+        let texture_pair = self
+            .texture_pairs
+            .iter()
+            .position(|pair| pair.0 == base_texture && pair.1 == fill_texture)
+            .unwrap_or_else(|| {
+                if base_texture != WHITE_TEXTURE {
+                    self.required_textures.insert(base_texture.clone());
+                }
+                if fill_texture != WHITE_TEXTURE {
+                    self.required_textures.insert(fill_texture.clone());
+                }
+                let index = self.texture_pairs.len();
+                self.texture_pairs.push((base_texture, fill_texture));
+                index
+            });
         let draw_index = self.draws.len();
         self.draws.push(PreparedDraw {
             vertices: first_vertex..first_vertex + vertex_count,
-            base_texture,
-            fill_texture,
+            texture_pair,
             program,
             scissor,
         });

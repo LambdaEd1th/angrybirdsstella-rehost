@@ -239,6 +239,7 @@ fn sprite_region_uses_native_octagonal_dirt_clip() {
         &mut target,
         None,
         None,
+        None,
         &[RenderHole {
             x: 0.0,
             y: 0.0,

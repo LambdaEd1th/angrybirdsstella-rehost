@@ -2,6 +2,12 @@
 
 use crate::*;
 
+enum CollisionFixtureGeometry {
+    Circle { center: (f64, f64), radius: f64 },
+    Polygon(Vec<(f64, f64)>),
+    Segment(((f64, f64), (f64, f64))),
+}
+
 impl SceneObject {
     pub(crate) fn collision_fixture_manifold(
         &self,
@@ -9,13 +15,124 @@ impl SceneObject {
         first_fixture: usize,
         second_fixture: usize,
     ) -> Option<ContactManifold> {
-        self.collision_fixture_manifolds(other)
-            .into_iter()
-            .find_map(|(first_index, second_index, manifold)| {
-                (first_index == first_fixture && second_index == second_fixture).then_some(manifold)
-            })
+        self.collision_fixture_manifold_at_transforms(
+            other,
+            first_fixture,
+            second_fixture,
+            self.native_collision_transform(),
+            other.native_collision_transform(),
+        )
     }
 
+    /// Build one contact manifold from fixture-local shapes and two compact
+    /// body transforms. This is the same pointer boundary used by Box2D's TOI
+    /// path and avoids cloning either complete scene/render object merely to
+    /// test an interpolated sweep pose.
+    pub(crate) fn collision_fixture_manifold_at_transforms(
+        &self,
+        other: &Self,
+        first_fixture: usize,
+        second_fixture: usize,
+        first_transform: NativeToiTransform,
+        second_transform: NativeToiTransform,
+    ) -> Option<ContactManifold> {
+        let first = self.collision_fixture_geometry(first_fixture, first_transform)?;
+        let second = other.collision_fixture_geometry(second_fixture, second_transform)?;
+        match (first, second) {
+            (
+                CollisionFixtureGeometry::Circle {
+                    center: first_center,
+                    radius: first_radius,
+                },
+                CollisionFixtureGeometry::Circle {
+                    center: second_center,
+                    radius: second_radius,
+                },
+            ) => circle_circle_manifold(first_center, first_radius, second_center, second_radius),
+            (
+                CollisionFixtureGeometry::Circle { center, radius },
+                CollisionFixtureGeometry::Polygon(polygon),
+            ) => circle_polygon_manifold(center, radius, &polygon, true),
+            (
+                CollisionFixtureGeometry::Polygon(polygon),
+                CollisionFixtureGeometry::Circle { center, radius },
+            ) => circle_polygon_manifold(center, radius, &polygon, false),
+            (
+                CollisionFixtureGeometry::Circle { center, radius },
+                CollisionFixtureGeometry::Segment(segment),
+            ) => circle_segment_manifold(center, radius, segment, true),
+            (
+                CollisionFixtureGeometry::Segment(segment),
+                CollisionFixtureGeometry::Circle { center, radius },
+            ) => circle_segment_manifold(center, radius, segment, false),
+            (
+                CollisionFixtureGeometry::Polygon(first),
+                CollisionFixtureGeometry::Polygon(second),
+            ) => polygon_manifold(&first, &second),
+            (
+                CollisionFixtureGeometry::Polygon(polygon),
+                CollisionFixtureGeometry::Segment(segment),
+            ) => polygon_segment_manifold(&polygon, segment, true),
+            (
+                CollisionFixtureGeometry::Segment(segment),
+                CollisionFixtureGeometry::Polygon(polygon),
+            ) => polygon_segment_manifold(&polygon, segment, false),
+            (CollisionFixtureGeometry::Segment(_), CollisionFixtureGeometry::Segment(_)) => None,
+        }
+    }
+
+    fn collision_fixture_geometry(
+        &self,
+        fixture: usize,
+        transform: NativeToiTransform,
+    ) -> Option<CollisionFixtureGeometry> {
+        match &self.collision_shape {
+            CollisionShape::None => None,
+            CollisionShape::Circle { .. } if fixture == 0 => {
+                let (center, radius) = self.collision_circle_at(transform)?;
+                Some(CollisionFixtureGeometry::Circle { center, radius })
+            }
+            CollisionShape::Circle { .. } => None,
+            CollisionShape::Box { width, height } if fixture == 0 => {
+                let vertices = [
+                    (-width * 0.5, -height * 0.5),
+                    (width * 0.5, -height * 0.5),
+                    (width * 0.5, height * 0.5),
+                    (-width * 0.5, height * 0.5),
+                ]
+                .into_iter()
+                .map(|point| self.transform_collision_point_at(transform, point))
+                .collect();
+                Some(CollisionFixtureGeometry::Polygon(vertices))
+            }
+            CollisionShape::Box { .. } => None,
+            CollisionShape::Polygon { vertices, fixtures } => {
+                let vertices = if fixtures.is_empty() {
+                    (fixture == 0).then_some(vertices)
+                } else {
+                    fixtures.get(fixture)
+                }?;
+                (vertices.len() >= 3).then(|| {
+                    CollisionFixtureGeometry::Polygon(
+                        vertices
+                            .iter()
+                            .copied()
+                            .map(|point| self.transform_collision_point_at(transform, point))
+                            .collect(),
+                    )
+                })
+            }
+            CollisionShape::Line { vertices } => {
+                let edge = vertices.get(fixture..fixture + 2)?;
+                let start = self.transform_collision_point_at(transform, edge[0]);
+                let end = self.transform_collision_point_at(transform, edge[1]);
+                ((end.0 - start.0).hypot(end.1 - start.1) > f64::EPSILON)
+                    .then_some(CollisionFixtureGeometry::Segment((start, end)))
+            }
+        }
+    }
+
+    #[cfg(test)]
     pub(crate) fn collision_fixture_manifolds(
         &self,
         other: &Self,

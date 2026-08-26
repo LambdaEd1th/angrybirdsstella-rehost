@@ -1,5 +1,140 @@
 use super::*;
 
+fn load_chapter02_level02(label: &str) -> (ShippedDataSandbox, StellaLua) {
+    let sandbox = ShippedDataSandbox::new(label);
+    let runtime = StellaLua::new(&sandbox.data_root).unwrap();
+    runtime.boot("scripts/game.lua").unwrap();
+    runtime.execute_source("initializeGameCommon()").unwrap();
+    runtime
+        .execute_source(
+            r#"
+                SpriteSheetManager.useGroupSet('INGAME')
+                currentFolder = 'Chapter02'
+                currentPack = 'Chapter02'
+                currentLevel = 2
+                levelFolder = 'levels/Chapter02/'
+                levelName = 'Chapter02_L02'
+                loadLevelInternal(levelFolder .. levelName)
+                blocks.BlockComponentManager.triggerGlobalEvent(blocks.events.EID_START)
+                setPhysicsEnabled(true)
+            "#,
+        )
+        .unwrap();
+    (sandbox, runtime)
+}
+
+#[test]
+fn chapter02_level02_trap_sucker_retains_authored_fixture() {
+    let (_sandbox, runtime) = load_chapter02_level02("chapter02-l02-trap-sucker-fixture");
+    let world = object_world(runtime.lua()).unwrap();
+    let hub = world.get::<mlua::Table>("BLOCK_SUCKER_TRAP_HUB_3").unwrap();
+    let sensor_name = hub.get::<String>("suckerSensorName").unwrap();
+    let bridge = runtime.render.lock().unwrap();
+    let sensor = &bridge.scene[&sensor_name];
+
+    assert!(sensor.sensor);
+    let CollisionShape::Box { width, height } = sensor.collision_shape else {
+        panic!("name={sensor_name} shape={:?}", sensor.collision_shape);
+    };
+    assert_eq!(
+        (
+            width * sensor.physics_scale_x,
+            height * sensor.physics_scale_y
+        ),
+        (f64::from(0.5_f32), f64::from(0.5_f32)),
+        "name={sensor_name} authored=({width}, {height}) physics_scale=({}, {})",
+        sensor.physics_scale_x,
+        sensor.physics_scale_y
+    );
+}
+
+#[test]
+fn chapter02_level02_moving_intake_captures_a_sleeping_right_structure() {
+    let (_sandbox, runtime) = load_chapter02_level02("chapter02-l02-sleeping-capture");
+    const TARGET: &str = "BLOCK_WOOD_1X10_1_9";
+    {
+        let mut bridge = runtime.render.lock().unwrap();
+        let target = bridge.scene.get_mut(TARGET).unwrap();
+        target.sleeping = true;
+        target.sleep_time = 0.0;
+        target.velocity_x = 0.0;
+        target.velocity_y = 0.0;
+        target.angular_velocity = 0.0;
+    }
+    runtime
+        .execute_source(
+            r#"
+                getAudioName = function() return "" end
+                isAudioPlaying = function() return false end
+                blocks.BlockComponentManager.triggerDelayedEvent = function(object, eventName, arg)
+                    blocks.BlockComponentManager.triggerEvent(object, eventName, arg)
+                end
+                update = function() end
+                local target = objects.world.BLOCK_WOOD_1X10_1_9
+                setPosition("TrapSuckerSensor_1", target.x, target.y)
+                setRotation("TrapSuckerSensor_1", target.angle)
+            "#,
+        )
+        .unwrap();
+
+    // Purple runs physics at 30 Hz while the host callback runs at the
+    // display cadence, so two 60 Hz updates cross one complete contact step.
+    runtime.update(1.0 / 60.0).unwrap();
+    runtime.update(1.0 / 60.0).unwrap();
+
+    let target = object_world(runtime.lua())
+        .unwrap()
+        .get::<mlua::Table>(TARGET)
+        .unwrap();
+    assert!(
+        target.get::<bool>("inTrapSucker").unwrap_or(false),
+        "the sleeping right-hand structure overlapped the intake without entering it"
+    );
+}
+
+#[test]
+fn chapter02_level02_toppled_intake_captures_the_right_structure() {
+    let (_sandbox, runtime) = load_chapter02_level02("chapter02-l02-toppled-capture");
+    runtime
+        .execute_source(
+            r#"
+                getAudioName = function() return "" end
+                isAudioPlaying = function() return false end
+                blocks.BlockComponentManager.triggerDelayedEvent = function(object, eventName, arg)
+                    blocks.BlockComponentManager.triggerEvent(object, eventName, arg)
+                end
+                removeBlocks = function() deadBlocks = {} end
+                update = function(dt, realDt)
+                    blocks.BlockComponentManager.triggerEvent(
+                        objects.world.BLOCK_SUCKER_TRAP_HUB_3,
+                        blocks.events.EID_UPDATE_BLOCK,
+                        dt,
+                        realDt
+                    )
+                end
+                setVelocity("BLOCK_SUCKER_TRAP_EXTEND_12", -8, 0)
+            "#,
+        )
+        .unwrap();
+
+    let mut captured = false;
+    for _ in 0..420 {
+        runtime.update(1.0 / 60.0).unwrap();
+        let target = object_world(runtime.lua())
+            .unwrap()
+            .get::<mlua::Table>("BLOCK_WOOD_1X10_1_9")
+            .unwrap();
+        if target.get::<bool>("inTrapSucker").unwrap_or(false) {
+            captured = true;
+            break;
+        }
+    }
+    assert!(
+        captured,
+        "the toppled intake crossed the right-hand structure without capturing it"
+    );
+}
+
 #[test]
 fn sensor_force_member_preserves_exact_string_slots_and_ignores_trailing_values() {
     let runtime = StellaLua::new("/tmp").unwrap();

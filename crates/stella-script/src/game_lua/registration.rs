@@ -145,6 +145,7 @@ pub(crate) fn install_base_globals(
         Arc::clone(&render),
         Arc::clone(&resource_runtime),
         Arc::clone(&data_root),
+        Rc::clone(&draw_callbacks),
     )?;
 
     game_lua::install_object_api(
@@ -153,6 +154,7 @@ pub(crate) fn install_base_globals(
         Arc::clone(&render),
         Arc::clone(&resource_runtime),
         Arc::clone(&data_root),
+        Rc::clone(&draw_callbacks),
     )?;
 
     game_lua::install_render_api(

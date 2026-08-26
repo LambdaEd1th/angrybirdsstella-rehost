@@ -17,20 +17,14 @@ impl RenderBridge {
         self.solver_contact_impulses.clear();
         self.position_contacts.clear();
         self.solver_islands.clear();
-        let mut contact_keys = self
-            .broad_phase_contacts
+        self.solver_synchronized_bodies.clear();
+        self.native_contact_world_order
             .iter()
+            .rev()
+            .map(|(_, key)| key)
+            .filter(|key| self.broad_phase_contacts.contains(*key))
             .cloned()
-            .collect::<Vec<_>>();
-        contact_keys.sort_unstable_by(|left, right| {
-            self.contact_creation_order
-                .get(right)
-                .copied()
-                .unwrap_or(0)
-                .cmp(&self.contact_creation_order.get(left).copied().unwrap_or(0))
-                .then_with(|| left.cmp(right))
-        });
-        contact_keys
+            .collect::<Vec<_>>()
     }
 
     pub(crate) fn finish_contact_manager_refresh(&mut self) {
@@ -38,9 +32,18 @@ impl RenderBridge {
             .retain(|pair, _| self.active_contacts.contains_key(pair));
         self.contact_velocity_bias
             .retain(|pair, _| self.active_contacts.contains_key(pair));
-        self.contact_creation_order.retain(|pair, _| {
-            self.active_contacts.contains_key(pair) || self.broad_phase_contacts.contains(pair)
-        });
+        let stale = self
+            .contact_creation_order
+            .keys()
+            .filter(|pair| {
+                !self.active_contacts.contains_key(*pair)
+                    && !self.broad_phase_contacts.contains(*pair)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        for pair in stale {
+            self.remove_native_contact_order(&pair);
+        }
         self.contact_filter_dirty
             .retain(|pair| self.broad_phase_contacts.contains(pair));
     }

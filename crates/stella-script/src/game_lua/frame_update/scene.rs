@@ -41,7 +41,11 @@ impl RenderBridge {
         }
     }
 
-    pub(crate) fn advance_native_scene_frame(&mut self, delta: f64) -> (bool, bool, bool) {
+    pub(crate) fn advance_native_scene_frame_with(
+        &mut self,
+        delta: f64,
+        mut visit_body: impl FnMut(&str, &SceneObject),
+    ) -> (bool, bool, bool) {
         // sub_10005E898 performs this pass once per rendered frame after all
         // fixed Box2D steps. Its three Lua globals deliberately use two
         // different motion tolerances, and P_IGNORE_MOTION only affects the
@@ -50,10 +54,15 @@ impl RenderBridge {
         let mut has_moving_objects = false;
         let mut has_awake_objects = false;
         let mut has_moving_objects_zero_tolerance = false;
-        for object in self.scene.values_mut() {
+        for (name, object) in &mut self.scene {
             if !object.has_physics_body() {
                 continue;
             }
+            // `sub_10005F278..0x10005F798` consumes the same ordered scene-map
+            // node before advancing its cached previous-awake byte. Let the
+            // body-to-Lua snapshot share this traversal instead of scanning
+            // the complete BTreeMap a second time on dense levels.
+            visit_body(name, object);
 
             // SceneObject+0x128 is incremented only for controllable objects
             // whose timer has been armed with a non-negative value.
@@ -94,5 +103,10 @@ impl RenderBridge {
             has_awake_objects,
             has_moving_objects_zero_tolerance,
         )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn advance_native_scene_frame(&mut self, delta: f64) -> (bool, bool, bool) {
+        self.advance_native_scene_frame_with(delta, |_, _| {})
     }
 }

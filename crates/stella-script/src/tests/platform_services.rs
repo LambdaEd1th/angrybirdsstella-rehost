@@ -580,6 +580,10 @@ fn recovered_platform_and_render_utilities_preserve_native_contracts() {
             &["native_checkForcedUpdate", "native_launchAppStore"][..],
         ),
         (
+            "AppStoreLauncher",
+            &["updateGameData", "launchAppStore"][..],
+        ),
+        (
             "Analytics",
             &[
                 "logTimerEvent",
@@ -617,6 +621,61 @@ fn recovered_platform_and_render_utilities_preserve_native_contracts() {
                 "native_getFriendAccountId",
                 "native_getLocalUserAccountId",
                 "native_getFriends",
+            ][..],
+        ),
+        (
+            "SkynestAccount",
+            &[
+                "native_getServiceName",
+                "native_isLoggedIn",
+                "native_isLoginInProgress",
+                "native_getAccountDetailsUrl",
+                "native_login",
+                "native_logout",
+                "native_loginWithSocialNetwork",
+                "native_unRegister",
+                "native_hasNickname",
+                "native_validateNickname",
+            ][..],
+        ),
+        (
+            "SkynestStorage",
+            &[
+                "native_loadCloudSettings",
+                "native_saveCloudSettings",
+                "native_setRequestTimeout",
+                "native_isTransactionInProcess",
+                "native_setKey",
+                "native_getKey",
+                "native_getKeyForAccountIds",
+            ][..],
+        ),
+        (
+            "RovioAds",
+            &[
+                "refresh",
+                "addPlacement",
+                "addPlacementWithGeometry",
+                "addPlacementNative",
+                "show",
+                "hide",
+                "click",
+                "trackConversion",
+                "startSession",
+            ][..],
+        ),
+        (
+            "Zappar",
+            &["native_isZapparSupported", "native_launchZappar"][..],
+        ),
+        (
+            "QrScanner",
+            &[
+                "isCameraSupported",
+                "isFrontCameraSupported",
+                "start",
+                "stop",
+                "setQrRecognizedCallback",
             ][..],
         ),
         ("Assets", &["loadFiles", "createSpriteSheet"][..]),
@@ -868,6 +927,342 @@ fn recovered_platform_and_render_utilities_preserve_native_contracts() {
 }
 
 #[test]
+fn qr_scanner_and_app_store_launcher_follow_unsupported_device_branches() {
+    let unique = NEXT_TEST_SPRITE_SHEET_ID.fetch_add(1, Ordering::Relaxed);
+    let root =
+        std::env::temp_dir().join(format!("stella-qr-store-{}-{unique}", std::process::id()));
+    let data_root = root.join("data");
+    let app_root = root.join("appdata");
+    fs::create_dir_all(&data_root).unwrap();
+    fs::create_dir_all(&app_root).unwrap();
+    fs::write(
+        app_root.join("promotion.json"),
+        br#"{"launchId":"angrybirds-space","storeId":"123456789"}"#,
+    )
+    .unwrap();
+
+    let runtime = StellaLua::new(&data_root).unwrap();
+    runtime
+        .execute_source(
+            r##"
+                qr_camera_supported = QrScanner.isCameraSupported("ignored")
+                qr_front_supported = QrScanner.isFrontCameraSupported("ignored")
+                qr_start_results = select("#", QrScanner.start("ignored"))
+                qr_stop_results = select("#", QrScanner.stop("ignored"))
+                qr_callback_results = select("#",
+                    QrScanner.setQrRecognizedCallback(function() end, "ignored"))
+                qr_clear_results = select("#",
+                    QrScanner.setQrRecognizedCallback(nil, "ignored"))
+                qr_non_function_clears = pcall(
+                    QrScanner.setQrRecognizedCallback, "clear", "ignored")
+
+                store_update_results = select("#",
+                    AppStoreLauncher.updateGameData("promotion.json", "ignored"))
+                store_update_missing_fails = not pcall(
+                    AppStoreLauncher.updateGameData)
+                store_update_tag_fails = not pcall(
+                    AppStoreLauncher.updateGameData, false)
+                store_launch_results = select("#",
+                    AppStoreLauncher.launchAppStore("ignored"))
+            "##,
+        )
+        .unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert!(!environment.get::<bool>("qr_camera_supported").unwrap());
+    assert!(!environment.get::<bool>("qr_front_supported").unwrap());
+    for field in [
+        "qr_start_results",
+        "qr_stop_results",
+        "qr_callback_results",
+        "qr_clear_results",
+        "store_update_results",
+        "store_launch_results",
+    ] {
+        assert_eq!(environment.get::<i64>(field).unwrap(), 0, "{field}");
+    }
+    assert!(environment.get::<bool>("qr_non_function_clears").unwrap());
+    assert!(
+        environment
+            .get::<bool>("store_update_missing_fails")
+            .unwrap()
+    );
+    assert!(environment.get::<bool>("store_update_tag_fails").unwrap());
+    assert_eq!(
+        runtime
+            .render
+            .lock()
+            .unwrap()
+            .requested_app_store_product
+            .as_ref(),
+        Some(&("123456789".to_owned(), 3))
+    );
+
+    drop(runtime);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn shipped_telepods_facade_observes_the_native_no_camera_branch() {
+    let sandbox = ShippedDataSandbox::new("telepods-no-camera");
+    let runtime = StellaLua::new(&sandbox.data_root).unwrap();
+    runtime.boot("scripts/game.lua").unwrap();
+    runtime
+        .execute_source(
+            r##"
+                shipped_telepods_supported = Telepods.areSupported()
+                shipped_telepods_front_camera = Telepods.hasFrontCamera()
+            "##,
+        )
+        .unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert!(matches!(
+        runtime.lua().globals().get::<Value>("QrScanner").unwrap(),
+        Value::Table(_)
+    ));
+    assert!(
+        !environment
+            .get::<bool>("shipped_telepods_supported")
+            .unwrap()
+    );
+    assert!(
+        !environment
+            .get::<bool>("shipped_telepods_front_camera")
+            .unwrap()
+    );
+}
+
+#[test]
+fn unsupported_zappar_completes_the_native_close_callback_immediately() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .execute_source(
+            r##"
+                zappar_supported = Zappar.native_isZapparSupported("ignored")
+                zappar_close_count = 0
+                zappar_launch_results = select("#", Zappar.native_launchZappar(
+                    function()
+                        zappar_close_count = zappar_close_count + 1
+                    end,
+                    "ignored tail"
+                ))
+                zappar_missing_callback_fails = not pcall(
+                    Zappar.native_launchZappar
+                )
+                zappar_bad_callback_fails = not pcall(
+                    Zappar.native_launchZappar, false
+                )
+            "##,
+        )
+        .unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert!(!environment.get::<bool>("zappar_supported").unwrap());
+    assert_eq!(environment.get::<i64>("zappar_close_count").unwrap(), 1);
+    assert_eq!(environment.get::<i64>("zappar_launch_results").unwrap(), 0);
+    assert!(
+        environment
+            .get::<bool>("zappar_missing_callback_fails")
+            .unwrap()
+    );
+    assert!(
+        environment
+            .get::<bool>("zappar_bad_callback_fails")
+            .unwrap()
+    );
+}
+
+#[test]
+fn shipped_zappar_handler_restores_audio_after_the_unsupported_launch() {
+    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data");
+    let runtime = StellaLua::new(data_root).unwrap();
+    runtime
+        .execute_source(
+            r##"
+                zappar_trace = {}
+                local function mark(value)
+                    zappar_trace[#zappar_trace + 1] = value
+                end
+                isIOSVersion = function() return true end
+                res = {
+                    stopAllAudio = function() mark("stop-all") end,
+                    startAudioOutput = function() mark("start-output") end,
+                    stopAudioOutput = function() mark("stop-output") end,
+                }
+                soundManager = {
+                    unloadStaticAudioAssets = function() mark("unload-static") end,
+                    reloadStaticAudioAssets = function() mark("reload-static") end,
+                }
+                SettingsWrapper = {
+                    audioEnabled = true,
+                    isAudioEnabled = function(self) return self.audioEnabled end,
+                    setAudioEnabled = function(self, enabled)
+                        self.audioEnabled = enabled
+                        mark("audio:" .. tostring(enabled))
+                    end,
+                }
+                events = { EID_ZAPPAR_ENTERED = 901 }
+                eventManager = {
+                    notify = function(self, event)
+                        mark("event:" .. tostring(event.id))
+                    end,
+                }
+                setEffectsVolume = function(value)
+                    mark("effects:" .. tostring(value))
+                end
+                setMusicVolume = function(value)
+                    mark("music:" .. tostring(value))
+                end
+                toggleCurrentMusic = function(restart)
+                    mark("toggle:" .. tostring(restart))
+                end
+                previousMusicName = "menu_music"
+            "##,
+        )
+        .unwrap();
+    let environment = game_environment(runtime.lua()).unwrap();
+    runtime
+        .lua()
+        .globals()
+        .set("res", environment.get::<mlua::Table>("res").unwrap())
+        .unwrap();
+    runtime.execute("scripts/ZapparHandler.lua").unwrap();
+    runtime
+        .execute_source(
+            r##"
+                ZapparHandler.launchZappar()
+                zappar_trace_result = table.concat(zappar_trace, ",")
+                zappar_audio_restored = SettingsWrapper.audioEnabled
+                zappar_music_restored = previousMusicName
+            "##,
+        )
+        .unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert_eq!(
+        environment.get::<String>("zappar_trace_result").unwrap(),
+        concat!(
+            "stop-all,unload-static,audio:false,event:901,reload-static,audio:true,",
+            "effects:1,music:1,start-output,toggle:true"
+        )
+    );
+    assert!(environment.get::<bool>("zappar_audio_restored").unwrap());
+    assert_eq!(
+        environment.get::<String>("zappar_music_restored").unwrap(),
+        "menu_music"
+    );
+}
+
+#[test]
+fn rovio_channel_preserves_the_seven_member_native_abi_before_service_enable() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .execute_source(
+            r##"
+                channel_available = RovioChannel.isAvailable("ignored")
+                channel_opened = RovioChannel.isChannelViewOpened("ignored")
+                channel_new_content = RovioChannel.numOfNewContent("ignored")
+                channel_open_results = select("#", RovioChannel.openChannelView(
+                    "Purple", "full", "en_EN", 1024, 768,
+                    "content/videos", "map_screen", "ignored tail"
+                ))
+                channel_cancel_results = select(
+                    "#", RovioChannel.cancelChannelViewLoading("ignored")
+                )
+                channel_update_results = select(
+                    "#", RovioChannel.updateNewContent("ignored")
+                )
+                channel_menu_results = select(
+                    "#", RovioChannel.onMenuInitialised("ignored")
+                )
+                channel_open_missing_fails = not pcall(
+                    RovioChannel.openChannelView,
+                    "Purple", "full", "en_EN", 1024, 768, "content/videos"
+                )
+                channel_open_string_fails = not pcall(
+                    RovioChannel.openChannelView,
+                    false, "full", "en_EN", 1024, 768, "", "map_screen"
+                )
+                channel_open_width_fails = not pcall(
+                    RovioChannel.openChannelView,
+                    "Purple", "full", "en_EN", false, 768, "", "map_screen"
+                )
+                channel_open_entry_fails = not pcall(
+                    RovioChannel.openChannelView,
+                    "Purple", "full", "en_EN", 1024, 768, "", false
+                )
+            "##,
+        )
+        .unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert!(!environment.get::<bool>("channel_available").unwrap());
+    assert!(!environment.get::<bool>("channel_opened").unwrap());
+    assert_eq!(environment.get::<f64>("channel_new_content").unwrap(), 0.0);
+    for field in [
+        "channel_open_results",
+        "channel_cancel_results",
+        "channel_update_results",
+        "channel_menu_results",
+    ] {
+        assert_eq!(environment.get::<i64>(field).unwrap(), 0, "{field}");
+    }
+    for field in [
+        "channel_open_missing_fails",
+        "channel_open_string_fails",
+        "channel_open_width_fails",
+        "channel_open_entry_fails",
+    ] {
+        assert!(environment.get::<bool>(field).unwrap(), "{field}");
+    }
+}
+
+#[test]
+fn retired_channel_sprite_names_fall_back_to_bundled_toons_art() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    register_test_sprite_sheet_with_sizes(
+        &runtime,
+        &[
+            ("BTN_PLAY_BG", 148, 146),
+            ("ICON_TOONS", 109, 72),
+            ("BTN_BG_SMALL", 67, 67),
+            ("ICON_PUSH", 48, 48),
+            ("ICON_TOONS_TV", 202, 189),
+            ("ICON_X", 58, 51),
+        ],
+    );
+
+    let resources = runtime.resource_runtime.lock().unwrap();
+    for (alias, target) in [
+        ("toonsBackgroundButton", "BTN_PLAY_BG"),
+        ("BUTTON_TOONS_NORMAL", "ICON_TOONS"),
+        ("BUTTON_TOONS_LOOKLEFT", "ICON_TOONS"),
+        ("BUTTON_TOONS_LOOKRIGHT", "ICON_TOONS"),
+        ("BUTTON_TOONS_BLINK", "ICON_TOONS"),
+        ("BUTTON_TOONS_AMOUNT", "BTN_BG_SMALL"),
+        ("BUTTON_TOONS_AMOUNT_SMALL", "BTN_BG_SMALL"),
+        ("BUTTON_TOONS_AMOUNT_MEDIUM", "BTN_BG_SMALL"),
+        ("BUTTON_TOONS_AMOUNT_LARGE", "BTN_BG_SMALL"),
+        ("BUTTON_TOONS_AMOUNT_PLUS", "ICON_PUSH"),
+        ("toonsBanner", "ICON_TOONS_TV"),
+        ("CHANNEL_INTRO_CLOSE", "ICON_X"),
+    ] {
+        assert_eq!(
+            resources.active_native_sprite_metrics(alias),
+            resources.active_native_sprite_metrics(target),
+            "{alias}"
+        );
+        assert!(
+            resources
+                .active_atlas_catalog_region(alias, runtime.data_root())
+                .is_some(),
+            "{alias}"
+        );
+    }
+}
+
+#[test]
 fn social_manager_preserves_native_table_and_disconnected_abi() {
     let runtime = StellaLua::new("/tmp").unwrap();
     runtime
@@ -961,6 +1356,244 @@ fn social_manager_preserves_native_table_and_disconnected_abi() {
     ] {
         assert!(environment.get::<bool>(name).unwrap(), "{name}");
     }
+}
+
+#[test]
+fn skynest_native_account_and_storage_complete_retired_backend_calls_locally() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .execute_source(
+            r##"
+                local account = _G.SkynestAccount
+                local storage = _G.SkynestStorage
+
+                skynest_service_name = account.native_getServiceName("ignored")
+                skynest_account_url = account.native_getAccountDetailsUrl("ignored")
+                skynest_logged_in = account.native_isLoggedIn("ignored")
+                skynest_login_in_progress = account.native_isLoginInProgress("ignored")
+                skynest_has_nickname_before = account.native_hasNickname("ignored")
+
+                skynest_validate_results = select("#", account.native_validateNickname(
+                    "testplayer", function(...)
+                        skynest_valid_count = select("#", ...)
+                        skynest_valid_ok, skynest_valid_value = ...
+                    end, "ignored"
+                ))
+                account.native_validateNickname("   ", function(...)
+                    skynest_invalid_count = select("#", ...)
+                    skynest_invalid_ok, skynest_invalid_value = ...
+                end)
+
+                storage.native_getKey("nickname", function(...)
+                    skynest_missing_count = select("#", ...)
+                    skynest_missing_value = ...
+                end)
+                skynest_set_results = select("#", storage.native_setKey(
+                    "nickname", "testplayer", function(...)
+                        skynest_set_callback_count = select("#", ...)
+                    end, "ignored"
+                ))
+                skynest_has_nickname_after = account.native_hasNickname()
+                storage.native_getKey("nickname", function(...)
+                    skynest_found_count = select("#", ...)
+                    skynest_found_value = ...
+                end, "ignored")
+                storage.native_getKeyForAccountIds(
+                    "nickname", { "friend-a", "friend-b", false, "ignored" },
+                    function(...)
+                        skynest_batch_count = select("#", ...)
+                        skynest_batch_value = ...
+                    end, "ignored"
+                )
+
+                skynest_load_started = storage.native_loadCloudSettings("ignored")
+                skynest_save_started = storage.native_saveCloudSettings({}, "ignored")
+                skynest_transaction = storage.native_isTransactionInProcess("ignored")
+                skynest_timeout_results = select("#",
+                    storage.native_setRequestTimeout(12.9, "ignored"))
+
+                account.onLoginFailure = function(...)
+                    skynest_login_failure_count = select("#", ...)
+                    skynest_login_failure_code, skynest_login_failure_message = ...
+                end
+                skynest_login_results = select("#",
+                    account.native_login(true, false, true, "ignored"))
+                skynest_login_in_progress_after =
+                    account.native_isLoginInProgress()
+                skynest_login_argument_tags_strict =
+                    not pcall(account.native_login, 1, false, true) and
+                    not pcall(account.native_login, true, 0, true) and
+                    not pcall(account.native_login, true, false, "true")
+                skynest_validate_argument_tags_strict =
+                    not pcall(account.native_validateNickname, false, function() end) and
+                    not pcall(account.native_validateNickname, "name", false)
+                skynest_storage_argument_tags_strict =
+                    not pcall(storage.native_saveCloudSettings, false) and
+                    not pcall(storage.native_setRequestTimeout, "12") and
+                    not pcall(storage.native_setKey, 1, "value", function() end) and
+                    not pcall(storage.native_setKey, "key", 1, function() end) and
+                    not pcall(storage.native_setKey, "key", "value", false) and
+                    not pcall(storage.native_getKey, 1, function() end) and
+                    not pcall(storage.native_getKey, "key", false) and
+                    not pcall(storage.native_getKeyForAccountIds,
+                        "key", false, function() end)
+            "##,
+        )
+        .unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert_eq!(
+        environment.get::<String>("skynest_service_name").unwrap(),
+        "identityLevel2"
+    );
+    assert_eq!(
+        environment.get::<String>("skynest_account_url").unwrap(),
+        "https://account.rovio.com"
+    );
+    assert!(
+        environment
+            .get::<bool>("skynest_login_in_progress")
+            .unwrap()
+    );
+    for name in [
+        "skynest_logged_in",
+        "skynest_login_in_progress_after",
+        "skynest_load_started",
+        "skynest_save_started",
+        "skynest_transaction",
+    ] {
+        assert!(!environment.get::<bool>(name).unwrap(), "{name}");
+    }
+    // Purple exposes `nickname.empty()` under this inverted native name.
+    assert!(
+        environment
+            .get::<bool>("skynest_has_nickname_before")
+            .unwrap()
+    );
+    assert!(
+        !environment
+            .get::<bool>("skynest_has_nickname_after")
+            .unwrap()
+    );
+    assert_eq!(
+        environment.get::<i64>("skynest_validate_results").unwrap(),
+        0
+    );
+    assert_eq!(environment.get::<i64>("skynest_valid_count").unwrap(), 2);
+    assert!(environment.get::<bool>("skynest_valid_ok").unwrap());
+    assert!(environment.get::<bool>("skynest_valid_value").unwrap());
+    assert_eq!(environment.get::<i64>("skynest_invalid_count").unwrap(), 2);
+    assert!(environment.get::<bool>("skynest_invalid_ok").unwrap());
+    assert!(!environment.get::<bool>("skynest_invalid_value").unwrap());
+    assert_eq!(environment.get::<i64>("skynest_missing_count").unwrap(), 0);
+    assert!(matches!(
+        environment.get::<Value>("skynest_missing_value").unwrap(),
+        Value::Nil
+    ));
+    assert_eq!(environment.get::<i64>("skynest_set_results").unwrap(), 0);
+    assert_eq!(
+        environment
+            .get::<i64>("skynest_set_callback_count")
+            .unwrap(),
+        0
+    );
+    assert_eq!(environment.get::<i64>("skynest_found_count").unwrap(), 1);
+    assert_eq!(
+        environment.get::<String>("skynest_found_value").unwrap(),
+        "testplayer"
+    );
+    assert_eq!(environment.get::<i64>("skynest_batch_count").unwrap(), 1);
+    assert_eq!(
+        environment
+            .get::<mlua::Table>("skynest_batch_value")
+            .unwrap()
+            .raw_len(),
+        0
+    );
+    assert_eq!(
+        environment.get::<i64>("skynest_timeout_results").unwrap(),
+        0
+    );
+    assert_eq!(environment.get::<i64>("skynest_login_results").unwrap(), 0);
+    assert_eq!(
+        environment
+            .get::<i64>("skynest_login_failure_count")
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        environment
+            .get::<String>("skynest_login_failure_code")
+            .unwrap(),
+        "ERROR_OTHER"
+    );
+    assert!(
+        environment
+            .get::<String>("skynest_login_failure_message")
+            .unwrap()
+            .contains("offline")
+    );
+    for name in [
+        "skynest_login_argument_tags_strict",
+        "skynest_validate_argument_tags_strict",
+        "skynest_storage_argument_tags_strict",
+    ] {
+        assert!(environment.get::<bool>(name).unwrap(), "{name}");
+    }
+}
+
+#[test]
+fn rovio_ads_native_table_preserves_null_provider_abi() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .execute_source(
+            r##"
+                local ads = _G.RovioAds
+                ads_refresh_results = select("#", ads.refresh("Banner", "ignored"))
+                ads_add_results = select("#", ads.addPlacement("Banner", "ignored"))
+                ads_geometry_results = select("#", ads.addPlacementWithGeometry(
+                    "Banner", 1.9, 2.9, 3.9, 4.9, "ignored"
+                ))
+                ads_native_results = select("#",
+                    ads.addPlacementNative("Native", "ignored"))
+                ads_show_result = ads.show("Banner", "ignored")
+                ads_hide_results = select("#", ads.hide("Banner", "ignored"))
+                ads_click_results = select("#", ads.click("Banner", "ignored"))
+                ads_conversion_results = select("#", ads.trackConversion("ignored"))
+                ads_session_results = select("#", ads.startSession("ignored"))
+                ads_tags_strict =
+                    not pcall(ads.refresh, false) and
+                    not pcall(ads.addPlacement, false) and
+                    not pcall(ads.addPlacementWithGeometry,
+                        "Banner", false, 2, 3, 4) and
+                    not pcall(ads.addPlacementWithGeometry,
+                        "Banner", 1, false, 3, 4) and
+                    not pcall(ads.addPlacementWithGeometry,
+                        "Banner", 1, 2, false, 4) and
+                    not pcall(ads.addPlacementWithGeometry,
+                        "Banner", 1, 2, 3, false) and
+                    not pcall(ads.addPlacementNative, false) and
+                    not pcall(ads.show, false) and
+                    not pcall(ads.hide, false) and
+                    not pcall(ads.click, false)
+            "##,
+        )
+        .unwrap();
+    let environment = game_environment(runtime.lua()).unwrap();
+    for name in [
+        "ads_refresh_results",
+        "ads_add_results",
+        "ads_geometry_results",
+        "ads_native_results",
+        "ads_hide_results",
+        "ads_click_results",
+        "ads_conversion_results",
+        "ads_session_results",
+    ] {
+        assert_eq!(environment.get::<i64>(name).unwrap(), 0, "{name}");
+    }
+    assert!(!environment.get::<bool>("ads_show_result").unwrap());
+    assert!(environment.get::<bool>("ads_tags_strict").unwrap());
 }
 
 #[test]
@@ -1878,7 +2511,7 @@ fn downloadable_assets_match_native_load_callbacks_and_sheet_abi() {
 }
 
 #[test]
-fn boot_announces_native_social_and_assets_services_before_menu_updates() {
+fn boot_announces_all_nine_native_cloud_services_before_menu_updates() {
     let sandbox = ShippedDataSandbox::new("cloud-service-announcement");
     let runtime = StellaLua::new(&sandbox.data_root).unwrap();
     let native_assets = runtime
@@ -1905,8 +2538,58 @@ fn boot_announces_native_social_and_assets_services_before_menu_updates() {
             r#"
                 cloud_social_available =
                     RovioCloudManager.isServiceAvailable("social")
+                cloud_analytics_available =
+                    RovioCloudManager.isServiceAvailable("analytics")
+                cloud_push_available =
+                    RovioCloudManager.isServiceAvailable("push")
+                cloud_identity_available =
+                    RovioCloudManager.isServiceAvailable("identityLevel2")
+                cloud_storage_available =
+                    RovioCloudManager.isServiceAvailable("storage")
+                cloud_ads_available =
+                    RovioCloudManager.isServiceAvailable("ads")
                 cloud_assets_available =
                     RovioCloudManager.isServiceAvailable("assets")
+                cloud_channel_available =
+                    RovioCloudManager.isServiceAvailable("channel")
+                cloud_time_available =
+                    RovioCloudManager.isServiceAvailable("time")
+                channel_facade_loaded = rovioChannel ~= nil
+                skynest_account_facade_loaded =
+                    type(SkynestAccount.isAccountLoggedIn) == "function" and
+                    type(_G.SkynestAccount.onLoginFailure) == "function"
+                skynest_storage_facade_loaded =
+                    type(SkynestStorage.syncWithCloud) == "function" and
+                    type(_G.SkynestStorage.onEnableService) == "function"
+                skynest_account_starts_signed_out =
+                    SkynestAccount.isNotLoggedIn() and
+                    not SkynestAccount.isAccountLoggedIn()
+                skynest_initial_autologin_completed =
+                    SkynestAccount.initialAutologinDone and
+                    not _G.SkynestAccount.native_isLoginInProgress() and
+                    notificationsFrame:getChild("initialLoadingScreen") == nil
+                ads_callbacks_loaded =
+                    type(_G.RovioAds.adStateChanged) == "function"
+                ads_provider_unavailable =
+                    not _G.RovioAds.show("InGameBanner")
+                channel_sdk_available = rovioChannel:isAvailable()
+                channel_native_callbacks_loaded =
+                    type(RovioChannel.onChannelShown) == "function" and
+                    type(RovioChannel.onChannelClosed) == "function" and
+                    type(RovioChannel.onNewChannelContentUpdated) == "function"
+                local original_channel_failure =
+                    RovioChannel.onChannelLoadingFailed
+                local channel_failure_calls = 0
+                RovioChannel.onChannelLoadingFailed = function()
+                    channel_failure_calls = channel_failure_calls + 1
+                end
+                RovioChannel.openChannelView(
+                    "Purple", "full", "en_EN", 1024, 768, "", "map_screen"
+                )
+                RovioChannel.onChannelLoadingFailed = original_channel_failure
+                retired_channel_request_finishes =
+                    channel_failure_calls == 1 and
+                    not RovioChannel.isChannelViewOpened()
                 assets_have_been_downloaded_loaded =
                     type(Assets.haveBeenDownloaded) == "function"
                 assets_filename_loaded =
@@ -1920,7 +2603,24 @@ fn boot_announces_native_social_and_assets_services_before_menu_updates() {
     let environment = game_environment(runtime.lua()).unwrap();
     for name in [
         "cloud_social_available",
+        "cloud_analytics_available",
+        "cloud_push_available",
+        "cloud_identity_available",
+        "cloud_storage_available",
+        "cloud_ads_available",
         "cloud_assets_available",
+        "cloud_channel_available",
+        "cloud_time_available",
+        "channel_facade_loaded",
+        "skynest_account_facade_loaded",
+        "skynest_storage_facade_loaded",
+        "skynest_account_starts_signed_out",
+        "skynest_initial_autologin_completed",
+        "ads_callbacks_loaded",
+        "ads_provider_unavailable",
+        "channel_sdk_available",
+        "channel_native_callbacks_loaded",
+        "retired_channel_request_finishes",
         "assets_have_been_downloaded_loaded",
         "assets_filename_loaded",
     ] {
@@ -1943,7 +2643,16 @@ fn boot_announces_native_social_and_assets_services_before_menu_updates() {
         .execute_source(
             r#"
                 assert(RovioCloudManager.isServiceAvailable("social"))
+                assert(RovioCloudManager.isServiceAvailable("analytics"))
+                assert(RovioCloudManager.isServiceAvailable("push"))
+                assert(RovioCloudManager.isServiceAvailable("identityLevel2"))
+                assert(RovioCloudManager.isServiceAvailable("storage"))
+                assert(RovioCloudManager.isServiceAvailable("ads"))
                 assert(RovioCloudManager.isServiceAvailable("assets"))
+                assert(RovioCloudManager.isServiceAvailable("channel"))
+                assert(RovioCloudManager.isServiceAvailable("time"))
+                assert(rovioChannel ~= nil)
+                assert(rovioChannel:isAvailable())
                 assert(type(Assets.haveBeenDownloaded) == "function")
             "#,
         )

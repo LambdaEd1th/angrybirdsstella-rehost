@@ -78,6 +78,49 @@ fn dynamic_tree_proxy_ids_follow_native_leaf_allocation_and_reuse() {
 }
 
 #[test]
+fn native_body_world_order_tracks_only_live_box2d_records() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createBox("older", "", -20, 0, 1, 1, 1, 0, 0, true, false, 1)
+                createNonPhysicsObject("visual_only", "", 0, 0, 1)
+                createBox("newer", "", 20, 0, 1, 1, 1, 0, 0, true, false, 1)
+                "#,
+        )
+        .unwrap();
+
+    {
+        let mut bridge = runtime.render.lock().unwrap();
+        assert_eq!(
+            bridge
+                .native_body_world_order
+                .values()
+                .rev()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["newer", "older"]
+        );
+        bridge.assemble_box2d_islands();
+        assert_eq!(bridge.solver_islands.len(), 2);
+        assert_eq!(bridge.solver_islands[0].bodies, ["newer"]);
+        assert_eq!(bridge.solver_islands[1].bodies, ["older"]);
+        assert_eq!(bridge.solver_synchronized_bodies, ["newer", "older"]);
+    }
+
+    runtime.execute_source(r#"removeObject("newer")"#).unwrap();
+    let bridge = runtime.render.lock().unwrap();
+    assert_eq!(
+        bridge
+            .native_body_world_order
+            .values()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["older"]
+    );
+}
+
+#[test]
 fn dynamic_tree_grows_balances_queries_and_reuses_full_node_free_list() {
     let mut tree = NativeDynamicTree::default();
     let mut proxies = Vec::new();
@@ -141,7 +184,9 @@ fn fat_aabb_creates_contact_before_narrow_phase_begin_contact() {
         assert!(events.is_empty());
         assert!(bridge.active_contacts.is_empty());
         assert!(bridge.broad_phase_contacts.contains(&key));
-        bridge.contact_creation_order[&key]
+        let order = bridge.contact_creation_order[&key];
+        assert_eq!(bridge.native_contact_world_order.get(&order), Some(&key));
+        order
     };
 
     let mut bridge = runtime.render.lock().unwrap();
@@ -153,6 +198,10 @@ fn fat_aabb_creates_contact_before_narrow_phase_begin_contact() {
     assert_eq!(
         bridge.contact_creation_order.get(&key),
         Some(&creation_order)
+    );
+    assert_eq!(
+        bridge.native_contact_world_order.get(&creation_order),
+        Some(&key)
     );
 }
 
@@ -169,19 +218,72 @@ fn body_transform_synchronizes_only_its_own_fixture_proxies() {
         .unwrap();
 
     let mut bridge = runtime.render.lock().unwrap();
-    let target_key = ("target".to_owned(), 0);
-    let unrelated_key = ("unrelated".to_owned(), 0);
-    let old_target = bridge.fixture_tight_aabbs[&target_key];
-    let old_unrelated = bridge.fixture_tight_aabbs[&unrelated_key];
+    let old_target = bridge.body_proxy_states["target"].tight_aabbs[0];
+    let old_unrelated = bridge.body_proxy_states["unrelated"].tight_aabbs[0];
     bridge.scene.get_mut("target").unwrap().x = -3.0;
     bridge.scene.get_mut("unrelated").unwrap().x = 5.0;
 
     bridge.sync_native_body_broad_phase("target");
 
-    assert_ne!(bridge.fixture_tight_aabbs[&target_key], old_target);
-    assert_eq!(bridge.fixture_tight_aabbs[&unrelated_key], old_unrelated);
+    assert_ne!(
+        bridge.body_proxy_states["target"].tight_aabbs[0],
+        old_target
+    );
+    assert_eq!(
+        bridge.body_proxy_states["unrelated"].tight_aabbs[0],
+        old_unrelated
+    );
     bridge.sync_native_broad_phase();
-    assert_ne!(bridge.fixture_tight_aabbs[&unrelated_key], old_unrelated);
+    assert_ne!(
+        bridge.body_proxy_states["unrelated"].tight_aabbs[0],
+        old_unrelated
+    );
+}
+
+#[test]
+fn discrete_solve_synchronizes_only_non_static_bodies_visited_by_an_island() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createBox("awake", "", -8, 0, 1, 1, 1, 0, 0, true, false, 1)
+                createBox("sleeping", "", 0, 0, 1, 1, 1, 0, 0, true, false, 1)
+                createBox("static", "", 8, 0, 1, 1, 0, 0, 0, true, false, 1)
+                setWorldGravity(0, 0)
+                setVelocity("awake", 3, 0)
+                setSleeping("sleeping", true)
+                update = function() end
+                updatePhysics = function() end
+                "#,
+        )
+        .unwrap();
+
+    let (old_awake, old_sleeping, old_static) = {
+        let mut bridge = runtime.render.lock().unwrap();
+        let bounds = (
+            bridge.body_proxy_states["awake"].tight_aabbs[0],
+            bridge.body_proxy_states["sleeping"].tight_aabbs[0],
+            bridge.body_proxy_states["static"].tight_aabbs[0],
+        );
+        // Direct field mutation deliberately bypasses SetTransform. It makes
+        // any accidental full-world post-solve synchronization observable.
+        bridge.scene.get_mut("sleeping").unwrap().x = 2.0;
+        bridge.scene.get_mut("static").unwrap().x = 10.0;
+        bounds
+    };
+
+    runtime.update(1.0 / 30.0).unwrap();
+
+    let bridge = runtime.render.lock().unwrap();
+    assert_ne!(bridge.body_proxy_states["awake"].tight_aabbs[0], old_awake);
+    assert_eq!(
+        bridge.body_proxy_states["sleeping"].tight_aabbs[0],
+        old_sleeping
+    );
+    assert_eq!(
+        bridge.body_proxy_states["static"].tight_aabbs[0],
+        old_static
+    );
 }
 
 #[test]

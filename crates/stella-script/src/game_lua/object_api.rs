@@ -1,6 +1,10 @@
 //! GameLua adapters for native scene-object mutation and inspection.
 
-use std::sync::{Arc, Mutex};
+use std::{
+    cell::RefCell,
+    rc::Rc,
+    sync::{Arc, Mutex},
+};
 
 use mlua::{Lua, MultiValue, Result as LuaResult, Table, Value};
 
@@ -12,6 +16,7 @@ pub(crate) fn install(
     render: Arc<Mutex<RenderBridge>>,
     resources: Arc<Mutex<ResourceRuntime>>,
     data_root: Arc<PathBuf>,
+    draw_callbacks: Rc<RefCell<DrawCallbacks>>,
 ) -> LuaResult<()> {
     install_object_transform_bindings(lua, globals, Arc::clone(&render))?;
 
@@ -23,7 +28,7 @@ pub(crate) fn install(
         Arc::clone(&data_root),
     )?;
 
-    install_object_feature_bindings(lua, globals, Arc::clone(&render))?;
+    install_object_feature_bindings(lua, globals, Arc::clone(&render), draw_callbacks)?;
 
     install_object_visual_bindings(lua, globals, Arc::clone(&render), resources, data_root)?;
 

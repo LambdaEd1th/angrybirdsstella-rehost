@@ -3,11 +3,14 @@
 use crate::*;
 
 impl RenderBridge {
-    pub(crate) fn apply_prismatic_velocity_impulse(
+    pub(crate) fn apply_prismatic_velocity_impulse<
+        F: JointBodyView + ?Sized,
+        S: JointBodyView + ?Sized,
+    >(
         &mut self,
         joint: &PhysicsJoint,
-        first: &SceneObject,
-        second: &SceneObject,
+        first: &F,
+        second: &S,
         geometry: PrismaticGeometry,
         impulse: (f64, f64, f64),
     ) {
@@ -36,11 +39,14 @@ impl RenderBridge {
         }
     }
 
-    pub(crate) fn apply_prismatic_position_impulse(
+    pub(crate) fn apply_prismatic_position_impulse<
+        F: JointBodyView + ?Sized,
+        S: JointBodyView + ?Sized,
+    >(
         &mut self,
         joint: &PhysicsJoint,
-        first: &SceneObject,
-        second: &SceneObject,
+        first: &F,
+        second: &S,
         geometry: PrismaticGeometry,
         impulse: (f64, f64, f64),
     ) {

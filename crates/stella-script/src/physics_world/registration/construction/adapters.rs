@@ -3,13 +3,17 @@
 //! These mirror sub_100086F24/sub_1000872D0/sub_100087704 and their nested
 //! strict argument readers sub_100086F8C/sub_100087338/sub_10008776C.
 
-use std::sync::{Arc, Mutex};
+use std::{
+    cell::RefCell,
+    rc::Rc,
+    sync::{Arc, Mutex},
+};
 
 use mlua::{Lua, MultiValue, Result as LuaResult, Table};
 
 use crate::{
-    RenderBridge, ResourceRuntime, describe_value, native_required_boolean, native_required_number,
-    native_required_string,
+    DrawCallbacks, RenderBridge, ResourceRuntime, describe_value, native_required_boolean,
+    native_required_number, native_required_string,
 };
 
 use super::{ConstructorKind, ConstructorRequest, object, shape};
@@ -20,6 +24,7 @@ pub(super) fn install(
     render: Arc<Mutex<RenderBridge>>,
     resources: Arc<Mutex<ResourceRuntime>>,
     data_root: Arc<std::path::PathBuf>,
+    draw_callbacks: Rc<RefCell<DrawCallbacks>>,
 ) -> LuaResult<()> {
     // Keep the installer order from sub_10002C274 visible instead of merging
     // the five adapters into a string-driven permissive shim.
@@ -27,6 +32,7 @@ pub(super) fn install(
         let scene_bridge = Arc::clone(&render);
         let resources = Arc::clone(&resources);
         let data_root = Arc::clone(&data_root);
+        let draw_callbacks = Rc::clone(&draw_callbacks);
         globals.set(
             kind.script_name(),
             lua.create_function(move |lua, args: MultiValue| {
@@ -46,7 +52,7 @@ pub(super) fn install(
                 prepared.sprite_bound = true;
                 prepared.sprite_region = sprite_region;
                 prepared.composite_sprite = composite_sprite;
-                object::commit(lua, &scene_bridge, prepared)
+                object::commit(lua, &scene_bridge, &draw_callbacks, prepared)
             })?,
         )?;
     }

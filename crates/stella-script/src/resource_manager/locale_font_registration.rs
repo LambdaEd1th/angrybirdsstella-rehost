@@ -101,19 +101,21 @@ pub(crate) fn resolve_localized_string(
     group: &str,
     key: &str,
 ) -> LuaResult<String> {
-    let table = {
+    let group_exists = {
         let resources = resource_runtime
             .lock()
             .expect("resource runtime lock poisoned");
-        if !resources.text_group_sets.contains(group) {
-            return Ok(key.to_owned());
-        }
-        resources
-            .text_group_set_tables
-            .get(group)
-            .and_then(Option::as_ref)
-            .cloned()
+        resources.text_group_sets.contains(group)
     };
+    if !group_exists {
+        return Ok(key.to_owned());
+    }
+
+    // ResourceManager::getString (`sub_10045C380`) walks the retained
+    // TextGroupSet node and then asks its current TextGroup for the key.  It
+    // never copies the source TEXT table on a lookup.  Keep the two host
+    // mutexes non-overlapping, but likewise borrow the retained table only on
+    // the exceptional present-vs-unloaded diagnostic path.
     let strings = locale_runtime.lock().expect("locale runtime lock poisoned");
     if let Some(value) = strings
         .loaded
@@ -133,8 +135,12 @@ pub(crate) fn resolve_localized_string(
     }
     let current = strings.current.clone();
     drop(strings);
-    let present = table
-        .as_ref()
+    let present = resource_runtime
+        .lock()
+        .expect("resource runtime lock poisoned")
+        .text_group_set_tables
+        .get(group)
+        .and_then(Option::as_ref)
         .is_some_and(|table| localization_table_has_locale(table, &current));
     let reason = if present {
         "which is not loaded"

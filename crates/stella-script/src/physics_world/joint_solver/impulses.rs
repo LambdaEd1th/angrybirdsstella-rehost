@@ -17,10 +17,7 @@ impl RenderBridge {
         }
     }
 
-    pub(crate) fn scale_joint_impulses(&mut self, name: &str, step: f64) {
-        let Some(joint) = self.joints.get_mut(name) else {
-            return;
-        };
+    pub(crate) fn scale_joint_impulses(joint: &mut PhysicsJoint, step: f64) {
         let step = step as f32;
         let previous_step = joint.previous_step as f32;
         let step_ratio = if previous_step > 0.0_f32 {
@@ -37,11 +34,14 @@ impl RenderBridge {
         joint.distance_impulse = f64::from(joint.distance_impulse as f32 * step_ratio);
     }
 
-    pub(crate) fn apply_joint_velocity_impulse(
+    pub(crate) fn apply_joint_velocity_impulse<
+        F: JointBodyView + ?Sized,
+        S: JointBodyView + ?Sized,
+    >(
         &mut self,
         joint: &PhysicsJoint,
-        first: &SceneObject,
-        second: &SceneObject,
+        first: &F,
+        second: &S,
         impulse_x: f64,
         impulse_y: f64,
         angular_impulse: f64,
@@ -73,11 +73,14 @@ impl RenderBridge {
         }
     }
 
-    pub(crate) fn apply_joint_position_impulse(
+    pub(crate) fn apply_joint_position_impulse<
+        F: JointBodyView + ?Sized,
+        S: JointBodyView + ?Sized,
+    >(
         &mut self,
         joint: &PhysicsJoint,
-        first: &SceneObject,
-        second: &SceneObject,
+        first: &F,
+        second: &S,
         impulse_x: f64,
         impulse_y: f64,
         angular_impulse: f64,

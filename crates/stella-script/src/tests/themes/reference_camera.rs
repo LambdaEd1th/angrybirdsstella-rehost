@@ -78,11 +78,16 @@ fn theme_refresh_recovers_reference_camera_and_native_layer_transform() {
         .unwrap();
     // Literal results of sub_10009CEB0 followed by sub_100067A04, using the
     // recovered float32 instruction order (not a screenshot-derived target).
-    assert_eq!((command.x, command.y), (199.4375, 91.125));
+    assert_eq!((command.x, command.y), (212.5625, 96.375_007_629_394_53));
     assert_eq!(
         (command.state.scale_x, command.state.scale_y),
         (2.625, 2.625)
     );
+    assert_eq!(
+        (command.state.translate_x, command.state.translate_y),
+        (-21.0, -10.5)
+    );
+    assert_eq!(command.state.sprite_pivot, Some([0.0, 0.0]));
 }
 
 #[test]
@@ -334,14 +339,14 @@ fn theme_layer_preserves_xmult_and_relative_record_fields() {
     let z_distance = 0.25_f32;
     let ratio = current_scale / end_scale;
     let one_minus_z = 1.0_f32 - z_distance;
-    let centered_x = (-16.0_f32).mul_add(0.5_f32, 3.0_f32);
+    let centered_x = 16.0_f32.mul_add(0.5_f32, -3.0_f32);
     let local_x = centered_x / reference_scale;
     let base_x = z_distance.mul_add(local_x / ratio, local_x * one_minus_z) + 10.0_f32;
     let camera_x = 2.0_f32 + (1024.0_f32 * 0.5_f32) / current_scale;
     let x_world = base_x + (z_distance + 0.5_f32) * (camera_x - 10.0_f32);
     let expected_x = (x_world - 2.0_f32) * current_scale;
 
-    let centered_y = (-8.0_f32).mul_add(0.5_f32, 2.0_f32);
+    let centered_y = 8.0_f32.mul_add(0.5_f32, -2.0_f32);
     let local_y = (96.0_f32 + centered_y) / reference_scale;
     let base_y = z_distance.mul_add(local_y / ratio, local_y * one_minus_z) + 20.0_f32;
     let camera_y = -3.0_f32 + (768.0_f32 * 0.5_f32) / current_scale;
@@ -522,15 +527,15 @@ fn theme_refresh_resolves_symbolic_foreground_offsets_from_all_corrected_cameras
         bridge.theme_foreground_layers[1].offset_y,
         ThemeVerticalOffset::Bottom
     ));
-    // sub_100099828 returns vertical bounds 77 and 154. The top branch uses
-    // max=154; the bottom branch uses min=77. end/reference is 8/4=2,
+    // sub_100099828 returns vertical bounds 83 and 166. The top branch uses
+    // max=166; the bottom branch uses min=83. end/reference is 8/4=2,
     // and the signed integer half-height term is (10/2)*1.5 = 7.5.
     assert_eq!(
         bridge.theme_foreground_layers[0].resolved_offset_y,
-        Some(-84.5)
+        Some(-90.5)
     );
     assert_eq!(
         bridge.theme_foreground_layers[1].resolved_offset_y,
-        Some(353.0)
+        Some(350.0)
     );
 }

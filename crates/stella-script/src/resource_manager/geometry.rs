@@ -16,4 +16,4 @@ pub(crate) use draw::{
     sprite_draw_anchor_offset_from_geometry,
 };
 pub(crate) use model::{NativeSpriteMetrics, NativeSpritePlacement, SpriteGeometry};
-pub(crate) use pivot::native_composite_metrics;
+pub(crate) use pivot::{native_composite_metrics, native_composite_metrics_from_parts};

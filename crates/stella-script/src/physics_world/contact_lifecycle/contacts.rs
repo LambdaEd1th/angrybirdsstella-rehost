@@ -16,22 +16,19 @@ impl RenderBridge {
             return Vec::new();
         }
         let invalidated = invalidated.iter().collect::<BTreeSet<_>>();
-        let mut ending = self
-            .active_contacts
-            .keys()
-            .filter(|(first, second, _, _)| {
-                invalidated.contains(first) || invalidated.contains(second)
-            })
+        let attached_contacts = self
+            .native_contact_world_order
+            .iter()
+            .rev()
+            .map(|(_, key)| key)
+            .filter(|key| invalidated.contains(&key.0) || invalidated.contains(&key.1))
             .cloned()
             .collect::<Vec<_>>();
-        ending.sort_unstable_by(|left, right| {
-            self.contact_creation_order
-                .get(right)
-                .copied()
-                .unwrap_or(0)
-                .cmp(&self.contact_creation_order.get(left).copied().unwrap_or(0))
-                .then_with(|| left.cmp(right))
-        });
+        let ending = attached_contacts
+            .iter()
+            .filter(|key| self.active_contacts.contains_key(*key))
+            .cloned()
+            .collect::<Vec<_>>();
         // 0x10086B9EC..0x10086B9F8 calls the listener before either contact
         // edge is unlinked. Its stores at 0x1000653DC..0x100065410 are the
         // reason a sleeping stack falls when Luca removes its glass support.
@@ -68,10 +65,9 @@ impl RenderBridge {
             .retain(|(first, second, _, _), _| {
                 !invalidated.contains(first) && !invalidated.contains(second)
             });
-        self.contact_creation_order
-            .retain(|(first, second, _, _), _| {
-                !invalidated.contains(first) && !invalidated.contains(second)
-            });
+        for key in &attached_contacts {
+            self.remove_native_contact_order(key);
+        }
         self.contact_filter_dirty.retain(|(first, second, _, _)| {
             !invalidated.contains(first) && !invalidated.contains(second)
         });
@@ -105,20 +101,19 @@ impl RenderBridge {
         let attached = |key: &ContactKey| {
             (key.0 == name && key.2 == fixture) || (key.1 == name && key.3 == fixture)
         };
-        let mut ending = self
-            .active_contacts
-            .keys()
+        let attached_contacts = self
+            .native_contact_world_order
+            .iter()
+            .rev()
+            .map(|(_, key)| key)
             .filter(|key| attached(key))
             .cloned()
             .collect::<Vec<_>>();
-        ending.sort_unstable_by(|left, right| {
-            self.contact_creation_order
-                .get(right)
-                .copied()
-                .unwrap_or(0)
-                .cmp(&self.contact_creation_order.get(left).copied().unwrap_or(0))
-                .then_with(|| left.cmp(right))
-        });
+        let ending = attached_contacts
+            .iter()
+            .filter(|key| self.active_contacts.contains_key(*key))
+            .cloned()
+            .collect::<Vec<_>>();
         // DestroyFixture reaches the same ContactManager::Destroy listener
         // path as DestroyBody, while both endpoints are still live.
         for key in &ending {
@@ -138,7 +133,9 @@ impl RenderBridge {
         self.contact_impulses.retain(|key, _| !attached(key));
         self.solver_contact_impulses.retain(|key, _| !attached(key));
         self.contact_velocity_bias.retain(|key, _| !attached(key));
-        self.contact_creation_order.retain(|key, _| !attached(key));
+        for key in &attached_contacts {
+            self.remove_native_contact_order(key);
+        }
         self.contact_filter_dirty.retain(|key| !attached(key));
         self.contact_manifolds.retain(|key, _| !attached(key));
         self.velocity_contacts.retain(|key, _| !attached(key));

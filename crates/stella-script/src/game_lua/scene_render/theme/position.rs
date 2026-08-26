@@ -38,8 +38,14 @@ pub(super) fn layer_transform(
     let height = layer.geometry.height() as f32;
     let pivot_x = -(layer.geometry.min_x as f32);
     let pivot_y = -(layer.geometry.min_y as f32);
-    let centered_x = (-width).mul_add(0.5_f32, pivot_x);
-    let centered_y = (-height).mul_add(0.5_f32, pivot_y);
+    // `FNMSUB Sd, Sn, Sm, Sa` at 0x10009CF3C/0x10009CF50 computes
+    // `Sn * Sm - Sa`: Purple first moves the authored pivot to the sprite's
+    // geometric center, then asks ResourceManager to draw that center using
+    // HCENTER/VCENTER. The later anchor operation cancels this term for an
+    // unscaled, unprojected sprite, but both halves are required for native
+    // parallax and repeat traversal.
+    let centered_x = width.mul_add(0.5_f32, -pivot_x);
+    let centered_y = height.mul_add(0.5_f32, -pivot_y);
     let local_x = ((layer.offset_x as f32) + centered_x) / reference_scale;
 
     let camera_x =

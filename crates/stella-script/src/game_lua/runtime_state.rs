@@ -1,7 +1,7 @@
 //! Aggregate `GameLua` runtime state recovered from `sub_10002C274`.
 
 use crate::*;
-use mlua::Function;
+use mlua::{Function, Table};
 use std::collections::{BTreeMap, BTreeSet};
 use stella_assets::ka3d::CompositePart;
 
@@ -32,6 +32,18 @@ impl Default for NativeInputZoom {
     }
 }
 
+/// Retained broad-phase payload owned by one native b2Body's fixture list.
+/// Purple stores the tight/swept AABB and proxy id beside each fixture proxy;
+/// the rehost keeps ids on `SceneObject` for fixture-list lifecycle, while
+/// co-locating the remaining proxy scalars under one body lookup. This avoids
+/// manufacturing `(String, fixture)` tree keys during every solver step.
+#[derive(Debug)]
+pub(crate) struct NativeBodyProxyState {
+    pub(crate) tight_aabbs: Vec<NativeAabb>,
+    pub(crate) fat_aabbs: Vec<NativeAabb>,
+    pub(crate) position: (f32, f32),
+}
+
 #[derive(Debug)]
 pub(crate) struct RenderBridge {
     pub(crate) state: RenderState,
@@ -60,6 +72,10 @@ pub(crate) struct RenderBridge {
     /// lists. Native creation inserts at each list head, so larger values are
     /// visited first by b2World::Solve and each body's edge traversal.
     pub(crate) next_physics_creation_order: u64,
+    /// b2World's intrusive body list, indexed by the monotonically allocated
+    /// creation token. Reverse iteration is the native head-to-tail order;
+    /// unlike `scene`, this contains only records that own a b2Body.
+    pub(crate) native_body_world_order: BTreeMap<u64, String>,
     /// Address-sized slot model for the native 0xC0-byte b2Body allocations.
     /// Unlike intrusive-list order, public QueryAABB results are sorted by
     /// `std::set<b2Body*>`, so a destroyed body's block-allocator slot must be
@@ -104,14 +120,16 @@ pub(crate) struct RenderBridge {
     pub(crate) vertex_buffer: Vec<(f64, f64)>,
     pub(crate) active_contacts: BTreeMap<ContactKey, bool>,
     pub(crate) contact_creation_order: BTreeMap<ContactKey, u64>,
+    /// `b2World::m_contactList`, indexed by the allocator-wide creation
+    /// sequence. New contacts are linked at the head, so reverse iteration
+    /// reproduces native `m_next` traversal without sorting string keys.
+    pub(crate) native_contact_world_order: BTreeMap<u64, ContactKey>,
     pub(crate) broad_phase_contacts: BTreeSet<ContactKey>,
     /// Native `b2Contact::e_filterFlag` (`0x8`). Joint topology changes mark
     /// existing contacts, but `ContactManager::Collide` does not consume the
     /// flag until at least one non-static endpoint is awake.
     pub(crate) contact_filter_dirty: BTreeSet<ContactKey>,
-    pub(crate) fixture_tight_aabbs: BTreeMap<(String, usize), (f32, f32, f32, f32)>,
-    pub(crate) fixture_fat_aabbs: BTreeMap<(String, usize), (f32, f32, f32, f32)>,
-    pub(crate) proxy_body_positions: BTreeMap<String, (f32, f32)>,
+    pub(crate) body_proxy_states: BTreeMap<String, NativeBodyProxyState>,
     pub(crate) moved_proxy_ids: BTreeSet<i32>,
     /// Every currently touching non-sensor manifold after the one native
     /// ContactManager::Collide pass. Island assembly selects a subset of
@@ -132,10 +150,17 @@ pub(crate) struct RenderBridge {
     /// sleeps each island independently rather than interleaving the whole
     /// world's constraints.
     pub(crate) solver_islands: Vec<SolverIsland>,
+    /// Non-static island-flagged bodies in b2World list order after the most
+    /// recent discrete assembly. `Solve` walks this same list once after all
+    /// islands to synchronize fixtures, without sorting the island arrays.
+    pub(crate) solver_synchronized_bodies: Vec<String>,
     pub(crate) native_sensor_overlaps: BTreeMap<String, BTreeSet<String>>,
     pub(crate) inside_gravity_objects: BTreeSet<String>,
     pub(crate) collision_velocities: BTreeMap<String, (f64, f64)>,
     pub(crate) joints: BTreeMap<String, PhysicsJoint>,
+    /// Physical `b2Joint` records in world-list creation order. Metadata-only
+    /// destruction links never enter this index.
+    pub(crate) native_joint_world_order: BTreeMap<u64, String>,
     /// GameLua `+0x3F0/+0x3F8`: breakable joints are removed from the
     /// logical 48-byte `jointData` vector during BeginContact, but their
     /// Box2D joints stay alive until the frame-tail drain after Lua update
@@ -237,10 +262,20 @@ pub(crate) struct RenderBridge {
     pub(crate) aim_stream_control_points: Vec<(f64, f64)>,
 }
 
+#[derive(Clone)]
+pub(crate) struct DrawCallbackRecord {
+    /// RenderObjectData+0x20. Purple retains the exact Lua object table in a
+    /// registry reference when the native record is constructed.
+    pub(crate) object: Table,
+    /// RenderObjectData+0x158/+0x160. The two callback holders live in the same
+    /// native record; one tree lookup therefore resolves all three references.
+    pub(crate) pre: Option<Function>,
+    pub(crate) post: Option<Function>,
+}
+
 #[derive(Default)]
 pub(crate) struct DrawCallbacks {
-    pub(crate) pre: BTreeMap<String, Function>,
-    pub(crate) post: BTreeMap<String, Function>,
+    pub(crate) records: BTreeMap<String, DrawCallbackRecord>,
     pub(crate) object_world_identity: Option<usize>,
 }
 
@@ -264,6 +299,7 @@ impl Default for RenderBridge {
             capture_commands: Vec::new(),
             next_draw_order: 0,
             next_physics_creation_order: 0,
+            native_body_world_order: BTreeMap::new(),
             next_body_allocation_slot: 0,
             free_body_allocation_slots: Vec::new(),
             dynamic_tree: NativeDynamicTree::default(),
@@ -291,11 +327,10 @@ impl Default for RenderBridge {
             vertex_buffer: Vec::new(),
             active_contacts: BTreeMap::new(),
             contact_creation_order: BTreeMap::new(),
+            native_contact_world_order: BTreeMap::new(),
             broad_phase_contacts: BTreeSet::new(),
             contact_filter_dirty: BTreeSet::new(),
-            fixture_tight_aabbs: BTreeMap::new(),
-            fixture_fat_aabbs: BTreeMap::new(),
-            proxy_body_positions: BTreeMap::new(),
+            body_proxy_states: BTreeMap::new(),
             moved_proxy_ids: BTreeSet::new(),
             contact_manifolds: BTreeMap::new(),
             velocity_contacts: BTreeMap::new(),
@@ -305,10 +340,12 @@ impl Default for RenderBridge {
             contact_velocity_bias: BTreeMap::new(),
             position_contacts: BTreeMap::new(),
             solver_islands: Vec::new(),
+            solver_synchronized_bodies: Vec::new(),
             native_sensor_overlaps: BTreeMap::new(),
             inside_gravity_objects: BTreeSet::new(),
             collision_velocities: BTreeMap::new(),
             joints: BTreeMap::new(),
+            native_joint_world_order: BTreeMap::new(),
             pending_native_joint_destructions: Vec::new(),
             pending_object_destructions: BTreeMap::new(),
             tracks: BTreeMap::new(),

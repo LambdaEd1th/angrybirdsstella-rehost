@@ -25,35 +25,71 @@ impl RenderBridge {
             self.background_color = self.theme_sky_color.map(native_theme_color_channel);
         }
         self.refresh_theme_world_offsets(foreground, world_limits);
-        let mut layers = if foreground {
-            self.theme_foreground_layers.clone()
+        let layer_count = if foreground {
+            self.theme_foreground_layers.len()
         } else {
-            self.theme_background_layers.clone()
+            self.theme_background_layers.len()
         };
-        if let Some(index) = selected_layer {
-            // Native code trusts this index and would read beyond the vector
-            // for a malformed script. Keep the recovered single-layer range
-            // while making that undefined case a safe empty pass.
-            layers = layers.get(index).cloned().into_iter().collect();
-        }
-        for layer in layers {
-            let transform = position::layer_transform(self, &layer, foreground);
-            self.draw_theme_particles_for_layer(
-                foreground,
-                layer.definition_index as i32,
-                &transform,
-            );
+        let (first_layer, end_layer) = match selected_layer {
+            Some(index) if index < layer_count => (index, index + 1),
+            Some(_) => return,
+            None => (0, layer_count),
+        };
+        for index in first_layer..end_layer {
+            // Purple traverses its retained ThemeLayer vector in place. Build
+            // only the small immutable draw snapshot needed after this borrow
+            // ends; cloning the complete layer here used to duplicate every
+            // animation-frame string/timeline once per pass and frame.
+            let (sprite, geometry, definition_index, alpha, transform, positions) = {
+                let layer = if foreground {
+                    &self.theme_foreground_layers[index]
+                } else {
+                    &self.theme_background_layers[index]
+                };
+                let transform = position::layer_transform(self, layer, foreground);
+                let positions = repeat::tile_positions(self, layer, &transform);
+                (
+                    layer.sprite.clone(),
+                    layer.geometry,
+                    layer.definition_index,
+                    layer.alpha,
+                    transform,
+                    positions,
+                )
+            };
+            self.draw_theme_particles_for_layer(foreground, definition_index as i32, &transform);
 
-            let bound_region = resources.active_atlas_catalog_region(&layer.sprite, data_root);
-            let bound_composite = resources.active_bound_composite(&layer.sprite);
+            let bound_region = resources.active_atlas_catalog_region(&sprite, data_root);
+            let bound_composite = resources.active_bound_composite(&sprite);
             if bound_region.is_none() && bound_composite.is_none() {
                 continue;
             }
             let scale_x = transform.scale_x;
             let scale_y = transform.scale_y;
+            // ThemeManager calls ResourceManager::drawSprite with both anchor
+            // arguments set to CENTER (0x10009C16C/0x10009C1B0). AtlasSprite
+            // then submits its raw rectangle, while CompositeSprite applies
+            // the center offset to its part coordinate system. Keep the
+            // repeated x/y as the native geometric center used for culling,
+            // and carry the corresponding local displacement in render state.
+            let (anchor_x, anchor_y) = sprite_draw_anchor_offset_from_geometry(
+                geometry,
+                SpriteHorizontalAnchor::Center,
+                SpriteVerticalAnchor::Center,
+            );
+            let is_atlas_sprite = bound_region.is_some();
+            let (local_anchor_x, local_anchor_y, sprite_pivot) = if is_atlas_sprite {
+                (
+                    anchor_x + geometry.min_x,
+                    anchor_y + geometry.min_y,
+                    Some([0.0, 0.0]),
+                )
+            } else {
+                (anchor_x, anchor_y, None)
+            };
             let command = |x, y| RenderCommand {
                 order: 0,
-                sprite: layer.sprite.clone(),
+                sprite: sprite.clone(),
                 texture: None,
                 texture_scale: 1.0,
                 masked_texture_binding: None,
@@ -65,16 +101,17 @@ impl RenderBridge {
                 x,
                 y,
                 state: RenderState {
+                    translate_x: local_anchor_x * scale_x,
+                    translate_y: local_anchor_y * scale_y,
                     scale_x,
                     scale_y,
-                    alpha: layer.alpha,
+                    alpha,
+                    sprite_pivot,
                     ..RenderState::default()
                 },
                 world_space: true,
             };
-            let layer_commands = repeat::tile_positions(self, &layer, &transform)
-                .into_iter()
-                .map(|(x, y)| command(x, y));
+            let layer_commands = positions.into_iter().map(|(x, y)| command(x, y));
             self.extend_render_commands(layer_commands);
         }
     }

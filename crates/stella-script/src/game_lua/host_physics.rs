@@ -123,10 +123,12 @@ impl StellaLua {
             }
             // sub_10005E898 invokes removeBlocks immediately after World::Step
             // (and therefore after BeginContact's Lua callbacks), before the
-            // collision-velocity map is consumed.
+            // collision-velocity map is consumed. The shipped removeBlocks
+            // calls the registered removeObject member for every dead block;
+            // that member synchronously retires the native record and Lua
+            // table entry, so Purple has no follow-up world-table scan here.
             if let Value::Function(remove_blocks) = environment.get::<Value>("removeBlocks")? {
                 remove_blocks.call::<()>(())?;
-                self.sync_scene_lifetime()?;
             }
 
             // 0x10005EE90 consumes contact-driven velocity replacements once

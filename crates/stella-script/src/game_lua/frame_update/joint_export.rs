@@ -5,7 +5,7 @@ use crate::*;
 #[derive(Debug, Clone)]
 pub(crate) struct NativeJointEndpointExport {
     pub(crate) name: String,
-    pub(crate) joint_type: i32,
+    pub(crate) coord_type: i32,
     pub(crate) first: (f32, f32),
     pub(crate) second: (f32, f32),
 }
@@ -31,7 +31,7 @@ impl RenderBridge {
                 let second = self.scene.get(&joint.second)?;
                 Some(NativeJointEndpointExport {
                     name: joint.name.clone(),
-                    joint_type: joint.joint_type,
+                    coord_type: joint.coord_type,
                     // The two virtual calls return b2Vec2 values in S0/S1.
                     // Keep the body transform and Lua widening at float32.
                     first: first.native_transform_body_point((

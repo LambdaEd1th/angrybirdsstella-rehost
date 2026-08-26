@@ -3,11 +3,14 @@
 use crate::*;
 
 impl RenderBridge {
-    pub(crate) fn solve_revolute_joint_position(
+    pub(crate) fn solve_revolute_joint_position<
+        F: JointBodyView + ?Sized,
+        S: JointBodyView + ?Sized,
+    >(
         &mut self,
         joint: &PhysicsJoint,
-        first: &SceneObject,
-        second: &SceneObject,
+        first: &F,
+        second: &S,
     ) -> bool {
         const ANGULAR_SLOP: f32 = f32::from_bits(0x3d0e_fa36);
         const MAX_ANGULAR_CORRECTION: f32 = f32::from_bits(0x3e0e_fa36);
@@ -21,7 +24,7 @@ impl RenderBridge {
         };
         let mut angular_error = 0.0_f32;
         if joint.limit_state != JointLimitState::Inactive && inverse_angular_mass != 0.0_f32 {
-            let angle = second.angle as f32 - first.angle as f32 - joint.rest_angle as f32;
+            let angle = second.angle() as f32 - first.angle() as f32 - joint.rest_angle as f32;
             angular_error = match joint.limit_state {
                 JointLimitState::AtLower => (angle - joint.lower_limit as f32).min(0.0_f32).abs(),
                 JointLimitState::AtUpper => (angle - joint.upper_limit as f32).max(0.0_f32).abs(),
@@ -48,10 +51,10 @@ impl RenderBridge {
         }
 
         // The angular limit is applied before anchor offsets are rebuilt.
-        let Some(first) = self.scene.get(&joint.first).cloned() else {
+        let Some(first) = self.scene.get(&joint.first).map(JointBodyState::capture) else {
             return true;
         };
-        let Some(second) = self.scene.get(&joint.second).cloned() else {
+        let Some(second) = self.scene.get(&joint.second).map(JointBodyState::capture) else {
             return true;
         };
         let (r_a, r_b) = joint_anchor_offsets(joint, &first, &second);

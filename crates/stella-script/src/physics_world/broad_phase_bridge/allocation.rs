@@ -9,6 +9,19 @@ impl RenderBridge {
         order
     }
 
+    pub(crate) fn insert_native_contact_order(&mut self, key: ContactKey, order: u64) {
+        if let Some(previous) = self.contact_creation_order.insert(key.clone(), order) {
+            self.native_contact_world_order.remove(&previous);
+        }
+        self.native_contact_world_order.insert(order, key);
+    }
+
+    pub(crate) fn remove_native_contact_order(&mut self, key: &ContactKey) -> Option<u64> {
+        let order = self.contact_creation_order.remove(key)?;
+        self.native_contact_world_order.remove(&order);
+        Some(order)
+    }
+
     pub(crate) fn allocate_body_allocation_slot(&mut self) -> u64 {
         self.free_body_allocation_slots.pop().unwrap_or_else(|| {
             let slot = self.next_body_allocation_slot;

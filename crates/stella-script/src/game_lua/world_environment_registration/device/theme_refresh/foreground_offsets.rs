@@ -113,7 +113,7 @@ fn native_camera_vertical_bound(
     // FNMSUB, with layer+0x40 already zeroed by sub_1000985DC.
     let height = f32::from(native_i16(layer.geometry.height()));
     let pivot_y = f32::from(native_i16(-layer.geometry.min_y));
-    let centered_y = height.mul_add(-0.5_f32, pivot_y);
+    let centered_y = height.mul_add(0.5_f32, -pivot_y);
     let local_y = centered_y / reference_scale;
     let camera_ratio = camera.scale / end_scale;
     let z_distance = layer.z_distance as f32;

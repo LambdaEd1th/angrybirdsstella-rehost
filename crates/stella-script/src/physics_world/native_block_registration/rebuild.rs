@@ -58,7 +58,7 @@ fn process_collision(
             .scene
             .get_mut(object_name)
         {
-            object.dirt_holes.push(hole);
+            Arc::make_mut(&mut object.dirt_holes).push(hole);
         }
         return Ok(());
     }
@@ -67,8 +67,9 @@ fn process_collision(
     let Some((vertices, fixtures, density, friction, restitution)) = ({
         let mut bridge = render.lock().expect("render bridge lock poisoned");
         bridge.scene.get_mut(object_name).and_then(|object| {
-            object.dirt_holes.push(hole);
+            Arc::make_mut(&mut object.dirt_holes).push(hole);
             object.dirt.as_mut().map(|dirt| {
+                let dirt = Arc::make_mut(dirt);
                 dirt.cut(hole);
                 (
                     dirt.foreground_paths.first().cloned().unwrap_or_default(),
