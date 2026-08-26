@@ -94,8 +94,7 @@ pub(crate) use host_input::lock_native_pinch_for_test;
 #[cfg(test)]
 pub(crate) use input::NATIVE_FRAME_KEYS;
 pub(crate) use input::{
-    clear_input_edges, install_input_queries, publish_native_key_state, set_input_flag,
-    trace_input_tables,
+    NativeKeyBuffers, install_input_queries, publish_native_key_state, trace_input_tables,
 };
 pub(super) use level_files::install as install_level_files;
 pub(crate) use loader_registration::install as install_loader_bindings;

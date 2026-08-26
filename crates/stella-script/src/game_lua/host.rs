@@ -17,6 +17,9 @@ pub struct StellaLua {
     #[cfg(test)]
     pub(crate) draw_callbacks: Rc<RefCell<DrawCallbacks>>,
     pub(crate) touches: Arc<Mutex<Vec<(u64, i32, i32)>>>,
+    /// GameApp's fixed platform hold/press/release byte arrays. The native
+    /// frame loop publishes them to GameLua and consumes only the two edges.
+    pub(crate) native_keys: Mutex<NativeKeyBuffers>,
     /// GameLua+0x513. The gamelogic loader sets this only after executing the
     /// decoded chunk and successfully invoking its `updateValues` callback.
     pub(crate) gamelogic_loaded: Cell<bool>,
@@ -86,6 +89,7 @@ impl StellaLua {
             #[cfg(test)]
             draw_callbacks,
             touches,
+            native_keys: Mutex::new(NativeKeyBuffers::default()),
             gamelogic_loaded: Cell::new(false),
             application_audio_active: Cell::new(false),
         })

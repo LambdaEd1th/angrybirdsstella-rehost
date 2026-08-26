@@ -475,8 +475,10 @@ fn native_constructor_does_not_publish_script_pointer_event_literals() {
     }
 
     // The native touch bridge owns the LBUTTON key-table field directly and
-    // does not depend on a same-named Lua global.
+    // does not depend on a same-named Lua global. The platform edge becomes
+    // visible only when GameApp publishes its fixed byte arrays for a frame.
     runtime.set_cursor(12.0, 34.0, true).unwrap();
+    assert!(runtime.update(0.0).unwrap());
     let key_pressed = environment.get::<mlua::Table>("keyPressed").unwrap();
     let key_hold = environment.get::<mlua::Table>("keyHold").unwrap();
     assert!(key_pressed.get::<bool>("LBUTTON").unwrap());
@@ -514,10 +516,6 @@ fn constructor_input_tables_keep_native_identity_after_shadowing() {
     runtime.set_key("KEY_BACK", true).unwrap();
     runtime.set_cursor(12.0, 34.0, true).unwrap();
     runtime.mouse_wheel(1, false, false).unwrap();
-    assert!(native_pressed.get::<bool>("KEY_BACK").unwrap());
-    assert!(native_hold.get::<bool>("KEY_BACK").unwrap());
-    assert!(native_pressed.get::<bool>("LBUTTON").unwrap());
-    assert!(native_hold.get::<bool>("LBUTTON").unwrap());
     assert_eq!(native_cursor.get::<f64>("x").unwrap(), 12.0);
     assert_eq!(native_cursor.get::<f64>("y").unwrap(), 34.0);
     assert_eq!(native_cursor.get::<f64>("wheel").unwrap(), 1.0);
@@ -532,10 +530,19 @@ fn constructor_input_tables_keep_native_identity_after_shadowing() {
     }
 
     assert!(runtime.update(0.0).unwrap());
+    assert!(native_pressed.get::<bool>("KEY_BACK").unwrap());
+    assert!(native_hold.get::<bool>("KEY_BACK").unwrap());
+    assert!(native_pressed.get::<bool>("LBUTTON").unwrap());
+    assert!(native_hold.get::<bool>("LBUTTON").unwrap());
+    assert!(!native_released.get::<bool>("KEY_BACK").unwrap());
+    assert!(!native_cursor.get::<bool>("wheelTriggered").unwrap());
+
+    // Purple clears the platform edge bytes before Lua update, but leaves the
+    // values it just published in the retained Lua table until next frame.
+    assert!(runtime.update(0.0).unwrap());
     assert!(!native_pressed.get::<bool>("KEY_BACK").unwrap());
     assert!(!native_pressed.get::<bool>("LBUTTON").unwrap());
     assert!(!native_released.get::<bool>("KEY_BACK").unwrap());
-    assert!(!native_cursor.get::<bool>("wheelTriggered").unwrap());
 }
 
 #[test]
@@ -621,41 +628,92 @@ fn native_touch_publication_replaces_the_table_caps_at_two_and_formats_ids() {
 #[test]
 fn native_key_injection_separates_hold_press_release_and_repeat() {
     let runtime = StellaLua::new("/tmp").unwrap();
-    runtime.execute_source("function update() end").unwrap();
+    runtime
+        .execute_source(
+            r#"
+                keyFrames = {}
+                function update()
+                    table.insert(keyFrames, {
+                        pressed = keyPressed.KEY_BACK,
+                        released = keyReleased.KEY_BACK,
+                        held = keyHold.KEY_BACK,
+                    })
+                end
+            "#,
+        )
+        .unwrap();
     let environment = game_environment(runtime.lua()).unwrap();
 
     runtime.set_key("KEY_BACK", true).unwrap();
     let key_hold = environment.get::<mlua::Table>("keyHold").unwrap();
     let key_pressed = environment.get::<mlua::Table>("keyPressed").unwrap();
-    let global_pressed = environment.get::<mlua::Table>("g_keyPressed").unwrap();
+    assert!(runtime.update(0.0).unwrap());
+    let frames = environment.get::<mlua::Table>("keyFrames").unwrap();
+    let pressed_frame = frames.raw_get::<mlua::Table>(1).unwrap();
+    assert!(pressed_frame.get::<bool>("pressed").unwrap());
+    assert!(!pressed_frame.get::<bool>("released").unwrap());
+    assert!(pressed_frame.get::<bool>("held").unwrap());
     assert!(key_hold.get::<bool>("KEY_BACK").unwrap());
     assert!(key_pressed.get::<bool>("KEY_BACK").unwrap());
-    assert_eq!(global_pressed.raw_get::<String>(1).unwrap(), "KEY_BACK");
-
-    assert!(runtime.update(0.0).unwrap());
-    assert!(key_hold.get::<bool>("KEY_BACK").unwrap());
-    assert!(!key_pressed.get::<bool>("KEY_BACK").unwrap());
-    assert!(
-        global_pressed
-            .raw_get::<Option<String>>(1)
-            .unwrap()
-            .is_none()
-    );
     for key in NATIVE_FRAME_KEYS {
         assert!(key_hold.get::<Option<bool>>(key).unwrap().is_some());
     }
 
+    assert!(runtime.update(0.0).unwrap());
+    let settled_frame = frames.raw_get::<mlua::Table>(2).unwrap();
+    assert!(!settled_frame.get::<bool>("pressed").unwrap());
+    assert!(!settled_frame.get::<bool>("released").unwrap());
+    assert!(settled_frame.get::<bool>("held").unwrap());
+    assert!(!key_pressed.get::<bool>("KEY_BACK").unwrap());
+
     // Auto-repeat down events leave the native held byte set but do not set
     // the edge byte a second time.
     runtime.set_key("KEY_BACK", true).unwrap();
+    assert!(runtime.update(0.0).unwrap());
+    let repeated_frame = frames.raw_get::<mlua::Table>(3).unwrap();
+    assert!(!repeated_frame.get::<bool>("pressed").unwrap());
     assert!(!key_pressed.get::<bool>("KEY_BACK").unwrap());
 
     runtime.set_key("KEY_BACK", false).unwrap();
     let key_released = environment.get::<mlua::Table>("keyReleased").unwrap();
+    assert!(runtime.update(0.0).unwrap());
+    let released_frame = frames.raw_get::<mlua::Table>(4).unwrap();
+    assert!(!released_frame.get::<bool>("held").unwrap());
+    assert!(released_frame.get::<bool>("released").unwrap());
     assert!(!key_hold.get::<bool>("KEY_BACK").unwrap());
     assert!(key_released.get::<bool>("KEY_BACK").unwrap());
     assert!(runtime.update(0.0).unwrap());
     assert!(!key_released.get::<bool>("KEY_BACK").unwrap());
+    assert!(runtime.set_key("SPACE", true).is_err());
+}
+
+#[test]
+fn native_key_publication_feeds_shipped_compact_event_tables() {
+    let sandbox = ShippedDataSandbox::new("native-key-compact-events");
+    let runtime = StellaLua::new(&sandbox.data_root).unwrap();
+    runtime.boot("scripts/game.lua").unwrap();
+    let environment = game_environment(runtime.lua()).unwrap();
+
+    // Keep the platform pointer outside every menu while exercising the same
+    // LBUTTON byte and shipped gamelogic event-copy path as a real click.
+    runtime.set_cursor(-100.0, -100.0, true).unwrap();
+    assert!(runtime.update(0.0).unwrap());
+    let native_pressed = environment.get::<mlua::Table>("keyPressed").unwrap();
+    let compact_pressed = environment.get::<mlua::Table>("g_keyPressed").unwrap();
+    assert!(native_pressed.get::<bool>("LBUTTON").unwrap());
+    assert!(compact_pressed.get::<bool>("LBUTTON").unwrap());
+
+    assert!(runtime.update(0.0).unwrap());
+    assert!(!native_pressed.get::<bool>("LBUTTON").unwrap());
+    let next_compact_pressed = environment.get::<mlua::Table>("g_keyPressed").unwrap();
+    assert!(!next_compact_pressed.get::<bool>("LBUTTON").unwrap());
+
+    runtime.set_cursor(-100.0, -100.0, false).unwrap();
+    assert!(runtime.update(0.0).unwrap());
+    let native_released = environment.get::<mlua::Table>("keyReleased").unwrap();
+    let compact_released = environment.get::<mlua::Table>("g_keyReleased").unwrap();
+    assert!(native_released.get::<bool>("LBUTTON").unwrap());
+    assert!(compact_released.get::<bool>("LBUTTON").unwrap());
 }
 
 #[test]
@@ -667,6 +725,7 @@ fn view_disappearance_clears_touches_and_releases_only_the_primary_button() {
     runtime.set_touches(&[(7, 12, 34), (8, 56, 78)]).unwrap();
 
     runtime.view_did_disappear(true).unwrap();
+    assert!(runtime.update(0.0).unwrap());
     let environment = game_environment(runtime.lua()).unwrap();
     let key_hold = environment.get::<mlua::Table>("keyHold").unwrap();
     let key_released = environment.get::<mlua::Table>("keyReleased").unwrap();
@@ -674,15 +733,17 @@ fn view_disappearance_clears_touches_and_releases_only_the_primary_button() {
     assert!(key_hold.get::<bool>("KEY_BACK").unwrap());
     assert!(key_released.get::<bool>("LBUTTON").unwrap());
 
-    assert!(runtime.update(0.0).unwrap());
     let touches = environment.get::<mlua::Table>("touches").unwrap();
     assert_eq!(environment.get::<f64>("touchcount").unwrap(), 0.0);
     assert_eq!(touches.raw_len(), 0);
+    assert!(key_released.get::<bool>("LBUTTON").unwrap());
+
+    assert!(runtime.update(0.0).unwrap());
     assert!(!key_released.get::<bool>("LBUTTON").unwrap());
 
     // An already empty controller must not manufacture a release edge.
     runtime.view_did_disappear(false).unwrap();
-    let key_released = environment.get::<mlua::Table>("keyReleased").unwrap();
+    assert!(runtime.update(0.0).unwrap());
     assert!(!key_released.get::<bool>("LBUTTON").unwrap());
 }
 
@@ -733,14 +794,20 @@ fn application_activation_gates_callbacks_until_loaded_and_clears_input_first() 
     assert!(!paused.get::<bool>("button").unwrap());
 
     // sub_100401678 clears only the hold bytes; an edge that arrived before
-    // activation changed remains pending for the first resumed frame.
+    // activation changed remains pending for the first resumed frame rather
+    // than being prematurely published during the activation callback.
     let key_pressed = environment.get::<mlua::Table>("keyPressed").unwrap();
-    assert!(key_pressed.get::<bool>("KEY_BACK").unwrap());
     runtime.set_application_active(true).unwrap();
     let resumed = lifecycle.raw_get::<mlua::Table>(2).unwrap();
     assert_eq!(resumed.get::<String>("name").unwrap(), "resumed");
     assert!(!resumed.get::<bool>("back").unwrap());
     assert!(!resumed.get::<bool>("button").unwrap());
+
+    assert!(!runtime.update(0.0).unwrap());
+    assert!(key_pressed.get::<bool>("KEY_BACK").unwrap());
+    assert_eq!(environment.get::<f64>("touchcount").unwrap(), 0.0);
+    assert!(!runtime.update(0.0).unwrap());
+    assert!(!key_pressed.get::<bool>("KEY_BACK").unwrap());
 
     // AppController does not deduplicate its native stopUpdate dispatch.
     // applicationWillTerminate therefore delivers one final gamePaused even
@@ -754,9 +821,6 @@ fn application_activation_gates_callbacks_until_loaded_and_clears_input_first() 
         assert!(!paused.get::<bool>("back").unwrap());
         assert!(!paused.get::<bool>("button").unwrap());
     }
-
-    assert!(!runtime.update(0.0).unwrap());
-    assert_eq!(environment.get::<f64>("touchcount").unwrap(), 0.0);
 }
 
 #[test]

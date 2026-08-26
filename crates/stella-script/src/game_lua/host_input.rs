@@ -61,24 +61,11 @@ impl StellaLua {
     /// one-frame edges; repeated down events therefore do not create another
     /// press edge.
     pub fn set_key(&self, key_name: &str, down: bool) -> Result<(), ScriptError> {
-        let environment = game_environment(&self.lua)?;
-        let key = Value::String(self.lua.create_string(key_name)?);
-        let was_down = native_lua_object(&self.lua, NativeLuaObject::KeyHold)?
-            .and_then(|table| table.raw_get::<bool>(key.clone()).ok())
-            .unwrap_or(false);
-        for name in ["keyHold", "g_keyHold", "g_keyHoldNotBlocked"] {
-            set_input_flag(&self.lua, &environment, name, key.clone(), down)?;
-        }
-        if down && !was_down {
-            for name in ["keyPressed", "g_keyPressed", "g_keyPressedNotBlocked"] {
-                set_input_flag(&self.lua, &environment, name, key.clone(), true)?;
-            }
-        }
-        if !down && was_down {
-            for name in ["keyReleased", "g_keyReleased", "g_keyReleasedNotBlocked"] {
-                set_input_flag(&self.lua, &environment, name, key.clone(), true)?;
-            }
-        }
+        self.native_keys
+            .lock()
+            .expect("native key-buffer lock poisoned")
+            .set(key_name, down)
+            .ok_or_else(|| runtime_error(format!("unsupported native key '{key_name}'")))?;
         Ok(())
     }
 
@@ -273,29 +260,14 @@ impl StellaLua {
     pub fn set_cursor(&self, x: f64, y: f64, down: bool) -> Result<(), ScriptError> {
         let cursor = native_lua_object(&self.lua, NativeLuaObject::Cursor)?
             .ok_or_else(|| runtime_error("cursor is not a table"))?;
-        let was_down = native_lua_object(&self.lua, NativeLuaObject::KeyHold)?
-            .and_then(|table| table.raw_get::<bool>("LBUTTON").ok())
-            .unwrap_or(false);
         cursor.set("x", x)?;
         cursor.set("y", y)?;
-        let environment = game_environment(&self.lua)?;
-        // GameApp's static key-name table owns this literal. It is not looked
-        // up through Lua and therefore must not trigger the missing-global
-        // observer when publishing the native LBUTTON state.
-        let key = Value::String(self.lua.create_string("LBUTTON")?);
-        for name in ["keyHold", "g_keyHold", "g_keyHoldNotBlocked"] {
-            set_input_flag(&self.lua, &environment, name, key.clone(), down)?;
-        }
-        if down && !was_down {
-            for name in ["keyPressed", "g_keyPressed", "g_keyPressedNotBlocked"] {
-                set_input_flag(&self.lua, &environment, name, key.clone(), true)?;
-            }
-        }
-        if !down && was_down {
-            for name in ["keyReleased", "g_keyReleased", "g_keyReleasedNotBlocked"] {
-                set_input_flag(&self.lua, &environment, name, key.clone(), true)?;
-            }
-        }
+        let was_down = self
+            .native_keys
+            .lock()
+            .expect("native key-buffer lock poisoned")
+            .set("LBUTTON", down)
+            .expect("LBUTTON is a fixed native key");
         if std::env::var_os("STELLA_TRACE_UI_INPUT").is_some() && down && !was_down {
             self.execute_source(
                 r##"
@@ -321,6 +293,8 @@ impl StellaLua {
             )?;
         }
         if std::env::var_os("STELLA_TRACE_INPUT").is_some() {
+            let environment = game_environment(&self.lua)?;
+            let key = Value::String(self.lua.create_string("LBUTTON")?);
             let pressed = match environment.get::<Value>("isKeyPressed")? {
                 Value::Function(function) => function.call::<bool>(key.clone()).unwrap_or(false),
                 _ => false,

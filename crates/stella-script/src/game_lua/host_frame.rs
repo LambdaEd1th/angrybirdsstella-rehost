@@ -35,7 +35,7 @@ impl StellaLua {
         let raw_delta = delta_seconds as f32;
         let delta_seconds = f64::from(raw_delta);
         self.recover_native_audio_output()?;
-        publish_native_key_state(&self.lua)?;
+        publish_native_key_state(&self.lua, &self.native_keys)?;
         let environment = game_environment(&self.lua)?;
         // sub_10005E898 converts Lua's g_safeToQuit with lua_toboolean and
         // stores GameLua+0x6AC before applyUserZoom, touch publication and the
@@ -261,7 +261,6 @@ impl StellaLua {
                 if trace_input {
                     trace_input_tables(&environment, "after-update")?;
                 }
-                clear_input_edges(&self.lua)?;
                 self.finish_mouse_wheel_frame()?;
                 Ok(true)
             }
@@ -289,7 +288,6 @@ impl StellaLua {
                     .expect("render bridge lock poisoned")
                     .drain_pending_native_joint_destructions();
                 self.advance_native_aim_stream(delta_seconds);
-                clear_input_edges(&self.lua)?;
                 self.finish_mouse_wheel_frame()?;
                 Ok(false)
             }

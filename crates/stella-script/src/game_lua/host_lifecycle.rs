@@ -10,6 +10,10 @@ impl StellaLua {
     /// The press/release edge buffers are intentionally not cleared here.
     pub fn set_application_active(&self, active: bool) -> Result<(), ScriptError> {
         self.set_touches(&[])?;
+        self.native_keys
+            .lock()
+            .expect("native key-buffer lock poisoned")
+            .clear_holds();
         let environment = game_environment(&self.lua)?;
         if let Some(table) = native_lua_object(&self.lua, NativeLuaObject::KeyHold)? {
             for key in NATIVE_FRAME_KEYS {

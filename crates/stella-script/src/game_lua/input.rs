@@ -14,21 +14,73 @@ pub(crate) const NATIVE_FRAME_KEYS: [&str; 5] = [
     "VOLUME_DOWN",
 ];
 
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct NativeKeyBuffers {
+    pressed: [bool; NATIVE_FRAME_KEYS.len()],
+    released: [bool; NATIVE_FRAME_KEYS.len()],
+    held: [bool; NATIVE_FRAME_KEYS.len()],
+}
+
+impl NativeKeyBuffers {
+    pub(crate) fn set(&mut self, key_name: &str, down: bool) -> Option<bool> {
+        let index = NATIVE_FRAME_KEYS
+            .iter()
+            .position(|candidate| *candidate == key_name)?;
+        let was_down = self.held[index];
+        self.held[index] = down;
+        if down && !was_down {
+            self.pressed[index] = true;
+        } else if !down && was_down {
+            self.released[index] = true;
+        }
+        Some(was_down)
+    }
+
+    pub(crate) fn clear_holds(&mut self) {
+        self.held.fill(false);
+    }
+
+    fn take_frame(&mut self) -> NativeKeyFrame {
+        let frame = NativeKeyFrame {
+            pressed: self.pressed,
+            released: self.released,
+            held: self.held,
+        };
+        self.pressed.fill(false);
+        self.released.fill(false);
+        frame
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct NativeKeyFrame {
+    pressed: [bool; NATIVE_FRAME_KEYS.len()],
+    released: [bool; NATIVE_FRAME_KEYS.len()],
+    held: [bool; NATIVE_FRAME_KEYS.len()],
+}
+
 /// `sub_1000293C8` writes all five entries on every frame, including false
-/// entries for keys whose platform bytes are clear.
-pub(crate) fn publish_native_key_state(lua: &Lua) -> LuaResult<()> {
-    for object in [
-        NativeLuaObject::KeyPressed,
-        NativeLuaObject::KeyReleased,
-        NativeLuaObject::KeyHold,
+/// entries for keys whose platform bytes are clear, then clears the two edge
+/// byte arrays before entering GameLua::update. The published Lua values are
+/// deliberately left in place until the following frame overwrites them.
+pub(crate) fn publish_native_key_state(
+    lua: &Lua,
+    buffers: &Mutex<NativeKeyBuffers>,
+) -> LuaResult<()> {
+    let frame = buffers
+        .lock()
+        .expect("native key-buffer lock poisoned")
+        .take_frame();
+    for (object, values) in [
+        (NativeLuaObject::KeyPressed, frame.pressed),
+        (NativeLuaObject::KeyReleased, frame.released),
+        (NativeLuaObject::KeyHold, frame.held),
     ] {
         let Some(table) = native_lua_object(lua, object)? else {
             continue;
         };
-        for key in NATIVE_FRAME_KEYS {
-            if matches!(table.raw_get::<Value>(key)?, Value::Nil) {
-                table.raw_set(key, false)?;
-            }
+        for (key, value) in NATIVE_FRAME_KEYS.into_iter().zip(values) {
+            table.raw_set(key, value)?;
         }
     }
     Ok(())
@@ -80,87 +132,6 @@ pub(crate) fn install_input_queries(lua: &Lua) -> LuaResult<()> {
                 })
             })?,
         )?;
-    }
-    Ok(())
-}
-
-pub(crate) fn set_input_flag(
-    lua: &Lua,
-    environment: &mlua::Table,
-    name: &str,
-    key: Value,
-    value: bool,
-) -> LuaResult<()> {
-    let native_object = match name {
-        "keyPressed" => Some(NativeLuaObject::KeyPressed),
-        "keyReleased" => Some(NativeLuaObject::KeyReleased),
-        "keyHold" => Some(NativeLuaObject::KeyHold),
-        _ => None,
-    };
-    let table = match native_object {
-        Some(object) => match native_lua_object(lua, object)? {
-            Some(table) => table,
-            None => lua.create_table()?,
-        },
-        None => match environment.get::<Value>(name)? {
-            Value::Table(table) => table,
-            _ => lua.create_table()?,
-        },
-    };
-    table.raw_set(key.clone(), value)?;
-    // Only native `g_*` buffers carry the compact event list. Publishing its
-    // numeric entry in Lua's key map makes MenuManager mistake mouse button 1
-    // for a keyboard event and skip pointer delegation for that frame.
-    if name.starts_with("g_") {
-        if value {
-            table.raw_set(1, key)?;
-        } else {
-            table.raw_set(1, Value::Nil)?;
-        }
-    } else {
-        table.raw_set(1, Value::Nil)?;
-    }
-    if let Some(object) = native_object {
-        retain_native_lua_object(lua, object, Some(&table))?;
-    } else {
-        environment.set(name, table.clone())?;
-        lua.globals().set(name, table)?;
-    }
-    Ok(())
-}
-
-pub(crate) fn clear_input_edges(lua: &Lua) -> LuaResult<()> {
-    let environment = game_environment(lua)?;
-    for object in [NativeLuaObject::KeyPressed, NativeLuaObject::KeyReleased] {
-        let Some(table) = native_lua_object(lua, object)? else {
-            continue;
-        };
-        let keys = table
-            .clone()
-            .pairs::<Value, Value>()
-            .map(|pair| pair.map(|(key, _)| key))
-            .collect::<LuaResult<Vec<_>>>()?;
-        for key in keys {
-            table.raw_set(key, false)?;
-        }
-    }
-    for name in [
-        "g_keyPressed",
-        "g_keyPressedNotBlocked",
-        "g_keyReleased",
-        "g_keyReleasedNotBlocked",
-    ] {
-        let Value::Table(table) = environment.get::<Value>(name)? else {
-            continue;
-        };
-        let keys = table
-            .clone()
-            .pairs::<Value, Value>()
-            .map(|pair| pair.map(|(key, _)| key))
-            .collect::<LuaResult<Vec<_>>>()?;
-        for key in keys {
-            table.raw_set(key, Value::Nil)?;
-        }
     }
     Ok(())
 }

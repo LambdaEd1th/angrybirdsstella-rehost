@@ -13646,3 +13646,62 @@ bindings and empty stderr; its PNG SHA-256 is
 The release `stella-app` and `stella-headless` hashes are respectively
 `2e523c823b15780611aad70efae519c7069a3adb09ddd4823d6225cd5b9b584c`
 and `fa533d3841bca561f59518311a1739af0c77be7966ee013357cb70fb7f321faa`.
+
+## Fixed GameApp key-byte buffers and frame-published edge lifetime
+
+The next full update/draw sample found a Rust-only per-frame cost in
+`clear_input_edges`: it iterated and copied six Lua tables through mlua's
+generic `TablePairs` path after every update. That also gave the retained
+native key tables the wrong observable lifetime. Purple does not scan or
+clear Lua tables at the end of a frame.
+
+IDA's frame input publisher `sub_1000293C8` at
+`0x1000295C8..0x100029658` walks the fixed five-entry key-code array at
+`0x1009AE708`. For each entry it reads the platform press byte at
+`GameApp + key + 0x590`, the release byte at `GameApp + key + 0x613`, and
+the held state through `sub_1004016F4`. It publishes all three values through
+the retained GameLua tables at `+0xf0`, `+0x118` and `+0x140`, then the two
+`strb wzr` instructions at `0x100029648` and `0x10002964c` consume only the
+platform edge bytes. The loop advances by four bytes and stops after exactly
+five keys: `LBUTTON`, `KEY_BACK`, `KEY_MENU`, `VOLUME_UP` and `VOLUME_DOWN`.
+Hopper independently recovers the same static array, GameLua owner at
+`GameApp + 0x578`, table offsets, byte offsets and five-iteration loop.
+
+The later GameLua update call in `sub_10005E898` is at `0x1000605A0`.
+Its tail updates particles, destroys pending joints, advances AimStream and
+returns at `0x1000606B0`; there is no post-callback Lua key-table scan or
+clear. A shipped-script probe also confirms that gamelogic derives its compact
+`g_keyPressed`/`g_keyReleased` tables from these retained native tables during
+`update`, so the host must not manufacture or clear those script-owned tables.
+
+The rehost now owns three fixed five-element native buffers. Platform events
+change the held byte and deduplicate press/release edges without entering Lua.
+At frame start one small snapshot is published to the three retained native
+tables and only the two edge arrays are consumed. Published Lua booleans stay
+visible for the complete frame and are overwritten on the next frame, exactly
+matching the recovered native boundary. Application deactivation still clears
+the held bytes before the lifecycle callback while preserving pending edges.
+
+Focused regressions cover frame publication, edge lifetime, auto-repeat,
+release, activation, view disappearance, retained-table identity and the
+shipped compact event-table derivation. The complete workspace passes 660
+tests with one intentional long-duration BirdRun audit ignored. Formatting,
+diff whitespace, strict all-target/all-feature Clippy, doc tests and the locked
+release build are clean.
+
+Three 2,000,000-frame stable-map host-overhead runs reduce median real time
+from 19.61 to 14.34 seconds and median user CPU from 18.79 to 13.58 seconds,
+reductions of about 26.9 and 27.7 percent in this deliberately minimal
+update/native-draw benchmark. A follow-up symbol sample contains no
+`clear_input_edges`, `TablePairs` or mlua `GenericShunt` stack. This isolated
+result is not treated as a universal gameplay frame-rate claim.
+
+The final release opens the settings panel through a real deterministic wgpu
+LBUTTON click after the map has settled, with zero invoked fallbacks, zero
+remaining compatibility bindings and empty stderr. Its PNG SHA-256 is
+`d40fba5eacb48c5738d2c4926408ce5dc374f3d3d6f3dc673fabcd02f81d8ff1`.
+The same release directly constructs and draws Chapter01 L50 with 14 optional
+nil probes, zero fallbacks and zero compatibility bindings. The stripped
+`stella-app` and `stella-headless` hashes are respectively
+`72ce04045bf490ef9fceb0e1f1efd85f415d4cad278d4f21138daa9215513a92`
+and `264fb417104690ee42e39497f77d00c697ef8fed6b2510e65c3e2aa7904aea61`.
