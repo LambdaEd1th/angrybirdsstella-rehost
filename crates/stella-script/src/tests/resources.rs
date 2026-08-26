@@ -1207,6 +1207,84 @@ fn composite_resource_tables_and_partial_entry_updates_match_native_shape() {
 }
 
 #[test]
+fn composite_generic_metrics_read_cached_fields_until_explicit_bounds_refresh() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    register_test_sprite_sheet_with_sizes(
+        &runtime,
+        &[("CACHE_PART", 100, 40), ("CACHE_ALT", 20, 10)],
+    );
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let file_name = format!(
+        "stella-composite-metric-cache-{}-{unique}.dat",
+        std::process::id()
+    );
+    let path = runtime.data_root().join(&file_name);
+    fs::write(
+        &path,
+        test_composite_set_with_part("METRIC_CACHE", "CACHE_PART"),
+    )
+    .unwrap();
+    runtime
+        .execute_source(&format!(
+            r#"
+                res.createCompoSpriteSet("{file_name}")
+                initial_w, initial_h = res.getSpriteBounds("METRIC_CACHE")
+                initial_px, initial_py = res.getSpritePivot("METRIC_CACHE")
+                res.setCompoSpriteEntry("METRIC_CACHE", 0, {{ x = 30 }})
+                stale_w, stale_h = res.getSpriteBounds("METRIC_CACHE")
+                stale_px, stale_py = res.getSpritePivot("METRIC_CACHE")
+                refreshed_min_x, refreshed_min_y, refreshed_max_x, refreshed_max_y =
+                    res.getCompoSpriteBounds("METRIC_CACHE")
+                refreshed_w, refreshed_h = res.getSpriteBounds("METRIC_CACHE")
+                refreshed_px, refreshed_py = res.getSpritePivot("METRIC_CACHE")
+                res.setCompoSpriteEntry("METRIC_CACHE", 0, {{
+                    name = "CACHE_ALT#RUNTIME_INSTANCE",
+                    x = 0
+                }})
+                rebound_w, rebound_h = res.getSpriteBounds("METRIC_CACHE")
+                rebound_px, rebound_py = res.getSpritePivot("METRIC_CACHE")
+            "#
+        ))
+        .unwrap();
+    fs::remove_file(path).unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    for (name, expected) in [
+        ("initial_w", 100.0),
+        ("initial_h", 40.0),
+        ("initial_px", 50.0),
+        ("initial_py", 20.0),
+        ("stale_w", 100.0),
+        ("stale_h", 40.0),
+        ("stale_px", 50.0),
+        ("stale_py", 20.0),
+        ("refreshed_min_x", -20.0),
+        ("refreshed_min_y", -20.0),
+        ("refreshed_max_x", 80.0),
+        ("refreshed_max_y", 20.0),
+        ("refreshed_w", 100.0),
+        ("refreshed_h", 40.0),
+        ("refreshed_px", 20.0),
+        ("refreshed_py", 20.0),
+        ("rebound_w", 20.0),
+        ("rebound_h", 10.0),
+        ("rebound_px", 10.0),
+        ("rebound_py", 5.0),
+    ] {
+        assert_eq!(environment.get::<f64>(name).unwrap(), expected, "{name}");
+    }
+    let resources = runtime.resource_runtime.lock().unwrap();
+    let (parts, regions) = resources
+        .active_composite_bound_parts("METRIC_CACHE")
+        .unwrap();
+    assert_eq!(parts[0].sprite, "CACHE_ALT#RUNTIME_INSTANCE");
+    assert_eq!(regions[0].sprite.name, "CACHE_ALT");
+}
+
+#[test]
 fn composite_resource_handwritten_stack_abi_matches_native_dispatch_order() {
     let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data");
     let runtime = StellaLua::new(data_root).unwrap();

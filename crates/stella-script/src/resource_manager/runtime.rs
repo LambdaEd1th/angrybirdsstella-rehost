@@ -9,7 +9,7 @@ use std::{
 
 use stella_assets::ka3d::{BitmapFont, CompositeSpriteSet, LocalizationTable, SpriteSheet};
 
-use super::SystemFontState;
+use super::{NativeSpriteMetrics, SystemFontState};
 use crate::{
     AudioAssetSource, SpriteCatalogRegion, SpriteShader, TextFontBinding, resolve_data_file,
 };
@@ -145,6 +145,12 @@ pub(crate) enum SpriteResourceKind {
 pub(crate) struct SpriteResourceEntry {
     pub(crate) kind: SpriteResourceKind,
     pub(crate) owner: String,
+    /// Index of the retained native Sprite object inside its owning resource.
+    /// Purple's active-name stack stores the concrete Sprite pointer; keeping
+    /// this index avoids rescanning the immutable SPRT/COMP vector by name.
+    pub(crate) index: usize,
+    /// Concrete Sprite fields read by getSpriteBounds/getSpritePivot.
+    pub(crate) metrics: NativeSpriteMetrics,
 }
 
 #[derive(Debug)]
@@ -174,9 +180,9 @@ pub(crate) struct ResourceRuntime {
     /// Native CompoSpriteSet map value identity represented by its resolved file.
     pub(crate) composite_set_paths: BTreeMap<String, String>,
     pub(crate) composite_set_values: BTreeMap<String, CompositeSpriteSet>,
-    /// AtlasSprite pointers resolved and retained by the native COMP loader.
-    /// Vectors remain index-aligned with their composite's `parts` vector.
-    pub(crate) composite_set_regions: BTreeMap<String, BTreeMap<String, Vec<SpriteCatalogRegion>>>,
+    /// AtlasSprite pointers retained for every native CompoSprite Entry. Both
+    /// vector levels stay index-aligned with CompositeSpriteSet::sprites/parts.
+    pub(crate) composite_set_regions: BTreeMap<String, Vec<Vec<SpriteCatalogRegion>>>,
     /// Native `Resources + 0x580` maps each name to a priority vector. Lookup
     /// observes only the final entry and then applies any requested type gate.
     pub(crate) sprite_entries: BTreeMap<String, Vec<SpriteResourceEntry>>,

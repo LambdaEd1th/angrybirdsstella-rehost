@@ -1,11 +1,14 @@
 //! SpriteSheet and CompoSpriteSet construction, replacement and release.
 
-use std::{collections::BTreeMap, path::Path};
+use std::path::Path;
 
 use stella_assets::ka3d::{CompositeSpriteSet, SpriteSheet};
 
 use super::{ResourceRuntime, SpriteResourceEntry, SpriteResourceKind};
-use crate::SpriteCatalogRegion;
+use crate::{
+    SpriteCatalogRegion,
+    resource_manager::{NativeSpriteMetrics, native_composite_metrics_from_parts},
+};
 
 impl ResourceRuntime {
     pub(crate) fn register_sprite_aliases(&mut self, aliases: &[(&str, &str)]) {
@@ -53,18 +56,27 @@ impl ResourceRuntime {
                     .copied()
                     .unwrap_or(0);
                 sprite.name = alias.clone();
+                let index = sheet.sprites.len();
+                let metrics = NativeSpriteMetrics {
+                    width: i32::from(sprite.width),
+                    height: i32::from(sprite.height),
+                    pivot_x: i32::from(sprite.pivot_x),
+                    pivot_y: i32::from(sprite.pivot_y),
+                };
                 sheet.sprites.push(sprite);
                 sheet.sprite_texture_indices.push(texture_index);
-                additions.push((alias.clone(), owner.clone()));
+                additions.push((alias.clone(), owner.clone(), index, metrics));
             }
         }
-        for (alias, owner) in additions {
+        for (alias, owner, index, metrics) in additions {
             self.sprite_entries
                 .entry(alias)
                 .or_default()
                 .push(SpriteResourceEntry {
                     kind: SpriteResourceKind::Atlas,
                     owner: owner.clone(),
+                    index,
+                    metrics,
                 });
             self.sprite_sheet_catalog_regions.remove(&owner);
         }
@@ -112,13 +124,20 @@ impl ResourceRuntime {
         self.next_sprite_sheet_identity = self.next_sprite_sheet_identity.wrapping_add(1).max(1);
         self.sprite_sheet_identities
             .insert(owner.to_owned(), native_sheet_id);
-        for sprite in &sheet.sprites {
+        for (index, sprite) in sheet.sprites.iter().enumerate() {
             self.sprite_entries
                 .entry(sprite.name.clone())
                 .or_default()
                 .push(SpriteResourceEntry {
                     kind: SpriteResourceKind::Atlas,
                     owner: owner.to_owned(),
+                    index,
+                    metrics: NativeSpriteMetrics {
+                        width: i32::from(sprite.width),
+                        height: i32::from(sprite.height),
+                        pivot_x: i32::from(sprite.pivot_x),
+                        pivot_y: i32::from(sprite.pivot_y),
+                    },
                 });
         }
         self.sprite_sheet_values.insert(owner.to_owned(), sheet);
@@ -162,7 +181,7 @@ impl ResourceRuntime {
         &mut self,
         owner: &str,
         set: CompositeSpriteSet,
-        regions: BTreeMap<String, Vec<SpriteCatalogRegion>>,
+        regions: Vec<Vec<SpriteCatalogRegion>>,
     ) {
         if let Some(old) = self.composite_set_values.remove(owner) {
             let names = old
@@ -172,13 +191,24 @@ impl ResourceRuntime {
                 .collect::<Vec<_>>();
             self.remove_sprite_entries(SpriteResourceKind::Composite, owner, &names);
         }
-        for sprite in &set.sprites {
+        for (index, sprite) in set.sprites.iter().enumerate() {
+            let metrics = regions
+                .get(index)
+                .and_then(|regions| native_composite_metrics_from_parts(&sprite.parts, regions))
+                .unwrap_or(NativeSpriteMetrics {
+                    width: 0,
+                    height: 0,
+                    pivot_x: 0,
+                    pivot_y: 0,
+                });
             self.sprite_entries
                 .entry(sprite.name.clone())
                 .or_default()
                 .push(SpriteResourceEntry {
                     kind: SpriteResourceKind::Composite,
                     owner: owner.to_owned(),
+                    index,
+                    metrics,
                 });
         }
         self.composite_set_values.insert(owner.to_owned(), set);
@@ -210,16 +240,20 @@ impl ResourceRuntime {
         set: &CompositeSpriteSet,
         data_root: &Path,
         source: &str,
-    ) -> Result<BTreeMap<String, Vec<SpriteCatalogRegion>>, String> {
-        let mut result = BTreeMap::new();
+    ) -> Result<Vec<Vec<SpriteCatalogRegion>>, String> {
+        let mut result = Vec::with_capacity(set.sprites.len());
         for composite in &set.sprites {
             let mut regions = Vec::with_capacity(composite.parts.len());
             for part in &composite.parts {
+                let sprite_name = part
+                    .sprite
+                    .split_once('#')
+                    .map_or(part.sprite.as_str(), |(base, _)| base);
                 let region = self
                     .sprite_sheet_values
                     .iter()
                     .find_map(|(owner, _)| {
-                        self.sprite_sheet_catalog_region(owner, &part.sprite, data_root)
+                        self.sprite_sheet_catalog_region(owner, sprite_name, data_root)
                     })
                     .ok_or_else(|| {
                         format!(
@@ -229,7 +263,7 @@ impl ResourceRuntime {
                     })?;
                 regions.push(region);
             }
-            result.insert(composite.name.clone(), regions);
+            result.push(regions);
         }
         Ok(result)
     }

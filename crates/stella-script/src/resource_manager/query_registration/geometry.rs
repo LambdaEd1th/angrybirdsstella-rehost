@@ -71,20 +71,17 @@ pub(super) fn install(
                         index + 1
                     ))
                 })?;
-            let resources = composite_bounds_resources
+            let mut resources = composite_bounds_resources
                 .lock()
                 .expect("resource runtime lock poisoned");
-            if resources.active_composite_parts(&name).is_none() {
-                return Ok(MultiValue::new());
-            }
-            let Some(geometry) = resources.active_geometry(&name) else {
+            let Some(metrics) = resources.refresh_active_composite_metrics(&name) else {
                 return Ok(MultiValue::new());
             };
             Ok(MultiValue::from_vec(vec![
-                Value::Number(geometry.min_x),
-                Value::Number(geometry.min_y),
-                Value::Number(geometry.max_x),
-                Value::Number(geometry.max_y),
+                Value::Number(-f64::from(metrics.pivot_x)),
+                Value::Number(-f64::from(metrics.pivot_y)),
+                Value::Number(f64::from(metrics.width) - f64::from(metrics.pivot_x)),
+                Value::Number(f64::from(metrics.height) - f64::from(metrics.pivot_y)),
             ]))
         })?,
     )?;
@@ -167,11 +164,23 @@ pub(super) fn install(
                 runtime_error("setCompoSpriteEntry selector did not resolve to a composite part")
             })?;
             let values = native_required_table(&args, 2, "setCompoSpriteEntry")?;
-            let parts = resources
-                .active_composite_parts_mut(&name)
-                .expect("composite existence was checked above");
-            update_composite_part_from_lua(&mut parts[index], &values)?;
-            let updated = parts.clone();
+            let (old_sprite, new_sprite, updated) = {
+                let parts = resources
+                    .active_composite_parts_mut(&name)
+                    .expect("composite existence was checked above");
+                let old_sprite = parts[index].sprite.clone();
+                update_composite_part_from_lua(&mut parts[index], &values)?;
+                (old_sprite, parts[index].sprite.clone(), parts.clone())
+            };
+            if old_sprite != new_sprite
+                && resources
+                    .rebind_active_composite_part_region(&name, index, &new_sprite)
+                    .is_none()
+            {
+                return Err(runtime_error(format!(
+                    "setCompoSpriteEntry atlas resource '{new_sprite}' was not found"
+                )));
+            }
             resources.mark_sprite_catalog_changed();
             drop(resources);
             let mut bridge = render.lock().expect("render bridge lock poisoned");

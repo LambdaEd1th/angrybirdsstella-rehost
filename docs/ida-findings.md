@@ -13584,3 +13584,65 @@ pixels inside one animated-character region. The release `stella-app` and
 `stella-headless` hashes are respectively
 `828862f62e46c8ed0291ae86d3eaa9349a793cb5a7ee0a2074652127cdc99e0d`
 and `7587167fb7fa8fad59e29595d53b1dbc03a67bc4939beaf04db6d23c0e33d1cc`.
+
+## Direct native Sprite entries and cached CompoSprite metrics
+
+The next query profile exposed another ownership mismatch. The rehost's
+active-name map already reproduced Purple's last-entry-wins resource stack,
+but the selected entry retained only its resource owner. Every generic Sprite
+bounds or pivot query therefore searched the owner's immutable SPRT/COMP
+vector by name, and a composite query rebuilt all transformed bounds. Purple
+keeps the concrete Sprite pointer and reads fields from that object instead.
+
+IDA's four generic query adapters at `sub_10045CD14`, `sub_10045CD60`,
+`sub_10045CDAC` and `sub_10045CDF8` call the central active-name lookup
+`sub_10045BDDC` once. They branch on the concrete type and immediately call
+the selected AtlasSprite or CompoSprite width, height and pivot getters. The
+AtlasSprite getters at `sub_100467E14`, `sub_100467E1C`, `sub_100467E24` and
+`sub_100467E2C` are direct signed loads from object offsets `+0x2c`, `+0x2e`,
+`+0x30` and `+0x32`. They contain no vector scan or geometry reconstruction.
+Hopper independently shows the same lookup, type branch and field loads.
+
+CompoSprite uses the same cached-field contract. `sub_100436D40` walks its
+retained Entry pointer vector and each Entry's AtlasSprite pointer, transforms
+the four corners, applies `FCVTZS`, and stores width, height and pivot at
+CompoSprite `+0x60`, `+0x64`, `+0x68` and `+0x6c`. Constructors call that
+member once. The dedicated `getCompoSpriteBounds` adapter at `sub_10044913C`
+also calls it explicitly before returning `-pivot` and `size - pivot`, whereas
+the generic Sprite queries do not. `setCompoSprite` at `sub_100449CFC` writes
+ordinary position, scale, flip, angle and visibility fields without a bounds
+refresh. Its name-change exception calls `sub_1004375E8`, which replaces the
+retained AtlasSprite pointer and then calls `sub_100436D40`. This distinction
+is visible in both disassemblers and is important to observable Lua behavior.
+
+The rehost now stores the direct owning-vector index and the four concrete
+integer metrics on every active Sprite resource entry. Composite child-region
+owners are represented by two index-aligned vectors matching the native
+CompoSpriteSet and Entry arrays. Generic queries therefore perform only the
+active-name stack lookup and copy the stored fields. The dedicated composite
+bounds query refreshes those fields; scalar entry changes leave them stale,
+and a changed child name resolves and retains the new AtlasSprite before an
+immediate refresh. The existing final-priority lookup and release-to-previous
+entry behavior is unchanged. A focused regression covers all three refresh
+boundaries, including an instance-suffixed child name.
+
+Three alternating 5,000,000-query runs against the last sprite in a shipped
+sheet reduce median real time from 1.54 to 1.18 seconds and median user CPU
+from 1.46 to 1.07 seconds, reductions of about 23.4 and 26.7 percent in this
+deliberately lookup-heavy microbenchmark. A follow-up symbolized
+30,000,000-query sample contains the expected active-name map lookup but no
+`active_sprite_entry`, iterator-find, owning SPRT-vector scan or
+`SpriteResourceEntry` scan stack.
+
+The complete workspace now passes 659 tests with one intentional
+long-duration BirdRun audit ignored. Formatting, diff whitespace, strict
+all-target/all-feature Clippy and the locked release build are clean. The
+current release also directly constructs Chapter01 L50 and calls
+`drawGameNative` with 14 optional nil probes, zero invoked fallbacks, zero
+remaining compatibility bindings and empty stderr. A separate 1,200-frame
+real-wgpu boot/map checkpoint has zero invoked fallbacks, zero compatibility
+bindings and empty stderr; its PNG SHA-256 is
+`f6acb966956827bc280e4031e6c82d92528a6f633980322c3d80a72644ac2045`.
+The release `stella-app` and `stella-headless` hashes are respectively
+`2e523c823b15780611aad70efae519c7069a3adb09ddd4823d6225cd5b9b584c`
+and `fa533d3841bca561f59518311a1739af0c77be7966ee013357cb70fb7f321faa`.

@@ -175,17 +175,12 @@ impl ResourceRuntime {
     pub(crate) fn active_atlas_geometry(&self, name: &str) -> Option<SpriteGeometry> {
         let asset_name = name.split_once('#').map_or(name, |(base, _)| base);
         let entry = self.active_sprite_entry(asset_name, Some(SpriteResourceKind::Atlas))?;
-        let sprite = self
-            .sprite_sheet_values
-            .get(&entry.owner)?
-            .sprites
-            .iter()
-            .find(|sprite| sprite.name == asset_name)?;
+        let metrics = entry.metrics;
         Some(SpriteGeometry {
-            min_x: -f64::from(sprite.pivot_x),
-            min_y: -f64::from(sprite.pivot_y),
-            max_x: f64::from(sprite.width) - f64::from(sprite.pivot_x),
-            max_y: f64::from(sprite.height) - f64::from(sprite.pivot_y),
+            min_x: -f64::from(metrics.pivot_x),
+            min_y: -f64::from(metrics.pivot_y),
+            max_x: f64::from(metrics.width) - f64::from(metrics.pivot_x),
+            max_y: f64::from(metrics.height) - f64::from(metrics.pivot_y),
         })
     }
 
@@ -233,8 +228,7 @@ impl ResourceRuntime {
         self.composite_set_values
             .get(&entry.owner)?
             .sprites
-            .iter()
-            .find(|sprite| sprite.name == asset_name)
+            .get(entry.index)
             .map(|sprite| sprite.parts.as_slice())
     }
 
@@ -248,14 +242,13 @@ impl ResourceRuntime {
             .composite_set_values
             .get(&entry.owner)?
             .sprites
-            .iter()
-            .find(|sprite| sprite.name == asset_name)?
+            .get(entry.index)?
             .parts
             .as_slice();
         let regions = self
             .composite_set_regions
             .get(&entry.owner)?
-            .get(asset_name)?
+            .get(entry.index)?
             .as_slice();
         (parts.len() == regions.len()).then_some((parts, regions))
     }
@@ -277,62 +270,93 @@ impl ResourceRuntime {
         name: &str,
     ) -> Option<&mut Vec<CompositePart>> {
         let asset_name = name.split_once('#').map_or(name, |(base, _)| base);
-        let owner = self
-            .active_sprite_entry(asset_name, Some(SpriteResourceKind::Composite))?
-            .owner
-            .clone();
+        let entry = self.active_sprite_entry(asset_name, Some(SpriteResourceKind::Composite))?;
+        let owner = entry.owner.clone();
+        let index = entry.index;
         self.composite_set_values
             .get_mut(&owner)?
             .sprites
-            .iter_mut()
-            .find(|sprite| sprite.name == asset_name)
+            .get_mut(index)
             .map(|sprite| &mut sprite.parts)
+    }
+
+    /// Match CompoSprite::setEntryName (`sub_1004375E8`): resolve the new
+    /// AtlasSprite through the ordered sheet map, replace the retained child
+    /// pointer, then immediately rebuild the composite's cached bounds.
+    pub(crate) fn rebind_active_composite_part_region(
+        &mut self,
+        name: &str,
+        part_index: usize,
+        sprite_name: &str,
+    ) -> Option<NativeSpriteMetrics> {
+        let atlas_name = sprite_name
+            .split_once('#')
+            .map_or(sprite_name, |(base, _)| base);
+        let region = self
+            .sprite_sheet_values
+            .keys()
+            .find_map(|owner| {
+                self.sprite_sheet_catalog_regions
+                    .get(owner)
+                    .and_then(|regions| regions.get(atlas_name))
+            })?
+            .clone();
+        let asset_name = name.split_once('#').map_or(name, |(base, _)| base);
+        let entry = self.active_sprite_entry(asset_name, Some(SpriteResourceKind::Composite))?;
+        let owner = entry.owner.clone();
+        let composite_index = entry.index;
+        *self
+            .composite_set_regions
+            .get_mut(&owner)?
+            .get_mut(composite_index)?
+            .get_mut(part_index)? = region;
+        self.refresh_active_composite_metrics(asset_name)
     }
 
     pub(crate) fn active_geometry(&self, name: &str) -> Option<SpriteGeometry> {
         self.resolve_active_geometry(name, &mut BTreeSet::new())
     }
 
-    /// Return the concrete integer fields used by Purple's three native
-    /// Sprite queries (`getBoundsX/Y` and `getPivotX/Y`). AtlasSprite stores
-    /// these values directly, while CompoSprite rebuilds them with the
-    /// transformed-FCVTZS pass in `sub_100436D40`.
+    /// Return the concrete integer fields used by Purple's native Sprite
+    /// queries (`getBoundsX/Y` and `getPivotX/Y`). Both concrete Sprite types
+    /// expose stored members; CompoSprite refreshes those members only at its
+    /// native `updateBounds` call sites.
     pub(crate) fn active_native_sprite_metrics(&self, name: &str) -> Option<NativeSpriteMetrics> {
         let asset_name = name.split_once('#').map_or(name, |(base, _)| base);
-        let entry = self.active_sprite_entry(asset_name, None)?;
-        match entry.kind {
-            SpriteResourceKind::Atlas => {
-                let sprite = self
-                    .sprite_sheet_values
-                    .get(&entry.owner)?
-                    .sprites
-                    .iter()
-                    .find(|sprite| sprite.name == asset_name)?;
-                Some(NativeSpriteMetrics {
-                    width: i32::from(sprite.width),
-                    height: i32::from(sprite.height),
-                    pivot_x: i32::from(sprite.pivot_x),
-                    pivot_y: i32::from(sprite.pivot_y),
-                })
-            }
-            SpriteResourceKind::Composite => {
-                // CompoSprite::updateBounds (`sub_100436D40`) walks its
-                // retained Entry*/AtlasSprite* vector directly. Keep the
-                // query on the corresponding borrowed resource arrays rather
-                // than deep-cloning every part, sprite name and atlas path.
-                let (parts, regions) = self.active_composite_bound_parts(asset_name)?;
-                Some(
-                    native_composite_metrics_from_parts(parts, regions).unwrap_or(
-                        NativeSpriteMetrics {
-                            width: 0,
-                            height: 0,
-                            pivot_x: 0,
-                            pivot_y: 0,
-                        },
-                    ),
-                )
-            }
+        self.active_sprite_entry(asset_name, None)
+            .map(|entry| entry.metrics)
+    }
+
+    /// Rebuild CompoSprite's cached integer fields at the explicit native
+    /// `getCompoSpriteBounds` boundary (`sub_10044913C`). Ordinary generic
+    /// bounds/pivot queries only read the last values stored on the object.
+    pub(crate) fn refresh_active_composite_metrics(
+        &mut self,
+        name: &str,
+    ) -> Option<NativeSpriteMetrics> {
+        let asset_name = name.split_once('#').map_or(name, |(base, _)| base);
+        let entry = self.sprite_entries.get_mut(asset_name)?.last_mut()?;
+        if entry.kind != SpriteResourceKind::Composite {
+            return None;
         }
+        let owner = &entry.owner;
+        let index = entry.index;
+        let parts = &self
+            .composite_set_values
+            .get(owner)?
+            .sprites
+            .get(index)?
+            .parts;
+        let regions = self.composite_set_regions.get(owner)?.get(index)?;
+        let metrics =
+            native_composite_metrics_from_parts(parts, regions).unwrap_or(NativeSpriteMetrics {
+                width: 0,
+                height: 0,
+                pivot_x: 0,
+                pivot_y: 0,
+            });
+        entry.metrics = metrics;
+        Some(metrics)
     }
 
     fn resolve_active_geometry(
