@@ -14,6 +14,19 @@ use crate::{
 };
 
 impl ResourceRuntime {
+    /// Resolve the BitmapFont atlas exactly once after its constructor has
+    /// parsed the FONT descriptor. Purple creates and retains the texture and
+    /// AtlasSprite owner in `sub_10042A780`; draw never reopens this path.
+    pub(crate) fn cache_bitmap_font_host_binding(&mut self, owner: &str, data_root: &Path) {
+        let Some(font) = self.bitmap_font_values.get(owner) else {
+            return;
+        };
+        let descriptor = self.bitmap_font_descriptor_paths.get(owner);
+        let texture_source = resolve_texture_source(data_root, descriptor, &font.texture);
+        self.bitmap_font_texture_sources
+            .insert(owner.to_owned(), texture_source);
+    }
+
     /// Resolve the host path and atlas-region bindings once, at the same
     /// lifetime boundary where Purple constructs its SpriteSheet resources.
     /// Native draw calls retain pointers to those resources; they do not

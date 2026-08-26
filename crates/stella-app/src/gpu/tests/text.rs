@@ -41,7 +41,7 @@ fn submitted_text_uses_bound_font_geometry_and_texture_not_active_name() {
         text: "A".to_owned(),
         font: "FONT".to_owned(),
         font_binding: Some(TextFontBinding::Bitmap {
-            font: font("ignored-relative-name.pvr", 4),
+            font: font("ignored-relative-name.pvr", 4).into(),
             texture_source: bound_texture.clone(),
         }),
         x: 10.0,
@@ -99,7 +99,7 @@ fn font_v2_utf32_glyphs_reach_the_wgpu_quad_path() {
         text: "😀".to_owned(),
         font: "UTF32".to_owned(),
         font_binding: Some(TextFontBinding::Bitmap {
-            font: utf32_font,
+            font: utf32_font.into(),
             texture_source: texture_source.clone(),
         }),
         x: 0.0,

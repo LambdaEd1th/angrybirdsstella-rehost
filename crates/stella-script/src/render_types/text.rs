@@ -1,5 +1,7 @@
 //! Text draw commands submitted through Purple's IFont interface.
 
+use std::sync::Arc;
+
 use stella_assets::ka3d::BitmapFont;
 
 use super::SystemFontRenderBinding;
@@ -40,8 +42,11 @@ pub struct TextRenderCommand {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TextFontBinding {
     Bitmap {
-        font: BitmapFont,
-        /// Resolved atlas source retained by the constructed BitmapFont.
+        /// Shared constructed IFont value. Purple's ResourceManager and every
+        /// submitted glyph retain the same BitmapFont/AtlasSprite ownership;
+        /// deferred wgpu commands must not deep-copy the glyph tree.
+        font: Arc<BitmapFont>,
+        /// Constructor-resolved atlas source retained with that IFont value.
         texture_source: String,
     },
     /// Snapshot of the UIKit-backed IFont implementation selected at native

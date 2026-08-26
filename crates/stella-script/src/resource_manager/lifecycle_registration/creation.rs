@@ -119,7 +119,10 @@ pub(super) fn install(
             resources
                 .bitmap_font_descriptor_paths
                 .insert(key.clone(), descriptor_path);
-            resources.bitmap_font_values.insert(key, font);
+            resources
+                .bitmap_font_values
+                .insert(key.clone(), Arc::new(font));
+            resources.cache_bitmap_font_host_binding(&key, &bitmap_data_root);
             Ok(())
         })?,
     )?;
@@ -260,6 +263,7 @@ fn install_system_font(
             resources.bitmap_fonts.remove(&name);
             resources.bitmap_font_paths.remove(&name);
             resources.bitmap_font_descriptor_paths.remove(&name);
+            resources.bitmap_font_texture_sources.remove(&name);
             resources.bitmap_font_values.remove(&name);
             resources.system_fonts.insert(name, font);
             Ok(())
@@ -315,6 +319,7 @@ fn install_stroked_system_font(
             resources.bitmap_fonts.remove(&name);
             resources.bitmap_font_paths.remove(&name);
             resources.bitmap_font_descriptor_paths.remove(&name);
+            resources.bitmap_font_texture_sources.remove(&name);
             resources.bitmap_font_values.remove(&name);
             resources.system_fonts.insert(name, font);
             Ok(())

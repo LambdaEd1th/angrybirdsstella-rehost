@@ -13513,3 +13513,74 @@ layout unchanged. The release `stella-app` and `stella-headless` hashes are
 respectively
 `269e5b0f3b9a42fbd7918d4ffe490206974abc5fa0153c6459b2cb923ff1d9e1`
 and `d40e08837f36380baf7f6517fbb6d067d8c4c6a5757f04ad46dbe4dfc68a5765`.
+
+## Constructor-owned BitmapFont atlas and shared deferred IFont value
+
+The next symbolized stress sample exposed a non-physics ownership mismatch in
+ordinary UI text. `ResourceRuntime::current_text_font_binding` called
+`resolve_texture_source` for every submitted bitmap-font string. Of 3,135
+samples, 286 were inside that resolver: 221 stopped in `__getattrlist` through
+`realpath`, with a further 35 in `stat`, 18 in `statfs`, 23 in `lstat` and 15
+in `readlink`. Each deferred command also deep-cloned the complete parsed
+BitmapFont and its glyph vector. Purple performs neither operation at draw
+time.
+
+IDA's BitmapFont constructor at `sub_10042A5B0` calls its loader
+`sub_10042A780` once at `0x10042A678`. The loader joins the constructor path at
+`0x10042A8E4..0x10042A924`, resolves the texture through `sub_100478240` at
+`0x10042A954`, constructs the retained atlas owner through `sub_10046ABB8` at
+`0x10042A960`, and stores that pointer at BitmapFont `+0x50` at
+`0x10042A974`. Each FONT glyph is constructed from that owner through
+`sub_10046AF70` and its `AtlasSprite*` is inserted into the persistent glyph
+tree at `0x10042AA38..0x10042AB40` for v1 or
+`0x10042ABA8..0x10042ACAC` for v2.
+
+The draw virtual at `sub_10042B338` follows the opposite boundary. It searches
+only the existing glyph tree at object `+0x28/+0x30`; the selected node's
+stored sprite pointer is read at `0x10042B620`. Width and pivot virtuals run on
+that pointer, and `sub_100467A00` submits it at `0x10042B6B8`. There is no
+filename, FilePath, open, stat or texture lookup in the complete 1,060-byte
+draw member. Hopper independently shows the same constructor-time texture
+owner store, glyph-node pointers and lookup-only draw loop.
+
+The rehost now resolves and canonicalizes a bitmap font's atlas once, during
+successful `createBitmapFont`, and retains the result beside the constructed
+font until a same-name replacement or `releaseFont`. The runtime IFont map and
+every deferred `TextRenderCommand` share one `Arc<BitmapFont>` instead of
+copying the glyph table. System-font replacement removes both bitmap owners;
+failed and duplicate constructors preserve them. A direct-runtime diagnostic
+fallback can still resolve an artificially inserted parsed font, but the
+shipped production path is constructor-bound and lookup-only.
+
+The strengthened ownership regression creates a real FONT and texture,
+captures its constructor binding, removes that texture and introduces a
+higher-level fallback candidate before drawing. Both submitted commands keep
+the original path and are `Arc::ptr_eq` to each other and to the constructed
+IFont; replacing and releasing the active name then removes only the resource
+map owner. Existing same-name replacement, 3D text, UTF-32 glyph, CPU renderer
+and wgpu font-binding tests pass unchanged.
+
+Three alternating runs of 5,000 direct bitmap-text submissions reduce real
+time from 0.18, 0.16 and 0.21 seconds (median 0.18) to 0.06, 0.05 and 0.06
+seconds (median 0.06). Median system time falls from 0.13 to 0.03 seconds and
+median user time from 0.04 to 0.02 seconds. This is an intentionally
+text-heavy ownership microbenchmark, not a universal frame-rate claim. In a
+mixed 2,000-frame physics/UI stress run the median real time changes from 1.25
+to 1.17 seconds and median system time from 0.18 to 0.09 seconds.
+
+The follow-up five-second symbol sample contains no `resolve_texture_source`,
+`realpath`, `__getattrlist`, `stat`, `lstat`, `readlink` or BitmapFont clone
+stack. The complete workspace passes 658 tests with one intentional
+long-duration BirdRun audit ignored. Formatting, diff whitespace, strict
+all-target/all-feature Clippy, doc tests and the locked workspace release
+build are clean.
+
+The final isolated 1,200-frame wgpu checkpoint directly constructs and draws
+Chapter01 L50 with 47 optional nil probes, zero invoked fallbacks, zero
+remaining compatibility bindings and empty stderr. Its PNG SHA-256 is
+`f2e5b5cc371fc22323843af684af7a42563c6f75872fb0680f68e65b2136c3a2`;
+a decoded comparison with the preceding checkpoint again differs only in 50
+pixels inside one animated-character region. The release `stella-app` and
+`stella-headless` hashes are respectively
+`828862f62e46c8ed0291ae86d3eaa9349a793cb5a7ee0a2074652127cdc99e0d`
+and `7587167fb7fa8fad59e29595d53b1dbc03a67bc4939beaf04db6d23c0e33d1cc`.

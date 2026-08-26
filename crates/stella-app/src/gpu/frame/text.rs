@@ -26,7 +26,7 @@ impl AssetCatalog {
                     return Ok(());
                 };
                 let texture_source = font.texture.clone();
-                (font, texture_source)
+                (font.into(), texture_source)
             }
         };
         let glyphs = command

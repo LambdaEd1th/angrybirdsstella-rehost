@@ -3,6 +3,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::PathBuf,
+    sync::Arc,
     time::Duration,
 };
 
@@ -190,10 +191,14 @@ pub(crate) struct ResourceRuntime {
     /// Concrete constructor input retained independently of later path/file
     /// changes, matching the native BitmapFont object's source identity.
     pub(crate) bitmap_font_descriptor_paths: BTreeMap<String, PathBuf>,
+    /// Host equivalent of BitmapFont+0x50's retained Texture/AtlasSheet owner.
+    /// Production text submission is lookup-only and never re-enters the
+    /// filesystem to rediscover this constructor-resolved source.
+    pub(crate) bitmap_font_texture_sources: BTreeMap<String, String>,
     /// Parsed bitmap object committed by `createBitmapFont`. Keeping the
     /// value here freezes the successful constructor input just like the
     /// native shared IFont object instead of reopening its file on queries.
-    pub(crate) bitmap_font_values: BTreeMap<String, BitmapFont>,
+    pub(crate) bitmap_font_values: BTreeMap<String, Arc<BitmapFont>>,
     pub(crate) system_fonts: BTreeMap<String, SystemFontState>,
     /// Generation of SystemFont's process-global LabelPool. Purple advances
     /// this lifetime boundary whenever its last SystemFont::Impl is destroyed.
@@ -266,6 +271,7 @@ impl ResourceRuntime {
             bitmap_fonts: BTreeSet::new(),
             bitmap_font_paths: BTreeMap::new(),
             bitmap_font_descriptor_paths: BTreeMap::new(),
+            bitmap_font_texture_sources: BTreeMap::new(),
             bitmap_font_values: BTreeMap::new(),
             system_fonts: BTreeMap::new(),
             system_font_label_pool_epoch: 0,
@@ -303,18 +309,30 @@ impl ResourceRuntime {
         if let Some(font) = self.system_fonts.get(&name) {
             return Some((name, TextFontBinding::System(font.render_binding())));
         }
-        let font = self.bitmap_font_values.get(&name)?.clone();
-        let descriptor = self
-            .bitmap_font_descriptor_paths
+        let font = Arc::clone(self.bitmap_font_values.get(&name)?);
+        let texture_source = self
+            .bitmap_font_texture_sources
             .get(&name)
             .cloned()
-            .or_else(|| {
-                self.bitmap_font_paths
+            .unwrap_or_else(|| {
+                // Direct ResourceRuntime fixtures can install a parsed font
+                // without invoking createBitmapFont. Keep that diagnostic
+                // path functional; production constructors always cache.
+                let descriptor = self
+                    .bitmap_font_descriptor_paths
                     .get(&name)
-                    .and_then(|source| resolve_data_file(data_root, source).ok())
+                    .cloned()
+                    .or_else(|| {
+                        self.bitmap_font_paths
+                            .get(&name)
+                            .and_then(|source| resolve_data_file(data_root, source).ok())
+                    });
+                sprite_catalog::resolve_texture_source(
+                    data_root,
+                    descriptor.as_ref(),
+                    &font.texture,
+                )
             });
-        let texture_source =
-            sprite_catalog::resolve_texture_source(data_root, descriptor.as_ref(), &font.texture);
         Some((
             name,
             TextFontBinding::Bitmap {

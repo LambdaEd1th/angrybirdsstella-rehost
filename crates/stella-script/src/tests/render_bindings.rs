@@ -272,11 +272,13 @@ fn submitted_text_keeps_constructed_font_and_texture_after_replace_and_release()
         test_bitmap_font_with_glyph("first.pvr", 3),
     )
     .unwrap();
+    fs::write(data_root.join("first/first.pvr"), b"first texture").unwrap();
     fs::write(
         data_root.join("second/FONT.dat"),
         test_bitmap_font_with_glyph("second.pvr", 11),
     )
     .unwrap();
+    fs::write(data_root.join("second/second.pvr"), b"second texture").unwrap();
 
     let runtime = StellaLua::new(&data_root).unwrap();
     runtime
@@ -284,7 +286,28 @@ fn submitted_text_keeps_constructed_font_and_texture_after_replace_and_release()
             r#"
                 res.createBitmapFont("first/FONT.dat")
                 res.useFont("FONT")
+            "#,
+        )
+        .unwrap();
+    let (constructed_font, constructed_texture_source) = {
+        let resources = runtime.resource_runtime.lock().unwrap();
+        (
+            Arc::clone(&resources.bitmap_font_values["FONT"]),
+            resources.bitmap_font_texture_sources["FONT"].clone(),
+        )
+    };
+    assert!(constructed_texture_source.ends_with("first/first.pvr"));
+
+    // Move the only live texture candidate after construction. A per-draw
+    // path resolution would now bind appdata/first.pvr, while Purple's
+    // retained BitmapFont texture owner must keep first/first.pvr.
+    fs::remove_file(data_root.join("first/first.pvr")).unwrap();
+    fs::write(root.join("appdata/first.pvr"), b"late texture").unwrap();
+    runtime
+        .execute_source(
+            r#"
                 res.drawString("MISSING_GROUP", "A", 10, 20)
+                res.drawString("MISSING_GROUP", "A", 30, 40)
                 res.createBitmapFont("second/FONT.dat", true)
                 res.releaseFont("FONT")
             "#,
@@ -292,8 +315,9 @@ fn submitted_text_keeps_constructed_font_and_texture_after_replace_and_release()
         .unwrap();
 
     let bridge = runtime.render.lock().unwrap();
-    let command = &bridge.text_commands[0];
-    match command.font_binding.as_ref().unwrap() {
+    let first_command = &bridge.text_commands[0];
+    let second_command = &bridge.text_commands[1];
+    let (first_font, first_texture_source) = match first_command.font_binding.as_ref().unwrap() {
         TextFontBinding::Bitmap {
             font,
             texture_source,
@@ -301,8 +325,24 @@ fn submitted_text_keeps_constructed_font_and_texture_after_replace_and_release()
             assert_eq!(font.glyphs[0].width, 3);
             assert_eq!(font.texture, "first.pvr");
             assert!(texture_source.ends_with("first/first.pvr"));
+            (font, texture_source)
         }
         TextFontBinding::System(_) => panic!("test font is a bitmap IFont"),
+    };
+    let (second_font, second_texture_source) = match second_command.font_binding.as_ref().unwrap() {
+        TextFontBinding::Bitmap {
+            font,
+            texture_source,
+        } => (font, texture_source),
+        TextFontBinding::System(_) => panic!("test font is a bitmap IFont"),
+    };
+    assert!(Arc::ptr_eq(first_font, second_font));
+    assert!(Arc::ptr_eq(first_font, &constructed_font));
+    assert_eq!(first_texture_source, &constructed_texture_source);
+    assert_eq!(second_texture_source, &constructed_texture_source);
+    {
+        let resources = runtime.resource_runtime.lock().unwrap();
+        assert!(!resources.bitmap_font_texture_sources.contains_key("FONT"));
     }
     drop(bridge);
     fs::remove_dir_all(root).unwrap();
