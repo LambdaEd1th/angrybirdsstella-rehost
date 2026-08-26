@@ -38,8 +38,8 @@ fn native_color_mesh_reaches_gpu_as_one_triangle_fan_draw() {
     for (vertex, index) in frame.vertices.iter().zip(indices) {
         assert_eq!(vertex.position, vertices[index].map(|value| value as f32));
     }
-    assert_eq!(frame.uniforms[0].diffuse, [0.25, 0.5, 0.75, 1.0]);
-    assert_eq!(frame.uniforms[0].header[0], 0.6);
+    assert_eq!(frame.uniforms[0].diffuse, [0.25, 0.5, 0.75, 0.6]);
+    assert_eq!(frame.uniforms[0].header[0], 1.0);
     assert_eq!(frame.draws[0].program, NativeProgram::PlainAlpha);
 }
 

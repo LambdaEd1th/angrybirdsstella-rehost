@@ -28,19 +28,23 @@ pub(in crate::gpu) fn append_gpu_rect(frame: &mut PreparedFrame, command: &RectR
             (value.clamp(0.0, 255.0) / 255.0) as f32
         }
     };
-    let mut uniform = DrawUniform {
-        header: [command.alpha.clamp(0.0, 1.0) as f32, 1.0, 2.0, 0.0],
+    let alpha = command.alpha.clamp(0.0, 1.0) as f32;
+    let uniform = DrawUniform {
+        // GL_Context::drawRect supplies RGBA in the vertex-color stream.
+        // Keep that alpha on the straight-alpha source instead of also
+        // multiplying the complete fragment by ALPHA_FACTOR; doing both
+        // applies the water/overlay opacity twice.
+        header: [1.0, 1.0, 2.0, 0.0],
         diffuse: [
             channel(command.red),
             channel(command.green),
             channel(command.blue),
-            1.0,
+            alpha,
         ],
         params: [0.0, 1.0, 0.0, 0.0],
         fill: [1.0, 1.0, 0.0, 0.0],
         holes: [[0.0; 4]; MAX_HOLES],
     };
-    uniform.header[0] = command.alpha.clamp(0.0, 1.0) as f32;
     if let Some(vertices) = &command.vertices {
         if vertices.len() < 3 || !vertices.iter().flatten().copied().all(f64::is_finite) {
             return;

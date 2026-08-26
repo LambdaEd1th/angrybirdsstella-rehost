@@ -13894,3 +13894,53 @@ remaining compatibility bindings and empty stderr. Its PNG SHA-256 is
 The stripped `stella-app` and `stella-headless` hashes are respectively
 `af6ba685e30fbf7428f2feff1294ae21180719b3cee697285aca96bc8b82181e`
 and `48570a7150ebe755b3086cd28a16b1d8a4bdb48614f7f8adf30aab1e9baa50a3`.
+
+## Rectangular water scene submission and editor placeholder suppression
+
+The Chapter02 water failure was not a missing texture. A direct L01 render
+trace showed that the two authored `BLOCK_SENSOR_BOX_WATER` bodies still
+submitted their `RED_CROSS` editor sprites, while the retained
+`native_setWaterColor` RGBA vector had no rendering consumer in the rehost.
+The same omission reproduced the reported L16 pool: its water fixture was
+physically present, but the red placeholder occupied the pool instead of the
+native translucent fill.
+
+IDA's `sub_10004BAB4` and Hopper's independent procedure view agree on the
+special branch at `0x10004BD2C..0x10004BF20`. After the visible byte at
+`RenderObjectData+0x14A`, the dispatcher tests the water byte at `+0x14B` and
+rejects the circle byte at `+0x147`. It reads the interpolated centre at
+`+0xA4/+0xA8`, rectangular dimensions at `+0x9C/+0xA0`, camera origin at
+`GameLua+0x514/+0x518`, world scale at `+0x520`, and RGBA at
+`+0x540..+0x54C`. Width and height are halved with `0.5f`, converted through
+the exact `1.0f / 0.05f` physics-to-world factor, and each screen origin and
+negative extent is independently truncated by `FCVTZS`. The color pack is
+`A<<24 | R<<16 | G<<8 | B`, with every component independently multiplied by
+`255.0f` and truncated. The member resets the complete 0x9c-byte GL state,
+draws the rectangle through virtual slot `+0x80`, then checks
+`GameLua+0x512`. A clear byte ends the object visit before Lua pre/post
+callbacks or sprite submission; only `setEditing(true)` continues into the
+ordinary `RED_CROSS` path.
+
+The scene callback snapshot now carries the five scalar water fields and
+submits that rectangle at the same point in the z walk, before callback
+resolution. Normal play terminates the visit, while editing preserves the
+native fill-then-placeholder order. The deferred wgpu vertex-color path also
+keeps the packed alpha in the straight-alpha color stream; the former host
+mapping placed it in both `ALPHA_FACTOR` and blend alpha, applying translucent
+rectangle opacity twice. The software and wgpu paths now perform the same
+single alpha blend.
+
+A focused regression proves the exact float32 geometry, packed color,
+unclipped default state, callback suppression, and editing-mode command
+order. A release-wgpu audit loaded all 45 Chapter02 levels containing
+`BLOCK_SENSOR_BOX_WATER`; every level completed and none submitted a
+`RED_CROSS` sprite. The fixed direct `Chapter02_L16` checkpoint matches the
+reported four-porthole pool and restores the full translucent blue water
+volume over its submerged structure. The complete workspace passes 667 tests
+with one intentional long-duration BirdRun audit ignored; strict Clippy,
+formatting, diff whitespace, doc tests and the locked stripped release build
+are clean. The final L16 PNG SHA-256 is
+`63b5da87b1a55a57d0e5d3559336f604d35817b5651cf8cf7347f7def189d4d7`;
+the stripped `stella-app` and `stella-headless` hashes are respectively
+`0c020a8db952ff5b481914b7d5098ef5f815735953291974756805538d52860e`
+and `6a241149e9e98612a8ba66bb622d17180f984254fb7966c4f1fe1b09f516f5d6`.

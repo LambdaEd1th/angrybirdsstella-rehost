@@ -1,9 +1,60 @@
 //! Ordinary sprite, ray and decoration submission owned by `sub_10006D5B4`.
 
-use super::SceneDrawObject;
+use super::{SceneCallbackObject, SceneDrawObject};
 use crate::*;
 
 impl RenderBridge {
+    /// Submit the rectangular-water branch at `0x10004BD34..0x10004BF20`.
+    /// Purple draws the interpolated fixture rectangle before consulting the
+    /// Lua pre/post callbacks, then suppresses its `RED_CROSS` editor sprite
+    /// unless GameLua+0x512 (`setEditing`) is set.
+    pub(crate) fn push_scene_water(&mut self, object: &SceneCallbackObject) -> bool {
+        if !object.is_water || object.collision_is_circle {
+            return false;
+        }
+
+        let pixels_per_physics = 1.0_f32 / f32::from_bits(0x3D4C_CCCD);
+        let width = object.native_shape_width as f32;
+        let height = object.native_shape_height as f32;
+        let half_width = width * 0.5_f32;
+        let half_height = height * 0.5_f32;
+        let x = object.x as f32;
+        let y = object.y as f32;
+        let right = x + half_width;
+        let bottom = y + half_height;
+        let left = x - half_width;
+        let top = y - half_height;
+        let top_left_x = self.top_left_x as f32;
+        let top_left_y = self.top_left_y as f32;
+        let world_scale = self.world_scale as f32;
+
+        // The native call supplies the right/bottom corner plus negative
+        // width/height to GL_Context::drawRect. Preserve its independent
+        // float32 FCVTZS stages before normalizing the deferred quad bounds.
+        let screen_right = world_scale * -(top_left_x - pixels_per_physics * right);
+        let screen_bottom = world_scale * -(top_left_y - pixels_per_physics * bottom);
+        let screen_width = world_scale * (pixels_per_physics * (left - right));
+        let screen_height = world_scale * (pixels_per_physics * (top - bottom));
+        let screen_right = native_fcvtzs_f32(screen_right);
+        let screen_bottom = native_fcvtzs_f32(screen_bottom);
+        let screen_width = native_fcvtzs_f32(screen_width);
+        let screen_height = native_fcvtzs_f32(screen_height);
+        let other_x = (screen_right as f32) + (screen_width as f32);
+        let other_y = (screen_bottom as f32) + (screen_height as f32);
+
+        let command = native_rect_command(
+            self.water_color,
+            f64::from(screen_right),
+            f64::from(screen_bottom),
+            f64::from(other_x),
+            f64::from(other_y),
+            RenderState::default(),
+        );
+        // The 0x9c-byte default-state memcpy clears the prior scissor too.
+        self.push_unclipped_rect_command(command);
+        true
+    }
+
     pub(crate) fn native_scene_z_bounds(&self) -> (i32, i32) {
         let minimum = self.z_order_min as i32;
         let maximum = if self.z_order_max < 0.0 {

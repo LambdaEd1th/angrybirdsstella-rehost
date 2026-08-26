@@ -48,6 +48,11 @@ pub(crate) struct SceneDrawObject {
 /// avoids deep-cloning those resource graphs just to install GL state.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct SceneCallbackObject {
+    pub(crate) x: f64,
+    pub(crate) y: f64,
+    pub(crate) native_shape_width: f64,
+    pub(crate) native_shape_height: f64,
+    pub(crate) is_water: bool,
     pub(crate) scale_x: f64,
     pub(crate) scale_y: f64,
     pub(crate) angle: f64,
@@ -71,6 +76,11 @@ impl From<&SceneObject> for SceneCallbackObject {
             object.pivot_offset_y,
         );
         Self {
+            x: object.render_x,
+            y: object.render_y,
+            native_shape_width: object.native_shape_width,
+            native_shape_height: object.native_shape_height,
+            is_water: object.is_water,
             scale_x: object.scale_x,
             scale_y: object.scale_y,
             angle: object.render_angle,
@@ -92,6 +102,13 @@ impl From<&SceneDrawObject> for SceneCallbackObject {
     fn from(object: &SceneDrawObject) -> Self {
         let (pivot_x, pivot_y) = object.callback_pivot();
         Self {
+            x: object.x,
+            y: object.y,
+            // This conversion only supports callback-state unit tests. Water
+            // submission snapshots the live SceneObject directly above.
+            native_shape_width: 0.0,
+            native_shape_height: 0.0,
+            is_water: false,
             scale_x: object.scale_x,
             scale_y: object.scale_y,
             angle: object.angle,

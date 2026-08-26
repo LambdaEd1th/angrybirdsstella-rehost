@@ -507,6 +507,75 @@ fn native_scene_draw_callbacks_wrap_object_draw_and_can_be_cleared() {
 }
 
 #[test]
+fn native_rectangular_water_replaces_editor_sprite_before_callbacks() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .execute_source(
+            r#"
+                setWorldScale(2)
+                setTopLeft(4, 6)
+                createBox("water", "RED_CROSS", 10, 20, 4, 6, 0, 0, 0, true, false, 3)
+                native_setIsWater("water", true)
+                native_setWaterColor(0.1, 0.2, 0.3, 0.4)
+                pre_count = 0
+                post_count = 0
+                native_setPreDrawFunction("water", function()
+                    pre_count = pre_count + 1
+                end)
+                native_setPostDrawFunction("water", function()
+                    post_count = post_count + 1
+                end)
+                drawGameNative()
+                "#,
+        )
+        .unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert_eq!(environment.get::<i64>("pre_count").unwrap(), 0);
+    assert_eq!(environment.get::<i64>("post_count").unwrap(), 0);
+    {
+        let bridge = runtime.render.lock().unwrap();
+        assert!(bridge.commands.is_empty());
+        assert_eq!(bridge.rect_commands.len(), 1);
+        let water = &bridge.rect_commands[0];
+        assert_eq!(water.order, 0);
+        assert_eq!(
+            (water.left, water.top, water.right, water.bottom),
+            (312.0, 668.0, 472.0, 908.0)
+        );
+        assert_eq!(
+            (water.red, water.green, water.blue, water.alpha),
+            (25.0 / 255.0, 51.0 / 255.0, 76.0 / 255.0, f64::from(0.4_f32),)
+        );
+        assert_eq!(water.color_program, ColorProgram::PlainAlpha);
+        assert!(water.clip_rect.is_none());
+    }
+
+    {
+        let mut bridge = runtime.render.lock().unwrap();
+        bridge.commands.clear();
+        bridge.rect_commands.clear();
+        bridge.next_draw_order = 0;
+    }
+    runtime
+        .execute_source(
+            r#"
+                setEditing(true)
+                drawGameNative()
+                "#,
+        )
+        .unwrap();
+    assert_eq!(environment.get::<i64>("pre_count").unwrap(), 1);
+    assert_eq!(environment.get::<i64>("post_count").unwrap(), 1);
+    let bridge = runtime.render.lock().unwrap();
+    assert_eq!(bridge.rect_commands.len(), 1);
+    assert_eq!(bridge.commands.len(), 1);
+    assert_eq!(bridge.rect_commands[0].order, 0);
+    assert_eq!(bridge.commands[0].order, 1);
+    assert_eq!(bridge.commands[0].sprite, "RED_CROSS");
+}
+
+#[test]
 fn native_scene_draw_retains_the_constructor_object_table() {
     let runtime = StellaLua::new("/tmp").unwrap();
     runtime

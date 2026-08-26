@@ -155,6 +155,16 @@ pub(super) fn install(
                     continue;
                 };
                 let callback_horizontal_flip = callback_state_object.horizontal_flip;
+                // sub_10004BAB4 handles rectangular water before resolving
+                // either retained Lua callback. In normal gameplay the fill
+                // replaces the editor-only placeholder and this visit ends.
+                let water_replaces_object = {
+                    let mut bridge = render.lock().expect("render bridge lock poisoned");
+                    bridge.push_scene_water(&callback_state_object) && !bridge.editing
+                };
+                if water_replaces_object {
+                    continue;
+                }
                 // RenderObjectData+0x20 owns the exact table through a Lua
                 // registry reference. Keep a compatibility fallback for
                 // tests or extension-created scene records that bypass the
