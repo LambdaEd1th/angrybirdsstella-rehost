@@ -127,6 +127,7 @@ fn ordinary_atlas_submission_preserves_the_surface_format_program_branch() {
         masked_texture_binding: None,
         bound_region: None,
         bound_composite: None,
+        geometry: None,
         shader: None,
         clip_holes: Vec::new(),
         dirt: None,

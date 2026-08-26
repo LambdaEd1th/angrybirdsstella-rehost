@@ -207,9 +207,20 @@ impl AssetCatalog {
             || state
                 .matrix
                 .is_some_and(|matrix| !matrix.into_iter().all(f64::is_finite))
-            || state
-                .native_sprite_quad
-                .is_some_and(|quad| !quad.into_iter().flatten().all(f64::is_finite))
+            || command.geometry.as_ref().is_some_and(|geometry| {
+                let finite = match geometry {
+                    SpriteGeometrySubmission::ExplicitQuad(quad) => quad
+                        .positions
+                        .into_iter()
+                        .chain(quad.uv)
+                        .flatten()
+                        .all(f64::is_finite),
+                    SpriteGeometrySubmission::NativeAtlasQuad(quad) => {
+                        quad.iter().flatten().copied().all(f64::is_finite)
+                    }
+                };
+                !finite
+            })
         {
             if trace_render {
                 eprintln!(
@@ -239,23 +250,26 @@ impl AssetCatalog {
                 state.alpha,
             );
         }
-        if let Some(positions) = state.native_sprite_quad {
-            return self.append_gpu_native_sprite_quad(
-                &command.sprite,
-                command.bound_region.as_deref(),
-                positions,
-                state.alpha,
-                frame,
-            );
-        }
-        if let Some(quad) = state.explicit_quad {
-            return self.append_gpu_explicit_quad(
-                &command.sprite,
-                command.bound_region.as_deref(),
-                quad,
-                state.alpha,
-                frame,
-            );
+        match command.geometry.as_ref() {
+            Some(SpriteGeometrySubmission::NativeAtlasQuad(positions)) => {
+                return self.append_gpu_native_sprite_quad(
+                    &command.sprite,
+                    command.bound_region.as_deref(),
+                    **positions,
+                    state.alpha,
+                    frame,
+                );
+            }
+            Some(SpriteGeometrySubmission::ExplicitQuad(quad)) => {
+                return self.append_gpu_explicit_quad(
+                    &command.sprite,
+                    command.bound_region.as_deref(),
+                    **quad,
+                    state.alpha,
+                    frame,
+                );
+            }
+            None => {}
         }
         let transform = render_command_transform(command);
         if let Some(dirt) = &command.dirt {

@@ -1,5 +1,12 @@
 use super::*;
 
+fn native_atlas_quad(command: &RenderCommand) -> [[f64; 2]; 4] {
+    let Some(SpriteGeometrySubmission::NativeAtlasQuad(quad)) = command.geometry.as_ref() else {
+        panic!("command did not retain a native atlas quad");
+    };
+    **quad
+}
+
 fn load_native_simulation_settings(
     runtime: &StellaLua,
     iterations: i32,
@@ -755,8 +762,8 @@ fn textured_line_uses_native_context_geometry_and_strict_adapter() {
     assert_eq!((line.x, line.y), (26.0, 60.0));
     assert_eq!(line.state.matrix, Some([40.0, 0.0, 0.0, 24.0]));
     assert_eq!(
-        line.state.native_sprite_quad,
-        Some([[26.0, 60.0], [66.0, 60.0], [26.0, 84.0], [66.0, 84.0]])
+        native_atlas_quad(line),
+        [[26.0, 60.0], [66.0, 60.0], [26.0, 84.0], [66.0, 84.0]]
     );
     assert_eq!(line.state.alpha, 0.25);
     assert!(line.world_space);
@@ -822,13 +829,13 @@ fn textured_line_quantizes_lua_coordinates_before_native_geometry() {
     // subtraction: 16777217 -> 16777216 and 16777219 -> 16777220.
     assert_eq!(line.state.matrix, Some([4.0, 0.0, 0.0, 2.0]));
     assert_eq!(
-        line.state.native_sprite_quad,
-        Some([
+        native_atlas_quad(line),
+        [
             [16_777_216.0, -1.0],
             [16_777_220.0, -1.0],
             [16_777_216.0, 1.0],
             [16_777_220.0, 1.0],
-        ])
+        ]
     );
 }
 
@@ -856,8 +863,8 @@ fn rubberband_uses_native_argument_and_uv_axis_order() {
     assert_eq!((rubber.x, rubber.y), (10.0, 16.0));
     assert_eq!(rubber.state.matrix, Some([0.0, 20.0, 8.0, 0.0]));
     assert_eq!(
-        rubber.state.native_sprite_quad,
-        Some([[10.0, 16.0], [10.0, 24.0], [30.0, 16.0], [30.0, 24.0]])
+        native_atlas_quad(rubber),
+        [[10.0, 16.0], [10.0, 24.0], [30.0, 16.0], [30.0, 24.0]]
     );
     assert_eq!(rubber.state.alpha, 0.25);
     assert!(rubber.world_space);
@@ -866,7 +873,7 @@ fn rubberband_uses_native_argument_and_uv_axis_order() {
     // coincide and the GPU discards the zero-area triangles naturally.
     let zero = &bridge.commands[1];
     assert_eq!(
-        zero.state.native_sprite_quad,
-        Some([[10.0, 16.0], [10.0, 24.0], [10.0, 16.0], [10.0, 24.0]])
+        native_atlas_quad(zero),
+        [[10.0, 16.0], [10.0, 24.0], [10.0, 16.0], [10.0, 24.0]]
     );
 }

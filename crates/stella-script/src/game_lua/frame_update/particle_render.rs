@@ -37,6 +37,7 @@ impl RenderBridge {
                     masked_texture_binding: None,
                     bound_region,
                     bound_composite,
+                    geometry: None,
                     shader: None,
                     clip_holes: Vec::new(),
                     dirt: None,

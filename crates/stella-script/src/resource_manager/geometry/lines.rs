@@ -1,6 +1,6 @@
 //! Native textured-line and rubber-band quad construction.
 
-use crate::{RenderCommand, RenderState, SpriteCatalogRegion};
+use crate::{RenderCommand, RenderState, SpriteCatalogRegion, SpriteGeometrySubmission};
 use std::sync::Arc;
 
 use super::model::SpriteGeometry;
@@ -99,6 +99,9 @@ impl SpriteGeometry {
             masked_texture_binding: None,
             bound_region: bound_region.map(Arc::new),
             bound_composite: None,
+            geometry: Some(SpriteGeometrySubmission::NativeAtlasQuad(Arc::new(
+                [top_left, top_right, bottom_left, bottom_right].map(|point| point.map(f64::from)),
+            ))),
             shader: None,
             clip_holes: Vec::new(),
             dirt: None,
@@ -106,13 +109,6 @@ impl SpriteGeometry {
             y: f64::from(origin_y),
             state: RenderState {
                 matrix: Some([m00, m01, m10, m11].map(f64::from)),
-                // Purple submits the four float32 points directly to
-                // sub_100467BE8. Keeping them avoids another affine rebuild
-                // and preserves the independently rounded outer edge.
-                native_sprite_quad: Some(
-                    [top_left, top_right, bottom_left, bottom_right]
-                        .map(|point| point.map(f64::from)),
-                ),
                 alpha: render_state.alpha,
                 clip_rect: render_state.clip_rect,
                 ..RenderState::default()
@@ -193,6 +189,9 @@ impl SpriteGeometry {
             masked_texture_binding: None,
             bound_region: bound_region.map(Arc::new),
             bound_composite: None,
+            geometry: Some(SpriteGeometrySubmission::NativeAtlasQuad(Arc::new(
+                [top_start, bottom_start, top_end, bottom_end].map(|point| point.map(f64::from)),
+            ))),
             shader: None,
             clip_holes: Vec::new(),
             dirt: None,
@@ -200,10 +199,6 @@ impl SpriteGeometry {
             y: f64::from(origin_y),
             state: RenderState {
                 matrix: Some([m00, m01, m10, m11].map(f64::from)),
-                native_sprite_quad: Some(
-                    [top_start, bottom_start, top_end, bottom_end]
-                        .map(|point| point.map(f64::from)),
-                ),
                 alpha: render_state.alpha,
                 clip_rect: render_state.clip_rect,
                 ..RenderState::default()

@@ -70,11 +70,11 @@ pub(super) fn render_game(
                 state.alpha,
             );
         }
-        if let Some(quad) = state.explicit_quad {
+        if let Some(SpriteGeometrySubmission::ExplicitQuad(quad)) = command.geometry.as_ref() {
             assets.draw_explicit_quad(
                 &command.sprite,
                 command.bound_region.as_deref(),
-                quad,
+                **quad,
                 state.alpha,
                 state.clip_rect,
                 target,

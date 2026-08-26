@@ -159,8 +159,6 @@ impl RenderBridge {
             pivot_x: 0.0,
             pivot_y: 0.0,
             draw_size: None,
-            explicit_quad: None,
-            native_sprite_quad: None,
             alpha: object.alpha,
             clip_rect: self.state.clip_rect,
         }
@@ -217,8 +215,6 @@ impl RenderBridge {
             pivot_x: f64::from(pivot_x),
             pivot_y: f64::from(pivot_y),
             draw_size: None,
-            explicit_quad: None,
-            native_sprite_quad: None,
             alpha: object.alpha,
             clip_rect: self.state.clip_rect,
         }

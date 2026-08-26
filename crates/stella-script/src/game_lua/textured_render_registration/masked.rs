@@ -72,11 +72,7 @@ pub(super) fn install(
                 ],
                 uv: [uv4, uv3, uv2, uv1],
             };
-            bridge.state.explicit_quad = None;
-            let state = RenderState {
-                explicit_quad: Some(explicit_quad),
-                ..bridge.state
-            };
+            let state = bridge.state;
             bridge.push_render_command(RenderCommand {
                 order: 0,
                 sprite: sprite.into(),
@@ -85,6 +81,9 @@ pub(super) fn install(
                 masked_texture_binding: None,
                 bound_region,
                 bound_composite: None,
+                geometry: Some(SpriteGeometrySubmission::ExplicitQuad(Arc::new(
+                    explicit_quad,
+                ))),
                 shader: None,
                 clip_holes: Vec::new(),
                 dirt: None,

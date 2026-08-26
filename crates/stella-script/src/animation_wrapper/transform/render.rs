@@ -139,6 +139,7 @@ pub(crate) fn animation_render_commands(
                     masked_texture_binding: None,
                     bound_region: Some(bound_region.into()),
                     bound_composite: None,
+                    geometry: None,
                     shader: shader.clone(),
                     clip_holes: Vec::new(),
                     dirt: None,

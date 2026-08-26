@@ -32,6 +32,7 @@ pub(crate) fn native_direct_sprite_command(
         masked_texture_binding: None,
         bound_region: Some(bound_region.into()),
         bound_composite: None,
+        geometry: None,
         shader,
         clip_holes: Vec::new(),
         dirt: None,

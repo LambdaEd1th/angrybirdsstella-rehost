@@ -16,9 +16,9 @@ use stella_script::{
     AudioOutputClock, AudioOutputState, BoundCompositePart, CaptureRenderCommand,
     ColorMeshTopology, ColorProgram, DirtRenderCommand, MaskedTextureBinding, RectRenderCommand,
     RenderCommand, RenderHole, RenderQuad, RenderTriangle, ScreenshotShareRequest,
-    SpriteCatalogRegion, SpriteCatalogSnapshot, SpriteShader, StellaLua, SystemFontLayoutFace,
-    SystemFontRenderBinding, SystemFontShapedLine, TextFontBinding, TextProjection3D,
-    TextRenderCommand,
+    SpriteCatalogRegion, SpriteCatalogSnapshot, SpriteGeometrySubmission, SpriteShader, StellaLua,
+    SystemFontLayoutFace, SystemFontRenderBinding, SystemFontShapedLine, TextFontBinding,
+    TextProjection3D, TextRenderCommand,
 };
 use winit::{
     application::ApplicationHandler,

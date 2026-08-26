@@ -109,6 +109,7 @@ impl RenderBridge {
                 // boundary instead of materializing either resource graph.
                 bound_region: object.sprite_region.clone(),
                 bound_composite: object.composite_sprite.clone(),
+                geometry: None,
                 shader: None,
                 clip_holes: object.dirt.as_ref().map_or_else(
                     || {
@@ -214,6 +215,7 @@ impl RenderBridge {
                 masked_texture_binding: None,
                 bound_region: bound_region.clone(),
                 bound_composite: bound_composite.clone(),
+                geometry: None,
                 shader: None,
                 clip_holes: Vec::new(),
                 dirt: None,

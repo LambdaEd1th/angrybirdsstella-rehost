@@ -83,15 +83,6 @@ pub struct RenderState {
     /// `drawSprite` overload. It stretches atlas sprites but is ignored for
     /// composite sprites.
     pub draw_size: Option<[f64; 2]>,
-    /// Native helpers such as `renderMaskedImageNative` submit an arbitrary
-    /// four-corner mesh instead of transforming an atlas rectangle.
-    pub explicit_quad: Option<RenderQuad>,
-    /// Exact screen-space corners for a native atlas-sprite quad, in the
-    /// renderer's TL, TR, BL, BR order. Unlike `explicit_quad`, the UVs still
-    /// come from the named atlas region. Purple's rubber-band and textured-
-    /// line helpers build their four float32 vertices independently, so
-    /// reducing them to one affine matrix loses observable edge rounding.
-    pub native_sprite_quad: Option<[[f64; 2]; 4]>,
     pub alpha: f64,
     /// Native renderer scissor edges `[left, top, right, bottom]` captured at
     /// draw submission time. `None` means the full current drawable.
@@ -112,8 +103,6 @@ impl Default for RenderState {
             pivot_x: 0.0,
             pivot_y: 0.0,
             draw_size: None,
-            explicit_quad: None,
-            native_sprite_quad: None,
             alpha: 1.0,
             clip_rect: None,
         }
@@ -188,6 +177,11 @@ pub struct RenderCommand {
     /// Deferred commands share that immutable owner instead of cloning the
     /// complete child array on every submission.
     pub bound_composite: Option<Arc<Vec<BoundCompositePart>>>,
+    /// Rare per-call vertex payload. Purple passes these arrays directly to
+    /// its draw member; they are not part of the copied 0x9c-byte GL state.
+    /// The deferred host owns them separately so ordinary commands stay
+    /// compact and command clones retain rather than duplicate the vertices.
+    pub geometry: Option<SpriteGeometrySubmission>,
     pub shader: Option<SpriteShader>,
     pub clip_holes: Vec<RenderHole>,
     /// Native DirtMechanics replaces the object's ordinary sprite callback
@@ -197,6 +191,15 @@ pub struct RenderCommand {
     pub y: f64,
     pub state: RenderState,
     pub world_space: bool,
+}
+
+#[derive(Debug, Clone)]
+pub enum SpriteGeometrySubmission {
+    /// Arbitrary positions and UVs emitted by `renderMaskedImageNative`.
+    ExplicitQuad(Arc<RenderQuad>),
+    /// Exact independently rounded atlas corners emitted by textured-line and
+    /// rubber-band helpers. UVs still come from the bound atlas region.
+    NativeAtlasQuad(Arc<[[f64; 2]; 4]>),
 }
 
 /// Reference-counted counterpart of Purple's copy-on-write libstdc++ sprite
@@ -268,6 +271,23 @@ impl PartialEq<String> for SharedSpriteName {
 impl PartialEq<SharedSpriteName> for String {
     fn eq(&self, other: &SharedSpriteName) -> bool {
         self == other.as_str()
+    }
+}
+
+#[cfg(test)]
+mod deferred_payload_tests {
+    use super::*;
+
+    #[test]
+    fn rare_vertex_geometry_stays_out_of_the_copied_render_state() {
+        // The native GL state is copied for every scene submission, while
+        // these arrays exist only on masked/line/rubber-band calls. Keep the
+        // common state compact and retain a rare payload through one pointer.
+        assert!(std::mem::size_of::<RenderState>() < 2 * std::mem::size_of::<RenderQuad>());
+        assert_eq!(
+            std::mem::size_of::<Option<SpriteGeometrySubmission>>(),
+            2 * std::mem::size_of::<usize>()
+        );
     }
 }
 

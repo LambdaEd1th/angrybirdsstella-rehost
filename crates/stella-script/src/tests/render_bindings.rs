@@ -722,7 +722,9 @@ fn masked_image_native_emits_recovered_quad_uvs_and_resets_scalar_state() {
     let bridge = runtime.render.lock().unwrap();
     assert_eq!(bridge.commands.len(), 1);
     let command = &bridge.commands[0];
-    let quad = command.state.explicit_quad.unwrap();
+    let Some(SpriteGeometrySubmission::ExplicitQuad(quad)) = command.geometry.as_ref() else {
+        panic!("masked image did not retain its native quad");
+    };
     assert_eq!(
         quad.positions,
         [[102.0, 53.0], [2.0, 52.0], [101.0, 3.0], [2.0, 2.0]]
@@ -753,7 +755,6 @@ fn masked_image_native_emits_recovered_quad_uvs_and_resets_scalar_state() {
     assert_eq!(command.state.scale_x, 0.0);
     assert_eq!(command.state.scale_y, 0.0);
     assert_eq!(command.state.angle, 0.0);
-    assert!(bridge.state.explicit_quad.is_none());
 }
 
 #[test]

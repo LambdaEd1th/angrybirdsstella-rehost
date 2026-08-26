@@ -14149,3 +14149,57 @@ SHA-256 is
 The stripped `stella-app` and `stella-headless` hashes are respectively
 `b7f07fd6648329e895f2090c19f655cd8f304693fcddabaac64e69ce4e81cfd0`
 and `350fb9681ab5cca4eb1fea743f4830822f7eda6b8b9a3444ea419a75a192c5f7`.
+
+## Per-call vertex geometry outside the copied renderer state
+
+The symbolized Chapter02 L16 follow-up no longer contained retained-resource
+or sprite-label allocation stacks, but `push_scene_object` still spent most of
+its sampled time in six large `memmove` sites. The ordinary command path was
+copying two four-corner arrays embedded in `RenderState` even though those
+arrays are used only by `renderMaskedImageNative`, textured lines and rubber
+bands. In the deferred host's deliberately retained 30,000-draw workload this
+also kept the unused payload alive on every queued scene command.
+
+IDA and Hopper expose a different ownership boundary. In
+`sub_100096344`, masked-image positions and UVs are assembled as call-local
+four-element vectors and passed into the renderer submission; they are not
+written into the copied GL-context state. `sub_10006DB0C` computes the
+textured-line vertices independently and allocates/copies one 0x20-byte
+geometry block for that special call. `sub_100030EB0` similarly constructs
+the rubber-band arrays on its stack and passes them in `x2`/`x3` to the draw
+virtual at offset `+0x40`. The general state copied around those calls
+contains the scalar transform, alpha, matrices, pivot and clipping state, not
+either vertex array. Both disassemblers therefore agree that the geometry is
+a draw-submission argument rather than persistent renderer state.
+
+`RenderState` now contains only the common copied state. `RenderCommand`
+owns an optional `SpriteGeometrySubmission`, whose explicit masked quad or
+native atlas-corner quad is retained behind `Arc`; ordinary scene, theme,
+particle, animation and resource commands carry `None`. Masked-image,
+textured-line and rubber-band constructors attach their exact existing
+float32-derived vertices only to the special command. The software reference
+renderer and wgpu dispatcher consume that command payload directly, including
+the existing non-finite rejection, triangle order, UV order and native atlas
+rotation behavior. A layout regression keeps the rare optional payload at two
+machine words and prevents the arrays from silently returning to the copied
+state.
+
+Three alternating Chapter02 L16 runs issue 30,000 complete
+`drawGameNative` submissions. The shared-label baseline reports median
+real/user/system times of 2.13/1.83/0.29 seconds and a median maximum resident
+set of about 3.87 GB. The split-geometry build reports 1.97/1.68/0.28 seconds
+and about 2.97 GB, reductions of approximately 7.5 percent real time, 8.2
+percent user CPU, 3.4 percent system CPU and 23.3 percent peak resident memory
+in this command-retention-heavy diagnostic. Across the corresponding six
+dominant `push_scene_object` bulk-copy sites, a three-second symbolized sample
+falls from 738 `memmove` samples to 325 while preserving the live scene path.
+
+The complete workspace passes 669 tests with the intentional long-duration
+BirdRun audit ignored. Formatting, diff whitespace, strict all-target and
+all-feature Clippy, doc tests and the locked stripped release build are clean.
+A final 1,200-frame real-wgpu map smoke test reports zero invoked fallbacks,
+zero remaining compatibility bindings and empty stderr; its PNG SHA-256 is
+`144b9342c4d0dff0c9a1bfc46c9ca42b2a51130e71086cfd5c1eea9b70f32832`.
+The stripped `stella-app` and `stella-headless` hashes are respectively
+`c73fddc0e52a4e1d536125a726e917cee139d27c59c8e65aea0a57b3d56cf10d`
+and `4484889ba5e65ee03b1d0e3ff285ae838eb3e9b03886cc7de8ed0182ee53a364`.

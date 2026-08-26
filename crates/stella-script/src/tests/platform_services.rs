@@ -917,7 +917,11 @@ fn recovered_platform_and_render_utilities_preserve_native_contracts() {
     let commands = runtime.take_render_commands();
     assert_eq!(commands.len(), 1);
     assert_eq!(commands[0].sprite, "BAND");
-    let native_quad = commands[0].state.native_sprite_quad.unwrap();
+    let Some(SpriteGeometrySubmission::NativeAtlasQuad(native_quad)) =
+        commands[0].geometry.as_ref()
+    else {
+        panic!("rubber band did not retain its native atlas quad");
+    };
     assert_eq!(commands[0].x, native_quad[0][0]);
     assert_eq!(commands[0].y, native_quad[0][1]);
     assert_eq!(

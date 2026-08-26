@@ -38,6 +38,7 @@ fn near_degenerate_atlas_matrix_is_submitted_without_a_host_epsilon_cull() {
         masked_texture_binding: None,
         bound_region: None,
         bound_composite: None,
+        geometry: None,
         shader: None,
         clip_holes: Vec::new(),
         dirt: None,
@@ -118,6 +119,9 @@ fn native_explicit_quad_reaches_gpu_in_recovered_triangle_and_uv_order() {
             .into(),
         ),
         bound_composite: None,
+        geometry: Some(SpriteGeometrySubmission::ExplicitQuad(Arc::new(
+            RenderQuad { positions, uv },
+        ))),
         shader: None,
         clip_holes: Vec::new(),
         dirt: None,
@@ -125,7 +129,6 @@ fn native_explicit_quad_reaches_gpu_in_recovered_triangle_and_uv_order() {
         y: 0.0,
         state: stella_script::RenderState {
             alpha: 0.25,
-            explicit_quad: Some(RenderQuad { positions, uv }),
             ..stella_script::RenderState::default()
         },
         world_space: true,
@@ -199,6 +202,9 @@ fn native_atlas_quad_keeps_positions_and_signed_rotated_region_uvs() {
             .into(),
         ),
         bound_composite: None,
+        geometry: Some(SpriteGeometrySubmission::NativeAtlasQuad(Arc::new(
+            positions,
+        ))),
         shader: None,
         clip_holes: Vec::new(),
         dirt: None,
@@ -206,7 +212,6 @@ fn native_atlas_quad_keeps_positions_and_signed_rotated_region_uvs() {
         y: 999.0,
         state: stella_script::RenderState {
             alpha: 0.375,
-            native_sprite_quad: Some(positions),
             ..stella_script::RenderState::default()
         },
         world_space: true,
@@ -260,6 +265,7 @@ fn render_state_pivot_is_not_applied_twice_after_native_sprite_anchoring() {
         masked_texture_binding: None,
         bound_region: None,
         bound_composite: None,
+        geometry: None,
         shader: None,
         clip_holes: Vec::new(),
         dirt: None,
@@ -322,6 +328,7 @@ fn explicit_sprite_pivot_override_replaces_an_atlas_pivot() {
         masked_texture_binding: None,
         bound_region: None,
         bound_composite: None,
+        geometry: None,
         shader: None,
         clip_holes: Vec::new(),
         dirt: None,
@@ -376,6 +383,7 @@ fn retained_animation_region_draws_after_active_resource_catalog_release() {
             .into(),
         ),
         bound_composite: None,
+        geometry: None,
         shader: None,
         clip_holes: Vec::new(),
         dirt: None,
@@ -434,6 +442,7 @@ fn selected_sprite_uses_its_submission_time_mask_texture_pointer() {
             .into(),
         ),
         bound_composite: None,
+        geometry: None,
         shader: None,
         clip_holes: Vec::new(),
         dirt: None,
@@ -507,6 +516,7 @@ fn retained_scene_composite_draws_its_frozen_child_after_catalog_release() {
             }]
             .into(),
         ),
+        geometry: None,
         shader: None,
         clip_holes: Vec::new(),
         dirt: None,
@@ -558,6 +568,7 @@ fn rotated_native_pivot_and_non_uniform_scale_reach_gpu_vertices_exactly() {
         masked_texture_binding: None,
         bound_region: None,
         bound_composite: None,
+        geometry: None,
         shader: None,
         clip_holes: Vec::new(),
         dirt: None,

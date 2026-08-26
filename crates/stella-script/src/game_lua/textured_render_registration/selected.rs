@@ -77,6 +77,7 @@ pub(super) fn install(
                 masked_texture_binding: Some(masked_texture_binding),
                 bound_region,
                 bound_composite: None,
+                geometry: None,
                 shader: None,
                 clip_holes: Vec::new(),
                 dirt: None,
