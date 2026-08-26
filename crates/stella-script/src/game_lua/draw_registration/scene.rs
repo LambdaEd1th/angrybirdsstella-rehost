@@ -82,10 +82,11 @@ pub(super) fn install(
                     if !stream.normal_sprite.is_empty() {
                         let bound_region = resources
                             .active_atlas_catalog_region(&stream.normal_sprite, &data_root);
-                        let mut bound_composite =
-                            resources.active_bound_composite(&stream.normal_sprite);
+                        let mut bound_composite = resources
+                            .active_bound_composite(&stream.normal_sprite)
+                            .map(Arc::new);
                         if bound_region.is_none() && bound_composite.is_none() {
-                            bound_composite = Some(Vec::new());
+                            bound_composite = Some(Arc::new(Vec::new()));
                         }
                         commands.extend(stream.points.iter().map(|&(x, y)| RenderCommand {
                             order: 0,
@@ -111,10 +112,11 @@ pub(super) fn install(
                     {
                         let bound_region = resources
                             .active_atlas_catalog_region(&stream.special_sprite, &data_root);
-                        let mut bound_composite =
-                            resources.active_bound_composite(&stream.special_sprite);
+                        let mut bound_composite = resources
+                            .active_bound_composite(&stream.special_sprite)
+                            .map(Arc::new);
                         if bound_region.is_none() && bound_composite.is_none() {
-                            bound_composite = Some(Vec::new());
+                            bound_composite = Some(Arc::new(Vec::new()));
                         }
                         commands.push(RenderCommand {
                             order: 0,

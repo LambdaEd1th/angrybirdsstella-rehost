@@ -104,11 +104,12 @@ impl RenderBridge {
                 texture_scale: object.texture_scale,
                 masked_texture_binding: object.texture_binding.as_deref().cloned(),
                 // Purple passes the retained RenderObjectData resource
-                // pointer into its immediate draw member. wgpu submits later,
-                // so materialize exactly one command-owned snapshot here;
-                // SceneObject -> SceneDrawObject above remains pointer-cheap.
+                // pointer into its immediate draw member. The small atlas
+                // record remains command-owned for deferred wgpu consumption;
+                // the potentially large composite graph below keeps its
+                // immutable retained owner instead of being materialized.
                 bound_region: object.sprite_region.as_deref().cloned(),
-                bound_composite: object.composite_sprite.as_deref().cloned(),
+                bound_composite: object.composite_sprite.clone(),
                 shader: None,
                 clip_holes: object.dirt.as_ref().map_or_else(
                     || {
@@ -195,9 +196,11 @@ impl RenderBridge {
             return;
         };
         let bound_region = resources.active_atlas_catalog_region(&decoration.sprite, data_root);
-        let mut bound_composite = resources.active_bound_composite(&decoration.sprite);
+        let mut bound_composite = resources
+            .active_bound_composite(&decoration.sprite)
+            .map(Arc::new);
         if bound_region.is_none() && bound_composite.is_none() {
-            bound_composite = Some(Vec::new());
+            bound_composite = Some(Arc::new(Vec::new()));
         }
         let base = self.scene_object_state(object);
         for index in 0..decoration.amount {

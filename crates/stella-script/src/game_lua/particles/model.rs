@@ -2,6 +2,7 @@
 
 use crate::{BoundCompositePart, ResourceRuntime, SpriteCatalogRegion};
 use std::path::Path;
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub(crate) struct Particle {
@@ -16,7 +17,7 @@ pub(crate) struct Particle {
     /// frame resolves to an atlas sprite Purple leaves an older composite
     /// pointer retained in this lower-priority slot, so keep the two native
     /// ownership fields separate instead of collapsing them into an enum.
-    pub(crate) bound_composite: Option<Vec<BoundCompositePart>>,
+    pub(crate) bound_composite: Option<Arc<Vec<BoundCompositePart>>>,
     pub(crate) x: f32,
     pub(crate) y: f32,
     pub(crate) velocity_x: f32,
@@ -49,7 +50,7 @@ impl Particle {
     pub(crate) fn bind_sprite(&mut self, resources: &ResourceRuntime, data_root: &Path) {
         self.bound_region = resources.active_atlas_catalog_region(&self.sprite, data_root);
         if self.bound_region.is_none() {
-            self.bound_composite = resources.active_bound_composite(&self.sprite);
+            self.bound_composite = resources.active_bound_composite(&self.sprite).map(Arc::new);
         }
     }
 
@@ -58,7 +59,10 @@ impl Particle {
     /// after the particle was submitted.
     pub(crate) fn draw_bindings(
         &self,
-    ) -> (Option<SpriteCatalogRegion>, Option<Vec<BoundCompositePart>>) {
+    ) -> (
+        Option<SpriteCatalogRegion>,
+        Option<Arc<Vec<BoundCompositePart>>>,
+    ) {
         let bound_region = self.bound_region.clone();
         if bound_region.is_some() {
             // Both native ownership slots may be populated after a
@@ -68,7 +72,7 @@ impl Particle {
         }
         let mut bound_composite = self.bound_composite.clone();
         if bound_composite.is_none() {
-            bound_composite = Some(Vec::new());
+            bound_composite = Some(Arc::new(Vec::new()));
         }
         (bound_region, bound_composite)
     }

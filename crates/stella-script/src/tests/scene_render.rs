@@ -961,6 +961,51 @@ fn native_scene_draw_snapshot_retains_resource_pointer_until_command_materializa
 }
 
 #[test]
+fn native_scene_composite_command_retains_the_same_part_vector_pointer() {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("stella-scene-composite-pointer-{unique}"));
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("SHEET.dat"),
+        test_textured_sprite_sheet("PART", "sheet.pvr", 12, 14),
+    )
+    .unwrap();
+    fs::write(root.join("sheet.pvr"), []).unwrap();
+    fs::write(
+        root.join("COMPOSITE.dat"),
+        test_composite_set_with_part("BODY", "PART"),
+    )
+    .unwrap();
+
+    let runtime = StellaLua::new(&root).unwrap();
+    runtime
+        .execute_source(
+            r#"
+                res.createSpriteSheet("SHEET.dat")
+                res.createCompoSpriteSet("COMPOSITE.dat")
+                createNonPhysicsObject("body", "BODY", 0, 0, 3)
+            "#,
+        )
+        .unwrap();
+
+    let bridge = runtime.render.lock().unwrap();
+    let scene_object = bridge.scene.get("body").unwrap();
+    let retained = scene_object.composite_sprite.as_ref().unwrap();
+    let snapshot = bridge.scene_draw_object("body").unwrap();
+    let snapshot_parts = snapshot.composite_sprite.as_ref().unwrap();
+    assert!(Arc::ptr_eq(retained, snapshot_parts));
+    let command = bridge.scene_object_command(&snapshot).unwrap();
+    let command_parts = command.bound_composite.as_ref().unwrap();
+    assert!(Arc::ptr_eq(retained, command_parts));
+
+    drop(bridge);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn native_duplicate_constructor_replaces_name_pointer_but_retains_old_render_leaf() {
     let runtime = StellaLua::new("/tmp").unwrap();
     register_test_sprite_sheet(&runtime, &["OLD", "NEW"]);

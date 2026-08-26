@@ -265,7 +265,10 @@ impl AssetCatalog {
         self.append_gpu_sprite(
             &command.sprite,
             command.bound_region.as_ref(),
-            command.bound_composite.as_deref(),
+            command
+                .bound_composite
+                .as_ref()
+                .map(|parts| parts.as_slice()),
             transform,
             0,
             state.draw_size,

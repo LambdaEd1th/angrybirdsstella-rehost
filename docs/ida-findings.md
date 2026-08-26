@@ -13087,13 +13087,11 @@ per-part retain/submit/release loop.
 
 The rehost now stores the scene object's bound atlas and composite resources
 as shared retained pointers. `SceneDrawObject::from` copies only the deferred
-draw state and increments those pointers; the final `RenderCommand` performs
-one owned materialization because wgpu consumes the command after the scene
-lock has been released. A focused regression verifies pointer identity across
-the scene snapshot and verifies that the command still owns a valid resource
-record. Construction and `native_setSprite` establish the retained pointer at
-the same assignment boundary, including the existing empty-composite null
-sentinel.
+draw state and increments those pointers. The later retained-command work
+described below extends this ownership through final wgpu consumption instead
+of materializing the complete composite graph. Construction and
+`native_setSprite` establish the retained pointer at the same assignment
+boundary, including the existing empty-composite null sentinel.
 
 The lifetime scan was also non-native. IDA decompiles `sub_10004BAB4` as a
 direct walk of GameLua's z/SpriteSheet/name tree at `+0x310`; each name is
@@ -13991,3 +13989,57 @@ are clean. The final `stella-app` and `stella-headless` SHA-256 values are
 respectively
 `7126543179cbe0b1c2f68be342465ba344e0051281a0989edcca699c5e145687`
 and `65f48a93277915f632ed792c6ee8f0ee7d7cb54e30e1100917b60b5da2458d44`.
+
+## Retained composite command ownership without per-draw graph copies
+
+The next symbolized Chapter02 L16 scene-dispatch sample exposed a remaining
+deferred-host ownership mismatch. `SceneObject` and `SceneDrawObject` already
+shared the bound `CompoSprite`, but `scene_object_command` converted the
+retained `Arc<Vec<BoundCompositePart>>` back into a freshly allocated owned
+vector. Every composite object therefore cloned all child strings, regions
+and texture-source strings on every draw. In the five-second baseline sample,
+the `Vec<BoundCompositePart>::clone` chain was a dominant descendant of
+`push_scene_object`, and the 100,000-submission workload reached a 5.8 GiB
+physical footprint while the command queue retained those duplicate graphs.
+
+IDA's `sub_10006D5B4` tests the composite byte at `RenderObjectData+0x138`,
+then repeatedly reads the retained owner at `+0x78`. At
+`0x10006D760..0x10006D7F8` it obtains one part by index, retains only that part
+wrapper, copies its small scalar/string draw record and submits it through
+`sub_10006C838` before releasing the wrapper. The ordinary branch instead
+passes the retained AtlasSprite at `+0x90` directly at `0x10006D8F4`. No path
+allocates or copies the complete composite child vector per object visit.
+Hopper independently shows the same `LDR [x21,#0x78]` part-count/index loop,
+per-part retain/release calls and the separate `+0x90` ordinary pointer.
+
+`RenderCommand.bound_composite` now shares the immutable retained part vector
+through `Arc`, so `SceneObject`, the compact draw snapshot and the deferred
+wgpu command all refer to one resource owner. Particle, theme, trajectory,
+decoration and direct ResourceManager submissions wrap a newly resolved
+composite once and cheaply retain it for repeated commands. The explicit
+empty-vector missing-resource sentinel remains shared as well. A focused
+regression proves pointer identity across scene object, draw snapshot and
+final command; the existing GPU release regression still draws the frozen
+child after the active catalog has released it.
+
+Three alternating Chapter02 L16 runs issue 30,000 complete
+`drawGameNative` submissions. The preceding retained-resource-lock build
+reports median real/user/system times of 3.36/2.68/0.65 seconds and a median
+maximum resident set of about 5.72 GB. The shared-command build reports
+2.99/2.48/0.49 seconds and about 4.95 GB, reductions of approximately 11.0
+percent real time, 7.5 percent user CPU, 24.6 percent system CPU and 13.4
+percent peak resident memory in this deliberately command-retention-heavy
+workload. A follow-up symbolized five-second sample contains zero
+`BoundCompositePart` vector-clone stacks while the live scene submission path
+remains present.
+
+The complete workspace now passes 668 tests with the intentional
+long-duration BirdRun audit ignored. Formatting, diff whitespace, strict
+all-target/all-feature Clippy, doc tests and the locked stripped release build
+are clean. A final 1,200-frame real-wgpu map run reports zero invoked
+fallbacks, zero remaining compatibility bindings and empty stderr; its PNG
+SHA-256 is
+`84659004659ac456c825489b60e6faf282ac770b628ca879222aeecce2ce3b09`.
+The stripped `stella-app` and `stella-headless` hashes are respectively
+`1f66574b091027391728e1323411c6730c8310a7080be5fc99780a691d316021`
+and `eb5bf9886d47c001f42455de92cf2210139cfd34ed95d8902368bf25c6777bd4`.

@@ -1,6 +1,6 @@
 //! Deferred sprite-command payloads matching Purple's ResourceManager draws.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::Arc};
 
 use stella_assets::ka3d::{CompositePart, SpriteRegion};
 
@@ -180,7 +180,9 @@ pub struct RenderCommand {
     pub bound_region: Option<SpriteCatalogRegion>,
     /// CompoSprite pointer retained by a native scene component. Every child
     /// carries the AtlasSprite pointer resolved when its COMP file loaded.
-    pub bound_composite: Option<Vec<BoundCompositePart>>,
+    /// Deferred commands share that immutable owner instead of cloning the
+    /// complete child array on every submission.
+    pub bound_composite: Option<Arc<Vec<BoundCompositePart>>>,
     pub shader: Option<SpriteShader>,
     pub clip_holes: Vec<RenderHole>,
     /// Native DirtMechanics replaces the object's ordinary sprite callback
