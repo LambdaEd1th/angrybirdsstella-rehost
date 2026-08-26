@@ -13768,3 +13768,74 @@ nil probes, zero fallbacks, zero compatibility bindings and empty stderr. The
 stripped `stella-app` and `stella-headless` hashes are respectively
 `34af11ca17294aa92e460a756a93d2b5dea544d411275220d3555dbae55ccd4e`
 and `0ccb4b4a0abd67895d0c7a009195428c022ff83b181bfaff848d4bf267a8fd57`.
+
+## Live scene cursor, callback snapshot boundary and in-place trails
+
+The next real update/draw sample concentrated the remaining scene adapter
+cost around the Lua pre/post calls, `NativeSceneWalk::next` and the trajectory
+pre-pass. The callback bodies themselves are shipped behavior and remain
+untouched, but the Rust ownership surrounding them still performed work that
+Purple does not: every yielded tree item cloned the render bridge `Arc`, a pre
+callback received a complete draw snapshot that was immediately discarded and
+rebuilt after Lua returned, and every frame deep-cloned both flight-trail point
+vectors before drawing them.
+
+IDA's 0x954-byte scene dispatcher `sub_10004BAB4` resolves each live name entry
+through `sub_100070278` at `0x10004BD1C..0x10004BD28`. After one visit it
+increments the vector index at `0x10004C33C`, reloads the vector begin/end pair
+at `0x10004C340`, recomputes the current length and branches back at
+`0x10004C34C`; therefore callback-driven removal, append and z movement remain
+observable to the current walk. The pre holder is read from RenderObjectData
+`+0x158` at `0x10004BFA4`, retained and invoked at
+`0x10004BFAC..0x10004BFDC`. Only after it returns does the dispatcher reload
+alpha, sprite/composite, scale, transform and decoration fields beginning at
+`0x10004BFE0`. The post holder is not snapshotted beside pre: it is loaded
+later from `+0x160` at `0x10004C300`, immediately before its own invocation at
+`0x10004C308..0x10004C338`. Hopper independently recovers the same 65-block
+function, live vector-length reload and the two distinct callback-holder load
+sites.
+
+The trajectory member `sub_10006D9C0` establishes the other ownership
+boundary. It reads the retained two-record owner from GameLua `+0x558`, walks
+the first point vector through `0x10006D9DC..0x10006DA2C`, then the second at
+`0x10006DA64..0x10006DAB4`. Both loops reload begin/end from the original
+records; no temporary record or point-vector copy exists. Sprite submission is
+direct from those same retained records. This also agrees with Hopper's two
+fixed-record assembly loops.
+
+The rehost now retains one `Arc<RenderBridge>` for the complete scene walk and
+keeps the mutable native cursor in a separate field, so each yielded z marker
+or object borrows the owner instead of performing an atomic retain/release.
+The initial scene lookup captures only the scalar callback context. Objects
+without pre retain one ordinary draw snapshot, while pre-enabled objects defer
+that snapshot until Lua returns. Post is re-read after pre, making a same-visit
+post replacement observable as in the executable. Both trajectory buffers are
+now borrowed in place while their existing bridge lock excludes mutators, and
+the retained Lua object is inspected for its shader without another temporary
+value clone.
+
+A new regression replaces an object's post callback from its pre callback and
+proves that only the replacement executes during that same visit. Existing
+tests continue to cover pre-draw visual mutation, post-draw live flip, z moves,
+empty z nodes, retained resource pointers and callback teardown. The complete
+workspace passes 664 tests with one intentional long-duration BirdRun audit
+ignored. Formatting, diff whitespace, strict all-target/all-feature Clippy,
+doc tests and the locked stripped release build are clean.
+
+Three warmed runs boot 1,200 island-map frames and issue 500 additional
+`drawGameNative` calls on the settled scene. The preceding build reports real
+times 0.96, 0.97 and 0.95 seconds (median 0.96) and user CPU 0.78, 0.79 and
+0.78 seconds (median 0.78). The optimized build reports real times 0.87, 0.88
+and 0.91 seconds (median 0.88) and user CPU 0.75, 0.75 and 0.78 seconds (median
+0.75), reductions of about 8.3 and 3.8 percent in this deliberately
+scene-dispatch-heavy mixed benchmark. It is not treated as a universal frame
+rate claim.
+
+The final 1,200-frame real-wgpu island checkpoint has zero invoked fallbacks,
+zero remaining compatibility bindings and empty stderr. Its PNG SHA-256 is
+`cc801333a8236a1c5caf57e8245af01bab69f35b2f7f6ed54e97df55c37b742b`.
+A separate direct Chapter01 L50 construction/draw has 14 optional nil probes,
+zero fallbacks, zero compatibility bindings and empty stderr. The stripped
+`stella-app` and `stella-headless` hashes are respectively
+`01d41b11e05099b67bed0b9cd8f9a66ab9b8f96ba8b016c415be39b7db48eb95`
+and `dc58a4a8425732194b714d853a1fb234d6515eccf5a4ec4e2190aa538e7239c6`.

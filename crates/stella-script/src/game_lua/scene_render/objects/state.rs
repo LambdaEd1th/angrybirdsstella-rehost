@@ -224,22 +224,12 @@ impl RenderBridge {
         }
     }
 
-    pub(crate) fn scene_callback_draw_object(
-        &self,
-        name: &str,
-    ) -> Option<(SceneCallbackObject, SceneDrawObject)> {
+    pub(crate) fn scene_callback_object(&self, name: &str) -> Option<SceneCallbackObject> {
         let object = self.scene.get(name)?;
         if !object.visible {
             return None;
         }
-        // sub_10004BAB4 resolves the RenderObjectData tree node once. With no
-        // pre callback, both callback GL state and the ordinary draw consume
-        // that same live pointer; only a pre callback requires reloading visual
-        // fields after Lua returns.
-        Some((
-            SceneCallbackObject::from(object),
-            SceneDrawObject::from(object),
-        ))
+        Some(SceneCallbackObject::from(object))
     }
 
     pub(crate) fn begin_scene_object_draw_callback(

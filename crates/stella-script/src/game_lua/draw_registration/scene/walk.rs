@@ -4,6 +4,10 @@ use crate::*;
 
 pub(super) struct NativeSceneWalk {
     render: Arc<Mutex<RenderBridge>>,
+    cursor: NativeSceneCursor,
+}
+
+struct NativeSceneCursor {
     minimum_z: i32,
     maximum_z: i32,
     z: Option<i32>,
@@ -17,16 +21,20 @@ impl NativeSceneWalk {
     pub(super) fn new(render: Arc<Mutex<RenderBridge>>, bounds: (i32, i32)) -> Self {
         Self {
             render,
-            minimum_z: bounds.0,
-            maximum_z: bounds.1,
-            z: None,
-            sheet: None,
-            name_index: 0,
-            emit_z: false,
-            finished: false,
+            cursor: NativeSceneCursor {
+                minimum_z: bounds.0,
+                maximum_z: bounds.1,
+                z: None,
+                sheet: None,
+                name_index: 0,
+                emit_z: false,
+                finished: false,
+            },
         }
     }
+}
 
+impl NativeSceneCursor {
     fn advance_z(&mut self, index: &NativeSceneRenderIndex) -> bool {
         let next = index.next_z_in_range(self.minimum_z, self.maximum_z, self.z);
         self.z = next;
@@ -47,46 +55,48 @@ impl Iterator for NativeSceneWalk {
     fn next(&mut self) -> Option<Self::Item> {
         // One bridge acquisition corresponds to one resumed native tree walk.
         // The lock is still released before yielding to Lua, and the next call
-        // re-reads the live vector length exactly like 0x10004C340.
-        let render = Arc::clone(&self.render);
-        let bridge = render.lock().expect("render bridge lock poisoned");
+        // re-reads the live vector length exactly like 0x10004C340. Borrowing
+        // owner and cursor independently also avoids an atomic Arc retain and
+        // release per item: Purple retains GameLua once for the complete walk.
+        let bridge = self.render.lock().expect("render bridge lock poisoned");
         let index = &bridge.scene_render_index;
+        let cursor = &mut self.cursor;
         loop {
-            let Some(z) = self.z else {
-                if self.finished {
+            let Some(current_z) = cursor.z else {
+                if cursor.finished {
                     return None;
                 }
-                if !self.advance_z(index) {
+                if !cursor.advance_z(index) {
                     return None;
                 }
                 continue;
             };
-            if self.emit_z {
-                self.emit_z = false;
-                return Some((z, None));
+            if cursor.emit_z {
+                cursor.emit_z = false;
+                return Some((current_z, None));
             }
-            let sheet = match self.sheet {
-                Some(sheet) => sheet,
+            let current_sheet = match cursor.sheet {
+                Some(current_sheet) => current_sheet,
                 None => {
-                    let first = index.first_sheet(z);
+                    let first = index.first_sheet(current_z);
                     let Some(first) = first else {
-                        self.advance_z(index);
+                        cursor.advance_z(index);
                         continue;
                     };
-                    self.sheet = Some(first);
-                    self.name_index = 0;
+                    cursor.sheet = Some(first);
+                    cursor.name_index = 0;
                     first
                 }
             };
-            let name = index.name_at(z, sheet, self.name_index);
+            let name = index.name_at(current_z, current_sheet, cursor.name_index);
             if let Some(name) = name {
-                self.name_index += 1;
-                return Some((z, Some(name)));
+                cursor.name_index += 1;
+                return Some((current_z, Some(name)));
             }
-            self.sheet = index.next_sheet(z, sheet);
-            self.name_index = 0;
-            if self.sheet.is_none() {
-                self.advance_z(index);
+            cursor.sheet = index.next_sheet(current_z, current_sheet);
+            cursor.name_index = 0;
+            if cursor.sheet.is_none() {
+                cursor.advance_z(index);
             }
         }
     }

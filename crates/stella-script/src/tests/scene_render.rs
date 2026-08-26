@@ -587,6 +587,33 @@ fn native_pre_draw_mutations_feed_the_same_object_draw_and_live_post_flip() {
 }
 
 #[test]
+fn native_pre_draw_replacement_of_post_callback_is_live_for_same_visit() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .execute_source(
+            r#"
+                createNonPhysicsObject("live_post_holder", "RED_CROSS", 0, 0, 3)
+                old_post_count = 0
+                new_post_count = 0
+                native_setPostDrawFunction("live_post_holder", function()
+                    old_post_count = old_post_count + 1
+                end)
+                native_setPreDrawFunction("live_post_holder", function(object)
+                    native_setPostDrawFunction(object.name, function()
+                        new_post_count = new_post_count + 1
+                    end)
+                end)
+                drawGameNative()
+                "#,
+        )
+        .unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert_eq!(environment.get::<i64>("old_post_count").unwrap(), 0);
+    assert_eq!(environment.get::<i64>("new_post_count").unwrap(), 1);
+}
+
+#[test]
 fn native_z_order_range_is_strict_and_fcvtzs_after_float32_rounding() {
     let runtime = StellaLua::new("/tmp").unwrap();
     runtime

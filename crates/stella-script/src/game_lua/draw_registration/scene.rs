@@ -72,9 +72,13 @@ pub(super) fn install(
                     scale_y: f64::from(world_scale * game_world_scale),
                     ..RenderState::default()
                 };
-                let streams = bridge.trajectory_streams.clone();
                 let mut commands = Vec::new();
-                for stream in streams {
+                // sub_10006D9C0 reads the two fixed 0x38-byte records at
+                // GameLua+0x558 in place and re-reads each point-vector end
+                // while iterating. The bridge lock already excludes the Lua
+                // mutators, so borrowing here avoids a Rust-only deep clone of
+                // both point vectors on every rendered frame.
+                for stream in &bridge.trajectory_streams {
                     if !stream.normal_sprite.is_empty() {
                         let bound_region = resources
                             .active_atlas_catalog_region(&stream.normal_sprite, &data_root);
@@ -83,7 +87,7 @@ pub(super) fn install(
                         if bound_region.is_none() && bound_composite.is_none() {
                             bound_composite = Some(Vec::new());
                         }
-                        commands.extend(stream.points.into_iter().map(|(x, y)| RenderCommand {
+                        commands.extend(stream.points.iter().map(|&(x, y)| RenderCommand {
                             order: 0,
                             sprite: stream.normal_sprite.clone(),
                             texture: None,
@@ -114,7 +118,7 @@ pub(super) fn install(
                         }
                         commands.push(RenderCommand {
                             order: 0,
-                            sprite: stream.special_sprite,
+                            sprite: stream.special_sprite.clone(),
                             texture: None,
                             texture_scale: 1.0,
                             masked_texture_binding: None,
@@ -143,10 +147,10 @@ pub(super) fn install(
                     }
                     continue;
                 };
-                let Some((callback_state_object, initial_draw_object)) = render
+                let Some(callback_state_object) = render
                     .lock()
                     .expect("render bridge lock poisoned")
-                    .scene_callback_draw_object(name.as_ref())
+                    .scene_callback_object(name.as_ref())
                 else {
                     continue;
                 };
@@ -155,7 +159,7 @@ pub(super) fn install(
                 // registry reference. Keep a compatibility fallback for
                 // tests or extension-created scene records that bypass the
                 // recovered constructors, but retain its first table too.
-                let (callback_object, pre, post) = {
+                let (callback_object, pre, initial_post) = {
                     let mut callbacks = draw_callbacks.borrow_mut();
                     if let Some(record) = callbacks.records.get(name.as_ref()) {
                         (
@@ -178,16 +182,27 @@ pub(super) fn install(
                         (object, None, None)
                     }
                 };
-                let previous = render
-                    .lock()
-                    .expect("render bridge lock poisoned")
-                    .begin_scene_object_draw_callback(callback_state_object);
-                if trace_draw_callbacks && (pre.is_some() || post.is_some())
+                // RenderObjectData+0x158 is tested before the original starts
+                // consuming the visual fields.  A pre callback can mutate all
+                // of those fields, so defer its SceneDrawObject snapshot until
+                // after Lua returns.  Objects without a pre callback keep the
+                // native one-pointer/one-snapshot fast path.
+                let (previous, initial_draw_object) = {
+                    let mut bridge = render.lock().expect("render bridge lock poisoned");
+                    let initial_draw_object = pre
+                        .is_none()
+                        .then(|| bridge.scene_draw_object(name.as_ref()))
+                        .flatten();
+                    let previous =
+                        bridge.begin_scene_object_draw_callback(callback_state_object);
+                    (previous, initial_draw_object)
+                };
+                if trace_draw_callbacks && (pre.is_some() || initial_post.is_some())
                 {
                     eprintln!(
                         "draw-callback name={name:?} pre={} post={} object={}",
                         pre.is_some(),
-                        post.is_some(),
+                        initial_post.is_some(),
                         describe_value(&callback_object)
                     );
                 }
@@ -210,7 +225,7 @@ pub(super) fn install(
                         .expect("render bridge lock poisoned")
                         .scene_draw_object(name.as_ref())
                 } else {
-                    Some(initial_draw_object)
+                    initial_draw_object
                 };
                 let Some(object) = object
                 else {
@@ -285,7 +300,7 @@ pub(super) fn install(
                     // shared cached shader through sub_1000222E4/
                     // sub_100529F68. This is the path used by
                     // GoldTransformer's `2d-sprite-gold` table.
-                    let shader = match callback_object.clone() {
+                    let shader = match &callback_object {
                         Value::Table(object_table) => {
                             match object_table.raw_get::<Value>("shader")? {
                                 Value::Table(shader) => Some(sprite_shader_from_lua(
@@ -302,6 +317,20 @@ pub(super) fn install(
                         .expect("render bridge lock poisoned")
                         .push_scene_object(&object, &resources, &data_root, shader);
                 }
+                // RenderObjectData+0x160 is loaded at 0x10004C300, after the
+                // pre callback and the ordinary draw. A pre callback can
+                // replace the post holder for this same visit. Without a pre
+                // callback there was no intervening Lua execution, so retain
+                // the first lookup.
+                let post = if pre.is_some() {
+                    draw_callbacks
+                        .borrow()
+                        .records
+                        .get(name.as_ref())
+                        .and_then(|record| record.post.clone())
+                } else {
+                    initial_post
+                };
                 if let Some(function) = post {
                     let horizontal_flip = render
                         .lock()
