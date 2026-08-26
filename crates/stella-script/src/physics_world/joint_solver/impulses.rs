@@ -3,17 +3,19 @@
 use crate::*;
 
 impl RenderBridge {
-    pub(super) fn clear_joint_impulses(&mut self, joint_names: &[String], step: f64) {
-        for name in joint_names {
-            if let Some(joint) = self.joints.get_mut(name) {
-                joint.linear_impulse_x = 0.0;
-                joint.linear_impulse_y = 0.0;
-                joint.angular_impulse = 0.0;
-                joint.motor_impulse = 0.0;
-                joint.limit_impulse = 0.0;
-                joint.distance_impulse = 0.0;
-                joint.previous_step = step;
-            }
+    pub(super) fn clear_constraint_impulses(
+        constraints: &mut NativeIslandJointConstraints,
+        step: f64,
+    ) {
+        for entry in &mut constraints.entries {
+            let joint = &mut entry.joint;
+            joint.linear_impulse_x = 0.0;
+            joint.linear_impulse_y = 0.0;
+            joint.angular_impulse = 0.0;
+            joint.motor_impulse = 0.0;
+            joint.limit_impulse = 0.0;
+            joint.distance_impulse = 0.0;
+            joint.previous_step = step;
         }
     }
 

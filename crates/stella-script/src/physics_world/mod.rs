@@ -48,7 +48,7 @@ pub(crate) use continuous::*;
 pub(crate) use dirt::*;
 pub(crate) use extensions::install_extensions;
 pub(crate) use islands::*;
-pub(crate) use joint_solver::{JointBodyState, JointBodyView};
+pub(crate) use joint_solver::{JointBodyState, JointBodyView, NativeIslandJointConstraints};
 pub(crate) use joints::*;
 pub(crate) use manifold::*;
 pub(crate) use narrow_phase::*;

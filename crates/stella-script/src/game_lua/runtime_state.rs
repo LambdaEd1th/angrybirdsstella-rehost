@@ -154,6 +154,9 @@ pub(crate) struct RenderBridge {
     /// recent discrete assembly. `Solve` walks this same list once after all
     /// islands to synchronize fixtures, without sorting the island arrays.
     pub(crate) solver_synchronized_bodies: Vec<String>,
+    /// Reusable owner for the current island's stable `b2Joint*` equivalent.
+    /// It is empty outside `b2Island::Solve`, retaining only vector capacity.
+    pub(crate) joint_constraint_scratch: NativeIslandJointConstraints,
     pub(crate) native_sensor_overlaps: BTreeMap<String, BTreeSet<String>>,
     pub(crate) inside_gravity_objects: BTreeSet<String>,
     pub(crate) collision_velocities: BTreeMap<String, (f64, f64)>,
@@ -341,6 +344,7 @@ impl Default for RenderBridge {
             position_contacts: BTreeMap::new(),
             solver_islands: Vec::new(),
             solver_synchronized_bodies: Vec::new(),
+            joint_constraint_scratch: NativeIslandJointConstraints::default(),
             native_sensor_overlaps: BTreeMap::new(),
             inside_gravity_objects: BTreeSet::new(),
             collision_velocities: BTreeMap::new(),

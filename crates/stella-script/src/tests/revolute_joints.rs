@@ -174,6 +174,77 @@ fn awake_island_borrows_native_joint_edges_and_wakes_the_complete_sleeping_chain
 }
 
 #[test]
+fn island_joint_pointer_array_is_resolved_once_and_restored_after_all_passes() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createCircle("a", "", 0, 0, 0.25, 1, 1, 0, true, false, 1)
+                createCircle("b", "", 2, 0, 0.25, 1, 1, 0, true, false, 1)
+                createCircle("c", "", 4, 0, 0.25, 1, 1, 0, true, false, 1)
+                createJoint({
+                    name = "ab", end1 = "a", end2 = "b", type = 1,
+                    coordType = 2, x1 = 0, y1 = 0, x2 = 0, y2 = 0
+                })
+                createJoint({
+                    name = "bc", end1 = "b", end2 = "c", type = 1,
+                    coordType = 2, x1 = 0, y1 = 0, x2 = 0, y2 = 0
+                })
+            "#,
+        )
+        .unwrap();
+
+    let mut bridge = runtime.render.lock().unwrap();
+    let ab_name_pointer = bridge.joints["ab"].name.as_ptr();
+    let bc_first_pointer = bridge.joints["bc"].first.as_ptr();
+    let names = vec!["ab".to_owned(), "bc".to_owned()];
+    let mut constraints = bridge.take_island_joint_constraints(&names);
+    assert_eq!(constraints.len(), 2);
+    assert!(bridge.joints.is_empty());
+
+    bridge.begin_island_joint_constraints(&mut constraints, 1.0 / 30.0);
+    for _ in 0..3 {
+        bridge.solve_island_joint_constraints(&mut constraints, 1.0 / 30.0, true, false);
+        assert_eq!(constraints.len(), 2);
+        assert!(bridge.joints.is_empty());
+    }
+    bridge.restore_island_joint_constraints(constraints);
+
+    assert_eq!(
+        bridge.joints.keys().map(String::as_str).collect::<Vec<_>>(),
+        ["ab", "bc"]
+    );
+    assert_eq!(bridge.joints["ab"].name.as_ptr(), ab_name_pointer);
+    assert_eq!(bridge.joints["bc"].first.as_ptr(), bc_first_pointer);
+}
+
+#[test]
+fn cached_joint_with_a_missing_endpoint_uses_the_ordered_native_destructor() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createCircle("a", "", 0, 0, 0.25, 1, 1, 0, true, false, 1)
+                createCircle("b", "", 2, 0, 0.25, 1, 1, 0, true, false, 1)
+                createJoint({
+                    name = "link", end1 = "a", end2 = "b", type = 1,
+                    coordType = 2, x1 = 0, y1 = 0, x2 = 0, y2 = 0
+                })
+            "#,
+        )
+        .unwrap();
+
+    let mut bridge = runtime.render.lock().unwrap();
+    bridge.scene.remove("b");
+    let mut constraints = bridge.take_island_joint_constraints(&["link".to_owned()]);
+    assert!(bridge.solve_island_joint_constraints(&mut constraints, 1.0 / 30.0, true, false,));
+    assert_eq!(constraints.len(), 0);
+    assert!(!bridge.joints.contains_key("link"));
+    assert!(bridge.native_joint_world_order.is_empty());
+    bridge.restore_island_joint_constraints(constraints);
+}
+
+#[test]
 fn recovered_revolute_limit_solver_couples_anchor_and_angular_impulses() {
     let runtime = unlocked_test_runtime();
     runtime

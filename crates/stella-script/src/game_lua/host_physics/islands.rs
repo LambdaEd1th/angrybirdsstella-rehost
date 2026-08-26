@@ -39,7 +39,11 @@ impl StellaLua {
             bridge.seed_island_contact_velocity_constraints(&island.contacts);
             bridge.begin_island_contact_step(&island.contacts);
             bridge.begin_island_track_step(&island.bodies);
-            bridge.begin_island_joint_step(&island.joints, PHYSICS_STEP);
+            // b2Island+0x20 is one stable b2Joint* array. Resolve the Rust
+            // name-addressed records once and retain their ownership through
+            // initialization and every velocity/position virtual call.
+            let mut joint_constraints = bridge.take_island_joint_constraints(&island.joints);
+            bridge.begin_island_joint_constraints(&mut joint_constraints, PHYSICS_STEP);
             // b2Island constructs one compact body-indexed velocity array and
             // every contact iteration reuses it. Joint/track solvers in this
             // rehost still publish through the name-addressed scene, so only
@@ -47,7 +51,12 @@ impl StellaLua {
             bridge.begin_contact_velocity_cache(&island.contacts);
             let mut island_impulses = vec![0.0_f64; island.contacts.len()];
             for _ in 0..VELOCITY_ITERATIONS {
-                bridge.solve_island_joints(&island.joints, PHYSICS_STEP, true, false);
+                bridge.solve_island_joint_constraints(
+                    &mut joint_constraints,
+                    PHYSICS_STEP,
+                    true,
+                    false,
+                );
                 bridge.solve_island_track_velocity_constraints(&island.bodies);
                 bridge.refresh_contact_velocity_cache();
                 let pass_impulses = bridge
@@ -88,8 +97,12 @@ impl StellaLua {
             let mut positions_solved = false;
             for _ in 0..POSITION_ITERATIONS {
                 let contacts_solved = bridge.solve_island_contact_positions(&island.contacts);
-                let joints_solved =
-                    bridge.solve_island_joints(&island.joints, PHYSICS_STEP, false, true);
+                let joints_solved = bridge.solve_island_joint_constraints(
+                    &mut joint_constraints,
+                    PHYSICS_STEP,
+                    false,
+                    true,
+                );
                 positions_solved = contacts_solved && joints_solved;
                 if positions_solved
                     && std::env::var_os("STELLA_FORCE_POSITION_ITERATIONS").is_none()
@@ -97,6 +110,7 @@ impl StellaLua {
                     break;
                 }
             }
+            bridge.restore_island_joint_constraints(joint_constraints);
             bridge.update_single_box2d_island_sleep(island, PHYSICS_STEP, positions_solved);
         }
         contact_events.retain(|event| event.began || event.ended || event.impulse > f64::EPSILON);

@@ -13453,3 +13453,63 @@ remaining compatibility bindings. Its PNG SHA-256 remains
 the release `stella-app` and `stella-headless` hashes are respectively
 `740ea04b1496f69d652d0f1a23950e2d4ab54d114a67f3369a9bd112bf4b32c4`
 and `2e246d3f92ae752bf82c29e0b43ae632ccbb941a91438fdf123839e848ec0972`.
+
+## One stable b2Joint pointer array across every island pass
+
+The compact joint-body state removed the largest ownership cost, but each
+constraint pass still resolved every selected joint name through the
+persistent `BTreeMap`. A normal island performs that lookup during constraint
+initialization, ten velocity iterations and as many as ten position
+iterations. This remaining indirection did not match the recovered native
+island representation.
+
+IDA's `b2Island::Solve` at `sub_10086CE84` shows that the island member at
+`+0x20` is one stable `b2Joint*` array and its count is at `+0x44`. The
+initialization loop at `0x10086D070..0x10086D0A8` loads a pointer from that
+array and calls virtual slot `+0x30`. Every velocity iteration at
+`0x10086D0D8..0x10086D10C` reloads the pointer from the same array and calls
+slot `+0x38`; the position loop at `0x10086D2E4..0x10086D320` does the same
+before calling slot `+0x40`. The compact body position and velocity arrays are
+the adjacent island members at `+0x30/+0x38`, while the body-pointer array is
+at `+0x10`. Hopper independently shows the same array loads, index order and
+three virtual-call slots. Neither disassembly resolves a name or reconstructs
+the joint list between passes.
+
+The rehost now resolves an island's persistent joints once, moves the actual
+records into a capacity-retaining `NativeIslandJointConstraints` owner, and
+reuses that ordered array from warm-start initialization through all velocity
+and position passes. The records are restored to the persistent map only after
+the island finishes. Warm-start, motor, limit and distance impulses therefore
+remain on the same record throughout the solve, matching the lifetime of the
+native pointers without unsafe aliases. A missing endpoint follows the prior
+adapter recovery boundary: its record is restored first and then removed by
+the ordinary ordered native-joint destructor.
+
+Focused regressions verify that the persistent map remains empty during all
+passes, that both joint records keep their original string storage addresses,
+that map order is restored afterward, and that a broken endpoint still retires
+the joint through the native order. The complete workspace now passes 658
+tests with one intentional long-duration BirdRun audit ignored. Formatting,
+diff whitespace, strict all-target/all-feature Clippy, doc tests and the locked
+release build are clean.
+
+Three alternating 2,000-frame runs of the same 800-body, 799-distance-joint
+stress scene reduce user CPU from 4.68, 4.68 and 4.67 seconds (median 4.68) on
+the preceding build to 4.28, 4.26 and 4.28 seconds (median 4.28), about an 8.5
+percent reduction in that deliberately joint-heavy case. Three alternating
+10,000-frame settled Chapter01 L50 controls remain effectively neutral at
+medians 2.33 versus 2.31 seconds. The symbolized five-second stress sample
+contains the live fixed-step solver and no `PhysicsJoint::clone`,
+`SceneObject::clone` or joint-map lookup stack; the constraint dispatch is
+inlined into `step_physics` in the optimized binary.
+
+The final isolated 1,200-frame wgpu checkpoint directly constructs and draws
+Chapter01 L50 with 47 optional nil probes, zero invoked fallbacks, zero
+remaining compatibility bindings and empty stderr. Its PNG SHA-256 is
+`8465f7a6472e89704512df24d980de68466f92558526c65794efb818f2cc751b`;
+a decoded comparison with the preceding checkpoint differs only in 50 pixels
+inside one 35-by-8 animated-character region, with the scene geometry and
+layout unchanged. The release `stella-app` and `stella-headless` hashes are
+respectively
+`269e5b0f3b9a42fbd7918d4ffe490206974abc5fa0153c6459b2cb923ff1d9e1`
+and `d40e08837f36380baf7f6517fbb6d067d8c4c6a5757f04ad46dbe4dfc68a5765`.
