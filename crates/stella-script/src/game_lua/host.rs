@@ -17,6 +17,7 @@ pub struct StellaLua {
     pub(crate) url_requests: UrlRequestRuntime,
     pub(crate) installed_apps: InstalledAppsRuntime,
     pub(crate) assets: AssetsRuntime,
+    pub(crate) channel: ChannelRuntime,
     pub(crate) game_server: GameServerRuntime,
     pub(crate) gamer_services: GamerServicesRuntime,
     #[cfg(test)]
@@ -122,6 +123,7 @@ impl StellaLua {
             url_requests: installed.url_requests,
             installed_apps: installed.installed_apps,
             assets: installed.assets,
+            channel: installed.channel,
             game_server: installed.game_server,
             gamer_services: installed.gamer_services,
             #[cfg(test)]

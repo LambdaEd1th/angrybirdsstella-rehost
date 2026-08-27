@@ -15595,3 +15595,31 @@ the calling stack, success/error FIFO order, pre-update delivery, retained
 root callback lookup and next-frame deferral of a nested request. The complete
 workspace remains at 699 passing tests with the intentional long-duration
 BirdRun audit ignored.
+
+## Rovio Channel asynchronous open and cancellation state
+
+The first Channel reconstruction retained the seven-member ABI and guaranteed
+that a retired endpoint could not leave its connection overlay stuck, but it
+called `onChannelLoadingFailed` from inside `openChannelView`. IDA and Hopper
+both show a different scheduling boundary. `sub_1000AD7D8` forwards the seven
+decoded arguments to `sub_1005DF1D4`; when the SDK is not prepared,
+`sub_1005DF2A0` copies them into a 0x48-byte callable, wraps that callable with
+`sub_1005865AC` and starts the job through `sub_100586644`. The retained SDK
+listener later reaches the no-argument Lua callback through
+`sub_1000AE41C -> sub_1005278E8`.
+
+Cancellation is not an unconditional sink. Native member `sub_1000ADB70`
+delegates to `sub_1005E0C04`, which acts only while SDK state equals loading,
+releases the outstanding request pointer, changes the state to cancelled and
+does not emit the loading-failed callback. This also explains why simply
+queuing an inevitable failure without a cancellation handle is observably
+wrong for the shipped connection screen.
+
+The portable Channel owner now retains its pending retired-request state.
+Opening an enabled Channel validates the recovered ABI and schedules the
+failure for application-thread frame-head dispatch; cancellation clears that
+pending state. The dispatcher addresses the retained root `RovioChannel`
+table and invokes `onChannelLoadingFailed()` before ordinary Lua update. A
+shipped-data regression proves call-stack deferral, pre-update delivery,
+one-shot completion and cancellation suppression while preserving the SDK's
+unavailable-view state.

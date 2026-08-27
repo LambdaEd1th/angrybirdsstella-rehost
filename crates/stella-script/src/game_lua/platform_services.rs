@@ -21,6 +21,7 @@ use crate::*;
 
 pub(crate) struct InstalledPlatformServices {
     pub(crate) assets: AssetsRuntime,
+    pub(crate) channel: ChannelRuntime,
     pub(crate) game_server: GameServerRuntime,
     pub(crate) gamer_services: GamerServicesRuntime,
 }
@@ -65,17 +66,19 @@ pub(crate) fn install(
         Arc::clone(&data_root),
         Arc::clone(&resource_runtime),
     )?;
-    channel::install(lua, globals, resource_runtime)?;
+    let channel = channel::install(lua, globals, resource_runtime)?;
     game_lua::install_simple_random(lua, globals)?;
     align::install(lua, globals)?;
     Ok(InstalledPlatformServices {
         assets,
+        channel,
         game_server,
         gamer_services,
     })
 }
 
 pub(crate) use assets::{AssetsRuntime, dispatch_completions as dispatch_assets_completions};
+pub(crate) use channel::{ChannelRuntime, dispatch_completions as dispatch_channel_completions};
 pub(crate) use cloud_service::announce_registrations as announce_cloud_service_registrations;
 pub(crate) use game_server::install_offline_facade as install_offline_game_server_facade;
 pub(crate) use game_server::{

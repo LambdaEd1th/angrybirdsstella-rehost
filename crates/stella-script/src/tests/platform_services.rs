@@ -3754,19 +3754,23 @@ fn boot_announces_all_nine_native_cloud_services_before_menu_updates() {
                     type(RovioChannel.onChannelShown) == "function" and
                     type(RovioChannel.onChannelClosed) == "function" and
                     type(RovioChannel.onNewChannelContentUpdated) == "function"
-                local original_channel_failure =
+                original_channel_failure =
                     RovioChannel.onChannelLoadingFailed
-                local channel_failure_calls = 0
+                channel_failure_calls = 0
                 RovioChannel.onChannelLoadingFailed = function()
                     channel_failure_calls = channel_failure_calls + 1
+                end
+                local original_update = update
+                update = function(...)
+                    channel_failure_preceded_update =
+                        channel_failure_calls == 1
+                    return original_update(...)
                 end
                 RovioChannel.openChannelView(
                     "Purple", "full", "en_EN", 1024, 768, "", "map_screen"
                 )
-                RovioChannel.onChannelLoadingFailed = original_channel_failure
-                retired_channel_request_finishes =
-                    channel_failure_calls == 1 and
-                    not RovioChannel.isChannelViewOpened()
+                retired_channel_request_is_deferred =
+                    channel_failure_calls == 0
                 assets_have_been_downloaded_loaded =
                     type(Assets.haveBeenDownloaded) == "function"
                 assets_filename_loaded =
@@ -3778,6 +3782,36 @@ fn boot_announces_all_nine_native_cloud_services_before_menu_updates() {
         )
         .unwrap();
     let environment = game_environment(runtime.lua()).unwrap();
+    assert!(
+        environment
+            .get::<bool>("retired_channel_request_is_deferred")
+            .unwrap()
+    );
+    runtime.update(1.0 / 60.0).unwrap();
+    runtime
+        .execute_source(
+            r#"
+                retired_channel_request_finishes =
+                    channel_failure_calls == 1 and
+                    not RovioChannel.isChannelViewOpened()
+                RovioChannel.openChannelView(
+                    "Purple", "full", "en_EN", 1024, 768, "", "map_screen"
+                )
+                RovioChannel.cancelChannelViewLoading()
+            "#,
+        )
+        .unwrap();
+    runtime.update(1.0 / 60.0).unwrap();
+    runtime
+        .execute_source(
+            r#"
+                retired_channel_cancel_suppresses_failure =
+                    channel_failure_calls == 1
+                RovioChannel.onChannelLoadingFailed =
+                    original_channel_failure
+            "#,
+        )
+        .unwrap();
     for name in [
         "cloud_social_available",
         "cloud_analytics_available",
@@ -3797,7 +3831,9 @@ fn boot_announces_all_nine_native_cloud_services_before_menu_updates() {
         "ads_provider_unavailable",
         "channel_sdk_available",
         "channel_native_callbacks_loaded",
+        "channel_failure_preceded_update",
         "retired_channel_request_finishes",
+        "retired_channel_cancel_suppresses_failure",
         "assets_have_been_downloaded_loaded",
         "assets_filename_loaded",
     ] {

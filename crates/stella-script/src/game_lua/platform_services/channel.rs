@@ -4,6 +4,37 @@ use crate::*;
 
 const SDK_ENABLED_REGISTRY_KEY: &str = "stella.rovio_channel.sdk_enabled";
 
+/// Retired Channel request state retained by the native SDK owner.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ChannelRuntime {
+    pending_loading_failure: Arc<Mutex<bool>>,
+}
+
+impl ChannelRuntime {
+    fn schedule_loading_failure(&self) {
+        *self
+            .pending_loading_failure
+            .lock()
+            .expect("channel completion lock poisoned") = true;
+    }
+
+    fn cancel_loading(&self) {
+        *self
+            .pending_loading_failure
+            .lock()
+            .expect("channel completion lock poisoned") = false;
+    }
+
+    fn take_loading_failure(&self) -> bool {
+        std::mem::take(
+            &mut *self
+                .pending_loading_failure
+                .lock()
+                .expect("channel completion lock poisoned"),
+        )
+    }
+}
+
 // ChannelButton.lua and ChannelIntroPopup.lua name sprites that were delivered
 // by the retired island-map promotion service rather than the application
 // bundle. These fallbacks preserve each visual role with Stella's bundled
@@ -28,7 +59,8 @@ pub(super) fn install(
     lua: &Lua,
     globals: &mlua::Table,
     resource_runtime: Arc<Mutex<ResourceRuntime>>,
-) -> LuaResult<()> {
+) -> LuaResult<ChannelRuntime> {
+    let runtime = ChannelRuntime::default();
     lua.set_named_registry_value(SDK_ENABLED_REGISTRY_KEY, false)?;
     resource_runtime
         .lock()
@@ -37,9 +69,10 @@ pub(super) fn install(
 
     let channel = lua.create_table()?;
 
+    let open_runtime = runtime.clone();
     channel.set(
         "openChannelView",
-        lua.create_function(|lua, args: MultiValue| {
+        lua.create_function(move |lua, args: MultiValue| {
             // Generated adapter sub_1000AEFE0 requires exactly the seven
             // values consumed by ChannelManager.openView: game id, mode,
             // locale, viewport width/height, content path and entry point.
@@ -56,27 +89,27 @@ pub(super) fn install(
                 .named_registry_value::<bool>(SDK_ENABLED_REGISTRY_KEY)
                 .unwrap_or(false)
             {
-                // Purple receives this callback asynchronously after its
-                // Channel 1.2 request fails. The endpoint is retired, so the
-                // desktop equivalent completes the failure continuation at
-                // the native boundary instead of leaving ConnectionScreen up
-                // forever. The callback is installed by ChannelManager.lua.
-                let native_channel: mlua::Table = lua.globals().get("RovioChannel")?;
-                if let Value::Function(callback) =
-                    native_channel.get::<Value>("onChannelLoadingFailed")?
-                {
-                    callback.call::<()>(())?;
-                }
+                // sub_1005DF2A0 packages these values into a 0x48-byte Func5
+                // and starts it through the shared background scheduler.
+                // The retired endpoint's failure continuation is therefore
+                // queued rather than invoked on this Lua calling stack.
+                open_runtime.schedule_loading_failure();
             }
             Ok(())
         })?,
     )?;
 
-    for method in [
+    let cancel_runtime = runtime.clone();
+    channel.set(
         "cancelChannelViewLoading",
-        "updateNewContent",
-        "onMenuInitialised",
-    ] {
+        lua.create_function(move |_, _: MultiValue| {
+            // sub_1005E0C04 succeeds only while SDK state is loading and
+            // releases the retained request without emitting failure.
+            cancel_runtime.cancel_loading();
+            Ok(())
+        })?,
+    )?;
+    for method in ["updateNewContent", "onMenuInitialised"] {
         channel.set(method, lua.create_function(|_, _: MultiValue| Ok(()))?)?;
     }
     channel.set(
@@ -105,7 +138,20 @@ pub(super) fn install(
     )?;
 
     globals.set("RovioChannel", channel)?;
-    Ok(())
+    Ok(runtime)
+}
+
+/// Deliver the retired SDK request result on the application thread.
+pub(crate) fn dispatch_completions(lua: &Lua, runtime: &ChannelRuntime) -> LuaResult<()> {
+    if !runtime.take_loading_failure() {
+        return Ok(());
+    }
+    let native_channel = lua.globals().get::<mlua::Table>("RovioChannel")?;
+    // sub_1000AE41C addresses the retained native LuaObject directly and
+    // calls the member with no arguments.
+    native_channel
+        .get::<mlua::Function>("onChannelLoadingFailed")?
+        .call::<()>(())
 }
 
 pub(super) fn enable_service(lua: &Lua) -> LuaResult<()> {
