@@ -16,13 +16,18 @@ pub(crate) fn install(
             // sub_100089B74 consumes two exact strings. sub_10004C7FC updates
             // native sprite/resource batches and never reflects `sprite` into
             // objects.world.
-            let name = native_required_string(&args, 0, "native_setSprite")?;
-            let sprite = native_required_string(&args, 1, "native_setSprite")?;
+            // sub_100089B74 creates one COW std::string owner per exact Lua
+            // string. sub_10004C7FC then retains those same owners in the
+            // render index/object instead of copying their payloads again.
+            let name: Arc<str> =
+                Arc::from(native_required_borrowed_string(&args, 0, "native_setSprite")?.as_ref());
+            let sprite: Arc<str> =
+                Arc::from(native_required_borrowed_string(&args, 1, "native_setSprite")?.as_ref());
             let (sprite_region, mut composite_sprite) = {
                 let resources = resources.lock().expect("resource runtime lock poisoned");
                 (
-                    resources.active_atlas_catalog_region(&sprite, &data_root),
-                    resources.active_bound_composite(&sprite),
+                    resources.active_atlas_catalog_region(sprite.as_ref(), &data_root),
+                    resources.active_bound_composite(sprite.as_ref()),
                 )
             };
             // A present empty composite vector is the deferred-host null
@@ -34,7 +39,7 @@ pub(crate) fn install(
             let mut bridge = sprite_bridge.lock().expect("render bridge lock poisoned");
             let (z_bucket, old_sheet_id) = bridge
                 .scene
-                .get(&name)
+                .get(name.as_ref())
                 .map(|object| {
                     (
                         native_fcvtzs_f32(object.z_order as f32),
@@ -47,14 +52,17 @@ pub(crate) fn install(
                 .map(|region| region.native_sheet_id)
                 .or_else(|| composite_sprite.as_ref()?.first_native_sheet_id())
                 .unwrap_or(0);
-            bridge
-                .scene_render_index
-                .move_sheet(z_bucket, old_sheet_id, new_sheet_id, &name);
+            bridge.scene_render_index.move_sheet(
+                z_bucket,
+                old_sheet_id,
+                new_sheet_id,
+                Arc::clone(&name),
+            );
             let object = bridge
                 .scene
-                .get_mut(&name)
+                .get_mut(name.as_ref())
                 .ok_or_else(|| runtime_error(format!("Missing object: {name}")))?;
-            object.sprite = sprite.into();
+            object.sprite = sprite;
             object.sprite_bound = true;
             object.sprite_region = sprite_region;
             object.composite_sprite = composite_sprite;
@@ -88,13 +96,16 @@ pub(crate) fn install(
             // adapter as setObjectAlpha. sub_1000592C4 first resolves the
             // render object, then moves it between integer z-order buckets,
             // writes its reflected attribute, and finally stores the float.
-            let name = native_required_string(&args, 0, "changeZOrder")?;
+            // sub_1000866F8 allocates the adapter's COW std::string once;
+            // sub_1000592C4 copies only that handle into the z-order vector.
+            let name: Arc<str> =
+                Arc::from(native_required_borrowed_string(&args, 0, "changeZOrder")?.as_ref());
             let z_order = f64::from(native_required_number(&args, 1, "changeZOrder")? as f32);
             {
                 let mut bridge = z_order_bridge.lock().expect("render bridge lock poisoned");
                 let (old_z_bucket, sheet) = bridge
                     .scene
-                    .get(&name)
+                    .get(name.as_ref())
                     .map(|object| {
                         (
                             native_fcvtzs_f32(object.z_order as f32),
@@ -103,16 +114,19 @@ pub(crate) fn install(
                     })
                     .ok_or_else(|| runtime_error(format!("Missing object: {name}")))?;
                 let new_z_bucket = native_fcvtzs_f32(z_order as f32);
-                bridge
-                    .scene_render_index
-                    .move_z(old_z_bucket, new_z_bucket, sheet, &name);
+                bridge.scene_render_index.move_z(
+                    old_z_bucket,
+                    new_z_bucket,
+                    sheet,
+                    Arc::clone(&name),
+                );
                 let object = bridge
                     .scene
-                    .get_mut(&name)
+                    .get_mut(name.as_ref())
                     .ok_or_else(|| runtime_error(format!("Missing object: {name}")))?;
                 object.z_order = z_order;
             }
-            if let Value::Table(entry) = object_world(lua)?.raw_get::<Value>(name.as_str())? {
+            if let Value::Table(entry) = object_world(lua)?.raw_get::<Value>(name.as_ref())? {
                 entry.set("z_order", z_order)?;
             }
             Ok(())

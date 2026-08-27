@@ -14940,3 +14940,64 @@ stderr; its PNG SHA-256 is
 The release `stella-app` and `stella-headless` hashes are respectively
 `d94cadc3c4b659147fd97c7e103ec09801adea7996a8416e4f16950a5b7a4724`
 and `b044d254f865209b956fb659c13e1b5de2dc526c2f9ad481ec5eec1520898c36`.
+
+## COW adapter strings retained by the native scene index
+
+A symbolized 20,000-frame island-map sample next placed avoidable host work
+under the `changeZOrder` Lua closure. The previous Rust adapter converted the
+Lua name to an owned `String`; `NativeSceneRenderIndex::move_z` then called
+`to_owned`, and conversion of that second allocation to `Arc<str>` copied the
+payload once more. This was not the ownership pattern used by Purple's old
+libstdc++ ABI.
+
+The registration sequence at `0x10002EEC4..0x10002EEF4` associates
+`changeZOrder` with member `sub_1000592C4` and generated STRING/NUMBER adapter
+`sub_100086690`. IDA shows that the latter unpacks the member pointer through
+`sub_100529B50` and enters `sub_1000866F8`. That adapter reads the exact Lua
+STRING through `sub_1005285CC`, creates one COW `std::string`, reads slot two
+as a float, and copy-constructs only the eight-byte COW handle for the member
+call. `sub_1000592C4` resolves the RenderObject, removes its name from the old
+integer-z/sheet vector, copy-constructs the same COW handle into the new
+vector, writes the reflected `z_order` attribute, and finally stores the
+float at RenderObjectData `+0xD4`. Hopper independently recovers the same
+registration pointers, `std::string` copy construction, vector erase/insert,
+attribute write and final field store.
+
+The related `native_setSprite` adapter `sub_100089B74` creates exactly one COW
+owner for each of its two exact STRING arguments. IDA's `sub_10004C7FC` and
+Hopper's pseudocode both show the object-name handle moving between the
+native scene-index leaves and the sprite-name handle being retained by
+`std::string::assign` at RenderObjectData `+0x68`. The resource pointer and
+sheet index are updated before that final assignment; neither retained label
+requires another character-buffer allocation.
+
+Rust now constructs one `Arc<str>` owner for each generated-adapter string and
+passes clones of that pointer through the same scene-index and object-field
+boundaries. `move_z` and `move_sheet` consume the supplied owner instead of
+rebuilding it. Lookups, missing-object errors and Lua `z_order` reflection use
+the same retained owner, preserving strict tags, failure order and float32
+rounding. A focused regression moves one name across both z and sheet leaves
+and proves with `Arc::ptr_eq` that the supplied COW-style owner is the value
+retained in each destination vector.
+
+A concentrated stripped-release diagnostic creates one non-physics object and
+executes 500,000 alternating `changeZOrder` calls. Three preceding-build runs
+report median real/user times of 0.23/0.20 seconds. After the ownership fix,
+four warm runs report medians of 0.20/0.18 seconds, reductions of about 13.0
+percent wall time and 10.0 percent user CPU in this adapter-heavy workload.
+The deliberately concentrated result measures removed string copies and is
+not a universal frame-rate claim.
+
+The complete workspace passes 676 tests with the intentional long-duration
+BirdRun audit ignored. Formatting, diff whitespace, documentation, doctests,
+strict all-target Clippy and the locked release build are clean. The direct
+release-wgpu Chapter02 L16 checkpoint remains byte-identical to the established
+translucent-water baseline, SHA-256
+`63b5da87b1a55a57d0e5d3559336f604d35817b5651cf8cf7347f7def189d4d7`.
+A visually inspected copied-AppData 1,200-frame island-map run completes with
+zero invoked fallbacks, zero remaining compatibility bindings and empty
+stderr; its PNG SHA-256 is
+`1853b677d8c354a2cca6766e9a1505de83bf05017da2b0b1d5804124a9252d89`.
+The release `stella-app` and `stella-headless` hashes are respectively
+`6e1483cc508eef543122e2905f46ea1f2c66c4c383578bc587b19bb1e725a3f8`
+and `06289b09b4c1ae975741ac93067993d49cdb3df27f0c121b9558f98b02887b7f`.

@@ -41,19 +41,19 @@ impl NativeSceneRenderIndex {
         }
     }
 
-    pub(crate) fn move_sheet(&mut self, z: i32, old_sheet: u64, new_sheet: u64, name: &str) {
+    pub(crate) fn move_sheet(&mut self, z: i32, old_sheet: u64, new_sheet: u64, name: Arc<str>) {
         if old_sheet == new_sheet {
             return;
         }
-        self.erase_first(z, old_sheet, name);
-        self.append(z, new_sheet, name.to_owned());
+        self.erase_first(z, old_sheet, name.as_ref());
+        self.append(z, new_sheet, name);
     }
 
-    pub(crate) fn move_z(&mut self, old_z: i32, new_z: i32, sheet: u64, name: &str) {
+    pub(crate) fn move_z(&mut self, old_z: i32, new_z: i32, sheet: u64, name: Arc<str>) {
         // sub_1000592C4 performs both operations even when FCVTZS maps the
         // old and new values to the same integer bucket.
-        self.erase_first(old_z, sheet, name);
-        self.append(new_z, sheet, name.to_owned());
+        self.erase_first(old_z, sheet, name.as_ref());
+        self.append(new_z, sheet, name);
     }
 
     /// Destroy the complete GameLua `+0x310` tree. `loadLevel` uses the
@@ -129,4 +129,24 @@ pub(crate) fn native_scene_sheet_id(object: &SceneObject) -> u64 {
         .map(|region| region.native_sheet_id)
         .or_else(|| object.composite_sprite.as_ref()?.first_native_sheet_id())
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn moves_retain_the_supplied_cow_string_owner() {
+        let mut index = NativeSceneRenderIndex::default();
+        let name: Arc<str> = Arc::from("body");
+        index.append(1, 10, Arc::clone(&name));
+
+        index.move_z(1, 2, 10, Arc::clone(&name));
+        let after_z = index.name_at(2, 10, 0).unwrap();
+        assert!(Arc::ptr_eq(&after_z, &name));
+
+        index.move_sheet(2, 10, 20, Arc::clone(&name));
+        let after_sheet = index.name_at(2, 20, 0).unwrap();
+        assert!(Arc::ptr_eq(&after_sheet, &name));
+    }
 }
