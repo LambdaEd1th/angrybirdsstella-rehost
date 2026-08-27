@@ -4,7 +4,7 @@ use crate::*;
 
 enum CollisionFixtureGeometry {
     Circle { center: (f64, f64), radius: f64 },
-    Polygon(Vec<(f64, f64)>),
+    Polygon(NativePolygon<(f64, f64)>),
     Segment(((f64, f64), (f64, f64))),
 }
 
@@ -102,7 +102,7 @@ impl SceneObject {
                 ]
                 .into_iter()
                 .map(|point| self.transform_collision_point_at(transform, point))
-                .collect();
+                .collect::<NativePolygon<_>>();
                 Some(CollisionFixtureGeometry::Polygon(vertices))
             }
             CollisionShape::Box { .. } => None,
@@ -118,7 +118,7 @@ impl SceneObject {
                             .iter()
                             .copied()
                             .map(|point| self.transform_collision_point_at(transform, point))
-                            .collect(),
+                            .collect::<NativePolygon<_>>(),
                     )
                 })
             }

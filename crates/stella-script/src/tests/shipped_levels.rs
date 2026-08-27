@@ -71,6 +71,28 @@ fn every_shipped_level_constructs_updates_and_reaches_native_draw() {
             unresolved_sprites.is_empty(),
             "{level} retained unresolved native sprites: {unresolved_sprites:?}"
         );
+        let oversized_polygon_fixtures = runtime
+            .render
+            .lock()
+            .expect("render bridge lock poisoned")
+            .scene
+            .iter()
+            .filter_map(|(name, object)| {
+                let CollisionShape::Polygon { vertices, fixtures } = &object.collision_shape else {
+                    return None;
+                };
+                let largest = if fixtures.is_empty() {
+                    vertices.len()
+                } else {
+                    fixtures.iter().map(Vec::len).max().unwrap_or(0)
+                };
+                (largest > BOX2D_MAX_POLYGON_VERTICES).then(|| (name.clone(), largest))
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            oversized_polygon_fixtures.is_empty(),
+            "{level} bypassed Purple's fixed polygon capacity: {oversized_polygon_fixtures:?}"
+        );
         // This direct container audit bypasses GameScene's surrounding
         // initialization. Empty/noninteractive containers therefore lack
         // the Lua component arrays consumed by the real updatePhysics even

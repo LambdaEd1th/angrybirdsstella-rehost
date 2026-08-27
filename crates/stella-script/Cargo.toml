@@ -17,6 +17,7 @@ clipper2-rust.workspace = true
 mlua.workspace = true
 rodio.workspace = true
 serde_json.workspace = true
+smallvec.workspace = true
 stella-assets = { path = "../stella-assets" }
 thiserror.workspace = true
 

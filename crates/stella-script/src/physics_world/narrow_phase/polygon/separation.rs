@@ -1,6 +1,9 @@
 //! b2FindMaxSeparation and b2EdgeSeparation (`sub_10085FB84`/`sub_10085FD74`).
 
-use super::super::geometry::{normalized_axis_f32, polygon_centroid_f32, polygon_signed_area_f32};
+use super::super::{
+    NativePolygon,
+    geometry::{normalized_axis_f32, polygon_centroid_f32, polygon_signed_area_f32},
+};
 
 pub(crate) fn polygon_max_separation(
     reference: &[(f64, f64)],
@@ -13,11 +16,11 @@ pub(crate) fn polygon_max_separation(
     let reference_points = reference
         .iter()
         .map(|&(x, y)| (x as f32, y as f32))
-        .collect::<Vec<_>>();
+        .collect::<NativePolygon<_>>();
     let incident_points = incident
         .iter()
         .map(|&(x, y)| (x as f32, y as f32))
-        .collect::<Vec<_>>();
+        .collect::<NativePolygon<_>>();
     let reference_centroid = polygon_centroid_f32(&reference_points)?;
     let incident_centroid = polygon_centroid_f32(&incident_points)?;
     let centroid_delta = (
@@ -107,7 +110,7 @@ fn edge_separation(
     normal.0.mul_add(delta.0, normal.1 * delta.1)
 }
 
-fn polygon_normals(polygon: &[(f64, f64)]) -> Option<Vec<(f32, f32)>> {
+fn polygon_normals(polygon: &[(f64, f64)]) -> Option<NativePolygon<(f32, f32)>> {
     let orientation = polygon_signed_area_f32(polygon);
     (0..polygon.len())
         .map(|index| {

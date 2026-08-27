@@ -2485,6 +2485,7 @@ dependencies = [
  "rodio",
  "rustybuzz",
  "serde_json",
+ "smallvec",
  "stella-assets",
  "thiserror 2.0.20",
  "ttf-parser",

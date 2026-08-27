@@ -15059,3 +15059,59 @@ checked PNG SHA-256 is
 The release `stella-app` and `stella-headless` hashes are respectively
 `71b922b2a7e51462aa7c827630178123b123d4f41168984d12e77f44a9c56631`
 and `ed5d143aac993ea8e9b11c3d025010d8cfb31470a6b341661565ae2fed089e60`.
+
+## Inline Box2D polygon contact scratch storage
+
+A new steady-state symbol sample of a fully constructed Chapter01 L50 scene
+placed the next avoidable host work in polygon contact creation. The preceding
+Rust path allocated a `Vec` for each fixture's transformed vertices, then more
+`Vec`s for float32 point copies and per-face normals inside every maximum-
+separation or edge-polygon query. These allocations were an artifact of the
+rehost data model; Purple's bundled Box2D shape already owns fixed vertex and
+normal arrays.
+
+IDA's `b2FindMaxSeparation` `sub_10085FB84` reads the signed face count from
+polygon-shape offset `+0x98` at `0x10085FBB8`, starts its direct normal walk at
+`shape+0x58` through the pointer formed at `0x10085FC34`, and advances exactly
+eight bytes per face. It calls only the direct `b2EdgeSeparation` leaf
+`sub_10085FD74`; neither function has an allocator call. Hopper independently
+recovers the same `+0x98` count, embedded normal-array walk and sole callee.
+The full polygon entry `sub_10085F648` and edge-polygon collider
+`sub_10085EADC` likewise operate on the supplied shapes and stack records
+without constructing a dynamic vertex container. This agrees with the
+previously recovered `sub_100871F08` decomposition limit of eight convex
+points.
+
+Rust now gives contact scratch polygons the same eight-point inline capacity.
+Fixture world transforms, float32 centroid inputs, computed face normals and
+the edge-polygon f32/f64 boundary use `SmallVec<[T; 8]>`; malformed diagnostic
+input can still spill safely, while every shape admitted by Purple's authored
+decomposition stays on the stack. The edge collider also computes signed area
+directly over the already-narrowed float32 points instead of allocating a
+round-trip f64 vector. The whole-bundle level regression now inspects every
+constructed polygon fixture in all 149 shipped levels and proves that none
+exceeds the native capacity.
+
+Five alternating, identically symbolized release pairs each execute 30,000
+complete Chapter01 L50 update/physics/draw frames. The preceding build's
+median real/user times are 10.39/10.33 seconds; the inline-polygon build's are
+10.32/10.22 seconds, reductions of approximately 0.7 and 1.1 percent in this
+physics-heavy diagnostic. Two new-build wall-time outliers do not affect the
+more stable user-CPU comparison. A follow-up five-second symbol sample still
+shows polygon computation itself, as expected, but no allocator appears below
+`collision_fixture_geometry` or `polygon_normals`.
+
+The complete workspace passes 677 tests with the intentional long-duration
+BirdRun audit ignored. Formatting, diff whitespace, documentation tests,
+strict all-target/all-feature Clippy and the locked release build are clean.
+The direct release-wgpu Chapter02 L16 checkpoint remains byte-identical to the
+established translucent-water baseline, SHA-256
+`63b5da87b1a55a57d0e5d3559336f604d35817b5651cf8cf7347f7def189d4d7`;
+visual inspection confirms the complete pool and submerged structure. An
+isolated copied-AppData 1,200-frame island-map run has empty stderr, zero
+invoked fallbacks and zero remaining compatibility bindings; its visually
+checked PNG SHA-256 is
+`bfe0d993856684e98e22556a96b9da13c7259d680aafda3f2c7b4516ee6e7425`.
+The release `stella-app` and `stella-headless` hashes are respectively
+`4af6d5b67b3274047e1a1229332d273da309c44e397bbd049054a42a8be8452f`
+and `7a9ce9e19458f3b9d4aacc7b26fcbc9703a32b34d1488a5b24d53481ec10478c`.

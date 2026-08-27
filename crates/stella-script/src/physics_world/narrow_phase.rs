@@ -5,6 +5,14 @@ mod edge;
 mod geometry;
 mod polygon;
 
+use smallvec::SmallVec;
+
+/// Purple embeds the Box2D 2.2 polygon vertex and normal arrays in each
+/// `b2PolygonShape`. Authored contours are decomposed before they can exceed
+/// this native capacity, so contact scratch space should remain inline too.
+pub(crate) const BOX2D_MAX_POLYGON_VERTICES: usize = 8;
+pub(crate) type NativePolygon<T> = SmallVec<[T; BOX2D_MAX_POLYGON_VERTICES]>;
+
 pub(crate) use circle::{circle_circle_manifold, circle_polygon_manifold};
 pub(crate) use edge::{circle_segment_manifold, polygon_segment_manifold};
 #[cfg(test)]

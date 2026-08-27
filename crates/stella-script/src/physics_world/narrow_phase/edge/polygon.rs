@@ -1,7 +1,8 @@
 //! b2EPCollider edge-polygon leaf (`sub_10085EADC`).
 
 use super::super::{
-    geometry::{normalized_axis_f32, polygon_centroid_f32, polygon_signed_area_f32},
+    NativePolygon,
+    geometry::{normalized_axis_f32, polygon_centroid_f32, polygon_signed_area_from_f32},
     polygon::{ClipVertex, clip_segment_to_line, polygon_incident_edge},
 };
 use crate::{
@@ -20,18 +21,13 @@ pub(crate) fn polygon_segment_manifold(
     let polygon = polygon
         .iter()
         .map(|&(x, y)| (x as f32, y as f32))
-        .collect::<Vec<_>>();
+        .collect::<NativePolygon<_>>();
     let edge_start = (segment.0.0 as f32, segment.0.1 as f32);
     let edge_end = (segment.1.0 as f32, segment.1.1 as f32);
     let edge_vector = (edge_end.0 - edge_start.0, edge_end.1 - edge_start.1);
     let edge_tangent = normalized_axis_f32(edge_vector)?;
     let base_edge_normal = (edge_tangent.1, -edge_tangent.0);
-    let polygon_orientation = polygon_signed_area_f32(
-        &polygon
-            .iter()
-            .map(|&(x, y)| (f64::from(x), f64::from(y)))
-            .collect::<Vec<_>>(),
-    );
+    let polygon_orientation = polygon_signed_area_from_f32(&polygon);
     let polygon_normals = polygon
         .iter()
         .enumerate()
@@ -45,7 +41,7 @@ pub(crate) fn polygon_segment_manifold(
             };
             normalized_axis_f32(outward).map(|normal| (index, normal))
         })
-        .collect::<Option<Vec<_>>>()?;
+        .collect::<Option<NativePolygon<_>>>()?;
 
     // With no adjacent vertices (the independent edge fixtures created by
     // Purple), sub_10085EADC chooses the edge side from the polygon centroid.
@@ -140,11 +136,12 @@ pub(crate) fn polygon_segment_manifold(
         } else {
             (edge_end, edge_start, 1, 0)
         };
+        let polygon_f64 = polygon
+            .iter()
+            .map(|&(x, y)| (f64::from(x), f64::from(y)))
+            .collect::<NativePolygon<_>>();
         let (incident_index, incident_edge) = polygon_incident_edge(
-            &polygon
-                .iter()
-                .map(|&(x, y)| (f64::from(x), f64::from(y)))
-                .collect::<Vec<_>>(),
+            &polygon_f64,
             (f64::from(edge_normal.0), f64::from(edge_normal.1)),
         )?;
         (

@@ -13,6 +13,17 @@ pub(crate) fn polygon_signed_area_f32(polygon: &[(f64, f64)]) -> f32 {
         * 0.5_f32
 }
 
+pub(crate) fn polygon_signed_area_from_f32(polygon: &[(f32, f32)]) -> f32 {
+    polygon
+        .iter()
+        .zip(polygon.iter().cycle().skip(1))
+        .take(polygon.len())
+        .fold(0.0_f32, |area, (&(x1, y1), &(x2, y2))| {
+            (-x2).mul_add(y1, x1.mul_add(y2, area))
+        })
+        * 0.5_f32
+}
+
 pub(crate) fn polygon_contains_point(polygon: &[(f64, f64)], point: (f64, f64)) -> bool {
     if polygon.len() < 3 {
         return false;
