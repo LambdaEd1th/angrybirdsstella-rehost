@@ -201,6 +201,14 @@ fn custom_joints_dispatch_to_lua_and_allow_editor_reentry() {
     assert_eq!(environment.get::<i64>("custom_calls").unwrap(), 1);
     assert_eq!(environment.get::<i64>("observed_custom_type").unwrap(), 7);
     assert!(runtime.render.lock().unwrap().joints.is_empty());
+    assert!(matches!(
+        environment
+            .get::<mlua::Table>("objects")
+            .unwrap()
+            .raw_get::<Value>("joints")
+            .unwrap(),
+        Value::Nil
+    ));
 
     // CustomJointHandlers' editor branch changes type 7 to type 2 and
     // recursively enters createJoint. The native mutex must not still be
@@ -228,6 +236,66 @@ fn custom_joints_dispatch_to_lua_and_allow_editor_reentry() {
     assert!((first_anchor.0 - 2.0).abs() < 1e-9);
     assert!((second_anchor.0 - 2.0).abs() < 1e-9);
     assert!(first_anchor.1.abs() < 1e-9 && second_anchor.1.abs() < 1e-9);
+    drop(bridge);
+    let descriptors = environment
+        .get::<mlua::Table>("objects")
+        .unwrap()
+        .get::<mlua::Table>("joints")
+        .unwrap();
+    assert_eq!(
+        descriptors
+            .get::<mlua::Table>("editor_rope")
+            .unwrap()
+            .get::<f64>("type")
+            .unwrap(),
+        2.0
+    );
+}
+
+#[test]
+fn native_joint_descriptor_is_published_only_after_success_and_is_not_borrowed() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createBox("first", "", 0, 0, 1, 1, 1, 0, 0, true, false, 1)
+                createBox("second", "", 2, 0, 1, 1, 1, 0, 0, true, false, 1)
+                local descriptor = {
+                    name = "owned_copy", end1 = "first", end2 = "second",
+                    type = 2, coordType = 2,
+                    x1 = 1, y1 = 0, x2 = -1, y2 = 0
+                }
+                createJoint(descriptor)
+                published_is_distinct = objects.joints.owned_copy ~= descriptor
+                descriptor.type = 6
+                descriptor.end2 = "mutated"
+
+                createJoint({
+                    name = "missing_endpoint", end1 = "first", end2 = "absent",
+                    type = 2, coordType = 2,
+                    x1 = 0, y1 = 0, x2 = 0, y2 = 0
+                })
+            "#,
+        )
+        .unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert!(environment.get::<bool>("published_is_distinct").unwrap());
+    let descriptors = environment
+        .get::<mlua::Table>("objects")
+        .unwrap()
+        .get::<mlua::Table>("joints")
+        .unwrap();
+    let published = descriptors.get::<mlua::Table>("owned_copy").unwrap();
+    assert_eq!(published.get::<f64>("type").unwrap(), 2.0);
+    assert_eq!(published.get::<String>("end2").unwrap(), "second");
+    assert!(matches!(
+        descriptors.raw_get::<Value>("missing_endpoint").unwrap(),
+        Value::Nil
+    ));
+    let bridge = runtime.render.lock().unwrap();
+    assert!(bridge.joints.contains_key("owned_copy"));
+    assert!(!bridge.joints.contains_key("missing_endpoint"));
 }
 
 #[test]

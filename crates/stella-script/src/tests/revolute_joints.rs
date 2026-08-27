@@ -314,6 +314,10 @@ fn recovered_joint_limit_helpers_reverse_or_stop_motor_and_keep_void_abi() {
                 objects.joints = { descriptor, numeric_name_descriptor }
                 createJoint(descriptor)
                 createJoint(numeric_name_descriptor)
+                local published_descriptor = objects.joints.boundary
+                local published_numeric_name_descriptor = objects.joints["123"]
+                assert(published_descriptor ~= descriptor)
+                assert(published_numeric_name_descriptor ~= numeric_name_descriptor)
                 parameter_result_count = select("#", setJointParameters(
                     { name = "ignored", motorSpeed = 99 },
                     { name = "boundary", motorSpeed = "3", upperLimit = "0.2" }
@@ -323,9 +327,12 @@ fn recovered_joint_limit_helpers_reverse_or_stop_motor_and_keep_void_abi() {
                     setJointParameters, { name = "boundary" }, false
                 )
                 setJointParameters({ name = 123, motorSpeed = "4" })
-                numeric_name_mirrored_speed = objects.joints[2].motorSpeed
-                mirrored_speed = objects.joints[1].motorSpeed
-                mirrored_upper = objects.joints[1].upperLimit
+                original_numeric_name_speed = numeric_name_descriptor.motorSpeed
+                original_speed = descriptor.motorSpeed
+                original_upper = descriptor.upperLimit
+                numeric_name_mirrored_speed = published_numeric_name_descriptor.motorSpeed
+                mirrored_speed = published_descriptor.motorSpeed
+                mirrored_upper = published_descriptor.upperLimit
                 setAngle("rotor", 0.3)
                 "##,
         )
@@ -366,6 +373,14 @@ fn recovered_joint_limit_helpers_reverse_or_stop_motor_and_keep_void_abi() {
     );
     assert_eq!(environment.get::<i64>("check_result_count").unwrap(), 0);
     assert_eq!(environment.get::<i64>("handle_result_count").unwrap(), 0);
+    assert_eq!(environment.get::<f64>("original_speed").unwrap(), 2.0);
+    assert_eq!(environment.get::<f64>("original_upper").unwrap(), 0.1);
+    assert_eq!(
+        environment
+            .get::<f64>("original_numeric_name_speed")
+            .unwrap(),
+        1.0
+    );
     assert_eq!(environment.get::<f64>("mirrored_speed").unwrap(), 3.0);
     assert_eq!(
         environment

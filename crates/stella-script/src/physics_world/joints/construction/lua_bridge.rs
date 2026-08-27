@@ -27,7 +27,14 @@ pub(crate) fn mirror_lua_joint_descriptor(lua: &Lua, descriptor: &mlua::Table) -
             joints
         }
     };
-    joints.raw_set(name, descriptor.clone())?;
+    // createJoint constructs a new native-owned LuaTable and copies resolved
+    // fields into it. The caller's descriptor is never retained by identity.
+    let published = lua.create_table()?;
+    for pair in descriptor.clone().pairs::<Value, Value>() {
+        let (key, value) = pair?;
+        published.raw_set(key, value)?;
+    }
+    joints.raw_set(name, published)?;
     Ok(())
 }
 

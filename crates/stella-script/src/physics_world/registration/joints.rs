@@ -23,14 +23,15 @@ pub(super) fn install_creation(
                 .ok_or_else(|| runtime_error("createJoint expects a table"))?;
             let descriptor = native_required_table(&args, index, "createJoint")?;
             let joint_type = table_required_number(&descriptor, "type", "createJoint")? as f32;
-            mirror_lua_joint_descriptor(lua, &descriptor)?;
             if joint_type >= 7.0 {
                 dispatch_custom_joint(lua, descriptor)?;
-            } else {
-                insert_physics_joint(
-                    &mut joint_bridge.lock().expect("render bridge lock poisoned"),
-                    &descriptor,
-                )?;
+            } else if insert_physics_joint(
+                &mut joint_bridge.lock().expect("render bridge lock poisoned"),
+                &descriptor,
+            )? {
+                // Purple publishes a fresh resolved descriptor only after
+                // the ordinary native joint has been constructed.
+                mirror_lua_joint_descriptor(lua, &descriptor)?;
             }
             Ok(())
         })?,
@@ -63,16 +64,13 @@ pub(super) fn install_creation(
                     return Err(runtime_error("createJoints descriptor must be table"));
                 };
                 let joint_type = table_required_number(&descriptor, "type", "createJoints")? as f32;
-                // The batch wrapper keeps the Lua-side topology synchronized
-                // just like the single-joint entry point.
-                mirror_lua_joint_descriptor(lua, &descriptor)?;
                 if joint_type >= 7.0 {
                     custom_descriptors.push(descriptor);
-                } else {
-                    insert_physics_joint(
-                        &mut joints_bridge.lock().expect("render bridge lock poisoned"),
-                        &descriptor,
-                    )?;
+                } else if insert_physics_joint(
+                    &mut joints_bridge.lock().expect("render bridge lock poisoned"),
+                    &descriptor,
+                )? {
+                    mirror_lua_joint_descriptor(lua, &descriptor)?;
                 }
             }
             // sub_1000386EC releases the C++ scene lock before invoking the

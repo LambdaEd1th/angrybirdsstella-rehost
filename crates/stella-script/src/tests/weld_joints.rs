@@ -74,14 +74,16 @@ fn recovered_breakable_joint_uses_collision_force_and_compacts_lua_metadata() {
                 }
                 objects.joints = { descriptor }
                 createJoint(descriptor)
+                local publishedDescriptor = objects.joints.fragile
+                assert(publishedDescriptor ~= descriptor)
                 jointRemovalCallbacks = {}
                 lua_onBeforeJointRemove = function(name)
-                    assert(objects.joints[name] == descriptor)
+                    assert(objects.joints[name] == publishedDescriptor)
                     table.insert(jointRemovalCallbacks, "before:" .. name)
-                    descriptor.isDrawn = true
+                    publishedDescriptor.isDrawn = true
                 end
                 lua_addParticlesToJoint = function(name)
-                    assert(objects.joints[name] == descriptor)
+                    assert(objects.joints[name] == publishedDescriptor)
                     table.insert(jointRemovalCallbacks, "particles:" .. name)
                 end
                 setVelocity("collider", -5, 0)

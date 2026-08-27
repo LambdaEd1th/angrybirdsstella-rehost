@@ -15778,3 +15778,28 @@ the Lua descriptor. Hopper independently shows `fmov s9, #1.0` at
 for metadata-only type-five links while preserving the separate overloaded
 physical-prismatic compatibility branch. This prevents an omitted timer from
 turning the original delayed dependent-object teardown into an immediate one.
+
+## Joint descriptor ownership and successful-publication boundary
+
+The earlier bridge put the caller's descriptor table into `objects.joints`
+before it knew whether native creation would succeed. IDA shows the opposite
+ownership. `sub_100037374` calls `sub_100529C84` at `0x100037630` to allocate a
+fresh Lua table and fills that table through the recovered field setters. It
+does not install it under `objects.joints[name]` until `0x10003B430..440`,
+after endpoint lookup and the complete native joint-type branch. A missing
+endpoint exits before that installation. Hopper shows the same allocation and
+late `joints` table setter.
+
+Types seven and above take an even earlier path: the comparison at
+`0x10003742C` calls retained `createCustomJoint` with the original input table
+at `0x100037614` and skips native descriptor construction entirely. This is
+observable in the editor-style type-seven handler, which temporarily changes
+the input to type two, recursively creates a native weld, and then restores
+the original type. Purple's newly allocated published weld remains type two;
+a borrowed input table incorrectly changes back to type seven.
+
+Rust now publishes an independently owned descriptor only after ordinary
+joint construction succeeds, leaves failed endpoint lookups absent, and does
+not pre-publish custom descriptors. Regression coverage proves distinct table
+identity, immunity to caller mutation, failed-creation cleanup, no type-seven
+artifact, and the recursive editor weld retaining its native type-two record.
