@@ -31,9 +31,7 @@ pub(super) fn install(
                     .active_masked_texture_source(&texture, &data_root)
                     .map_or(MaskedTextureBinding::Missing, MaskedTextureBinding::Source);
                 (
-                    resources
-                        .active_atlas_catalog_region(&sprite, &data_root)
-                        .map(Arc::new),
+                    resources.active_atlas_catalog_region(&sprite, &data_root),
                     binding,
                 )
             };

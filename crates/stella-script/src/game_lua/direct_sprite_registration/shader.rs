@@ -68,7 +68,7 @@ pub(super) fn install(
                 let part_y = f64::from(part.y) * scale_y;
                 bridge.push_render_command(native_direct_sprite_command(
                     part.sprite,
-                    bound_region,
+                    Arc::new(bound_region),
                     Some(shader.clone()),
                     NativeSpritePlacement {
                         x: x + cosine * part_x - sine * part_y,

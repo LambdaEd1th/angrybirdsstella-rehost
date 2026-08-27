@@ -155,15 +155,6 @@ pub(super) fn install(
                     continue;
                 };
                 let post_horizontal_flip = object.horizontal_flip;
-                // Alpha, camera transform, pivot, angle and the branch-local
-                // scale/translation are installed only after pre returns.
-                // Purple leaves this context live through +0x160 post and
-                // into the following scene entry; there is no per-object
-                // save/restore pair.
-                render
-                    .lock()
-                    .expect("render bridge lock poisoned")
-                    .install_scene_post_draw_state(&object);
                 if object.flash_animation {
                     // Preserve Purple's interpolated position and authored
                     // ability rotations. The recovered BirdAnimation flying
@@ -177,10 +168,16 @@ pub(super) fn install(
                         .get(name.as_ref())
                         .map(|playback| playback.current_action.clone())
                         .unwrap_or_default();
-                    let transform = render
-                        .lock()
-                        .expect("render bridge lock poisoned")
-                        .flash_animation_transform(&object, &current_action);
+                    let transform = {
+                        let mut bridge = render.lock().expect("render bridge lock poisoned");
+                        // 0x10004BFE0 installs the callback context and the
+                        // custom animation branch consumes it immediately.
+                        // Keep those two native operations inside one bridge
+                        // acquisition instead of introducing a host-only
+                        // synchronization boundary between them.
+                        bridge.install_scene_post_draw_state(&object);
+                        bridge.flash_animation_transform(&object, &current_action)
+                    };
                     let mut commands = {
                         let mut runtime = animation_runtime
                             .lock()

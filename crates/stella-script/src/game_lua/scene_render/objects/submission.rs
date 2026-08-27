@@ -150,6 +150,18 @@ impl RenderBridge {
         decoration_resources: Option<(&ResourceRuntime, &Path)>,
         shader: Option<SpriteShader>,
     ) {
+        // sub_10004BFE0 installs the base object context and then calls the
+        // ordinary member with the same GL_Context pointer. The member mutates
+        // that context in place before returning to the post callback. Keep
+        // both halves in this one bridge acquisition: the previous host split
+        // them across two mutex scopes even though no Lua code runs between
+        // the live `shader` raw lookup and this submission.
+        let command_state = (!object.flash_animation
+            && object.ray.is_none()
+            && !object.sprite.is_empty()
+            && object.sprite_bound)
+            .then(|| self.scene_object_state(&object).into());
+        self.install_scene_post_draw_state(&object);
         if let Some(ray) = object.ray.as_ref() {
             // DrawablePolygon was constructed as alpha-filled (`mode=1`) and
             // with its optional outline byte clear. Its copied position is
@@ -171,7 +183,6 @@ impl RenderBridge {
             // its ordinary sprite or every composite part. The shader is not
             // a RenderObjectData member and therefore must be supplied from
             // the dispatcher on every draw.
-            let state = self.scene_object_state(&object).into();
             let dirt = object.dirt.as_deref().map(DirtComponent::render_command);
             let command = RenderCommand {
                 order: 0,
@@ -189,7 +200,7 @@ impl RenderBridge {
                 dirt,
                 x: 0.0,
                 y: 0.0,
-                state,
+                state: command_state.expect("drawable scene object must retain its draw state"),
                 world_space: true,
             };
             self.push_render_command(command);
@@ -222,7 +233,7 @@ impl RenderBridge {
             let bound_composite = resources.active_bound_composite(&decoration.sprite);
             let (pivot_x, pivot_y) = native_scene_callback_pivot(
                 bound_composite.as_deref(),
-                bound_region.as_ref(),
+                bound_region.as_deref(),
                 0.0,
                 0.0,
             );

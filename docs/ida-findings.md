@@ -14687,3 +14687,78 @@ A final 1,200-frame release-wgpu run against a fresh copied AppData directory
 reaches the island map with zero invoked fallbacks, zero remaining
 compatibility bindings and empty stderr; its PNG SHA-256 is
 `4673877261ea2012eb5ce409f6fdb7ffb8b3b08b20fb3b22ad61cb00580af4a0`.
+
+## Pre-frame dense-level profiling, contiguous context submission and retained atlas owners
+
+The next performance audit moved from command-retention microbenchmarks to a
+complete deterministic `GameScene:update`/`GameScene:draw` route. The
+headless diagnostic executable now accepts `--pre-eval`, which runs setup Lua
+after boot but before its fixed 60 Hz frame loop. The audit uses that boundary
+to load `Chapter01_L50`, dispatch `EID_START`, install the shipped GameScene
+callbacks and then run the same Lua update, physics, scene walk and draw calls
+on every measured frame. A 1,200-frame probe constructs the full dense level
+with zero invoked compatibility fallbacks.
+
+The first symbolized 100,000-frame sample exposed one synchronization split
+inside ordinary scene submission. The Rust dispatcher installed the final
+per-object GL state under one render-bridge lock, released it for a raw Lua
+`shader` lookup, and reacquired it to prepare the draw. That raw lookup cannot
+invoke a metatable or callback, so the split was host-only.
+
+IDA's `sub_10004BAB4` shows the uninterrupted native sequence. The pre holder
+returns at `0x10004BFDC`; `0x10004BFE0..0x10004C104` writes alpha, camera,
+scale, pivot and rotation to the one `GL_Context*` retained in `x20`; and
+`0x10004C138..0x10004C144` immediately passes the same GameLua/object pair to
+`sub_10006D5B4`. That member mutates the same live context and returns before
+the post holder is loaded at `0x10004C300`. Hopper independently shows the
+same `x20` context stores, direct ordinary-member branch and post-holder load,
+with no ownership or synchronization boundary between state installation and
+draw. The common Rust path now installs the post context and submits the
+deferred command during one bridge acquisition. The flash-animation branch
+similarly installs its context and derives its transform without an
+intermediate unlock/relock.
+
+The same profile also showed repeated allocation around atlas lookup. The
+resource cache already froze each `SpriteCatalogRegion` when its SpriteSheet
+was created, but every theme, trajectory, particle, direct-sprite and resource
+draw cloned that complete region into a new `Arc`. This did not model the
+executable's concrete sprite ownership.
+
+IDA's ResourceManager draw `sub_10045C0AC` calls `sub_10045BDDC` once and,
+after checking the type tag at the returned resource-stack entry, loads the
+concrete sprite pointer directly from entry `+0x10` before tail-calling either
+the CompoSprite or AtlasSprite draw member. The resolver itself walks the
+ordered name tree and returns `last_entry - 0x18`; it performs no atlas-region
+copy. Hopper independently shows `LDR x0, [x0,#0x10]` in both type branches.
+The Rust SpriteSheet cache now stores shared atlas owners and every active
+lookup returns a pointer clone to that same allocation. Deferred commands keep
+that owner across later shadow/release exactly as before, while the lookup no
+longer copies the texture-source string and sprite record or allocates a fresh
+owner. A focused regression asserts that the cached entry and two consecutive
+active lookups are pointer-identical.
+
+Three alternating stripped-release runs each execute 30,000 complete L50
+update/draw frames. The preceding build reports median real/user/system times
+of 5.65/5.59/0.03 seconds; the contiguous-context/retained-atlas build reports
+5.52/5.47/0.04 seconds, reductions of approximately 2.3 percent real time and
+2.1 percent user CPU in this dense deterministic workload. The small system
+time difference is within run noise. Matching five-second symbol samples move
+the scene closure's collapsed top count from 244 to 213, malloc-tiny from 118
+to 87, and the combined pthread mutex lock/unlock counts from 97 to 50. The
+shipped Lua post callbacks and native-style scene/name tree comparisons remain
+the dominant behavior and are deliberately unchanged.
+
+The complete workspace passes 675 tests with the intentional long-duration
+BirdRun audit ignored. Formatting, diff whitespace, documentation, strict
+all-target/all-feature Clippy and the locked release build are clean. The
+direct release-wgpu Chapter02 L16 checkpoint remains byte-identical to the
+established water/state-order baseline, SHA-256
+`63b5da87b1a55a57d0e5d3559336f604d35817b5651cf8cf7347f7def189d4d7`;
+the translucent blue pool and submerged structure render without an editor
+cross. A separate 1,200-frame copied-AppData map run reports zero invoked
+fallbacks, zero remaining compatibility bindings and empty stderr; its PNG
+SHA-256 is
+`54ec7817d2a6598a5c622119c47e6d1c3a1ef8241171a149bb8c90c86694fa4c`.
+The release `stella-app` and `stella-headless` hashes are respectively
+`40dc833d5d4a057582b79046806f089c84744ce4a489b86c10139615bd7e3d65`
+and `e49c347987719bb5e86222bd29e85557c6a9b53eb8a7598ba2fde274073f4236`.

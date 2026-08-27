@@ -48,9 +48,7 @@ impl Particle {
     /// change branches in `sub_100091834`: overwrite +0x20 on every bind,
     /// but touch +0x28 only when the atlas lookup returned null.
     pub(crate) fn bind_sprite(&mut self, resources: &ResourceRuntime, data_root: &Path) {
-        self.bound_region = resources
-            .active_atlas_catalog_region(&self.sprite, data_root)
-            .map(Arc::new);
+        self.bound_region = resources.active_atlas_catalog_region(&self.sprite, data_root);
         if self.bound_region.is_none() {
             self.bound_composite = resources.active_bound_composite(&self.sprite).map(Arc::new);
         }

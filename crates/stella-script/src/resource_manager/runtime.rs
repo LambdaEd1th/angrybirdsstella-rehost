@@ -168,7 +168,7 @@ pub(crate) struct ResourceRuntime {
     /// hundreds of filesystem calls in one display-link frame.
     pub(crate) sprite_sheet_texture_sources: BTreeMap<String, BTreeMap<String, String>>,
     pub(crate) sprite_sheet_catalog_regions:
-        BTreeMap<String, BTreeMap<String, SpriteCatalogRegion>>,
+        BTreeMap<String, BTreeMap<String, Arc<SpriteCatalogRegion>>>,
     /// Address-order stand-in for native `SpriteSheet*` allocations. Draw
     /// buckets retain these ids independently of the active name map.
     pub(crate) sprite_sheet_identities: BTreeMap<String, u64>,

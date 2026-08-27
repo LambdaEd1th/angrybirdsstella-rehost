@@ -72,7 +72,9 @@ fn resolve_native_sprite_binding(
             .cloned(),
         AnimationSpriteTrackKind::SkinAlias => {
             if let Some((resources, data_root)) = resources.zip(data_root) {
-                resources.active_atlas_catalog_region(&sprite, data_root)
+                resources
+                    .active_atlas_catalog_region(&sprite, data_root)
+                    .map(|region| (*region).clone())
             } else if resources.is_none() {
                 // Unit fixtures without a ResourceRuntime retain the previous
                 // concrete-region setup path. Installed Lua methods always

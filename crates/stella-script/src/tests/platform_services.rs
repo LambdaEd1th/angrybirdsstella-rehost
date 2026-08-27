@@ -3872,6 +3872,14 @@ fn deferred_host_sprite_catalog_tracks_native_shadow_and_release_lifetimes() {
     {
         let resources = runtime.resource_runtime.lock().unwrap();
         let cached = &resources.sprite_sheet_catalog_regions["FIRST"]["SHARED"];
+        let first_lookup = resources
+            .active_atlas_catalog_region("SHARED", runtime.data_root())
+            .unwrap();
+        let repeated_lookup = resources
+            .active_atlas_catalog_region("SHARED", runtime.data_root())
+            .unwrap();
+        assert!(Arc::ptr_eq(cached, &first_lookup));
+        assert!(Arc::ptr_eq(&first_lookup, &repeated_lookup));
         assert_eq!(cached.sprite.width, 10);
         assert!(cached.texture_source.ends_with("first/first.pvr"));
     }

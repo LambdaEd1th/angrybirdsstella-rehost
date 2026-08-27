@@ -261,7 +261,7 @@ impl ResourceRuntime {
                             part.sprite, source
                         )
                     })?;
-                regions.push(region);
+                regions.push((*region).clone());
             }
             result.push(regions);
         }

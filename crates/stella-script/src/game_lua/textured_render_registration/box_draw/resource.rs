@@ -51,7 +51,7 @@ pub(super) fn command(
         order: 0,
         sprite: sprite.into(),
         texture: None,
-        bound_region: Some(bound_region.into()),
+        bound_region: Some(bound_region),
         bound_composite: None,
         geometry: None,
         shader: None,

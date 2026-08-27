@@ -16,6 +16,9 @@ struct Args {
     /// Execute host-side Lua in the game's environment after boot.
     #[arg(long)]
     eval: Vec<String>,
+    /// Execute diagnostic Lua after boot and before deterministic frames.
+    #[arg(long)]
+    pre_eval: Vec<String>,
     /// Print all globals created by the loaded script.
     #[arg(long)]
     list_globals: bool,
@@ -47,6 +50,12 @@ fn main() {
     match runtime.boot(&args.script) {
         Ok(()) => {
             println!("boot completed");
+            for source in &args.pre_eval {
+                if let Err(error) = runtime.execute_source(source) {
+                    eprintln!("pre-eval stopped: {error}");
+                    std::process::exit(7);
+                }
+            }
             let mut audio_clock = AudioOutputClock::default();
             for frame in 0..args.frames {
                 if let Err(error) = runtime.update(1.0 / 60.0).and_then(|_| runtime.draw()) {

@@ -29,9 +29,8 @@ pub(super) fn push_native_trajectory_streams(
     // bridge lock excludes mutators here, so no trajectory clone is needed.
     for stream in &bridge.trajectory_streams {
         if !stream.normal_sprite.is_empty() {
-            let bound_region = resources
-                .active_atlas_catalog_region(&stream.normal_sprite, data_root)
-                .map(Arc::new);
+            let bound_region =
+                resources.active_atlas_catalog_region(&stream.normal_sprite, data_root);
             let mut bound_composite = resources
                 .active_bound_composite(&stream.normal_sprite)
                 .map(Arc::new);
@@ -57,9 +56,8 @@ pub(super) fn push_native_trajectory_streams(
         if let Some((x, y)) = stream.puff
             && !stream.special_sprite.is_empty()
         {
-            let bound_region = resources
-                .active_atlas_catalog_region(&stream.special_sprite, data_root)
-                .map(Arc::new);
+            let bound_region =
+                resources.active_atlas_catalog_region(&stream.special_sprite, data_root);
             let mut bound_composite = resources
                 .active_bound_composite(&stream.special_sprite)
                 .map(Arc::new);

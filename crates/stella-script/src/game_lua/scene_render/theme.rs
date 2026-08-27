@@ -59,9 +59,7 @@ impl RenderBridge {
             };
             self.draw_theme_particles_for_layer(foreground, definition_index as i32, &transform);
 
-            let bound_region = resources
-                .active_atlas_catalog_region(&sprite, data_root)
-                .map(Arc::new);
+            let bound_region = resources.active_atlas_catalog_region(&sprite, data_root);
             let bound_composite = resources.active_bound_composite(&sprite).map(Arc::new);
             if bound_region.is_none() && bound_composite.is_none() {
                 continue;

@@ -164,7 +164,7 @@ fn animation_resource_snapshot(
         .filter_map(|name| {
             resources
                 .active_atlas_catalog_region(&name, data_root)
-                .map(|region| (name, region))
+                .map(|region| (name, (*region).clone()))
         })
         .collect::<BTreeMap<_, _>>();
     // `sub_100469030` stores one concrete AtlasSprite pointer at +0x188.

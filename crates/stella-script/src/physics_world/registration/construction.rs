@@ -80,7 +80,7 @@ struct PreparedConstruction {
     dynamic_body: bool,
     mass: f64,
     sprite_bound: bool,
-    sprite_region: Option<SpriteCatalogRegion>,
+    sprite_region: Option<Arc<SpriteCatalogRegion>>,
     composite_sprite: Option<Vec<BoundCompositePart>>,
 }
 

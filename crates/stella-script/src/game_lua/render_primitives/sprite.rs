@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 pub(crate) fn native_direct_sprite_command(
     sprite: String,
-    bound_region: SpriteCatalogRegion,
+    bound_region: Arc<SpriteCatalogRegion>,
     shader: Option<SpriteShader>,
     placement: NativeSpritePlacement,
     parent: RenderState,
@@ -29,7 +29,7 @@ pub(crate) fn native_direct_sprite_command(
         order: 0,
         sprite: sprite.into(),
         texture: None,
-        bound_region: Some(bound_region.into()),
+        bound_region: Some(bound_region),
         bound_composite: None,
         geometry: None,
         shader: shader.map(Arc::new),

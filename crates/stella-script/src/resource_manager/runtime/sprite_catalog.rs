@@ -3,6 +3,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use stella_assets::ka3d::CompositePart;
@@ -58,11 +59,11 @@ impl ResourceRuntime {
                 let texture = sheet.texture_for(sprite)?;
                 Some((
                     sprite.name.clone(),
-                    SpriteCatalogRegion {
+                    Arc::new(SpriteCatalogRegion {
                         native_sheet_id,
                         texture_source: texture_sources.get(texture)?.clone(),
                         sprite: sprite.clone(),
-                    },
+                    }),
                 ))
             })
             .collect::<BTreeMap<_, _>>();
@@ -77,7 +78,7 @@ impl ResourceRuntime {
         owner: &str,
         name: &str,
         data_root: &Path,
-    ) -> Option<SpriteCatalogRegion> {
+    ) -> Option<Arc<SpriteCatalogRegion>> {
         if let Some(region) = self
             .sprite_sheet_catalog_regions
             .get(owner)
@@ -96,7 +97,7 @@ impl ResourceRuntime {
             .clone();
         let texture = sheet.texture_for(&sprite)?;
         let descriptor = self.sprite_sheet_descriptor_paths.get(owner);
-        Some(SpriteCatalogRegion {
+        Some(Arc::new(SpriteCatalogRegion {
             native_sheet_id: self
                 .sprite_sheet_identities
                 .get(owner)
@@ -104,7 +105,7 @@ impl ResourceRuntime {
                 .unwrap_or(0),
             texture_source: resolve_texture_source(data_root, descriptor, texture),
             sprite,
-        })
+        }))
     }
 
     pub(crate) fn sprite_catalog_snapshot(&self, data_root: &Path) -> SpriteCatalogSnapshot {
@@ -126,7 +127,7 @@ impl ResourceRuntime {
                         continue;
                     };
                     let texture_source = region.texture_source.clone();
-                    regions.insert(name.clone(), region);
+                    regions.insert(name.clone(), (*region).clone());
                     if sheet.sprites.len() == 1 {
                         masked_textures.insert(entry.owner.clone(), texture_source);
                     }
@@ -188,7 +189,7 @@ impl ResourceRuntime {
         &self,
         name: &str,
         data_root: &Path,
-    ) -> Option<SpriteCatalogRegion> {
+    ) -> Option<Arc<SpriteCatalogRegion>> {
         let asset_name = name.split_once('#').map_or(name, |(base, _)| base);
         let entry = self.active_sprite_entry(asset_name, Some(SpriteResourceKind::Atlas))?;
         self.sprite_sheet_catalog_region(&entry.owner, asset_name, data_root)
@@ -300,6 +301,7 @@ impl ResourceRuntime {
                     .get(owner)
                     .and_then(|regions| regions.get(atlas_name))
             })?
+            .as_ref()
             .clone();
         let asset_name = name.split_once('#').map_or(name, |(base, _)| base);
         let entry = self.active_sprite_entry(asset_name, Some(SpriteResourceKind::Composite))?;

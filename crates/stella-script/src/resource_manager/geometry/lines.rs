@@ -9,7 +9,7 @@ impl SpriteGeometry {
     pub(crate) fn native_textured_line_command(
         self,
         sprite: String,
-        bound_region: Option<SpriteCatalogRegion>,
+        bound_region: Option<Arc<SpriteCatalogRegion>>,
         render_state: RenderState,
         start: (f64, f64),
         end: (f64, f64),
@@ -95,7 +95,7 @@ impl SpriteGeometry {
             order: 0,
             sprite: sprite.into(),
             texture: None,
-            bound_region: bound_region.map(Arc::new),
+            bound_region,
             bound_composite: None,
             geometry: Some(SpriteGeometrySubmission::NativeAtlasQuad(Arc::new(
                 [top_left, top_right, bottom_left, bottom_right].map(|point| point.map(f64::from)),
@@ -118,7 +118,7 @@ impl SpriteGeometry {
     pub(crate) fn native_rubberband_command(
         self,
         sprite: String,
-        bound_region: Option<SpriteCatalogRegion>,
+        bound_region: Option<Arc<SpriteCatalogRegion>>,
         render_state: RenderState,
         start: (f64, f64),
         end: (f64, f64),
@@ -183,7 +183,7 @@ impl SpriteGeometry {
             order: 0,
             sprite: sprite.into(),
             texture: None,
-            bound_region: bound_region.map(Arc::new),
+            bound_region,
             bound_composite: None,
             geometry: Some(SpriteGeometrySubmission::NativeAtlasQuad(Arc::new(
                 [top_start, bottom_start, top_end, bottom_end].map(|point| point.map(f64::from)),
