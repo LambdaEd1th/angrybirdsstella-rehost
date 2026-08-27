@@ -216,6 +216,23 @@ jobs:
           bash .github/scripts/embed-runtime-data.sh \
             dist "$RUNNER_TEMP/runtime-data/$RUNTIME_DATA_ARCHIVE"
 
+      - name: Verify release archives contain no macOS metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          for archive in dist/*.tar.gz; do
+            if tar -tzf "$archive" | grep -Eq '(^|/)(\.DS_Store|\._[^/]+|__MACOSX)(/|$)'; then
+              echo "macOS metadata found in $(basename "$archive")" >&2
+              exit 1
+            fi
+          done
+          for archive in dist/*.zip; do
+            if unzip -Z1 "$archive" | grep -Eq '(^|/)(\.DS_Store|\._[^/]+|__MACOSX)(/|$)'; then
+              echo "macOS metadata found in $(basename "$archive")" >&2
+              exit 1
+            fi
+          done
+
       - name: Generate SHA-256 checksums
         shell: bash
         run: |

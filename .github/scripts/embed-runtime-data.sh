@@ -13,14 +13,29 @@ trap 'rm -rf "$work_dir"' EXIT
 
 mkdir -p "$work_dir/runtime"
 tar -xzf "$data_archive" -C "$work_dir/runtime"
+
+# Finder metadata is frequently introduced when the private runtime bundle is
+# prepared on macOS.  The extracted tree is temporary and is the only source
+# copied into release packages, so remove it here before validating or
+# embedding the game data.  Keep this portable across GNU/BSD find (the
+# release publish job runs on Linux while local archive preparation often runs
+# on macOS).
+find "$work_dir/runtime" -type f \( -name '.DS_Store' -o -name '._*' \) -print -delete
+find "$work_dir/runtime" -type d -name '__MACOSX' -print -prune -exec rm -rf {} +
+
 if [[ ! -f "$work_dir/runtime/data/scripts/game.lua" ]]; then
   echo "runtime data archive does not contain data/scripts/game.lua" >&2
   exit 1
 fi
 
-shopt -s nullglob
-tar_archives=("$dist_dir"/*.tar.gz)
-zip_archives=("$dist_dir"/*.zip)
+tar_archives=()
+zip_archives=()
+for archive in "$dist_dir"/*.tar.gz; do
+  [[ -f "$archive" ]] && tar_archives+=("$archive")
+done
+for archive in "$dist_dir"/*.zip; do
+  [[ -f "$archive" ]] && zip_archives+=("$archive")
+done
 if (( ${#tar_archives[@]} + ${#zip_archives[@]} == 0 )); then
   echo "no platform packages found in $dist_dir" >&2
   exit 1
