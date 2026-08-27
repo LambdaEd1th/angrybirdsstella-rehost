@@ -26,6 +26,7 @@ pub(super) fn install_creation(
             if joint_type >= 7.0 {
                 dispatch_custom_joint(lua, descriptor)?;
             } else if let Some(created) = insert_physics_joint(
+                lua,
                 &mut joint_bridge.lock().expect("render bridge lock poisoned"),
                 &descriptor,
             )? {
@@ -67,6 +68,7 @@ pub(super) fn install_creation(
                 if joint_type >= 7.0 {
                     custom_descriptors.push(descriptor);
                 } else if let Some(created) = insert_physics_joint(
+                    lua,
                     &mut joints_bridge.lock().expect("render bridge lock poisoned"),
                     &descriptor,
                 )? {

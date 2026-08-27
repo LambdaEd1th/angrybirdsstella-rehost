@@ -13,9 +13,6 @@ pub(crate) fn mirror_lua_joint_descriptor(
 ) -> LuaResult<()> {
     let joint = &created.joint;
     let name = joint.name.clone();
-    if name.is_empty() {
-        return Ok(());
-    }
     let environment = game_environment(lua)?;
     let objects = match native_lua_object(lua, NativeLuaObject::Objects)? {
         Some(objects) => objects,

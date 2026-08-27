@@ -15,10 +15,11 @@ pub(crate) struct CreatedPhysicsJoint {
 }
 
 pub(crate) fn insert_physics_joint(
+    lua: &mlua::Lua,
     bridge: &mut RenderBridge,
     table: &mlua::Table,
 ) -> LuaResult<Option<CreatedPhysicsJoint>> {
-    let Some(geometry) = anchors::decode_joint_geometry(bridge, table)? else {
+    let Some(geometry) = anchors::decode_joint_geometry(lua, bridge, table)? else {
         return Ok(None);
     };
     let parameters = parameters::decode_joint_parameters(table, &geometry)?;

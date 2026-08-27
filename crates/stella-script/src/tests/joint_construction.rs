@@ -270,6 +270,7 @@ fn native_joint_descriptor_is_published_only_after_success_and_is_not_borrowed()
                 descriptor.type = 6
                 descriptor.end2 = "mutated"
 
+                LevelSplitter = { active = true }
                 createJoint({
                     name = "missing_endpoint", end1 = "first", end2 = "absent",
                     type = 2, coordType = 2,
@@ -296,6 +297,94 @@ fn native_joint_descriptor_is_published_only_after_success_and_is_not_borrowed()
     let bridge = runtime.render.lock().unwrap();
     assert!(bridge.joints.contains_key("owned_copy"));
     assert!(!bridge.joints.contains_key("missing_endpoint"));
+}
+
+#[test]
+fn missing_joint_endpoints_follow_level_splitter_and_body_presence_boundaries() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createBox("first", "", 0, 0, 1, 1, 1, 0, 0, true, false, 1)
+                createBox("second", "", 2, 0, 1, 1, 1, 0, 0, true, false, 1)
+                createNonPhysicsObject("visual", "", 1, 0, 3)
+
+                local ok, message = pcall(createJoint, {
+                    name = "missing_first", end1 = "absent_first", end2 = "second",
+                    type = 2, coordType = 2, x1 = 0, y1 = 0, x2 = 0, y2 = 0
+                })
+                missing_first_failed = not ok
+                missing_first_error = tostring(message)
+                ok, message = pcall(createJoint, {
+                    name = "missing_second", end1 = "first", end2 = "absent_second",
+                    type = 2, coordType = 2, x1 = 0, y1 = 0, x2 = 0, y2 = 0
+                })
+                missing_second_failed = not ok
+                missing_second_error = tostring(message)
+
+                bodyless_first_succeeds = pcall(createJoint, {
+                    name = "bodyless_first", end1 = "visual", end2 = "second",
+                    type = 2, coordType = 2, x1 = 0, y1 = 0, x2 = 0, y2 = 0
+                })
+                bodyless_second_succeeds = pcall(createJoint, {
+                    name = "bodyless_second", end1 = "first", end2 = "visual",
+                    type = 2, coordType = 2, x1 = 0, y1 = 0, x2 = 0, y2 = 0
+                })
+
+                LevelSplitter = { active = true }
+                splitter_missing_succeeds = pcall(createJoint, {
+                    name = "split_missing", end1 = "first", end2 = "not_loaded",
+                    type = 2, coordType = 2, x1 = 0, y1 = 0, x2 = 0, y2 = 0
+                })
+
+                createJoint({
+                    name = "", end1 = "first", end2 = "second",
+                    type = 2, coordType = 2, x1 = 0, y1 = 0, x2 = 0, y2 = 0
+                })
+                empty_name_published = objects.joints[""] ~= nil
+            "#,
+        )
+        .unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert!(environment.get::<bool>("missing_first_failed").unwrap());
+    assert!(environment.get::<bool>("missing_second_failed").unwrap());
+    assert!(
+        environment
+            .get::<String>("missing_first_error")
+            .unwrap()
+            .starts_with(
+                "runtime error: The block absent_first connected to joint missing_first doesn't exist"
+            )
+    );
+    assert!(
+        environment
+            .get::<String>("missing_second_error")
+            .unwrap()
+            .starts_with(
+                "runtime error: The block absent_second connected to joint missing_second doesn't exist"
+            )
+    );
+    assert!(environment.get::<bool>("bodyless_first_succeeds").unwrap());
+    assert!(environment.get::<bool>("bodyless_second_succeeds").unwrap());
+    assert!(
+        environment
+            .get::<bool>("splitter_missing_succeeds")
+            .unwrap()
+    );
+    assert!(environment.get::<bool>("empty_name_published").unwrap());
+
+    let bridge = runtime.render.lock().unwrap();
+    for absent in [
+        "missing_first",
+        "missing_second",
+        "bodyless_first",
+        "bodyless_second",
+        "split_missing",
+    ] {
+        assert!(!bridge.joints.contains_key(absent), "{absent}");
+    }
+    assert!(bridge.joints.contains_key(""));
 }
 
 #[test]

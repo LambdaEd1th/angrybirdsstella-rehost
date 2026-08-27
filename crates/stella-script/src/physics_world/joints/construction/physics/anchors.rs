@@ -1,28 +1,32 @@
 //! `createJoint` coordinate-mode switch and per-class anchor initialization.
 
-use mlua::{Result as LuaResult, Value};
+use mlua::{Lua, Result as LuaResult, Value};
 
-use crate::{RenderBridge, native_hypot};
+use crate::{RenderBridge, game_environment, native_hypot, runtime_error};
 
 use super::super::super::geometry::inverse_rotate_vector;
 use super::model::JointGeometry;
 
 pub(super) fn decode_joint_geometry(
+    lua: &Lua,
     bridge: &RenderBridge,
     table: &mlua::Table,
 ) -> LuaResult<Option<JointGeometry>> {
     let name = table.get::<String>("name").unwrap_or_default();
     let first_name = table.get::<String>("end1").unwrap_or_default();
     let second_name = table.get::<String>("end2").unwrap_or_default();
-    if name.is_empty() || first_name.is_empty() || second_name.is_empty() {
-        return Ok(None);
-    }
     let Some(first) = bridge.scene.get(&first_name) else {
-        return Ok(None);
+        return missing_endpoint(lua, &first_name, &name);
     };
     let Some(second) = bridge.scene.get(&second_name) else {
-        return Ok(None);
+        return missing_endpoint(lua, &second_name, &name);
     };
+    // The scene-name tree can contain render-only objects whose retained
+    // RenderObjectData has a null b2Body pointer. Native logs and returns
+    // without constructing or publishing a joint in that case.
+    if first.body_allocation_slot.is_none() || second.body_allocation_slot.is_none() {
+        return Ok(None);
+    }
     let raw_first_anchor = (
         table.get::<f64>("x1").unwrap_or(0.0),
         table.get::<f64>("y1").unwrap_or(0.0),
@@ -161,4 +165,25 @@ pub(super) fn decode_joint_geometry(
         rest_length,
         one_way_destroy,
     }))
+}
+
+fn missing_endpoint(lua: &Lua, endpoint: &str, joint: &str) -> LuaResult<Option<JointGeometry>> {
+    if level_splitter_active(lua)? {
+        Ok(None)
+    } else {
+        Err(runtime_error(format!(
+            "The block {endpoint} connected to joint {joint} doesn't exist"
+        )))
+    }
+}
+
+fn level_splitter_active(lua: &Lua) -> LuaResult<bool> {
+    let environment = game_environment(lua)?;
+    let Value::Table(splitter) = environment.raw_get::<Value>("LevelSplitter")? else {
+        return Ok(false);
+    };
+    Ok(matches!(
+        splitter.raw_get::<Value>("active")?,
+        Value::Boolean(true)
+    ))
 }

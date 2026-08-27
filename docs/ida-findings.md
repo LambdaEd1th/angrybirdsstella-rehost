@@ -15846,3 +15846,26 @@ the destroy-link metadata branch. That type-five branch reads
 descriptor is consequently metadata-only with the one-second timer default,
 not a prismatic joint. Rust now matches that boundary and retains native joint
 topology only for type four.
+
+`createJoint` also distinguishes a missing scene name from an existing
+render-only object. The first endpoint lookup reaches its missing branch at
+`0x100037BE0`; it reads `LevelSplitter.active` at
+`0x100037CB4..0x100037D14` and throws the formatted
+`The block {0} connected to joint {1} doesn't exist` exception when that flag
+is false. The second endpoint repeats the same contract at
+`0x100037DF8` and `0x100037F68..0x100037FC8`. Hopper confirms both independent
+tree lookups and both exception sites. When the splitter is active, either
+missing lookup returns without publishing a descriptor because the named
+object may simply belong to an unloaded bucket.
+
+After both names resolve, the native code separately tests each retained
+body pointer and branches to `0x100038098` when either is null. That path logs
+`Joint to an object with no body: %s` and returns without a Lua descriptor; it
+does not throw and is not controlled by LevelSplitter. Conversely, no native
+branch rejects an empty joint name once both endpoints are valid, so the
+fresh descriptor is installed under the empty string. Rust previously
+silently accepted every missing endpoint and incorrectly allowed joints to
+render-only objects while rejecting empty names. The construction boundary
+now reproduces all four cases, with regressions for both endpoint orders,
+splitter suppression, both null-body orders, publication absence and the
+empty-name key.
