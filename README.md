@@ -115,7 +115,9 @@ separate extraction step and contains its runtime instructions in
 - `runtime/appdata`: writable saves, settings and downloaded-asset state;
   intentionally ignored by Git.
 
-- `stella-app`: resizable desktop host and `wgpu` atlas/composite renderer.
+- `stella-app`: resizable desktop host and `wgpu` atlas/composite renderer,
+  restricted to `Backends::PRIMARY` (Metal, DX12, Vulkan and Browser WebGPU)
+  rather than the secondary GL backend.
 - `stella-assets`: resource crypto, 7z, Lua, PVR v2 and KA3D/RVIO formats.
   Its `ka3d.rs` facade preserves the public parser API while `ka3d/envelope.rs`,
   `reader.rs`, `sprite.rs`, `composite.rs`, `font.rs` and `localization.rs`

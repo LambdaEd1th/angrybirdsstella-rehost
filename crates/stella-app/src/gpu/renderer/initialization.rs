@@ -8,6 +8,8 @@ mod programs;
 pub(in crate::gpu) mod target;
 mod window;
 
+const STELLA_WGPU_BACKENDS: wgpu::Backends = wgpu::Backends::PRIMARY;
+
 impl GpuRenderer {
     pub(crate) fn for_window(window: Arc<Window>, resolution: GameResolution) -> Result<Self> {
         pollster::block_on(Self::new(Some(window), resolution))
@@ -18,7 +20,12 @@ impl GpuRenderer {
     }
 
     async fn new(window: Option<Arc<Window>>, resolution: GameResolution) -> Result<Self> {
-        let instance = wgpu::Instance::default();
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            // Prefer Metal on macOS, DX12 on Windows and Vulkan on Linux.
+            // The secondary GL backend is intentionally not a rehost path.
+            backends: STELLA_WGPU_BACKENDS,
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
+        });
         let surface = window
             .map(|window| instance.create_surface(window))
             .transpose()
@@ -112,5 +119,16 @@ impl GpuRenderer {
             blit_layout,
             blit_sampler,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn renderer_enables_only_wgpu_primary_backends() {
+        assert_eq!(STELLA_WGPU_BACKENDS, wgpu::Backends::PRIMARY);
+        assert!(!STELLA_WGPU_BACKENDS.intersects(wgpu::Backends::SECONDARY));
     }
 }
