@@ -15744,3 +15744,27 @@ string is empty. Both decompilers show no access to Skynest Storage or its key
 map. The signed-out offline provider therefore returns true even after a
 separate storage key literally named `nickname` is written; Rust no longer
 couples those unrelated service states.
+
+## Native joint-definition defaults and float narrowing
+
+The initial `createJoint` reconstruction treated an omitted distance-joint
+frequency and damping ratio as zero. That creates a rigid Box2D distance
+constraint, but it is not Purple's definition. IDA's type-one branch in
+`sub_100037374` loads `4.0f` at `0x1000382D0` when `frequency` is absent and
+`0.5f` at `0x100038388` when `dampingRatio` is absent. Hopper independently
+shows the corresponding `fmov s0, #4.0` and `fmov s0, #0.5` instructions.
+After native joint creation, the same branch publishes both resolved values,
+`collideConnected` and the calculated length back into the Lua descriptor.
+
+The neighboring revolute branch also has a nonzero implicit upper limit. Its
+fallback loads the four bytes `DB 0F 49 40` from `0x1009F74B0`, which are
+single-precision pi; the lower limit remains `0.0f`. The prismatic branch keeps
+its recovered `0.0f`/`5.0f` bounds, enabled motor and limits, zero speed and
+`10000.0f` maximum motor force. Every supplied joint scalar in these branches
+passes through `sub_10052A014` and is narrowed to float32 before Box2D sees it.
+
+Rust now performs that same narrowing for creation-time motor, limit, spring,
+break-force and destruction-delay values, installs the native distance and
+revolute defaults, and mirrors the resolved distance fields into the retained
+Lua descriptor. Regression coverage proves the `4.0f`/`0.5f` spring defaults,
+single-precision pi limit, explicit-number rounding and descriptor publication.

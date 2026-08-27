@@ -128,6 +128,54 @@ fn distance_joint_publishes_native_length_for_pulley_component() {
 }
 
 #[test]
+fn joint_creation_uses_native_float_defaults_and_precision() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createBox("anchor", "", 0, 0, 1, 1, 0, 0, 0, false, false, 1)
+                createBox("payload", "", 3, 4, 1, 1, 1, 0, 0, true, false, 1)
+                createJoint({
+                    name = "spring", end1 = "anchor", end2 = "payload",
+                    type = 1, coordType = 2,
+                    x1 = 0, y1 = 0, x2 = 0, y2 = 0,
+                    breakForce = 1.00000006
+                })
+                createJoint({
+                    name = "hinge", end1 = "anchor", end2 = "payload",
+                    type = 3, coordType = 2,
+                    x1 = 0, y1 = 0, x2 = 0, y2 = 0,
+                    limit = true, motorSpeed = 1.00000006
+                })
+            "#,
+        )
+        .unwrap();
+
+    let bridge = runtime.render.lock().unwrap();
+    let spring = &bridge.joints["spring"];
+    assert_eq!(spring.frequency, f64::from(4.0_f32));
+    assert_eq!(spring.damping_ratio, f64::from(0.5_f32));
+    assert_eq!(spring.break_force, f64::from(1.000_000_1_f32));
+    let hinge = &bridge.joints["hinge"];
+    assert_eq!(hinge.lower_limit, f64::from(0.0_f32));
+    assert_eq!(hinge.upper_limit, f64::from(std::f32::consts::PI));
+    assert_eq!(hinge.motor_speed, Some(f64::from(1.000_000_1_f32)));
+    drop(bridge);
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    let spring_descriptor = environment
+        .get::<mlua::Table>("objects")
+        .unwrap()
+        .get::<mlua::Table>("joints")
+        .unwrap()
+        .get::<mlua::Table>("spring")
+        .unwrap();
+    assert_eq!(spring_descriptor.get::<f64>("frequency").unwrap(), 4.0);
+    assert_eq!(spring_descriptor.get::<f64>("dampingRatio").unwrap(), 0.5);
+    assert!(!spring_descriptor.get::<bool>("collideConnected").unwrap());
+}
+
+#[test]
 fn custom_joints_dispatch_to_lua_and_allow_editor_reentry() {
     let runtime = unlocked_test_runtime();
     runtime
