@@ -27,7 +27,7 @@ pub(super) fn install(
             let Some((sprite_name, bound_region)) = resource_runtime
                 .lock()
                 .expect("resource runtime lock poisoned")
-                .active_atlas_draw_binding(&sprite, &data_root)
+                .active_atlas_draw_binding(sprite, &data_root)
             else {
                 return Ok(());
             };

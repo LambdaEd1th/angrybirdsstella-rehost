@@ -22,7 +22,7 @@ pub(super) fn install(
             let resources = resource_runtime
                 .lock()
                 .expect("resource runtime lock poisoned");
-            let Some(parts) = resources.active_bound_composite_snapshot(&sprite) else {
+            let Some(parts) = resources.active_bound_composite_snapshot(sprite) else {
                 return Ok(());
             };
             drop(resources);

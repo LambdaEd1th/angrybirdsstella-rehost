@@ -1050,6 +1050,10 @@ fn direct_sprite_helpers_match_native_lookup_fallback_and_independent_affine_mat
                 )
                 setRenderState(10, 20, 2, 3, 0.25, 4, 5, 0.5)
                 drawSpriteWithoutShader("AB_STELLA_LOGO_MAINMENU", 7, 8, 0.5, 0.25, 0.4)
+                drawSpriteWithoutShader(
+                    "AB_STELLA_LOGO_MAINMENU" .. string.char(0) .. string.char(255),
+                    9, 10, 1, 1, 0
+                )
                 drawSpriteWithoutShader("STELLALOGO", 0, 0, 1, 1, 0)
                 drawSpriteWithShader("STELLALOGO", {
                         name = "colorize-test",
@@ -1075,11 +1079,13 @@ fn direct_sprite_helpers_match_native_lookup_fallback_and_independent_affine_mat
     let bridge = runtime.render.lock().unwrap();
     // WithoutShader skips the composite; WithShader expands STELLALOGO's
     // one direct atlas part after regular sprite lookup fails.
-    assert_eq!(bridge.commands.len(), 2);
+    assert_eq!(bridge.commands.len(), 3);
     assert_eq!(bridge.commands[0].sprite, "AB_STELLA_LOGO_MAINMENU");
     assert_eq!(bridge.commands[1].sprite, "AB_STELLA_LOGO_MAINMENU");
+    assert_eq!((bridge.commands[1].x, bridge.commands[1].y), (9.0, 10.0));
+    assert_eq!(bridge.commands[2].sprite, "AB_STELLA_LOGO_MAINMENU");
     assert_eq!(
-        bridge.commands[1].shader.as_ref().unwrap().name,
+        bridge.commands[2].shader.as_ref().unwrap().name,
         "colorize-test"
     );
 

@@ -15001,3 +15001,61 @@ stderr; its PNG SHA-256 is
 The release `stella-app` and `stella-headless` hashes are respectively
 `6e1483cc508eef543122e2905f46ea1f2c66c4c383578bc587b19bb1e725a3f8`
 and `06289b09b4c1ae975741ac93067993d49cdb3df27f0c121b9558f98b02887b7f`.
+
+## Generated C-string boundaries and allocation-free Lua name borrows
+
+A fresh symbolized profile separated startup work from steady scene work. The
+startup-inclusive sample correctly placed MP3 open/decode paths near the top,
+but none of those frames remained in a second five-second sample taken after a
+ten-second warm-up. In that steady sample, `value_string` and the native scene
+walker were the leading Rust frames. Inspecting mlua's safe `BorrowedStr` path
+showed that even a temporary string view clones its `ValueRef`; the first clone
+of a unique reference lazily allocates a shared counter. Purple's generated
+adapters do not have that host-only retain/allocation boundary.
+
+IDA's `drawSpriteWithoutShader` adapter `sub_100084398` reads slot one through
+the exact STRING checker `sub_1005285CC` at `0x1000843E0`, calls `strlen` at
+`0x1000843EC`, and assigns exactly that byte count to its old-ABI
+`std::string` at `0x1000843FC`. It then reads the five exact NUMBER slots and
+dispatches the member. The independent `setVisible` adapter
+`sub_1000859F4` has the same sequence at `0x100085A30`, `0x100085A3C` and
+`0x100085A4C`, followed by the exact BOOLEAN reader. Hopper independently
+recovers both STRING-pointer, `strlen`, `std::string::assign` sequences and
+the same numeric/boolean argument order. This corrects an observable ABI edge:
+embedded NUL terminates every generated string, whereas the preceding Rust
+conversion retained the complete Lua byte string.
+
+The central strict adapter now obtains mlua's stable Lua string pointer, views
+it through the same C-string boundary, validates only the prefix consumed by
+Purple, and ties the returned Rust lifetime to the owning `MultiValue`. Lua
+strings are immutable and non-moving, and the argument vector retains the
+registry reference for that complete lifetime. Members that retain a name
+still create one `String` or `Arc<str>` owner at the native COW ownership
+boundary. Synchronous atlas/composite/resource lookups use the view directly,
+so they neither fabricate an owned payload nor allocate mlua's shared
+reference counter. Focused regressions verify both scene-object and direct
+sprite lookup with an embedded NUL, including a non-UTF-8 suffix that Purple's
+preceding `strlen` never observes.
+
+Five stripped-release runs create one non-physics object and execute three
+million `setVisible` calls. Ignoring each build's first cold-start outlier, the
+preceding build reports about 0.47/0.44 seconds real/user time; the corrected
+adapter reports about 0.38-0.39/0.35-0.36 seconds, an approximately 17-18
+percent reduction in this deliberately concentrated string-adapter workload.
+This quantifies the removed host allocation and is not a universal frame-rate
+claim.
+
+The complete workspace passes 676 tests with the intentional long-duration
+BirdRun audit ignored. Formatting, diff whitespace, documentation, strict
+all-target Clippy and the locked release build are clean. The final direct
+release-wgpu Chapter02 L16 checkpoint remains byte-identical to the established
+translucent-water baseline, SHA-256
+`63b5da87b1a55a57d0e5d3559336f604d35817b5651cf8cf7347f7def189d4d7`;
+it contains the complete pool and submerged structure without an editor cross.
+An isolated copied-AppData 1,200-frame island-map run has empty stderr, zero
+invoked fallbacks and zero remaining compatibility bindings; its visually
+checked PNG SHA-256 is
+`e2188201f63a5654237ee0be4ec56184bf460f4a077ae5231094b580d7839621`.
+The release `stella-app` and `stella-headless` hashes are respectively
+`71b922b2a7e51462aa7c827630178123b123d4f41168984d12e77f44a9c56631`
+and `ed5d143aac993ea8e9b11c3d025010d8cfb31470a6b341661565ae2fed089e60`.

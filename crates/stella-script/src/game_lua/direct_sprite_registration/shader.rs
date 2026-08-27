@@ -25,10 +25,10 @@ pub(super) fn install(
                 .lock()
                 .expect("resource runtime lock poisoned");
             let shader = sprite_shader_from_lua(shader, &mut resources.shader_cache)?;
-            let atlas_binding = resources.active_atlas_draw_binding(&sprite, &data_root);
+            let atlas_binding = resources.active_atlas_draw_binding(sprite, &data_root);
             let parts = atlas_binding
                 .is_none()
-                .then(|| resources.active_bound_composite_snapshot(&sprite))
+                .then(|| resources.active_bound_composite_snapshot(sprite))
                 .flatten();
             drop(resources);
             let mut bridge = render.lock().expect("render bridge lock poisoned");

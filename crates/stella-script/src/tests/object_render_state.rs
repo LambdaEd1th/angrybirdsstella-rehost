@@ -125,6 +125,15 @@ fn object_visibility_bindings_use_strict_native_state_without_lua_reflection() {
                 )
                 missing_query_error = tostring(missing_query_error)
                 native_visible_after_failures = isVisible("visible_object")
+                nul_visible_name = "visible_object" .. string.char(0) .. "ignored"
+                setVisible(nul_visible_name, true)
+                native_visible_after_nul_name = isVisible("visible_object")
+                native_nul_query = isVisible(nul_visible_name)
+                non_utf8_nul_suffix_name = nul_visible_name .. string.char(255)
+                setVisible(non_utf8_nul_suffix_name, false)
+                native_visible_after_non_utf8_nul_suffix = isVisible(
+                    non_utf8_nul_suffix_name
+                )
                 "#,
         )
         .unwrap();
@@ -159,6 +168,17 @@ fn object_visibility_bindings_use_strict_native_state_without_lua_reflection() {
             .unwrap()
     );
     assert!(environment.get::<bool>("mirrored_visible_after").unwrap());
+    assert!(
+        environment
+            .get::<bool>("native_visible_after_nul_name")
+            .unwrap()
+    );
+    assert!(environment.get::<bool>("native_nul_query").unwrap());
+    assert!(
+        !environment
+            .get::<bool>("native_visible_after_non_utf8_nul_suffix")
+            .unwrap()
+    );
     assert!(
         !runtime
             .render

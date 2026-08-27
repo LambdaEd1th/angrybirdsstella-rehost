@@ -19,10 +19,16 @@ pub(crate) fn install(
             // sub_100089B74 creates one COW std::string owner per exact Lua
             // string. sub_10004C7FC then retains those same owners in the
             // render index/object instead of copying their payloads again.
-            let name: Arc<str> =
-                Arc::from(native_required_borrowed_string(&args, 0, "native_setSprite")?.as_ref());
-            let sprite: Arc<str> =
-                Arc::from(native_required_borrowed_string(&args, 1, "native_setSprite")?.as_ref());
+            let name: Arc<str> = Arc::from(native_required_borrowed_string(
+                &args,
+                0,
+                "native_setSprite",
+            )?);
+            let sprite: Arc<str> = Arc::from(native_required_borrowed_string(
+                &args,
+                1,
+                "native_setSprite",
+            )?);
             let (sprite_region, mut composite_sprite) = {
                 let resources = resources.lock().expect("resource runtime lock poisoned");
                 (
@@ -99,7 +105,7 @@ pub(crate) fn install(
             // sub_1000866F8 allocates the adapter's COW std::string once;
             // sub_1000592C4 copies only that handle into the z-order vector.
             let name: Arc<str> =
-                Arc::from(native_required_borrowed_string(&args, 0, "changeZOrder")?.as_ref());
+                Arc::from(native_required_borrowed_string(&args, 0, "changeZOrder")?);
             let z_order = f64::from(native_required_number(&args, 1, "changeZOrder")? as f32);
             {
                 let mut bridge = z_order_bridge.lock().expect("render bridge lock poisoned");

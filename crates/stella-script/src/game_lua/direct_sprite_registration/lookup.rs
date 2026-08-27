@@ -16,7 +16,7 @@ pub(super) fn install(
             Ok(resource_runtime
                 .lock()
                 .expect("resource runtime lock poisoned")
-                .active_composite_parts(&name)
+                .active_composite_parts(name)
                 .is_some())
         })?,
     )

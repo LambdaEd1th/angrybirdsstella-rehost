@@ -17,7 +17,7 @@ pub(super) fn install(
             Ok(bounds_resources
                 .lock()
                 .expect("resource runtime lock poisoned")
-                .active_native_sprite_metrics(&name)
+                .active_native_sprite_metrics(name)
                 .map(|metrics| (f64::from(metrics.width), f64::from(metrics.height)))
                 .unwrap_or((0.0, 0.0)))
         })?,
@@ -32,7 +32,7 @@ pub(super) fn install(
             Ok(pivot_resources
                 .lock()
                 .expect("resource runtime lock poisoned")
-                .active_native_sprite_metrics(&name)
+                .active_native_sprite_metrics(name)
                 .map(|metrics| (f64::from(metrics.pivot_x), f64::from(metrics.pivot_y)))
                 .unwrap_or((0.0, 0.0)))
         })?,
