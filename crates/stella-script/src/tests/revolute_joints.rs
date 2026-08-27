@@ -124,11 +124,13 @@ fn revolute_motor_uses_type_three_and_accumulates_max_torque_once_per_step() {
     drop(bridge);
 
     runtime.update(1.0 / 30.0).unwrap();
-    // The cached motor impulse is warm-started on the next island step,
+    // The native unit angular damping first decays the prior velocity. The
+    // cached motor impulse is then warm-started on the next island step,
     // adding one more dt*maxTorque contribution without exceeding the
     // per-step accumulator limit.
     let bridge = runtime.render.lock().unwrap();
-    let second_step_velocity = native_velocity + native_velocity;
+    let native_angular_drag = (-native_step).mul_add(1.0_f32, 1.0_f32);
+    let second_step_velocity = native_velocity * native_angular_drag + native_velocity;
     assert_eq!(
         bridge.scene["rotor"].angular_velocity,
         f64::from(second_step_velocity)

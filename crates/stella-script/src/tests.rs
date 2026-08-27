@@ -287,4 +287,5 @@ mod shipped_levels;
 mod themes;
 mod tracks;
 mod trajectory;
+mod vehicle_settling;
 mod weld_joints;

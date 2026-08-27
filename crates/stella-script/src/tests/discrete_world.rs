@@ -621,7 +621,13 @@ fn physics_torque_uses_shape_inverse_inertia_instead_of_inverse_mass() {
     let environment = game_environment(runtime.lua()).unwrap();
     assert!((environment.get::<f64>("impulse_angular_velocity").unwrap() + 1.2).abs() < 1e-6);
     runtime.update(1.0 / 30.0).unwrap();
-    assert!((runtime.render.lock().unwrap().scene["body"].angular_velocity + 0.04).abs() < 1e-6);
+    let native_step = f32::from_bits(0x3d08_8889);
+    let native_velocity = (native_step * 1.2_f32).mul_add(-1.0_f32, 0.0_f32);
+    let native_angular_drag = (-native_step).mul_add(1.0_f32, 1.0_f32);
+    assert_eq!(
+        runtime.render.lock().unwrap().scene["body"].angular_velocity,
+        f64::from(native_velocity * native_angular_drag)
+    );
 }
 
 #[test]
@@ -1031,10 +1037,16 @@ fn physics_step_uses_recovered_box2d_motion_clamps_and_sleep_thresholds() {
     {
         let bridge = runtime.render.lock().unwrap();
         let body = &bridge.scene["body"];
+        let native_step = f32::from_bits(0x3d08_8889);
+        let native_angular_drag = (-native_step).mul_add(1.0_f32, 1.0_f32);
+        let mut native_angular_velocity = 1_000.0_f32 * native_angular_drag;
+        let native_rotation = native_step * native_angular_velocity;
+        let native_max_rotation = 15_708.0_f32 / 10_000.0_f32;
+        native_angular_velocity *= native_max_rotation / native_rotation.abs();
         assert_eq!(body.x, 0.159_999_981_522_560_12);
-        assert_eq!(body.angle, 1.570_799_827_575_683_6);
+        assert_eq!(body.angle, f64::from(native_step * native_angular_velocity));
         assert_eq!(body.velocity_x, 4.799_999_237_060_547);
-        assert_eq!(body.angular_velocity, 47.123_992_919_921_875);
+        assert_eq!(body.angular_velocity, f64::from(native_angular_velocity));
     }
 
     runtime

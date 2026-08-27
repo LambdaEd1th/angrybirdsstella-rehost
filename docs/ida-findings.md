@@ -15171,3 +15171,44 @@ zero remaining compatibility bindings and a visually checked PNG SHA-256 of
 The release `stella-app` and `stella-headless` hashes are respectively
 `d0184ef3b8ef182dacea5bc681dc88ac8aae79f7fbee59260cf62285fc64cde4`
 and `beb417c969d76675e3eb0c75ffe176015e204f673041028f315c74ded2fe1128`.
+
+## Native unit angular damping and Chapter02 L56 vehicle settling
+
+The upper-right Chapter02 L56 vehicle is authored as chassis
+`BLOCK_ROCK_1X10_1_6`, wheels `BLOCK_WOOD_ROUND_4X4_1_11` and `_12`, and pig
+`pig_medium_8`. Its two type-three revolute joints and the three-piece static
+platform match the shipped level data. With the preceding Rust constructor
+default of zero angular damping, both wheels remained above Box2D's angular
+sleep tolerance: after 600 display updates the left wheel had reached the
+platform edge with angular velocity about `-0.145`, so the vehicle eventually
+fell.
+
+IDA shows that this zero was not a native default. The circle constructor
+`sub_100034FB0` builds its `b2BodyDef` at `var_128`; the sequence at
+`0x100035088..0x1000350E0` writes `1.0f` to structure offset `+0x20`, before
+the `CreateBody` call `sub_10086DF90` at `0x1000350E0`. The box constructor
+`sub_100034740` has the same layout: linear damping at `+0x1c` is zero,
+angular damping at `+0x20` is `1.0f`, and gravity scale at `+0x38` is
+`1.0f`. The polygon and line constructor paths initialize the same definition.
+Hopper independently recovers the circle store to `var_108` and the following
+`CreateBody` call. Finally, `b2Island::Solve` `sub_10086CE84` reads body
+offsets `+0xa8/+0xac` and multiplies linear/angular velocity by
+`clamp(1 - dt * damping, 0, 1)` before its recovered half-second sleep test.
+
+All native physics constructors now start with unit angular damping; the
+non-physics render constructor retains its inert zero. The real shipped L56
+regression loads and starts the complete level, requires the vehicle to roll
+instead of starting asleep, waits for the chassis and both wheels to enter
+Box2D sleep, and then advances another 600 frames. The chassis moves about
+`0.344` world units, settles at `x=12.716`, and remains unchanged with both
+wheels and the pig still present. This reproduces the original brief roll and
+stop without a level-specific constraint or coordinate override.
+
+The complete workspace passes 678 tests with the intentional long-duration
+BirdRun audit ignored. Formatting, diff whitespace, strict all-target/all-
+feature Clippy and the locked release build are clean. Direct release-wgpu
+checkpoints at 60 and 1,800 display frames have SHA-256 values
+`3a804b15be45db786705b56bae55336ef44b1c2b46e06341a672255e9a4f5a8c` and
+`398357769f817a2ccae7f557b67fee4beb61188a25e34d78f9c87af1b50c16ec`.
+Visual inspection shows the authored initial roll and the complete vehicle
+resting on the upper-right platform at the later checkpoint.

@@ -97,7 +97,10 @@ pub(super) fn insert(
         fixture_restitutions: vec![request.restitution; fixture_count],
         fixture_frictions: vec![request.friction; fixture_count],
         linear_damping: 0.0,
-        angular_damping: 0.0,
+        // Every native physics constructor writes 1.0f to
+        // b2BodyDef::angularDamping before CreateBody. Non-physics render
+        // records have no b2BodyDef and keep the inert zero value.
+        angular_damping: if request.kind.has_body() { 1.0 } else { 0.0 },
         gravity_scale: 1.0,
         // All native RenderObjectData constructors use -1 for both fields
         // (+0x124/+0x104).

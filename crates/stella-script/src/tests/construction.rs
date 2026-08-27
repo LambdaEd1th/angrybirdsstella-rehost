@@ -136,5 +136,9 @@ fn constructors_publish_only_the_native_objects_world_fields() {
             "{name}"
         );
     }
+    for name in ["box", "circle", "polygon", "line"] {
+        assert_eq!(bridge.scene[name].angular_damping, 1.0, "{name}");
+    }
+    assert_eq!(bridge.scene["none"].angular_damping, 0.0);
     assert_eq!(bridge.scene["none"].friction, 0.0);
 }
