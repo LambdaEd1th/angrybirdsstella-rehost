@@ -35,8 +35,7 @@ pub(super) fn decode_joint_geometry(
         table.get::<f64>("x2").unwrap_or(0.0),
         table.get::<f64>("y2").unwrap_or(0.0),
     );
-    let coord_type = table
-        .get::<f32>("coordType")
+    let coord_type = native_optional_number(table, "coordType")?
         .map(|value| (value + 0.5_f32).floor() as i32)
         .unwrap_or(0);
     let (common_first_anchor, common_second_anchor) = match coord_type {
@@ -131,14 +130,13 @@ pub(super) fn decode_joint_geometry(
             1 | 2 => native_anchor_length,
             _ => 0.0,
         };
-        f64::from(table.get::<f32>("maxLength").unwrap_or(inferred))
+        f64::from(native_optional_number(table, "maxLength")?.unwrap_or(inferred))
     } else {
-        f64::from(table.get::<f32>("length").unwrap_or(native_anchor_length))
+        // Purple never reads an input `length` while constructing a distance
+        // joint. The only use of that key publishes b2DistanceJoint+0xA4 on
+        // the freshly allocated descriptor after Box2D has initialized it.
+        f64::from(native_anchor_length)
     };
-    if joint_type == 1 {
-        // createJoint publishes b2DistanceJoint+0xA4 immediately to Lua.
-        table.set("length", rest_length)?;
-    }
     let local_axis = if matches!(joint_type, 4 | 5) && is_physical {
         inverse_rotate_vector(
             (
@@ -165,6 +163,14 @@ pub(super) fn decode_joint_geometry(
         rest_length,
         one_way_destroy,
     }))
+}
+
+fn native_optional_number(table: &mlua::Table, field: &str) -> LuaResult<Option<f32>> {
+    Ok(match table.raw_get::<Value>(field)? {
+        Value::Integer(value) => Some(value as f32),
+        Value::Number(value) => Some(value as f32),
+        _ => None,
+    })
 }
 
 fn missing_endpoint(lua: &Lua, endpoint: &str, joint: &str) -> LuaResult<Option<JointGeometry>> {

@@ -176,6 +176,83 @@ fn joint_creation_uses_native_float_defaults_and_precision() {
 }
 
 #[test]
+fn joint_creation_ignores_non_native_length_and_wrong_typed_optional_fields() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createBox("first", "", 0, 0, 1, 1, 0, 0, 0, false, false, 1)
+                createBox("second", "", 10, 0, 1, 1, 1, 0, 0, false, false, 1)
+                strict_distance_source = {
+                    name = "strict_distance", end1 = "first", end2 = "second",
+                    type = 1, coordType = "2",
+                    x1 = 4, y1 = 0, x2 = -4, y2 = 0,
+                    length = 99, collideConnected = "true", breakable = 1
+                }
+                createJoint(strict_distance_source)
+                createJoint({
+                    name = "strict_rope", end1 = "first", end2 = "second",
+                    type = 6, coordType = 2,
+                    x1 = 0, y1 = 0, x2 = 0, y2 = 0,
+                    maxLength = "3"
+                })
+                createJoint({
+                    name = "numeric_rope", end1 = "first", end2 = "second",
+                    type = 6, coordType = 2,
+                    x1 = 0, y1 = 0, x2 = 0, y2 = 0,
+                    maxLength = 3
+                })
+            "#,
+        )
+        .unwrap();
+
+    let bridge = runtime.render.lock().unwrap();
+    let distance = &bridge.joints["strict_distance"];
+    assert_eq!(distance.coord_type, 0);
+    assert_eq!(distance.first_anchor, (0.0, 0.0));
+    assert_eq!(distance.second_anchor, (0.0, 0.0));
+    assert_eq!(distance.rest_length, 10.0);
+    assert!(!distance.collide_connected);
+    assert!(!distance.breakable);
+    assert_eq!(bridge.joints["strict_rope"].rest_length, 10.0);
+    assert_eq!(bridge.joints["numeric_rope"].rest_length, 3.0);
+    drop(bridge);
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    let source = environment
+        .get::<mlua::Table>("strict_distance_source")
+        .unwrap();
+    assert_eq!(source.get::<f64>("length").unwrap(), 99.0);
+    assert_eq!(source.get::<String>("coordType").unwrap(), "2");
+
+    let joints = environment
+        .get::<mlua::Table>("objects")
+        .unwrap()
+        .get::<mlua::Table>("joints")
+        .unwrap();
+    let distance = joints.get::<mlua::Table>("strict_distance").unwrap();
+    assert_eq!(distance.get::<f64>("coordType").unwrap(), 0.0);
+    assert_eq!(distance.get::<f64>("x1").unwrap(), 0.0);
+    assert_eq!(distance.get::<f64>("x2").unwrap(), 10.0);
+    assert_eq!(distance.get::<f64>("length").unwrap(), 10.0);
+    assert!(!distance.get::<bool>("collideConnected").unwrap());
+    assert!(matches!(
+        distance.raw_get::<Value>("breakable").unwrap(),
+        Value::Nil
+    ));
+    for name in ["strict_rope", "numeric_rope"] {
+        assert!(matches!(
+            joints
+                .get::<mlua::Table>(name)
+                .unwrap()
+                .raw_get::<Value>("maxLength")
+                .unwrap(),
+            Value::Nil
+        ));
+    }
+}
+
+#[test]
 fn custom_joints_dispatch_to_lua_and_allow_editor_reentry() {
     let runtime = unlocked_test_runtime();
     runtime

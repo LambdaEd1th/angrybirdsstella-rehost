@@ -34,7 +34,7 @@ pub(super) fn decode_joint_parameters(
         None if geometry.joint_type == 3 => f64::from(std::f32::consts::PI),
         None => f64::from(0.0_f32),
     };
-    let collide_connected = table.get::<bool>("collideConnected").unwrap_or(false);
+    let collide_connected = native_optional_boolean(table, "collideConnected")?.unwrap_or(false);
     let frequency = native_optional_number(table, "frequency")?.unwrap_or_else(|| {
         f64::from(if geometry.joint_type == 1 {
             4.0_f32
@@ -60,7 +60,7 @@ pub(super) fn decode_joint_parameters(
     Ok(JointParameters {
         collide_connected,
         destroy_timer,
-        breakable: table.get::<bool>("breakable").unwrap_or(false),
+        breakable: native_optional_boolean(table, "breakable")?.unwrap_or(false),
         break_force: native_optional_number(table, "breakForce")?.unwrap_or(0.0),
         motor_enabled,
         motor_speed,
@@ -77,6 +77,13 @@ fn native_optional_number(table: &mlua::Table, field: &str) -> LuaResult<Option<
     Ok(match table.raw_get::<Value>(field)? {
         Value::Integer(value) => Some(f64::from(value as f32)),
         Value::Number(value) => Some(f64::from(value as f32)),
+        _ => None,
+    })
+}
+
+fn native_optional_boolean(table: &mlua::Table, field: &str) -> LuaResult<Option<bool>> {
+    Ok(match table.raw_get::<Value>(field)? {
+        Value::Boolean(value) => Some(value),
         _ => None,
     })
 }

@@ -15886,3 +15886,24 @@ batch bridge now dispatches each custom descriptor inline, after no scene lock
 is retained, and then advances to the next `lua_next` value. A regression uses
 an array-ordered custom builder, dependent native weld and second custom
 observer to prove the original interleaving and reentrant endpoint creation.
+
+The optional joint inputs also retain Lua's native type gates rather than
+using coercive conversions. At `0x10003754C..0x1000375E0`, Purple accepts
+`coordType` only after `sub_1005280FC` identifies a number, then rounds the
+float32 value with `floorf(value + 0.5)`. `breakable` uses the Boolean predicate
+`sub_1005280DC` at `0x1000376C4..0x100037744`; every per-class
+`collideConnected` branch repeats that same predicate/read pair (for example,
+the distance branch at `0x1000383B0..0x100038430`). Rope `maxLength` is likewise
+guarded by the numeric predicate at `0x10003A950..0x10003AA10`.
+
+The string `length` has exactly one use inside the entire recovered
+`createJoint`: `0x1000387DC..0x1000387F0` reads the already-created
+`b2DistanceJoint` length at offset `0xA4` and writes it to the fresh published
+descriptor. There is no input lookup, so an editor-provided `length` must not
+override the initial constraint or be written back into the caller's table.
+Rust now derives type-one length only from the float32-transformed anchor
+positions, strictly ignores wrong-typed coordinate, rope-length and Boolean
+options, and preserves the input table unchanged. Regression coverage
+distinguishes coerced versus default coordinates, numeric versus string rope
+limits, the canonical published distance length, and both wrong-typed Boolean
+fields.
