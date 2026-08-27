@@ -15311,3 +15311,28 @@ fallbacks and zero remaining compatibility bindings. The release `stella-app`
 and `stella-headless` hashes are respectively
 `7e0e3ac33414ed9b812a0795b241558ead9e7f1b50a1e237d10e95d4caf8962e` and
 `278a278bb10de1d68fd8acb64eec85dd722f9f64bad3ae6ad44d7b77abd2f4af`.
+
+## Live-game Telepods delivery coverage
+
+The functional-completeness pass now follows the original Telepods route past
+the scan-page lifecycle and wallet callbacks. A first artificial probe opened
+`TelepodPage` in the same host call that constructed Chapter02 L11. That is not
+a valid game route: the original `GameHud` and its extra-bird listeners have
+not completed their entry lifecycle yet, so it can prove skin delivery but not
+the later in-level bird animation.
+
+The permanent regression instead starts the complete shipped level and block
+component graph, advances sixty display frames, and only then opens the
+original `TelepodPage` with a prequeued `hasbro.telepod.020` scanner payload.
+It observes the unmodified Lua chain
+`onQRRecognized -> IAP.redeemCode -> native_fetchWallet -> onPurchaseDone ->
+EID_WILL_ADD_EXTRA_BIRD -> EID_TELEPOD_BIRD_ADD_FINISHED`. The scan unlocks
+`Piano Willow`, publishes that exact bird name on the completion event and
+increments the live `birdsCounter` by one. This closes the distinction between
+merely showing the recovered Telepods UI and actually delivering its bird into
+an active level.
+
+The complete workspace now contains 683 tests with the intentional
+long-duration BirdRun audit ignored. The functional priority remains on
+unexercised menu/gameplay/service routes; pure performance work is deferred
+until those routes are complete.

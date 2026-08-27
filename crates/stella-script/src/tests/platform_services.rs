@@ -1172,6 +1172,69 @@ fn shipped_telepods_page_consumes_a_code_queued_before_boot() {
 }
 
 #[test]
+fn shipped_telepods_page_adds_the_scanned_bird_during_live_gameplay() {
+    let sandbox = ShippedDataSandbox::new("telepods-live-gameplay");
+    let runtime = StellaLua::new(&sandbox.data_root).unwrap();
+    runtime.set_qr_scanner_available(true).unwrap();
+    assert!(!runtime.submit_qr_code("hasbro.telepod.020").unwrap());
+    runtime.boot("scripts/game.lua").unwrap();
+    runtime.execute_source("initializeEventSystem()").unwrap();
+    runtime
+        .execute_source(
+            r##"
+                SpriteSheetManager.useGroupSet("INGAME")
+                currentFolder = "Chapter02"
+                currentPack = "Chapter02"
+                currentLevel = 11
+                levelFolder = "levels/Chapter02/"
+                levelName = "Chapter02_L11"
+                loadLevelInternal(levelFolder .. levelName)
+                blocks.BlockComponentManager.triggerGlobalEvent(blocks.events.EID_START)
+            "##,
+        )
+        .unwrap();
+
+    for _ in 0..60 {
+        runtime.update(1.0 / 60.0).unwrap();
+        runtime.draw().unwrap();
+    }
+    runtime
+        .execute_source(
+            r##"
+                telepodBirdCountBefore = birdsCounter
+                telepodBirdAddFinished = false
+                telepodBirdAddListener = {
+                    eventTriggered = function(self, event)
+                        telepodBirdAddFinished = true
+                        telepodBirdAdded = event.bird
+                    end,
+                }
+                eventManager:addEventListener(
+                    events.EID_TELEPOD_BIRD_ADD_FINISHED,
+                    telepodBirdAddListener
+                )
+                notificationsFrame:addChild(ui.TelepodPage:new())
+            "##,
+        )
+        .unwrap();
+
+    for _ in 0..180 {
+        runtime.update(1.0 / 60.0).unwrap();
+        runtime.draw().unwrap();
+    }
+    runtime
+        .execute_source(
+            r##"
+                assert(SettingsWrapper:isBirdSkinUnlocked("Piano Willow"))
+                assert(telepodBirdAddFinished)
+                assert(telepodBirdAdded == "Piano Willow")
+                assert(birdsCounter == telepodBirdCountBefore + 1)
+            "##,
+        )
+        .unwrap();
+}
+
+#[test]
 fn shipped_telepods_scanner_and_iap_wallet_complete_all_configured_products() {
     let sandbox = ShippedDataSandbox::new("telepods-wallet");
     let runtime = StellaLua::new(&sandbox.data_root).unwrap();
