@@ -15736,3 +15736,11 @@ validation callback from completing a nested validation recursively. Tests
 prove the pre-completion state byte, deferred startup loading-screen release,
 two-value validation result, two-argument login failure, strict adapters,
 one-shot registry release and next-frame nested deferral.
+
+The nearby synchronous `native_hasNickname` query is intentionally inverted
+but not a storage lookup. `sub_1000A79B0` forwards to `sub_1000A3D68`, which
+asks the identity provider for its profile nickname and returns whether that
+string is empty. Both decompilers show no access to Skynest Storage or its key
+map. The signed-out offline provider therefore returns true even after a
+separate storage key literally named `nickname` is written; Rust no longer
+couples those unrelated service states.

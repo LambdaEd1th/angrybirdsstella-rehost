@@ -2675,7 +2675,7 @@ fn skynest_native_account_and_storage_complete_retired_backend_calls_locally() {
         )
         .unwrap();
     assert!(
-        !environment
+        environment
             .get::<bool>("skynest_has_nickname_completed")
             .unwrap()
     );

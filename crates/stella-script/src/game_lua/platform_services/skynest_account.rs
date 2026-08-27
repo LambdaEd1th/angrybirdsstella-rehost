@@ -128,19 +128,12 @@ pub(super) fn install(
         lua.create_function(|_, _: MultiValue| Ok(()))?,
     )?;
 
-    let nickname_state = Arc::clone(&state);
     account.set(
         "native_hasNickname",
-        lua.create_function(move |_, _: MultiValue| {
-            // Despite its exported name, sub_1000A3D68 returns
-            // `profileNickname.empty()`: true before a nickname exists and
-            // false after one is stored. Preserve that observable inversion.
-            Ok(!nickname_state
-                .lock()
-                .map_err(|_| runtime_error("Skynest state lock poisoned"))?
-                .keys
-                .contains_key("nickname"))
-        })?,
+        // Despite its exported name, sub_1000A3D68 returns the identity
+        // provider's `profileNickname.empty()`. A signed-out provider has an
+        // empty profile regardless of similarly named Skynest Storage keys.
+        lua.create_function(|_, _: MultiValue| Ok(true))?,
     )?;
     let validation_runtime = runtime.clone();
     account.set(
