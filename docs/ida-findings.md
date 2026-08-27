@@ -15563,3 +15563,35 @@ The complete workspace now passes 699 tests with the intentional long-duration
 BirdRun audit ignored. Repository-authored source remains explicitly licensed
 under `AGPL-3.0-or-later`; the full GNU Affero GPL v3 text, Cargo SPDX metadata
 and README notice agree, while Rovio game data remains outside that grant.
+
+## Assets request scheduling and retained callback ownership
+
+The previous local-cache surrogate reproduced the values returned by
+`Assets.loadFiles`, but invoked its Lua callback before the native member
+returned. Both disassemblers show that this timing is impossible in Purple.
+`sub_1000AC25C` first copies every exact-string table value and constructs two
+completion functors retaining the native Assets LuaObject. It then submits a
+0x90-byte `lang::Func5` request job through `sub_1006EC360 -> sub_1005865AC`
+and starts it through `sub_100586644`; neither completion is called from the
+submission stack.
+
+The success functor at `sub_1000AC964` constructs the request-to-filename map
+and calls retained member `onLoadSuccess` with exactly that one table. Failure
+functor `sub_1000ACA0C` builds a dense one-based failed-filename array and calls
+`onLoadError(array, ErrorCode, message)`. The owner is the native root object
+created by `sub_1000AC118`, not the separate facade later installed into the
+GameLua environment. This matches the shipped `Assets.lua`, whose `_G.Assets`
+assignments publish callbacks onto the retained native table while its local
+table owns `getAssetFilename` and `haveBeenDownloaded`.
+
+Rust now retains an Assets runtime with a FIFO completion queue and the
+successfully resolved filename map. `loadFiles` only validates, resolves and
+queues; frame-head dispatch updates the completed map and calls the root
+native callback before ordinary Lua update. Dispatch takes a snapshot of the
+pending queue, so a callback that issues another load cannot complete
+recursively in the same frame and instead observes a fresh asynchronous
+boundary. Regression coverage proves zero-result submission, no callback on
+the calling stack, success/error FIFO order, pre-update delivery, retained
+root callback lookup and next-frame deferral of a nested request. The complete
+workspace remains at 699 passing tests with the intentional long-duration
+BirdRun audit ignored.

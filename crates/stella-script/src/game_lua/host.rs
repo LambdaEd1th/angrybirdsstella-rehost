@@ -16,6 +16,7 @@ pub struct StellaLua {
     pub(crate) _animation_runtime: Arc<Mutex<AnimationRuntime>>,
     pub(crate) url_requests: UrlRequestRuntime,
     pub(crate) installed_apps: InstalledAppsRuntime,
+    pub(crate) assets: AssetsRuntime,
     pub(crate) game_server: GameServerRuntime,
     pub(crate) gamer_services: GamerServicesRuntime,
     #[cfg(test)]
@@ -120,6 +121,7 @@ impl StellaLua {
             _animation_runtime: animation_runtime,
             url_requests: installed.url_requests,
             installed_apps: installed.installed_apps,
+            assets: installed.assets,
             game_server: installed.game_server,
             gamer_services: installed.gamer_services,
             #[cfg(test)]

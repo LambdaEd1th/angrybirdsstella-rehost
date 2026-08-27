@@ -1,23 +1,59 @@
 //! Downloadable Assets service and named sprite-sheet lifetime.
 
 use crate::*;
+use std::collections::VecDeque;
+
+#[derive(Clone, Debug)]
+enum Completion {
+    Success(BTreeMap<String, String>),
+    Error {
+        failed: Vec<String>,
+        code: i32,
+        message: String,
+    },
+}
+
+/// Main-thread completion state retained by Purple's native Assets object.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct AssetsRuntime {
+    downloaded_asset_names: Arc<Mutex<BTreeMap<String, String>>>,
+    completions: Arc<Mutex<VecDeque<Completion>>>,
+}
+
+impl AssetsRuntime {
+    fn push(&self, completion: Completion) {
+        self.completions
+            .lock()
+            .expect("assets completion queue lock poisoned")
+            .push_back(completion);
+    }
+
+    fn take_pending(&self) -> VecDeque<Completion> {
+        std::mem::take(
+            &mut *self
+                .completions
+                .lock()
+                .expect("assets completion queue lock poisoned"),
+        )
+    }
+}
 
 pub(super) fn install(
     lua: &Lua,
     globals: &mlua::Table,
     data_root: Arc<PathBuf>,
     resource_runtime: Arc<Mutex<ResourceRuntime>>,
-) -> LuaResult<()> {
+) -> LuaResult<AssetsRuntime> {
+    let runtime = AssetsRuntime::default();
     let downloadable_assets = lua.create_table()?;
-    let downloaded_asset_names = Arc::new(Mutex::new(BTreeMap::<String, String>::new()));
     // Purple's Assets constructor sub_1000AC118 publishes only loadFiles and
     // createSpriteSheet. getAssetFilename/haveBeenDownloaded are defined by
     // scripts_common/cloud/rovioid/Assets.lua after the native table exists.
     let load_asset_root = Arc::clone(&data_root);
-    let load_asset_names = Arc::clone(&downloaded_asset_names);
+    let load_runtime = runtime.clone();
     downloadable_assets.set(
         "loadFiles",
-        lua.create_function(move |lua, args: MultiValue| {
+        lua.create_function(move |_, args: MultiValue| {
             // Generated adapter sub_1000AD28C -> sub_1000AD2F4 requires an
             // exact table in slot one and never checks the remaining stack.
             let requested = native_required_table(&args, 0, "Assets.loadFiles")?;
@@ -37,7 +73,8 @@ pub(super) fn install(
             let mut available = BTreeMap::new();
             let mut missing = Vec::new();
             {
-                let known = load_asset_names
+                let known = load_runtime
+                    .downloaded_asset_names
                     .lock()
                     .expect("downloaded asset map lock poisoned");
                 for requested in requested_names {
@@ -53,27 +90,14 @@ pub(super) fn install(
                 }
             }
 
-            let assets: mlua::Table = game_environment(lua)?.get("Assets")?;
             if missing.is_empty() {
-                load_asset_names
-                    .lock()
-                    .expect("downloaded asset map lock poisoned")
-                    .extend(available.clone());
-                let result = lua.create_table()?;
-                for (requested, filename) in available {
-                    result.raw_set(requested, filename)?;
-                }
-                if let Value::Function(callback) = assets.get::<Value>("onLoadSuccess")? {
-                    callback.call::<()>(result)?;
-                }
+                load_runtime.push(Completion::Success(available));
             } else {
-                let failed = lua.create_table()?;
-                for (index, filename) in missing.into_iter().enumerate() {
-                    failed.raw_set(index + 1, filename)?;
-                }
-                if let Value::Function(callback) = assets.get::<Value>("onLoadError")? {
-                    callback.call::<()>((failed, 1_i32, "offline asset unavailable"))?;
-                }
+                load_runtime.push(Completion::Error {
+                    failed: missing,
+                    code: 1,
+                    message: "offline asset unavailable".to_owned(),
+                });
             }
             Ok(())
         })?,
@@ -117,5 +141,49 @@ pub(super) fn install(
         })?,
     )?;
     globals.set("Assets", downloadable_assets)?;
+    Ok(runtime)
+}
+
+/// Deliver RCS Assets request functors on the application thread.
+pub(crate) fn dispatch_completions(lua: &Lua, runtime: &AssetsRuntime) -> LuaResult<()> {
+    // The completion functors at sub_1000AC964/sub_1000ACA0C retain the
+    // native Assets LuaObject created by sub_1000AC118. The shipped facade is
+    // a separate GameLua-environment table and installs its callbacks onto
+    // this root object through `_G.Assets`.
+    let native_assets = lua.globals().get::<mlua::Table>("Assets")?;
+    // Take a frame-head snapshot. A callback that starts another request must
+    // not complete recursively in the same dispatcher pass: Purple submits a
+    // fresh asynchronous Func5 job for every call.
+    for completion in runtime.take_pending() {
+        match completion {
+            Completion::Success(available) => {
+                runtime
+                    .downloaded_asset_names
+                    .lock()
+                    .expect("downloaded asset map lock poisoned")
+                    .extend(available.clone());
+                let result = lua.create_table()?;
+                for (requested, filename) in available {
+                    result.raw_set(requested, filename)?;
+                }
+                native_assets
+                    .get::<mlua::Function>("onLoadSuccess")?
+                    .call::<()>(result)?;
+            }
+            Completion::Error {
+                failed,
+                code,
+                message,
+            } => {
+                let failed_table = lua.create_table()?;
+                for (index, filename) in failed.into_iter().enumerate() {
+                    failed_table.raw_set(index + 1, filename)?;
+                }
+                native_assets
+                    .get::<mlua::Function>("onLoadError")?
+                    .call::<()>((failed_table, code, message))?;
+            }
+        }
+    }
     Ok(())
 }

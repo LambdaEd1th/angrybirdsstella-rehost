@@ -3545,10 +3545,19 @@ fn downloadable_assets_match_native_load_callbacks_and_sheet_abi() {
                 native_asset_helpers_absent =
                     Assets.getAssetFilename == nil and
                     Assets.haveBeenDownloaded == nil
+                callback_order = ""
+                load_success_count = 0
                 Assets.onLoadSuccess = function(files)
+                    callback_order = callback_order .. "S"
+                    load_success_count = load_success_count + 1
                     load_success = files["cached.json"]
+                    if load_success_count == 1 then
+                        nested_load_results = select("#",
+                            Assets.loadFiles({ "cached.json" }))
+                    end
                 end
                 Assets.onLoadError = function(files, code, message)
+                    callback_order = callback_order .. "E"
                     load_failure = files[1]
                     load_failure_code = code
                     load_failure_message = message
@@ -3585,6 +3594,9 @@ fn downloadable_assets_match_native_load_callbacks_and_sheet_abi() {
                 trailing_sheet_ok = pcall(
                     Assets.createSpriteSheet,
                     "DYNAMIC", "cached.json", "cached.pvr", false)
+                update = function()
+                    assets_callbacks_preceded_update = callback_order == "SSE"
+                end
                 "##,
         )
         .unwrap();
@@ -3599,6 +3611,24 @@ fn downloadable_assets_match_native_load_callbacks_and_sheet_abi() {
     assert!(environment.get::<bool>("missing_load_table_fails").unwrap());
     assert!(environment.get::<bool>("non_table_load_fails").unwrap());
     assert!(environment.get::<bool>("numeric_load_value_fails").unwrap());
+    assert!(matches!(
+        environment.get::<Value>("load_success").unwrap(),
+        Value::Nil
+    ));
+    assert!(matches!(
+        environment.get::<Value>("load_failure").unwrap(),
+        Value::Nil
+    ));
+    assert_eq!(environment.get::<String>("callback_order").unwrap(), "");
+    runtime.update(1.0 / 60.0).unwrap();
+    assert!(
+        environment
+            .get::<bool>("assets_callbacks_preceded_update")
+            .unwrap()
+    );
+    assert_eq!(environment.get::<String>("callback_order").unwrap(), "SSE");
+    assert_eq!(environment.get::<i64>("load_success_count").unwrap(), 2);
+    assert_eq!(environment.get::<i64>("nested_load_results").unwrap(), 0);
     assert_eq!(
         environment.get::<String>("load_success").unwrap(),
         "cached.json"
@@ -3613,6 +3643,9 @@ fn downloadable_assets_match_native_load_callbacks_and_sheet_abi() {
         environment.get::<String>("load_failure_message").unwrap(),
         "offline asset unavailable"
     );
+    runtime.update(1.0 / 60.0).unwrap();
+    assert_eq!(environment.get::<String>("callback_order").unwrap(), "SSES");
+    assert_eq!(environment.get::<i64>("load_success_count").unwrap(), 3);
     assert_eq!(environment.get::<i64>("sheet_results").unwrap(), 0);
     assert_eq!(environment.get::<f64>("dynamic_width").unwrap(), 4.0);
     assert_eq!(environment.get::<f64>("dynamic_height").unwrap(), 6.0);

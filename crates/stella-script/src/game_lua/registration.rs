@@ -11,6 +11,7 @@ pub(crate) struct InstalledRuntimes {
     pub(crate) audio: Arc<Mutex<AudioRuntime>>,
     pub(crate) url_requests: UrlRequestRuntime,
     pub(crate) installed_apps: InstalledAppsRuntime,
+    pub(crate) assets: AssetsRuntime,
     pub(crate) game_server: GameServerRuntime,
     pub(crate) gamer_services: GamerServicesRuntime,
 }
@@ -222,6 +223,7 @@ pub(crate) fn install_base_globals(
         audio: audio_runtime,
         url_requests: platform.url_requests,
         installed_apps: platform.installed_apps,
+        assets: platform_services.assets,
         game_server: platform_services.game_server,
         gamer_services: platform_services.gamer_services,
     })

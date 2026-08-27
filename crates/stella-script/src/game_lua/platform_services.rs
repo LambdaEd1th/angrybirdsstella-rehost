@@ -20,6 +20,7 @@ mod zappar;
 use crate::*;
 
 pub(crate) struct InstalledPlatformServices {
+    pub(crate) assets: AssetsRuntime,
     pub(crate) game_server: GameServerRuntime,
     pub(crate) gamer_services: GamerServicesRuntime,
 }
@@ -58,7 +59,7 @@ pub(crate) fn install(
     skynest_account::install(lua, globals, Arc::clone(&skynest_state))?;
     skynest_storage::install(lua, globals, skynest_state)?;
     social::install(lua, globals)?;
-    assets::install(
+    let assets = assets::install(
         lua,
         globals,
         Arc::clone(&data_root),
@@ -68,11 +69,13 @@ pub(crate) fn install(
     game_lua::install_simple_random(lua, globals)?;
     align::install(lua, globals)?;
     Ok(InstalledPlatformServices {
+        assets,
         game_server,
         gamer_services,
     })
 }
 
+pub(crate) use assets::{AssetsRuntime, dispatch_completions as dispatch_assets_completions};
 pub(crate) use cloud_service::announce_registrations as announce_cloud_service_registrations;
 pub(crate) use game_server::install_offline_facade as install_offline_game_server_facade;
 pub(crate) use game_server::{

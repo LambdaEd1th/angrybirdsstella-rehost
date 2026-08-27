@@ -38,6 +38,9 @@ impl StellaLua {
         // GameCenter reports authentication, achievement and score completion
         // through retained GameLua event calls on the application thread.
         dispatch_gamer_services_completions(&self.lua, &self.gamer_services)?;
+        // RCS Assets jobs retain the native Assets table and invoke their Lua
+        // completion functors asynchronously on the application thread.
+        dispatch_assets_completions(&self.lua, &self.assets)?;
         // AppController hands GameLua an `S0` value. `sub_10005E898` retains
         // that float as the raw delta, then performs the time-multiplier FMUL
         // in single precision before forwarding `float,float` to Lua. Keep
