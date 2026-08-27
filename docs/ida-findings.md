@@ -14632,3 +14632,58 @@ A final 1,200-frame release-wgpu run against a fresh copied AppData directory
 reaches the island map with zero invoked fallbacks, zero remaining
 compatibility bindings and empty stderr; its PNG SHA-256 is
 `7f7804a95612a7ce2eab1ef4a193b3db351ade5db001ede0f294ba458f82dcc1`.
+
+## Single resource-owner handoff and uninterrupted scene lookup
+
+The next ordinary-submission audit found two remaining synchronization and
+ownership adapters around the recovered scene path. `SceneDrawObject::from`
+already retained the sprite label, atlas/composite pointer and optional
+texture while the render lock was released for Lua, but command construction
+retained all of them a second time and immediately released the snapshot's
+copies. Separately, `NativeSceneWalk::next` yielded the leaf name and the
+dispatcher reacquired the same bridge solely to perform the required scene
+name-map lookup.
+
+Purple has neither boundary. In `sub_10004BAB4`, `0x10004BD1C` forms the
+current leaf-string address and `0x10004BD24` immediately calls
+`sub_100070278`; the returned RenderObjectData pointer remains live through
+the callbacks and ordinary submission. In `sub_10006D5B4`, the composite
+branch reads the retained owner at `+0x78`, while the ordinary branch loads
+the atlas pointer at `+0x90` and passes it directly to `sub_10006C838` at
+`0x10006D8B4..0x10006D8F4`. Hopper independently shows the same contiguous
+leaf lookup and direct `+0x78`/`+0x90` pointer use.
+
+The Rust walk now resolves the compact `SceneDrawVisit` during the same bridge
+acquisition that reads the live z/sheet/name vector, then releases the lock
+before any Lua callback. It still reloads vector length on the following
+iterator step, so callback-driven append, removal and z movement remain
+observable. Ordinary submission consumes the compact draw snapshot and moves
+its already-retained resource owners into the deferred wgpu command. The
+command therefore keeps exactly the one host reference required past the
+native immediate-draw boundary instead of performing a second retain/release
+round trip.
+
+Focused scene regressions continue to cover pointer identity, same-name
+replacement, resource shadowing/release, dynamic shader assignment and clear,
+pre/post mutation, live z movement, composite drawing and GoldTransformer.
+Three alternating stripped-release runs each issue 30,000 complete Chapter02
+L16 draws. The previous retained-shader-key build reports median
+real/user/system times of 1.11/1.00/0.10 seconds and the uninterrupted
+lookup/owner-transfer build reports 1.09/0.98/0.10 seconds, reductions of
+approximately 1.8 percent real time and 2.0 percent user CPU with system CPU
+unchanged. This is again a scene-dispatch-heavy diagnostic, not a universal
+frame-rate claim.
+
+The direct release-wgpu Chapter02 L16 checkpoint remains byte-identical to
+the established water baseline, SHA-256
+`63b5da87b1a55a57d0e5d3559336f604d35817b5651cf8cf7347f7def189d4d7`.
+The complete workspace passes 675 tests with one intentional long-duration
+BirdRun audit ignored. Formatting, diff whitespace, documentation, strict
+all-target/all-feature Clippy and the locked release build are clean. The
+release `stella-app` and `stella-headless` hashes are respectively
+`0422195c123774929f1aec507175e4f975e72f3d681fbf063f85eec4b711f397`
+and `70fa5b3ca03488c382ee4cf18570f6909df717ba4c5a7592454fc0e4e6f3bbfb`.
+A final 1,200-frame release-wgpu run against a fresh copied AppData directory
+reaches the island map with zero invoked fallbacks, zero remaining
+compatibility bindings and empty stderr; its PNG SHA-256 is
+`4673877261ea2012eb5ce409f6fdb7ffb8b3b08b20fb3b22ad61cb00580af4a0`.

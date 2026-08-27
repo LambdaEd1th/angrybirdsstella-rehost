@@ -140,7 +140,7 @@ pub(super) use render_api::{
 };
 pub(crate) use render_primitives::*;
 pub(crate) use runtime_state::*;
-pub(crate) use scene_render::{NativeSceneRenderIndex, native_scene_sheet_id};
+pub(crate) use scene_render::{NativeSceneRenderIndex, SceneDrawVisit, native_scene_sheet_id};
 pub(crate) use script_runtime::*;
 #[cfg(test)]
 pub(super) use simple_random::NativeSeedRandom;

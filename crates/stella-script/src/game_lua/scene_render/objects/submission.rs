@@ -99,6 +99,7 @@ impl RenderBridge {
         self.scene.get(name).map(SceneDrawObject::from)
     }
 
+    #[cfg(test)]
     pub(crate) fn scene_object_command(&self, object: &SceneDrawObject) -> Option<RenderCommand> {
         (!object.flash_animation
             && object.ray.is_none()
@@ -145,7 +146,7 @@ impl RenderBridge {
 
     pub(crate) fn push_scene_object(
         &mut self,
-        object: &SceneDrawObject,
+        object: SceneDrawObject,
         decoration_resources: Option<(&ResourceRuntime, &Path)>,
         shader: Option<SpriteShader>,
     ) {
@@ -160,13 +161,37 @@ impl RenderBridge {
             }
             return;
         }
-        if let Some(mut command) = self.scene_object_command(object) {
+        if !object.flash_animation
+            && object.ray.is_none()
+            && !object.sprite.is_empty()
+            && object.sprite_bound
+        {
             // sub_10006D5B4 looks up the live Lua object's `shader` field at
             // 0x10006D6D8..0x10006D744 immediately before submitting either
             // its ordinary sprite or every composite part. The shader is not
             // a RenderObjectData member and therefore must be supplied from
             // the dispatcher on every draw.
-            command.shader = shader.map(Arc::new);
+            let state = self.scene_object_state(&object).into();
+            let dirt = object.dirt.as_deref().map(DirtComponent::render_command);
+            let command = RenderCommand {
+                order: 0,
+                // The compact draw snapshot already retained every native
+                // resource pointer while the scene lock was released for Lua.
+                // Transfer those owners into the deferred wgpu command rather
+                // than retaining and releasing the same pointers a second
+                // time. Purple likewise passes +0x90/+0x78 straight through.
+                sprite: object.sprite.into(),
+                texture: object.texture,
+                bound_region: object.sprite_region,
+                bound_composite: object.composite_sprite,
+                geometry: None,
+                shader: shader.map(Arc::new),
+                dirt,
+                x: 0.0,
+                y: 0.0,
+                state,
+                world_space: true,
+            };
             self.push_render_command(command);
         }
         if object.flash_animation {

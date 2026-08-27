@@ -67,20 +67,13 @@ pub(super) fn install(
                 (bridge.native_scene_z_bounds(), bridge.world_scale as f32)
             };
             let mut trajectory_drawn = false;
-            for (z_bucket, name) in
+            for (z_bucket, entry) in
                 NativeSceneWalk::new(Arc::clone(&render), z_bounds, draw_world_scale)
             {
-                let Some(name) = name else {
+                let Some((name, visit)) = entry else {
                     if let Some(draw) = z_order_draw.as_ref() {
                         draw.call::<()>(f64::from(z_bucket))?;
                     }
-                    continue;
-                };
-                let Some(visit) = render
-                    .lock()
-                    .expect("render bridge lock poisoned")
-                    .scene_draw_visit(name.as_ref())
-                else {
                     continue;
                 };
                 let callback_state_object = visit.callback;
@@ -161,6 +154,7 @@ pub(super) fn install(
                 let Some(object) = object else {
                     continue;
                 };
+                let post_horizontal_flip = object.horizontal_flip;
                 // Alpha, camera transform, pivot, angle and the branch-local
                 // scale/translation are installed only after pre returns.
                 // Purple leaves this context live through +0x160 post and
@@ -259,7 +253,7 @@ pub(super) fn install(
                         render
                             .lock()
                             .expect("render bridge lock poisoned")
-                            .push_scene_object(&object, decoration_resources, shader);
+                            .push_scene_object(object, decoration_resources, shader);
                     } else {
                         // Purple's ordinary sprite branch consumes only the
                         // retained RenderObjectData resource pointer. Keep the
@@ -267,7 +261,7 @@ pub(super) fn install(
                         render
                             .lock()
                             .expect("render bridge lock poisoned")
-                            .push_scene_object(&object, None, None);
+                            .push_scene_object(object, None, None);
                     }
                 }
                 // RenderObjectData+0x160 is loaded at 0x10004C300, after the
@@ -284,7 +278,7 @@ pub(super) fn install(
                     initial_post
                 };
                 if let Some(function) = post {
-                    function.call::<()>((callback_object, object.horizontal_flip))?;
+                    function.call::<()>((callback_object, post_horizontal_flip))?;
                 }
             }
             Ok(())

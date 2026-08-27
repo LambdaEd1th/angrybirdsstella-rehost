@@ -56,7 +56,7 @@ impl Iterator for NativeSceneWalk {
     /// `None` names mark every persistent outer z node, including empty ones.
     /// Names are then fetched by live vector index so callback mutations have
     /// the same shift/append behavior as Purple's pointer loop.
-    type Item = (i32, Option<Arc<str>>);
+    type Item = (i32, Option<(Arc<str>, SceneDrawVisit)>);
 
     fn next(&mut self) -> Option<Self::Item> {
         // One bridge acquisition corresponds to one resumed native tree walk.
@@ -99,7 +99,16 @@ impl Iterator for NativeSceneWalk {
                     .name_at(current_z, current_sheet, cursor.name_index);
             if let Some(name) = name {
                 cursor.name_index += 1;
-                return Some((current_z, Some(name)));
+                // Purple performs the nested z/sheet/vector read and the
+                // following scene-name map lookup in one uninterrupted native
+                // tree walk. There is no host synchronization boundary
+                // between them. Resolve the compact live visit while this
+                // bridge acquisition is already held, then release it before
+                // yielding to either Lua callback.
+                if let Some(visit) = bridge.scene_draw_visit(name.as_ref()) {
+                    return Some((current_z, Some((name, visit))));
+                }
+                continue;
             }
             // 0x10004C350..0x10004C354 restores only the two scale
             // members after every SpriteSheet/name vector. Translation,
