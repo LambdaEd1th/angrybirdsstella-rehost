@@ -14581,3 +14581,54 @@ and `5024a85419116ef4bf355e0790761b0ed1c53e91db45cd1adbbf190622ca815e`.
 A final 1,200-frame release-wgpu run against a copied runtime save reports
 zero invoked compatibility fallbacks and zero remaining compatibility
 bindings.
+
+## Static shader-key reuse in the native scene submission path
+
+A symbolized 30,000-draw Chapter02 L16 sample placed the next avoidable host
+cost in the ordinary-object `shader` lookup. The semantic lookup itself is
+native and must stay live: GoldTransformer assigns and clears this field at
+runtime. The excess was constructing and interning a new Lua string from the
+Rust `&str` key for every visible ordinary object.
+
+IDA shows the exact bridge sequence in `sub_10006D5B4`. After the caller's
+pre-draw callback, `0x10006D6DC..0x10006D710` reads the retained Lua object at
+RenderObjectData `+0x38`, passes the static `"shader"` literal at
+`0x10006D6E0` to the Lua field bridge and tests the result. When present,
+`0x10006D720..0x10006D74C` passes that same static literal to
+`sub_1000222E4` and constructs the cached shader. Hopper independently shows
+the same two references to `aShader` and the same nil branch to
+`0x10006D754`.
+
+The registered Rust native member now retains one interned Lua string for
+that literal and pushes the retained key for each raw lookup. It still reads
+the current object table after pre and on every visit; no shader result is
+cached. The existing live-mutation regression therefore continues to prove
+that assigning `2d-sprite-gold` affects the next submission and clearing the
+field removes it on the following draw.
+
+In the before symbol sample, the `mlua::Table::raw_get` instantiation for this
+line accounted for 243 of 1,656 main-thread samples and included repeated Lua
+string interning/comparison. In the matching after sample, that instantiation
+and its key-construction stack disappear; the retained-key lookup is inlined
+into the scene member. Three alternating stripped-release runs each issue
+30,000 complete Chapter02 L16 draws. The baseline reports median
+real/user/system times of 1.12/1.02/0.09 seconds and the retained-key build
+reports 1.08/0.99/0.09 seconds, reductions of approximately 3.6 percent real
+time and 2.9 percent user CPU with system CPU unchanged. This remains a
+scene-dispatch-heavy diagnostic rather than a universal frame-rate claim.
+
+The direct release-wgpu Chapter02 L16 checkpoint remains byte-identical to
+the water/state-order baseline, SHA-256
+`63b5da87b1a55a57d0e5d3559336f604d35817b5651cf8cf7347f7def189d4d7`.
+It renders the full translucent blue pool and submerged structure without an
+editor cross. The complete workspace passes 675 tests with one intentional
+long-duration BirdRun audit ignored. Formatting, diff whitespace,
+documentation, strict all-target/all-feature Clippy and the locked release
+build are clean. The release `stella-app` and `stella-headless` hashes are
+respectively
+`a80daa3823279e99e5455adf424ad47e96223e09ba730d2083b5e5c35318beef`
+and `46aae11615746766c9d434c56545dd4a76703590cf53d1f90dc3b36b631a0049`.
+A final 1,200-frame release-wgpu run against a fresh copied AppData directory
+reaches the island map with zero invoked fallbacks, zero remaining
+compatibility bindings and empty stderr; its PNG SHA-256 is
+`7f7804a95612a7ce2eab1ef4a193b3db351ade5db001ede0f294ba458f82dcc1`.

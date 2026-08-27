@@ -23,6 +23,12 @@ pub(super) fn install(
     // scene walk and has no counterpart in sub_10004BAB4.
     let trace_draw_callbacks = std::env::var_os("STELLA_TRACE_DRAW_CALLBACKS").is_some();
     let trace_animation = std::env::var_os("STELLA_TRACE_ANIMATION").is_some();
+    // Purple passes the same static `"shader"` literal to its Lua bridge at
+    // 0x10006D6E0 and again to the shader builder at 0x10006D720. Keep one
+    // interned Lua key alive with the registered native member so the live
+    // per-object raw lookup remains exact without rebuilding that key for
+    // every RenderObjectData visit.
+    let shader_key = lua.create_string("shader")?;
     globals.set(
         "drawGameNative",
         lua.create_function(move |lua, _: MultiValue| {
@@ -228,7 +234,7 @@ pub(super) fn install(
                     // GoldTransformer's `2d-sprite-gold` table.
                     let shader_table = match &callback_object {
                         Value::Table(object_table) => {
-                            match object_table.raw_get::<Value>("shader")? {
+                            match object_table.raw_get::<Value>(&shader_key)? {
                                 Value::Table(shader) => Some(shader),
                                 _ => None,
                             }
