@@ -1,8 +1,8 @@
 //! Screenshot sharing and asynchronous URL-request bridge.
 
 use std::{
-    cell::RefCell,
-    rc::Rc,
+    collections::VecDeque,
+    io::Read,
     sync::{Arc, Mutex},
 };
 
@@ -14,6 +14,30 @@ use crate::{RenderBridge, ScreenshotShareRequest, native_required_string, runtim
 // shader counter, not in GameLua or RenderBridge. The value is incremented
 // before formatting and streamed through ostream's signed-int overload.
 static SCREENSHOT_SEQUENCE: Mutex<i32> = Mutex::new(0);
+
+const URL_CALLBACK_REGISTRY_KEY: &str = "stella.native_start_url_thread.callback";
+
+#[derive(Debug)]
+pub(crate) struct UrlRequestCompletion {
+    url: String,
+    body: Vec<u8>,
+}
+
+/// Cross-thread half of GameLua's `+0x660` URL worker and the process-global
+/// zero-delay event queue used to hand successful responses back to Lua.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct UrlRequestRuntime {
+    completions: Arc<Mutex<VecDeque<UrlRequestCompletion>>>,
+}
+
+impl UrlRequestRuntime {
+    fn pop_completion(&self) -> Option<UrlRequestCompletion> {
+        self.completions
+            .lock()
+            .expect("URL completion queue lock poisoned")
+            .pop_front()
+    }
+}
 
 pub(super) fn install_screenshot(
     lua: &Lua,
@@ -58,12 +82,13 @@ pub(super) fn install_url(
     lua: &Lua,
     globals: &Table,
     render: &Arc<Mutex<RenderBridge>>,
-) -> LuaResult<()> {
+) -> LuaResult<UrlRequestRuntime> {
+    let runtime = UrlRequestRuntime::default();
     let url_bridge = Arc::clone(render);
-    let url_callback = Rc::new(RefCell::new(None::<Function>));
+    let completion_queue = Arc::clone(&runtime.completions);
     globals.set(
         "native_startURLThread",
-        lua.create_function(move |_, args: MultiValue| {
+        lua.create_function(move |lua, args: MultiValue| {
             let url = native_required_string(&args, 0, "native_startURLThread")?;
             let callback = match args.iter().nth(1) {
                 Some(Value::Function(callback)) => callback.clone(),
@@ -78,13 +103,59 @@ pub(super) fn install_url(
                     "bad argument #3 to 'native_startURLThread' (boolean expected)",
                 ));
             }
-            *url_callback.borrow_mut() = Some(callback);
+
+            // sub_100032688 overwrites GameLua+0x50 before constructing the
+            // worker. All queued completion events consequently resolve the
+            // callback that is live when the event is dispatched.
+            lua.set_named_registry_value(URL_CALLBACK_REGISTRY_KEY, callback)?;
             url_bridge
                 .lock()
                 .expect("render bridge lock poisoned")
-                .requested_url = Some(url);
+                .requested_url = Some(url.clone());
+
+            let completion_queue = Arc::clone(&completion_queue);
+            std::thread::Builder::new()
+                .name("stella-url-request".to_owned())
+                .spawn(move || {
+                    let Ok(mut response) = ureq::get(&url).call() else {
+                        return;
+                    };
+                    // net::HttpFileInputStream throws unless the final status
+                    // is exactly 200; other successful 2xx statuses do not
+                    // produce the GameLua event either.
+                    if response.status().as_u16() != 200 {
+                        return;
+                    }
+                    let mut body = Vec::new();
+                    if response
+                        .body_mut()
+                        .as_reader()
+                        .read_to_end(&mut body)
+                        .is_err()
+                    {
+                        return;
+                    }
+                    completion_queue
+                        .lock()
+                        .expect("URL completion queue lock poisoned")
+                        .push_back(UrlRequestCompletion { url, body });
+                })
+                .map_err(|_| runtime_error("Creating thread failed"))?;
             Ok(())
         })?,
     )?;
+    Ok(runtime)
+}
+
+/// Execute the zero-delay events queued by completed URL workers. Purple's
+/// AppController drains this scheduler before calling the application/GameLua
+/// update virtual, so this must run at the head of [`StellaLua::update`].
+pub(crate) fn dispatch_url_completions(lua: &Lua, runtime: &UrlRequestRuntime) -> LuaResult<()> {
+    while let Some(completion) = runtime.pop_completion() {
+        let callback: Function = lua.named_registry_value(URL_CALLBACK_REGISTRY_KEY)?;
+        let url = lua.create_string(completion.url.as_bytes())?;
+        let body = lua.create_string(&completion.body)?;
+        callback.call::<()>((url, body))?;
+    }
     Ok(())
 }

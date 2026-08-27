@@ -14,6 +14,7 @@ pub struct StellaLua {
     pub(crate) resource_runtime: Arc<Mutex<ResourceRuntime>>,
     pub(crate) _audio_runtime: Arc<Mutex<AudioRuntime>>,
     pub(crate) _animation_runtime: Arc<Mutex<AnimationRuntime>>,
+    pub(crate) url_requests: UrlRequestRuntime,
     #[cfg(test)]
     pub(crate) draw_callbacks: Rc<RefCell<DrawCallbacks>>,
     pub(crate) touches: Arc<Mutex<Vec<(u64, i32, i32)>>>,
@@ -114,6 +115,7 @@ impl StellaLua {
             resource_runtime: installed.resources,
             _audio_runtime: installed.audio,
             _animation_runtime: animation_runtime,
+            url_requests: installed.url_requests,
             #[cfg(test)]
             draw_callbacks,
             touches,

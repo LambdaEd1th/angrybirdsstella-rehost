@@ -89,6 +89,9 @@ jobs:
       - name: Run contact solver regressions
         run: "cargo test --locked -p stella-script --lib tests::contact_solver::"
 
+      - name: Run asynchronous URL service regressions
+        run: "cargo test --locked -p stella-script --lib native_url_thread"
+
   platform-check:
     name: Check ${{ matrix.label }}
     needs: quality

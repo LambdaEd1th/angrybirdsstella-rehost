@@ -17,19 +17,21 @@ pub(crate) fn install(
     lua: &Lua,
     globals: &Table,
     render: &Arc<Mutex<RenderBridge>>,
-) -> LuaResult<()> {
+) -> LuaResult<UrlRequestRuntime> {
     // Relative positions recovered from sub_10002C274. Other GameLua
     // subsystems are interleaved between these groups in the full constructor.
     registration::install_identity(lua, globals)?;
     time::install_get_date(lua, globals)?;
-    sharing::install_url(lua, globals, render)?;
+    let url_requests = sharing::install_url(lua, globals, render)?;
     installed_apps::install(lua, globals)?;
     time::install_epoch_conversion(lua, globals)?;
     registration::install_checksum(lua, globals)?;
     misc::install(lua, globals)?;
     sharing::install_screenshot(lua, globals, render)?;
-    Ok(())
+    Ok(url_requests)
 }
+
+pub(crate) use sharing::{UrlRequestRuntime, dispatch_url_completions};
 
 #[cfg(test)]
 pub(crate) use sha1::sha1_upper_hex;

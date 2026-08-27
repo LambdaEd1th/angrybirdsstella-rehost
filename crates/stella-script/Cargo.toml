@@ -13,6 +13,7 @@ rustybuzz.workspace = true
 unicode-bidi.workspace = true
 unicode-script.workspace = true
 unicode-segmentation.workspace = true
+ureq.workspace = true
 clipper2-rust.workspace = true
 mlua.workspace = true
 rodio.workspace = true

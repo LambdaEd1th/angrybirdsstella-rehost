@@ -15371,3 +15371,50 @@ not invent an external-player behavior for that unreachable service.
 A regression invokes `res.openURL` and ForceUpdate from the Lua VM, checks the
 strict argument failures and return ABI, and proves that URL then product
 requests reach the host in native call order without being coalesced.
+
+## Asynchronous URL response worker and main-thread event handoff
+
+`native_startURLThread` was registered but previously stopped after retaining
+the requested URL and a Lua callback that no later code could reach. IDA
+recovers the adapter at `sub_100032688`: argument one is an exact generated-
+adapter string, argument two is a Lua function, and argument three is read as
+a boolean only when the Lua stack count is exactly three. The callback wrapper
+replaces `GameLua+0x50`; a callable containing the `GameLua*` and URL is then
+installed in a newly constructed 0x30-byte thread object at `GameLua+0x660`.
+`sub_100586430` starts that worker with `pthread_create`, and Hopper recovers
+the same callback, owner, URL and optional-thread-policy layout.
+
+The worker body `sub_10006DDAC` constructs `net::HttpFileInputStream` through
+`sub_10052C7F4`, copies the entire stream to memory and posts the original URL
+plus the binary response body to event `dword_100C2A028`. The HTTP stream
+constructor accepts only status 200; any other status throws before a response
+event can be made. A negative stream length also skips the event. Both IDA and
+Hopper recover the constructor's exact `status == 0xC8` comparison and the
+two-string event payload. GameLua's constructor binds that event to
+`sub_10005BD5C`, which pushes the saved function followed by URL and response
+strings, then performs a protected Lua call with exactly two arguments and no
+results.
+
+The event is deliberately not invoked on the network thread. The template
+instantiation at `0x100074654` copies both strings into a zero-delay functor and
+queues it through `sub_10057C1BC` under the process-global scheduler mutex.
+`sub_10057C418` moves and executes those queued functors, and its application
+call site at `-[AppController update]+0x264` (`0x1004045D8`) precedes the app
+update virtual at `0x1004045FC`. This establishes the observable boundary:
+successful URL callbacks run on the next scheduler frame before GameLua's
+ordinary update callback.
+
+The Rust host now mirrors that structure with a named one-slot Lua callback, a
+pure-Rust HTTP/HTTPS worker thread, a binary-safe completion queue and a queue
+drain at the head of `StellaLua::update`. It requires final status 200, reads
+the response without a size or UTF-8 conversion boundary, preserves the
+original `callback(url, responseBody)` ABI, and produces no callback on request
+or stream failure. A loopback regression returns a response containing both a
+NUL and an invalid UTF-8 byte, proves the body survives byte-for-byte, proves
+the callback precedes that frame's Lua update and covers the exact optional-
+boolean stack-count rule.
+
+The complete workspace now passes 687 tests with the intentional long-duration
+BirdRun audit ignored. Strict all-target/all-feature Clippy, formatting and
+locked dependency checks are clean; CI also runs the two synthetic URL-thread
+regressions without requiring the separately distributed game data.

@@ -1,5 +1,123 @@
 use super::*;
 
+use std::{
+    io::{Read, Write},
+    net::TcpListener,
+    thread,
+    time::Duration,
+};
+
+fn spawn_url_response(body: Vec<u8>) -> (String, thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let worker = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = [0_u8; 2048];
+        let _ = stream.read(&mut request).unwrap();
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        )
+        .unwrap();
+        stream.write_all(&body).unwrap();
+    });
+    (format!("http://{address}/stella-data"), worker)
+}
+
+#[test]
+fn native_url_thread_fetches_binary_body_and_dispatches_before_lua_update() {
+    let body = vec![b'S', 0, 0x80, b'!'];
+    let (url, server) = spawn_url_response(body.clone());
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .execute_source(&format!(
+            r#"
+                url_callback_count = 0
+                url_callback_url = nil
+                url_callback_body = nil
+                callback_preceded_update = false
+                native_startURLThread(
+                    "{url}",
+                    function(callback_url, callback_body)
+                        url_callback_count = url_callback_count + 1
+                        url_callback_url = callback_url
+                        url_callback_body = callback_body
+                    end,
+                    true
+                )
+                update = function()
+                    if url_callback_count > 0 then
+                        callback_preceded_update = true
+                    end
+                end
+            "#
+        ))
+        .unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert_eq!(environment.get::<i64>("url_callback_count").unwrap(), 0);
+    server.join().unwrap();
+
+    for _ in 0..200 {
+        runtime.update(0.0).unwrap();
+        if environment.get::<i64>("url_callback_count").unwrap() == 1 {
+            break;
+        }
+        thread::sleep(Duration::from_millis(2));
+    }
+
+    assert_eq!(environment.get::<i64>("url_callback_count").unwrap(), 1);
+    assert_eq!(environment.get::<String>("url_callback_url").unwrap(), url);
+    assert_eq!(
+        environment
+            .get::<mlua::LuaString>("url_callback_body")
+            .unwrap()
+            .as_bytes()
+            .as_ref(),
+        body
+    );
+    assert!(environment.get::<bool>("callback_preceded_update").unwrap());
+}
+
+#[test]
+fn native_url_thread_preserves_generated_adapter_argument_contract() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .execute_source(
+            r#"
+                url_missing_fails = not pcall(native_startURLThread)
+                url_callback_missing_fails = not pcall(
+                    native_startURLThread, "not-a-url"
+                )
+                url_callback_type_fails = not pcall(
+                    native_startURLThread, "not-a-url", false
+                )
+                url_exact_third_type_fails = not pcall(
+                    native_startURLThread, "not-a-url", function() end, 1
+                )
+                url_fourth_argument_skips_optional_bool = pcall(
+                    native_startURLThread,
+                    "not-a-url",
+                    function() end,
+                    "ignored when stack count is not three",
+                    true
+                )
+            "#,
+        )
+        .unwrap();
+    let environment = game_environment(runtime.lua()).unwrap();
+    for name in [
+        "url_missing_fails",
+        "url_callback_missing_fails",
+        "url_callback_type_fails",
+        "url_exact_third_type_fails",
+        "url_fourth_argument_skips_optional_bool",
+    ] {
+        assert!(environment.get::<bool>(name).unwrap(), "{name}");
+    }
+}
+
 #[test]
 fn external_url_and_store_members_queue_host_actions_in_native_call_order() {
     let runtime = StellaLua::new("/tmp").unwrap();

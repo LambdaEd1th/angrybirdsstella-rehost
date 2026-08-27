@@ -27,6 +27,10 @@ impl StellaLua {
 
     /// Run the per-frame callback recovered from the native update loop.
     pub fn update(&self, delta_seconds: f64) -> Result<bool, ScriptError> {
+        // AppController calls the process-global zero-delay event scheduler at
+        // 0x1004045D8 before entering the application update virtual. URL
+        // workers post their successful response through that scheduler.
+        dispatch_url_completions(&self.lua, &self.url_requests)?;
         // AppController hands GameLua an `S0` value. `sub_10005E898` retains
         // that float as the raw delta, then performs the time-multiplier FMUL
         // in single precision before forwarding `float,float` to Lua. Keep

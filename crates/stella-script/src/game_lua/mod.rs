@@ -127,6 +127,7 @@ pub(super) use platform::install as install_platform;
 pub(crate) use platform::set_screenshot_sequence_for_test;
 #[cfg(test)]
 pub(crate) use platform::sha1_upper_hex;
+pub(super) use platform::{UrlRequestRuntime, dispatch_url_completions};
 pub(crate) use platform_services::announce_cloud_service_registrations;
 pub(crate) use platform_services::complete_iap_initialization;
 pub(crate) use platform_services::install as install_platform_service_tables;
