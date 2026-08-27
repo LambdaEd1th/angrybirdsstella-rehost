@@ -65,8 +65,7 @@ impl RenderBridge {
 
     fn destroy_native_joint_now(&mut self, name: &str) -> Option<PhysicsJoint> {
         let joint = self.joints.remove(name)?;
-        self.native_joint_world_order
-            .remove(&joint.physics_creation_order);
+        self.remove_native_joint_order(joint.physics_creation_order);
         if joint.is_physical {
             for object_name in [&joint.first, &joint.second] {
                 if let Some(object) = self.scene.get_mut(object_name) {

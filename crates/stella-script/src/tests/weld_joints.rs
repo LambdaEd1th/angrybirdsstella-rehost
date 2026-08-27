@@ -190,6 +190,8 @@ fn breakable_joints_keep_native_constraints_until_reverse_frame_tail_drain() {
     );
     assert!(bridge.joints.is_empty());
     assert!(bridge.native_joint_world_order.is_empty());
+    assert!(bridge.native_joint_body_orders.is_empty());
+    assert!(bridge.native_body_joint_edges.values().all(Vec::is_empty));
     assert!(bridge.pending_native_joint_destructions.is_empty());
     assert!(!bridge.scene["anchor"].sleeping);
     assert!(!bridge.scene["payload"].sleeping);

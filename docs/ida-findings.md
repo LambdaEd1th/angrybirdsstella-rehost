@@ -15115,3 +15115,59 @@ checked PNG SHA-256 is
 The release `stella-app` and `stella-headless` hashes are respectively
 `4af6d5b67b3274047e1a1229332d273da309c44e397bbd049054a42a8be8452f`
 and `7a9ce9e19458f3b9d4aacc7b26fcbc9703a32b34d1488a5b24d53481ec10478c`.
+
+## Persistent Box2D body-edge topology during island assembly
+
+The follow-up steady L50 profile placed the next avoidable ownership cost in
+`assemble_box2d_islands`. The preceding bridge retained the world contact and
+joint records, but reconstructed two `BTreeMap<&str, Vec<usize>>` adjacency
+graphs on every fixed step and used endpoint names as the island visited
+identity. That work is not present in Purple's Box2D world.
+
+IDA's `b2World::Solve` at `sub_10086E634` clears the body island bit while
+following `b2Body+0x68` at `0x10086E6F4..0x10086E704`, clears contact flags
+through `b2Contact+0x18` at `0x10086E71C..0x10086E72C`, and clears joint
+flags through `b2Joint+0x18` at `0x10086E744..0x10086E74C`. It allocates only
+the `bodyCount * 8` pointer DFS stack at `0x10086E750..0x10086E760`. The DFS
+then reads the body's persistent contact-edge head at `+0x90`, advances each
+edge through `+0x18`, reads the persistent joint-edge head at `+0x80`, and
+again advances through `+0x18` at `0x10086E828..0x10086E8F8`. Static bodies
+terminate traversal before the optional controller list at `+0x88`.
+Hopper independently recovers the same three intrusive list clears, the one
+pointer-stack allocation, both body edge heads and both `edge+0x18` walks.
+
+The Rust world now retains contact and physical-joint allocation tokens on
+both endpoint bodies from creation until destruction. Each per-body vector is
+append-only in creation order while live, so reverse iteration exactly models
+Box2D's head insertion. Contact and joint replacement, fixture/body teardown,
+deferred breakable-joint destruction and complete level clearing unlink both
+endpoints at the native lifecycle boundaries. Island traversal uses the
+stable body allocation token for visited/static-island identity and borrows
+the endpoint name only for the existing scene lookup. It therefore no longer
+rebuilds or sorts an adjacency graph on every solve. Focused regressions cover
+the retained contact endpoints, two-joint chain edge order, island wake order
+and reverse frame-tail joint unlinking.
+
+Five alternating stripped-release pairs each execute 30,000 complete
+Chapter01 L50 update/physics/draw frames. The preceding build reports median
+real/user times of 11.80/11.46 seconds; the persistent-edge build reports
+11.45/11.08 seconds, reductions of approximately 3.0 and 3.3 percent. The
+first new-build wall-time outlier is excluded naturally by the median. A
+follow-up symbol sample no longer has a standalone
+`assemble_box2d_islands` frame or the per-step adjacency-map entry allocation
+below it; LLVM folds the smaller persistent-edge walk into the discrete island
+solver.
+
+The complete workspace passes 677 tests with the intentional long-duration
+BirdRun audit ignored. Formatting, diff whitespace, documentation tests,
+strict all-target/all-feature Clippy and the locked release build are clean.
+The direct release-wgpu Chapter02 L16 checkpoint remains byte-identical to the
+established translucent-water baseline, SHA-256
+`63b5da87b1a55a57d0e5d3559336f604d35817b5651cf8cf7347f7def189d4d7`;
+visual inspection confirms the complete pool and submerged structure. A
+fresh copied-AppData 1,200-frame island-map run has zero invoked fallbacks,
+zero remaining compatibility bindings and a visually checked PNG SHA-256 of
+`324f959b1eebaaf0192cacfd8d31ecab57c8e9eb93573245e5357fee9ba59e44`.
+The release `stella-app` and `stella-headless` hashes are respectively
+`d0184ef3b8ef182dacea5bc681dc88ac8aae79f7fbee59260cf62285fc64cde4`
+and `beb417c969d76675e3eb0c75ffe176015e204f673041028f315c74ded2fe1128`.

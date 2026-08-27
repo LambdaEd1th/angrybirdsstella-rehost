@@ -183,11 +183,21 @@ pub(super) fn insert(
         .map(|object| object.physics_creation_order)
     {
         bridge.native_body_world_order.remove(&previous_order);
+        bridge.native_body_contact_edges.remove(&previous_order);
+        bridge.native_body_joint_edges.remove(&previous_order);
     }
     if scene_object.body_allocation_slot.is_some() {
         bridge
             .native_body_world_order
             .insert(physics_creation_order, name.clone());
+        bridge
+            .native_body_contact_edges
+            .entry(physics_creation_order)
+            .or_default();
+        bridge
+            .native_body_joint_edges
+            .entry(physics_creation_order)
+            .or_default();
     }
     bridge.scene.insert(name.clone(), scene_object);
     bridge.install_object_broad_phase_proxies(&name, false);

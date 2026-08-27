@@ -15,14 +15,16 @@ pub(super) fn insert_joint(
     let is_physical = geometry.is_physical;
     let collide_connected = parameters.collide_connected;
     if let Some(previous) = bridge.joints.get(&geometry.name) {
-        bridge
-            .native_joint_world_order
-            .remove(&previous.physics_creation_order);
+        let previous_order = previous.physics_creation_order;
+        bridge.remove_native_joint_order(previous_order);
     }
     if is_physical {
-        bridge
-            .native_joint_world_order
-            .insert(physics_creation_order, geometry.name.clone());
+        bridge.insert_native_joint_order(
+            physics_creation_order,
+            geometry.name.clone(),
+            &geometry.first,
+            &geometry.second,
+        );
     }
     bridge.joints.insert(
         geometry.name.clone(),

@@ -17,54 +17,19 @@ impl RenderBridge {
         let mut synchronized_bodies = std::mem::take(&mut self.solver_synchronized_bodies);
         synchronized_bodies.clear();
         {
-            // Purple walks the stable contact/joint edge pointers owned by each
-            // body and appends only selected pointers to b2Island scratch
-            // arrays. Borrow the equivalent world records here: copying the
-            // complete contact/joint graph (and every endpoint string) is not
-            // part of `sub_10086E634`.
-            let contact_keys = self
-                .native_contact_world_order
-                .iter()
-                .rev()
-                .map(|(_, key)| key)
-                .filter(|key| {
-                    self.contact_manifolds.contains_key(*key)
-                        && self.active_contacts.get(*key) == Some(&false)
-                })
-                .collect::<Vec<_>>();
-            let joints = self
-                .native_joint_world_order
-                .iter()
-                .rev()
-                .filter_map(|(_, name)| self.joints.get(name))
-                .collect::<Vec<_>>();
-            // b2Body owns contact/joint edge lists. Reconstruct the pointer
-            // topology once in native creation order with borrowed name keys.
-            let mut contact_edges = BTreeMap::<&str, Vec<usize>>::new();
-            for (index, key) in contact_keys.iter().enumerate() {
-                contact_edges.entry(key.0.as_str()).or_default().push(index);
-                contact_edges.entry(key.1.as_str()).or_default().push(index);
-            }
-            let mut joint_edges = BTreeMap::<&str, Vec<usize>>::new();
-            for (index, joint) in joints.iter().enumerate() {
-                joint_edges
-                    .entry(joint.first.as_str())
-                    .or_default()
-                    .push(index);
-                joint_edges
-                    .entry(joint.second.as_str())
-                    .or_default()
-                    .push(index);
-            }
-
-            let mut visited_non_static = BTreeSet::<&str>::new();
-            let mut selected_contacts = vec![false; contact_keys.len()];
-            let mut selected_joints = vec![false; joints.len()];
-            let mut stack = Vec::<&str>::new();
+            // Purple walks the persistent b2ContactEdge/b2JointEdge lists
+            // owned by each body. The Rust bridge maintains those lists at
+            // contact/joint creation and destruction, so island assembly does
+            // not rebuild a host-side graph or compare endpoint names merely
+            // to find a body's edges.
+            let mut visited_non_static = BTreeSet::<u64>::new();
+            let mut selected_contacts = BTreeSet::<u64>::new();
+            let mut selected_joints = BTreeSet::<u64>::new();
+            let mut stack = Vec::<(u64, &str)>::new();
             // b2World::Solve starts at the intrusive body-list head and
             // follows b2Body+0x68. Reverse creation-index iteration is that
             // exact order; it does not first copy or sort a seed-name vector.
-            for (_, seed) in self.native_body_world_order.iter().rev() {
+            for (&seed_id, seed) in self.native_body_world_order.iter().rev() {
                 let Some(seed_object) = self.scene.get(seed) else {
                     continue;
                 };
@@ -72,16 +37,16 @@ impl RenderBridge {
                     || !seed_object.active
                     || !seed_object.motion_started
                     || seed_object.sleeping
-                    || !visited_non_static.insert(seed.as_str())
+                    || !visited_non_static.insert(seed_id)
                 {
                     continue;
                 }
                 stack.clear();
-                stack.push(seed.as_str());
-                let mut island_seen = BTreeSet::<&str>::new();
+                stack.push((seed_id, seed.as_str()));
+                let mut island_seen = BTreeSet::<u64>::new();
                 let mut island = SolverIsland::default();
-                while let Some(name) = stack.pop() {
-                    if !island_seen.insert(name) {
+                while let Some((body_id, name)) = stack.pop() {
+                    if !island_seen.insert(body_id) {
                         continue;
                     }
                     let Some(object) = self.scene.get(name) else {
@@ -99,8 +64,21 @@ impl RenderBridge {
                         continue;
                     }
 
-                    for &edge_index in contact_edges.get(name).into_iter().flatten() {
-                        let key = contact_keys[edge_index];
+                    for &contact_order in self
+                        .native_body_contact_edges
+                        .get(&body_id)
+                        .into_iter()
+                        .flatten()
+                        .rev()
+                    {
+                        let Some(key) = self.native_contact_world_order.get(&contact_order) else {
+                            continue;
+                        };
+                        if !self.contact_manifolds.contains_key(key)
+                            || self.active_contacts.get(key) != Some(&false)
+                        {
+                            continue;
+                        }
                         let other = if key.0 == name {
                             Some(key.1.as_str())
                         } else if key.1 == name {
@@ -117,21 +95,33 @@ impl RenderBridge {
                         if !other_object.active {
                             continue;
                         }
-                        if !selected_contacts[edge_index] {
-                            selected_contacts[edge_index] = true;
+                        if selected_contacts.insert(contact_order) {
                             island.contacts.push(key.clone());
                         }
+                        let other_id = other_object.physics_creation_order;
                         if other_object.moves_during_step() {
-                            if visited_non_static.insert(other) {
-                                stack.push(other);
+                            if visited_non_static.insert(other_id) {
+                                stack.push((other_id, other));
                             }
-                        } else if !island_seen.contains(other) {
-                            stack.push(other);
+                        } else if !island_seen.contains(&other_id) {
+                            stack.push((other_id, other));
                         }
                     }
 
-                    for &edge_index in joint_edges.get(name).into_iter().flatten() {
-                        let joint = joints[edge_index];
+                    for &joint_order in self
+                        .native_body_joint_edges
+                        .get(&body_id)
+                        .into_iter()
+                        .flatten()
+                        .rev()
+                    {
+                        let Some(joint) = self
+                            .native_joint_world_order
+                            .get(&joint_order)
+                            .and_then(|name| self.joints.get(name))
+                        else {
+                            continue;
+                        };
                         let other = if joint.first == name {
                             Some(joint.second.as_str())
                         } else if joint.second == name {
@@ -148,16 +138,16 @@ impl RenderBridge {
                         if !other_object.active {
                             continue;
                         }
-                        if !selected_joints[edge_index] {
-                            selected_joints[edge_index] = true;
+                        if selected_joints.insert(joint_order) {
                             island.joints.push(joint.name.clone());
                         }
+                        let other_id = other_object.physics_creation_order;
                         if other_object.moves_during_step() {
-                            if visited_non_static.insert(other) {
-                                stack.push(other);
+                            if visited_non_static.insert(other_id) {
+                                stack.push((other_id, other));
                             }
-                        } else if !island_seen.contains(other) {
-                            stack.push(other);
+                        } else if !island_seen.contains(&other_id) {
+                            stack.push((other_id, other));
                         }
                     }
                 }
@@ -170,7 +160,7 @@ impl RenderBridge {
                 self.native_body_world_order
                     .iter()
                     .rev()
-                    .filter(|(_, name)| visited_non_static.contains(name.as_str()))
+                    .filter(|(order, _)| visited_non_static.contains(*order))
                     .map(|(_, name)| name.clone()),
             );
         }

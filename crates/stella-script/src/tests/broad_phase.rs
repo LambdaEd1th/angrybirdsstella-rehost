@@ -186,6 +186,11 @@ fn fat_aabb_creates_contact_before_narrow_phase_begin_contact() {
         assert!(bridge.broad_phase_contacts.contains(&key));
         let order = bridge.contact_creation_order[&key];
         assert_eq!(bridge.native_contact_world_order.get(&order), Some(&key));
+        let first = bridge.scene["a"].physics_creation_order;
+        let second = bridge.scene["b"].physics_creation_order;
+        assert_eq!(bridge.native_contact_body_orders[&order], (first, second));
+        assert_eq!(bridge.native_body_contact_edges[&first], [order]);
+        assert_eq!(bridge.native_body_contact_edges[&second], [order]);
         order
     };
 

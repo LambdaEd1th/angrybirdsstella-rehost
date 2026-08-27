@@ -17,6 +17,10 @@ impl RenderBridge {
         self.solver_islands.clear();
         self.solver_synchronized_bodies.clear();
         self.native_body_world_order.clear();
+        self.native_body_contact_edges.clear();
+        self.native_contact_body_orders.clear();
+        self.native_body_joint_edges.clear();
+        self.native_joint_body_orders.clear();
         self.contact_creation_order.clear();
         self.native_contact_world_order.clear();
         self.pending_object_destructions.clear();
@@ -60,6 +64,10 @@ impl RenderBridge {
         };
         if object.body_allocation_slot.is_some() {
             self.native_body_world_order
+                .remove(&object.physics_creation_order);
+            self.native_body_contact_edges
+                .remove(&object.physics_creation_order);
+            self.native_body_joint_edges
                 .remove(&object.physics_creation_order);
         }
         let z_bucket = native_fcvtzs_f32(object.z_order as f32);

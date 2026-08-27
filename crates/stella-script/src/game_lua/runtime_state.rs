@@ -76,6 +76,16 @@ pub(crate) struct RenderBridge {
     /// creation token. Reverse iteration is the native head-to-tail order;
     /// unlike `scene`, this contains only records that own a b2Body.
     pub(crate) native_body_world_order: BTreeMap<u64, String>,
+    /// Intrusive b2ContactEdge order retained per native body. Entries are
+    /// appended in creation order and traversed in reverse because Box2D
+    /// inserts every new edge at the list head.
+    pub(crate) native_body_contact_edges: BTreeMap<u64, Vec<u64>>,
+    /// Stable body endpoints retained by each live contact allocation.
+    pub(crate) native_contact_body_orders: BTreeMap<u64, (u64, u64)>,
+    /// Intrusive b2JointEdge order retained per native body.
+    pub(crate) native_body_joint_edges: BTreeMap<u64, Vec<u64>>,
+    /// Stable body endpoints retained by each live physical joint allocation.
+    pub(crate) native_joint_body_orders: BTreeMap<u64, (u64, u64)>,
     /// Address-sized slot model for the native 0xC0-byte b2Body allocations.
     /// Unlike intrusive-list order, public QueryAABB results are sorted by
     /// `std::set<b2Body*>`, so a destroyed body's block-allocator slot must be
@@ -343,6 +353,10 @@ impl Default for RenderBridge {
             next_draw_order: 0,
             next_physics_creation_order: 0,
             native_body_world_order: BTreeMap::new(),
+            native_body_contact_edges: BTreeMap::new(),
+            native_contact_body_orders: BTreeMap::new(),
+            native_body_joint_edges: BTreeMap::new(),
+            native_joint_body_orders: BTreeMap::new(),
             next_body_allocation_slot: 0,
             free_body_allocation_slots: Vec::new(),
             dynamic_tree: NativeDynamicTree::default(),

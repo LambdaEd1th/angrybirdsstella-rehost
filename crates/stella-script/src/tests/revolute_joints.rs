@@ -161,6 +161,17 @@ fn awake_island_borrows_native_joint_edges_and_wakes_the_complete_sleeping_chain
         .unwrap();
 
     let mut bridge = runtime.render.lock().unwrap();
+    let a_order = bridge.scene["a"].physics_creation_order;
+    let b_order = bridge.scene["b"].physics_creation_order;
+    let c_order = bridge.scene["c"].physics_creation_order;
+    let ab_order = bridge.joints["ab"].physics_creation_order;
+    let bc_order = bridge.joints["bc"].physics_creation_order;
+    assert_eq!(bridge.native_body_joint_edges[&a_order], [ab_order]);
+    assert_eq!(
+        bridge.native_body_joint_edges[&b_order],
+        [ab_order, bc_order]
+    );
+    assert_eq!(bridge.native_body_joint_edges[&c_order], [bc_order]);
     bridge.scene.get_mut("a").unwrap().velocity_x = 1.0;
     bridge.scene.get_mut("b").unwrap().sleeping = true;
     bridge.scene.get_mut("c").unwrap().sleeping = true;
