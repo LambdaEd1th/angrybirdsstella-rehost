@@ -12363,10 +12363,55 @@ adapter. `sub_1000DE1F4` tests Lua slot one with `isFunction`: a function is
 strongly retained at object offset `+0x88`, while `nil`, a missing slot, or any
 other Lua tag clears the old reference without error. The recognition event
 member `sub_1000DDFF0` invokes that retained function with the decoded string
-only when the platform event reports success. The desktop host has no QR
-capture backend, so it now publishes the exact table, returns false for both
-camera queries, retains/clears the callback with the native tag behavior, and
-leaves start/stop on the native no-session path.
+only when the platform event reports success. The desktop host publishes the
+exact table and defaults to the native no-device branch. A host-provided code
+source can explicitly advertise a virtual scanner: `start` retains the native
+session state, a queued code is delivered only after the callback exists, and
+`stop` prevents delivery. It never claims a front-facing camera. This keeps an
+ordinary run on the original false-camera branch while allowing deterministic
+desktop or future platform scanner backends without adding a sixth Lua member.
+
+Following the real Telepod page beyond camera recognition exposed a second,
+larger missing native boundary. `TelepodPage:onQRRecognized` stops the scanner
+and calls the shipped `IAP.redeemCode`; a successful response does not directly
+unlock a bird. It first fetches the provider wallet, delivers the product and
+only then reaches `TelepodPage:onPurchaseDone`. IDA recovers the IAP constructor
+at `sub_1000CC6C8`. Hopper independently confirms all eight registrations:
+`native_buyItem`, `native_restorePurchases`, `native_getAvailableItems`,
+`native_isPaymentInitialized`, `native_fetchWallet`,
+`native_useWalletValidation`, `native_redeemCode` and
+`native_refreshCatalog`. The constructor reads `g_iapBundleId`, publishes the
+table as `IAP`, and `sub_1000CE2A0` calls the shipped
+`registerPaymentCallbacks` exactly once.
+
+The provider-success continuation `sub_1000CE5C4` calls wallet fetch
+`sub_1000CEDAC`, invokes Lua `onPaymentInitialized(bundleId)`, and only then
+publishes its completed state. `native_useWalletValidation` is not a guessed
+policy: direct member `sub_1000CDD54` returns literal true. Redeem member
+`sub_1000CDD5C` installs success and failure continuations before entering the
+provider. Success continuation `sub_1000CF178` calls
+`onRedeemResponse(code, "CODE_OK", productId)`. Failure continuation
+`sub_1000CF278` maps provider errors -31 through -37 and -101 to the shipped
+`CODE_*` strings, using `INVALID_CODE` for every other status.
+
+Finally, wallet processor `sub_1000CF4E4` establishes the non-obvious delivery
+order. For an ordinary voucher it calls `deliverItem(productId)`, optionally
+marks the voucher delivered, then calls
+`onWalletProcessVoucher(voucherProductId, productId, source)`. Decompiling the
+original float32 Lua 5.1 `iap.lua` confirms that a successful redeem moves its
+listener from the scanned code to `productId`; the wallet callback completes
+that product with `PURCHASE_SUCCEEDED`. Reversing only the QR table would
+therefore leave every visible scan stuck before character delivery.
+
+The retired RCS voucher and mobile-store providers cannot be contacted by a
+cross-platform offline release. The rehost nevertheless preserves the exact
+eight-member table, initialization order, strict string adapters, empty store
+catalog, wallet-validation result, `CODE_NOT_FOUND` failure shape and full
+wallet callback chain. Its deterministic provider accepts only one of the 24
+configured `hasbro.telepod.*` identifiers (or a host payload containing that
+exact token), never guesses arbitrary numeric codes. `--telepod-code` exposes
+the virtual scanner and queues such a payload until the shipped Telepod page
+registers its callback.
 
 IDA places the separate two-member `AppStoreLauncher` constructor at
 `sub_10009E2B8`. It registers `updateGameData` at
@@ -12391,23 +12436,26 @@ causing an external process side effect. This table alone does not invent
 promotion content: the shipped button still also requires the retired remote
 Assets payload before becoming visible.
 
-Regressions cover both complete member inventories, strict/ignored argument
+Regressions cover all three complete member inventories, strict/ignored argument
 boundaries, zero-result command ABI, callback function/clear semantics,
 predecoded AppData promotion metadata and the recorded type-3 store request.
 A second test boots the original 1.1.6 chunks and proves their real
 `Telepods.areSupported()` and `hasFrontCamera()` calls observe the native
-false-camera branch. The complete workspace passes 635 tests with one
-intentional long-duration idle test ignored (83 app/audio/wgpu, 31 assets,
-one core and 520 passing plus one ignored script/physics test). Formatting,
+false-camera branch. A scanner/wallet regression then queues a host code and
+proves all 24 configured products map to the correct shipped character and
+complete through `PURCHASE_SUCCEEDED`; an unknown payload completes through
+`CODE_NOT_FOUND`. The complete workspace passes 679 tests with one
+intentional long-duration idle test ignored (85 app/audio/wgpu, 31 assets,
+one core and 562 passing plus one ignored script/physics test). Formatting,
 locked metadata, diff whitespace checks, strict all-target/all-feature Clippy
 and the locked release build are clean. A final 600-frame release-headless run
 against complete `runtime/data` asserts the QrScanner, Telepods,
 AppStoreLauncher and RovioChannel boundaries and completes with zero invoked
 fallbacks and zero remaining compatibility bindings. Current local release
 SHA-256 values are
-`940d89a3cdfb024a324f9336d35f25441742ffefc1fcc673cebf23d98bf43337`
+`cb57fb0f1d9620dddbf31db5109cb83bcbe221d4d2fb4e062d314ee7b03153bc`
 for `stella-app` and
-`e4e20e6619fd4361ba7ddd41fb19b917b4a6a3ef5b7a5878c6b14d9b03c170c3`
+`256bdaec658c20d31bbcbac5ea8a3c6b8aafc4a4b5c9cbfc9318aa9b97e2b88b`
 for `stella-headless`.
 
 ## Skynest account/storage and Ads facades behind the Toons cloud dispatcher

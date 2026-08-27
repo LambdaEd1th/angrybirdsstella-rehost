@@ -678,6 +678,19 @@ fn recovered_platform_and_render_utilities_preserve_native_contracts() {
                 "setQrRecognizedCallback",
             ][..],
         ),
+        (
+            "IAP",
+            &[
+                "native_buyItem",
+                "native_restorePurchases",
+                "native_getAvailableItems",
+                "native_isPaymentInitialized",
+                "native_fetchWallet",
+                "native_useWalletValidation",
+                "native_redeemCode",
+                "native_refreshCatalog",
+            ][..],
+        ),
         ("Assets", &["loadFiles", "createSpriteSheet"][..]),
     ] {
         let table: mlua::Table = runtime.lua().globals().raw_get(table_name).unwrap();
@@ -1034,6 +1047,112 @@ fn shipped_telepods_facade_observes_the_native_no_camera_branch() {
         !environment
             .get::<bool>("shipped_telepods_front_camera")
             .unwrap()
+    );
+}
+
+#[test]
+fn shipped_telepods_scanner_and_iap_wallet_complete_all_configured_products() {
+    let sandbox = ShippedDataSandbox::new("telepods-wallet");
+    let runtime = StellaLua::new(&sandbox.data_root).unwrap();
+    runtime.boot("scripts/game.lua").unwrap();
+
+    assert!(!runtime.submit_qr_code("hasbro.telepod.020").unwrap());
+    runtime.set_qr_scanner_available(true).unwrap();
+    runtime
+        .execute_source(
+            r##"
+                assert(IAP.isPaymentInitialized())
+                assert(_G.IAP.native_isPaymentInitialized())
+                assert(_G.IAP.native_useWalletValidation())
+                assert(#_G.IAP.native_getAvailableItems() == 0)
+                assert(_G.IAP.native_buyItem("retired.store.product") == "")
+                assert(not pcall(_G.IAP.native_buyItem))
+                assert(not pcall(_G.IAP.native_redeemCode, false))
+                assert(Telepods.areSupported())
+                assert(not Telepods.hasFrontCamera())
+
+                scanner_recognized = nil
+                scanner_product = nil
+                scanner_status = nil
+                QrScanner.start()
+                QrScanner.setQrRecognizedCallback(function(code)
+                    scanner_recognized = code
+                    IAP.redeemCode(code, {
+                        onPurchaseDone = function(self, product, status)
+                            scanner_product = product
+                            scanner_status = status
+                        end,
+                        onRedeemFailed = function(self, failedCode, status)
+                            error(failedCode .. ":" .. status)
+                        end,
+                    })
+                end)
+
+                telepod_product_count = 0
+                telepod_success_count = 0
+                telepod_mapping_count = 0
+                for characterName, configuration in pairs(g_telepodConfiguration) do
+                    local product = configuration.productId
+                    if product then
+                        telepod_product_count = telepod_product_count + 1
+                        local mappedName, mappedConfiguration =
+                            getCharacterBasedOnProductId(product)
+                        if mappedName == characterName and
+                           mappedConfiguration == configuration then
+                            telepod_mapping_count = telepod_mapping_count + 1
+                        end
+                        IAP.redeemCode(product, {
+                            onPurchaseDone = function(self, delivered, status)
+                                if delivered == product and
+                                   status == IAP.PaymentStatus.PURCHASE_SUCCEEDED then
+                                    telepod_success_count = telepod_success_count + 1
+                                end
+                            end,
+                            onRedeemFailed = function(self, code, status)
+                                error(code .. ":" .. status)
+                            end,
+                        })
+                    end
+                end
+
+                unknown_code = nil
+                unknown_status = nil
+                IAP.redeemCode("not-a-shipped-telepod", {
+                    onPurchaseDone = function()
+                        error("unknown Telepod code was delivered")
+                    end,
+                    onRedeemFailed = function(self, code, status)
+                        unknown_code = code
+                        unknown_status = status
+                    end,
+                })
+            "##,
+        )
+        .unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert_eq!(
+        environment.get::<String>("scanner_recognized").unwrap(),
+        "hasbro.telepod.020"
+    );
+    assert_eq!(
+        environment.get::<String>("scanner_product").unwrap(),
+        "hasbro.telepod.020"
+    );
+    assert_eq!(
+        environment.get::<String>("scanner_status").unwrap(),
+        "PURCHASE_SUCCEEDED"
+    );
+    assert_eq!(environment.get::<i64>("telepod_product_count").unwrap(), 24);
+    assert_eq!(environment.get::<i64>("telepod_mapping_count").unwrap(), 24);
+    assert_eq!(environment.get::<i64>("telepod_success_count").unwrap(), 24);
+    assert_eq!(
+        environment.get::<String>("unknown_code").unwrap(),
+        "not-a-shipped-telepod"
+    );
+    assert_eq!(
+        environment.get::<String>("unknown_status").unwrap(),
+        "CODE_NOT_FOUND"
     );
 }
 

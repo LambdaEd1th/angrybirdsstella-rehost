@@ -25,6 +25,14 @@ selected explicitly:
 stella-app --data /path/to/data
 ```
 
+To exercise the reconstructed Telepods path without a camera, queue one of the
+product identifiers in `runtime/data/config/telepod_configuration.json` before
+opening the original scan page:
+
+```text
+stella-app --telepod-code hasbro.telepod.020
+```
+
 The bundled resources originate from a legally supplied Angry Birds Stella
 application and must not be redistributed outside the authorized private
 repository and its private releases.

@@ -128,6 +128,7 @@ pub(crate) use platform::set_screenshot_sequence_for_test;
 #[cfg(test)]
 pub(crate) use platform::sha1_upper_hex;
 pub(crate) use platform_services::announce_cloud_service_registrations;
+pub(crate) use platform_services::complete_iap_initialization;
 pub(crate) use platform_services::install as install_platform_service_tables;
 pub(crate) use platform_services::install_offline_game_server_facade;
 pub(crate) use primitive_render_registration::install as install_primitive_render_bindings;

@@ -28,6 +28,11 @@ impl StellaLua {
         ) {
             self.execute(game_script)?;
         }
+        // IapManager publishes its eight native members before loading the
+        // scripts, but registers the six Lua callbacks only once iap.lua has
+        // been evaluated. Its provider-success continuation then fetches the
+        // wallet and calls onPaymentInitialized in that order.
+        complete_iap_initialization(&self.lua)?;
         // The shipped 1.1.6 GameServerConnection chunk deliberately asserts
         // GAMESERVER-DISABLED for every endpoint. Preserve the recovered
         // asynchronous callback shape while making local challenge replay

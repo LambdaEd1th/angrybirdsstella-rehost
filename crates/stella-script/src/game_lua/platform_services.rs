@@ -10,6 +10,7 @@ mod cloud_service;
 mod force_update;
 mod game_server;
 mod gamer_services;
+mod iap;
 mod qr_scanner;
 mod skynest_account;
 mod skynest_storage;
@@ -44,6 +45,7 @@ pub(crate) fn install(
     )?;
     analytics::install(lua, globals)?;
     gamer_services::install(lua, globals)?;
+    iap::install(lua, globals, Arc::clone(&data_root))?;
     qr_scanner::install(lua, globals)?;
     zappar::install(lua, globals)?;
     let skynest_state = Arc::new(Mutex::new(skynest_account::OfflineState::default()));
@@ -64,3 +66,5 @@ pub(crate) fn install(
 
 pub(crate) use cloud_service::announce_registrations as announce_cloud_service_registrations;
 pub(crate) use game_server::install_offline_facade as install_offline_game_server_facade;
+pub(crate) use iap::complete_initialization as complete_iap_initialization;
+pub(crate) use qr_scanner::{set_host_available as set_qr_scanner_available, submit_host_code};

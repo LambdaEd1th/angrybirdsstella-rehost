@@ -253,6 +253,21 @@ impl StellaLua {
             .exec()?;
         Ok(())
     }
+
+    /// Advertise a host-provided QR source to the shipped Telepods menus.
+    /// Desktop builds leave it disabled until a platform integration or a
+    /// deterministic command-line code explicitly enables it.
+    pub fn set_qr_scanner_available(&self, available: bool) -> Result<(), ScriptError> {
+        super::platform_services::set_qr_scanner_available(&self.lua, available)?;
+        Ok(())
+    }
+
+    /// Queue or deliver one recognized QR payload through QrScanner's retained
+    /// native callback. Returns true when an active scanner consumed it now;
+    /// otherwise it remains queued until `start` and callback registration.
+    pub fn submit_qr_code(&self, code: &str) -> Result<bool, ScriptError> {
+        Ok(super::platform_services::submit_host_code(&self.lua, code)?)
+    }
 }
 
 fn canonical_device_orientation(screen_width: u32, screen_height: u32) -> u32 {

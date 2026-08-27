@@ -70,6 +70,18 @@ location by default):
 cargo run --release -p stella-app
 ```
 
+The original camera/provider services are no longer available on desktop, but
+the reverse-matched Telepods flow can be exercised with any product identifier
+from `runtime/data/config/telepod_configuration.json`:
+
+```sh
+cargo run --release -p stella-app -- \
+  --telepod-code hasbro.telepod.020
+```
+
+This exposes a virtual QR scanner, queues the payload until the original scan
+page opens, and then runs the shipped validation, wallet and unlock callbacks.
+
 Generate a deterministic render without opening a window:
 
 ```sh

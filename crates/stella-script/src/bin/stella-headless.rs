@@ -31,6 +31,9 @@ struct Args {
     /// Print render commands emitted by the last frame.
     #[arg(long)]
     dump_render: bool,
+    /// Queue a Telepods QR payload and expose the virtual host scanner.
+    #[arg(long)]
+    telepod_code: Option<String>,
 }
 
 fn main() {
@@ -50,6 +53,14 @@ fn main() {
     match runtime.boot(&args.script) {
         Ok(()) => {
             println!("boot completed");
+            if let Some(code) = args.telepod_code.as_deref()
+                && let Err(error) = runtime
+                    .set_qr_scanner_available(true)
+                    .and_then(|_| runtime.submit_qr_code(code).map(|_| ()))
+            {
+                eprintln!("telepod code stopped: {error}");
+                std::process::exit(8);
+            }
             for source in &args.pre_eval {
                 if let Err(error) = runtime.execute_source(source) {
                     eprintln!("pre-eval stopped: {error}");
