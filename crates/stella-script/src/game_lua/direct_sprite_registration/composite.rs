@@ -14,7 +14,7 @@ pub(super) fn install(
         lua.create_function(move |_, args: mlua::MultiValue| {
             // sub_100085C1C reads one exact STRING followed by four exact
             // NUMBER slots; generated adapters do not reject extras.
-            let sprite = native_required_string(&args, 0, "drawCompoSprite")?;
+            let sprite = native_required_borrowed_string(&args, 0, "drawCompoSprite")?;
             let x = native_required_number(&args, 1, "drawCompoSprite")?;
             let y = native_required_number(&args, 2, "drawCompoSprite")?;
             let local_scale_x = native_required_number(&args, 3, "drawCompoSprite")?;
@@ -22,11 +22,9 @@ pub(super) fn install(
             let resources = resource_runtime
                 .lock()
                 .expect("resource runtime lock poisoned");
-            let Some((parts, regions)) = resources.active_composite_bound_parts(&sprite) else {
+            let Some(parts) = resources.active_bound_composite_snapshot(&sprite) else {
                 return Ok(());
             };
-            let parts = parts.to_vec();
-            let regions = regions.to_vec();
             drop(resources);
             let mut bridge = render.lock().expect("render bridge lock poisoned");
             let current = bridge.state;
@@ -44,7 +42,9 @@ pub(super) fn install(
             let m10 = current.scale_y * sine * local_scale_x;
             let m11 = current.scale_y * cosine * local_scale_y;
 
-            for (part, bound_region) in parts.into_iter().zip(regions) {
+            for bound in parts.iter() {
+                let part = &bound.part;
+                let bound_region = &bound.region;
                 // The record stores an AtlasSprite pointer. Nested
                 // composites have no such pointer and are skipped.
                 let geometry = SpriteGeometry {
@@ -65,9 +65,9 @@ pub(super) fn install(
                 bridge.state.pivot_y = native_pivot_y;
                 bridge.push_render_command(RenderCommand {
                     order: 0,
-                    sprite: part.sprite.into(),
+                    sprite: bound.sprite.clone(),
                     texture: None,
-                    bound_region: Some(bound_region.into()),
+                    bound_region: Some(Arc::clone(bound_region)),
                     bound_composite: None,
                     geometry: None,
                     shader: None,

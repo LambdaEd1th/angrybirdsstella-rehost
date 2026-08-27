@@ -2,7 +2,7 @@ use crate::*;
 use std::sync::Arc;
 
 pub(crate) fn native_direct_sprite_command(
-    sprite: String,
+    sprite: SharedSpriteName,
     bound_region: Arc<SpriteCatalogRegion>,
     shader: Option<SpriteShader>,
     placement: NativeSpritePlacement,
@@ -27,7 +27,7 @@ pub(crate) fn native_direct_sprite_command(
     ];
     RenderCommand {
         order: 0,
-        sprite: sprite.into(),
+        sprite,
         texture: None,
         bound_region: Some(bound_region),
         bound_composite: None,

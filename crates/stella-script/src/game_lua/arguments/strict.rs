@@ -22,6 +22,29 @@ pub(crate) fn native_required_string(
         })
 }
 
+/// Borrow the exact Lua STRING payload used by generated adapters such as
+/// `sub_1005285CC`. Purple's `sub_100508E38` returns the retained TString data
+/// pointer directly; callers that only perform a synchronous lookup must not
+/// allocate an owned host string first.
+pub(crate) fn native_required_borrowed_string(
+    values: &MultiValue,
+    index: usize,
+    function: &str,
+) -> LuaResult<mlua::BorrowedStr> {
+    match values.iter().nth(index) {
+        Some(Value::String(value)) => value.to_str().map_err(|_| {
+            runtime_error(format!(
+                "bad argument #{} to '{function}' (string expected)",
+                index + 1
+            ))
+        }),
+        _ => Err(runtime_error(format!(
+            "bad argument #{} to '{function}' (string expected)",
+            index + 1
+        ))),
+    }
+}
+
 pub(crate) fn native_required_boolean(
     values: &MultiValue,
     index: usize,

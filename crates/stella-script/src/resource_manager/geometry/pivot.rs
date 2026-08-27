@@ -1,5 +1,8 @@
 //! Native CompoSprite integer bounds used by sprite components and callbacks.
 
+#[cfg(test)]
+use std::sync::Arc;
+
 use stella_assets::ka3d::CompositePart;
 
 use crate::{BoundCompositePart, SpriteCatalogRegion, native_fcvtzs_f32};
@@ -9,7 +12,11 @@ use super::NativeSpriteMetrics;
 pub(crate) fn native_composite_metrics(
     parts: &[BoundCompositePart],
 ) -> Option<NativeSpriteMetrics> {
-    native_composite_metrics_iter(parts.iter().map(|bound| (&bound.part, &bound.region)))
+    native_composite_metrics_iter(
+        parts
+            .iter()
+            .map(|bound| (&bound.part, bound.region.as_ref())),
+    )
 }
 
 pub(crate) fn native_composite_metrics_from_parts(
@@ -155,7 +162,11 @@ mod tests {
             .iter()
             .cloned()
             .zip(regions.iter().cloned())
-            .map(|(part, region)| BoundCompositePart { part, region })
+            .map(|(part, region)| BoundCompositePart {
+                sprite: part.sprite.as_str().into(),
+                part,
+                region: Arc::new(region),
+            })
             .collect::<Vec<_>>();
 
         assert_eq!(

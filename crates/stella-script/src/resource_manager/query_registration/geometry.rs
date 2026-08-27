@@ -13,16 +13,7 @@ pub(super) fn install(
         "getSpriteBounds",
         lua.create_function(move |_, args: MultiValue| {
             let index = usize::from(args.len() != 1);
-            let name = args
-                .iter()
-                .nth(index)
-                .and_then(value_string)
-                .ok_or_else(|| {
-                    runtime_error(format!(
-                        "getSpriteBounds argument {} must be string",
-                        index + 1
-                    ))
-                })?;
+            let name = native_required_borrowed_string(&args, index, "getSpriteBounds")?;
             Ok(bounds_resources
                 .lock()
                 .expect("resource runtime lock poisoned")
@@ -37,16 +28,7 @@ pub(super) fn install(
         "getSpritePivot",
         lua.create_function(move |_, args: MultiValue| {
             let index = usize::from(args.len() != 1);
-            let name = args
-                .iter()
-                .nth(index)
-                .and_then(value_string)
-                .ok_or_else(|| {
-                    runtime_error(format!(
-                        "getSpritePivot argument {} must be string",
-                        index + 1
-                    ))
-                })?;
+            let name = native_required_borrowed_string(&args, index, "getSpritePivot")?;
             Ok(pivot_resources
                 .lock()
                 .expect("resource runtime lock poisoned")

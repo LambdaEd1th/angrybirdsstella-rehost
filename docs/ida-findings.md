@@ -14878,3 +14878,65 @@ stderr; its PNG SHA-256 is
 The release `stella-app` and `stella-headless` hashes are respectively
 `128576b06b6cf8581c71c98e6800c084462ee8fccf5c5996744b7ef773194e06`
 and `140b152239fb110f4adb2d7a20745fd88579124d2183a1845e912f9e5c8c9339`.
+
+## Borrowed Lua resource names and retained direct-draw child owners
+
+The next symbolized dense-scene sample placed avoidable host work in the
+direct sprite adapters: `value_string`, UTF-8 validation and allocation were
+visible below the generated Lua closures, while direct composite submission
+still copied the complete part and region vectors and allocated a new region
+owner for every emitted child. These copies were not needed for lifetime
+safety because the active resource-stack entry and live `CompositeSpriteOwner`
+already retained the data beyond the immediate Lua call.
+
+IDA's generated STRING adapter `sub_1005285CC` calls the exact-tag checker
+`sub_1005281F8(a1, a2, 4)` and then tail-branches to `sub_100508E38` with the
+Lua state, slot index and a null length output. `sub_100508E38` locates the
+`TValue`, verifies tag four, loads the `TString*`, and returns `TString+0x18`;
+it neither constructs nor copies a C++ string. The corresponding IDA
+instructions at `0x1005285CC..0x1005285FC` show the tag check followed by that
+tail branch. Hopper independently recovers the same call, `LDR X0,
+[X20,#0x18]`, zero length argument and branch to `sub_100508e38`. Together
+with the previously recovered active-entry `+0x10` concrete sprite load and
+live CompoSprite owner, this establishes a borrowed lookup key followed by
+retained resource pointers, not per-call owned names and child arrays.
+
+The strict direct-draw, `isCompoSprite`, `getSpriteBounds` and
+`getSpritePivot` adapters now borrow the exact Lua STRING payload for their
+synchronous lookup. Each concrete `SpriteResourceEntry` retains one shared
+old-ABI-style COW label, and ordinary direct atlas commands reuse that label
+and the existing atlas owner. A diagnostic `name#instance` still strips the
+suffix only for resource lookup and retains the complete submitted label on
+the deferred command. Each bound composite child likewise stores a shared
+label and shared atlas owner. Direct composite and shader draws now take one
+immutable snapshot from the live owner and clone those pointers into commands
+instead of duplicating both vectors and constructing an owner for every
+child. Focused shadow/release regressions prove pointer identity between the
+active entry and atlas command, and between the live composite child and its
+queued command, while preserving the prior frozen-resource lifetime.
+
+Three alternating stripped-release runs each execute 200,000 deterministic
+frames with 20 hot iterations per frame. The ordinary iteration contains one
+direct atlas draw plus bounds, pivot and composite-type queries. The preceding
+live-CompoSprite build reports median real/user/system times of
+3.58/3.54/0.03 seconds; the borrowed/shared-owner build reports
+2.95/2.91/0.03 seconds, reductions of approximately 17.6 and 17.8 percent in
+wall time and user CPU. A separate four-million-call direct composite run
+drops from median 2.06/2.02/0.02 seconds to 1.33/1.30/0.02 seconds, reductions
+of approximately 35.4 and 35.6 percent. These deliberately concentrated
+adapter diagnostics quantify the removed copies; they are not universal
+frame-rate claims.
+
+The complete workspace passes 675 tests with the intentional long-duration
+BirdRun audit ignored. Formatting, diff whitespace, documentation, strict
+all-target/all-feature Clippy and the locked release build are clean. The
+direct release-wgpu Chapter02 L16 checkpoint remains byte-identical to the
+established translucent-water baseline, SHA-256
+`63b5da87b1a55a57d0e5d3559336f604d35817b5651cf8cf7347f7def189d4d7`.
+A visually inspected copied-AppData 1,200-frame island-map run completes with
+zero invoked fallbacks, zero remaining compatibility bindings and empty
+stderr; its PNG SHA-256 is
+`a8bbc33cf2a94c829cb3ad6834420ceaece6165d111b5399d26a69bdced22dd3`.
+The release `stella-app` and `stella-headless` hashes are respectively
+`d94cadc3c4b659147fd97c7e103ec09801adea7996a8416e4f16950a5b7a4724`
+and `b044d254f865209b956fb659c13e1b5de2dc526c2f9ad481ec5eec1520898c36`.

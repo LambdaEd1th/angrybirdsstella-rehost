@@ -11,8 +11,8 @@ use stella_assets::ka3d::{BitmapFont, CompositeSpriteSet, LocalizationTable, Spr
 
 use super::{NativeSpriteMetrics, SystemFontState};
 use crate::{
-    AudioAssetSource, CompositeSpriteOwner, SpriteCatalogRegion, SpriteShader, TextFontBinding,
-    resolve_data_file,
+    AudioAssetSource, CompositeSpriteOwner, SharedSpriteName, SpriteCatalogRegion, SpriteShader,
+    TextFontBinding, resolve_data_file,
 };
 
 mod sprite_catalog;
@@ -144,6 +144,10 @@ pub(crate) enum SpriteResourceKind {
 
 #[derive(Debug, Clone)]
 pub(crate) struct SpriteResourceEntry {
+    /// Reference-counted counterpart of the concrete Sprite's old-ABI COW
+    /// name. Synchronous Lua lookup can borrow its input while deferred wgpu
+    /// commands retain this already-published label.
+    pub(crate) name: SharedSpriteName,
     pub(crate) kind: SpriteResourceKind,
     pub(crate) owner: String,
     /// Index of the retained native Sprite object inside its owning resource.

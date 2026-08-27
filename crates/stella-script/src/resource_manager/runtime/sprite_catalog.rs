@@ -10,7 +10,8 @@ use stella_assets::ka3d::CompositePart;
 
 use super::{ResourceRuntime, SpriteResourceEntry, SpriteResourceKind};
 use crate::{
-    BoundCompositePart, CompositeSpriteOwner, SpriteCatalogRegion, SpriteCatalogSnapshot,
+    BoundCompositePart, CompositeSpriteOwner, SharedSpriteName, SpriteCatalogRegion,
+    SpriteCatalogSnapshot,
     resource_manager::{NativeSpriteMetrics, SpriteGeometry, native_composite_metrics_from_parts},
 };
 
@@ -223,6 +224,28 @@ impl ResourceRuntime {
         })
     }
 
+    /// Resolve the concrete AtlasSprite pointer and its already-retained COW
+    /// label together. Instance suffixes are not part of the resource lookup,
+    /// but remain visible on the deferred diagnostic command just as before.
+    pub(crate) fn active_atlas_draw_binding(
+        &self,
+        name: &str,
+        data_root: &Path,
+    ) -> Option<(SharedSpriteName, Arc<SpriteCatalogRegion>)> {
+        let asset_name = name.split_once('#').map_or(name, |(base, _)| base);
+        let entry = self.active_sprite_entry(asset_name, Some(SpriteResourceKind::Atlas))?;
+        let region = entry
+            .atlas_region
+            .clone()
+            .or_else(|| self.sprite_sheet_catalog_region(&entry.owner, asset_name, data_root))?;
+        let label = if asset_name.len() == name.len() {
+            entry.name.clone()
+        } else {
+            name.into()
+        };
+        Some((label, region))
+    }
+
     pub(crate) fn active_masked_texture_source(
         &self,
         name: &str,
@@ -289,6 +312,21 @@ impl ResourceRuntime {
             .clone()
     }
 
+    /// Borrow the concrete CompoSprite from its active stack entry and retain
+    /// only the immutable child array required past this synchronous lookup.
+    /// Direct native draws do not acquire another owner reference before they
+    /// walk the CompoSprite Entry vector.
+    pub(crate) fn active_bound_composite_snapshot(
+        &self,
+        name: &str,
+    ) -> Option<Arc<Vec<BoundCompositePart>>> {
+        let asset_name = name.split_once('#').map_or(name, |(base, _)| base);
+        self.active_sprite_entry(asset_name, Some(SpriteResourceKind::Composite))?
+            .composite_sprite
+            .as_ref()
+            .map(|owner| owner.snapshot())
+    }
+
     /// Publish the latest mutable Entry records through the concrete
     /// CompoSprite owner retained by already-created particles and scene
     /// objects. Deferred render commands keep the older Arc snapshot they
@@ -318,7 +356,11 @@ impl ResourceRuntime {
                 .iter()
                 .cloned()
                 .zip(regions.iter().cloned())
-                .map(|(part, region)| BoundCompositePart { part, region })
+                .map(|(part, region)| BoundCompositePart {
+                    sprite: part.sprite.as_str().into(),
+                    part,
+                    region: Arc::new(region),
+                })
                 .collect(),
         );
         Some(owner)

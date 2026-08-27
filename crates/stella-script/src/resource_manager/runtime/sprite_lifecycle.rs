@@ -69,10 +69,12 @@ impl ResourceRuntime {
             }
         }
         for (alias, owner, index, metrics) in additions {
+            let name = alias.as_str().into();
             self.sprite_entries
                 .entry(alias)
                 .or_default()
                 .push(SpriteResourceEntry {
+                    name,
                     kind: SpriteResourceKind::Atlas,
                     owner: owner.clone(),
                     index,
@@ -131,6 +133,7 @@ impl ResourceRuntime {
                 .entry(sprite.name.clone())
                 .or_default()
                 .push(SpriteResourceEntry {
+                    name: sprite.name.as_str().into(),
                     kind: SpriteResourceKind::Atlas,
                     owner: owner.to_owned(),
                     index,
@@ -203,7 +206,11 @@ impl ResourceRuntime {
                 .iter()
                 .cloned()
                 .zip(part_regions.iter().cloned())
-                .map(|(part, region)| BoundCompositePart { part, region })
+                .map(|(part, region)| BoundCompositePart {
+                    sprite: part.sprite.as_str().into(),
+                    part,
+                    region: Arc::new(region),
+                })
                 .collect();
             let metrics = regions
                 .get(index)
@@ -218,6 +225,7 @@ impl ResourceRuntime {
                 .entry(sprite.name.clone())
                 .or_default()
                 .push(SpriteResourceEntry {
+                    name: sprite.name.as_str().into(),
                     kind: SpriteResourceKind::Composite,
                     owner: owner.to_owned(),
                     index,

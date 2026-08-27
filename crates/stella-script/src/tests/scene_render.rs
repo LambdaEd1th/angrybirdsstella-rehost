@@ -1411,6 +1411,7 @@ fn native_scene_composite_callback_uses_integer_bounds_pivot_and_ignores_object_
         object.pivot_offset_y = 200.0;
         object.composite_sprite = Some(Arc::new(CompositeSpriteOwner::new(vec![
             BoundCompositePart {
+                sprite: "PART".into(),
                 part: stella_assets::ka3d::CompositePart {
                     sprite: "PART".to_owned(),
                     x: 10.0,
@@ -1422,7 +1423,7 @@ fn native_scene_composite_callback_uses_integer_bounds_pivot_and_ignores_object_
                     angle: 0.0,
                     visible: true,
                 },
-                region: SpriteCatalogRegion {
+                region: Arc::new(SpriteCatalogRegion {
                     native_sheet_id: 1,
                     texture_source: "part.pvr".to_owned(),
                     sprite: stella_assets::ka3d::SpriteRegion {
@@ -1435,7 +1436,7 @@ fn native_scene_composite_callback_uses_integer_bounds_pivot_and_ignores_object_
                         pivot_y: 7,
                         atlas_rotation: 0,
                     },
-                },
+                }),
             },
         ])));
     }

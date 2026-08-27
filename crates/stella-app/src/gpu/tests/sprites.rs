@@ -475,6 +475,7 @@ fn retained_scene_composite_draws_its_frozen_child_after_catalog_release() {
         bound_region: None,
         bound_composite: Some(
             vec![BoundCompositePart {
+                sprite: "RELEASED_CHILD".into(),
                 part: CompositePart {
                     sprite: "RELEASED_CHILD".to_owned(),
                     x: 5.0,
@@ -486,7 +487,7 @@ fn retained_scene_composite_draws_its_frozen_child_after_catalog_release() {
                     angle: 0.0,
                     visible: true,
                 },
-                region: SpriteCatalogRegion {
+                region: Arc::new(SpriteCatalogRegion {
                     native_sheet_id: 1,
                     texture_source: texture_name.clone(),
                     sprite: SpriteRegion {
@@ -499,7 +500,7 @@ fn retained_scene_composite_draws_its_frozen_child_after_catalog_release() {
                         pivot_y: 3,
                         atlas_rotation: 0,
                     },
-                },
+                }),
             }]
             .into(),
         ),

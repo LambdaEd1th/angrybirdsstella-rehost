@@ -14,7 +14,7 @@ pub(super) fn install(
         lua.create_function(move |_, args: mlua::MultiValue| {
             // sub_100084628 preserves exact STRING, TABLE and NUMBER
             // tags at slots 1..7 and ignores any trailing Lua values.
-            let sprite = native_required_string(&args, 0, "drawSpriteWithShader")?;
+            let sprite = native_required_borrowed_string(&args, 0, "drawSpriteWithShader")?;
             let shader = native_required_table(&args, 1, "drawSpriteWithShader")?;
             let x = native_required_number(&args, 2, "drawSpriteWithShader")?;
             let y = native_required_number(&args, 3, "drawSpriteWithShader")?;
@@ -25,21 +25,17 @@ pub(super) fn install(
                 .lock()
                 .expect("resource runtime lock poisoned");
             let shader = sprite_shader_from_lua(shader, &mut resources.shader_cache)?;
-            let atlas_region = resources.active_atlas_catalog_region(&sprite, &data_root);
-            let parts = atlas_region
+            let atlas_binding = resources.active_atlas_draw_binding(&sprite, &data_root);
+            let parts = atlas_binding
                 .is_none()
-                .then(|| {
-                    resources
-                        .active_composite_bound_parts(&sprite)
-                        .map(|(parts, regions)| (parts.to_vec(), regions.to_vec()))
-                })
+                .then(|| resources.active_bound_composite_snapshot(&sprite))
                 .flatten();
             drop(resources);
             let mut bridge = render.lock().expect("render bridge lock poisoned");
             let state = bridge.state;
-            if let Some(bound_region) = atlas_region {
+            if let Some((sprite_name, bound_region)) = atlas_binding {
                 bridge.push_render_command(native_direct_sprite_command(
-                    sprite,
+                    sprite_name,
                     bound_region,
                     Some(shader),
                     NativeSpritePlacement {
@@ -53,7 +49,7 @@ pub(super) fn install(
                 ));
                 return Ok(());
             }
-            let Some((parts, atlas_parts)) = parts else {
+            let Some(parts) = parts else {
                 return Ok(());
             };
 
@@ -63,12 +59,13 @@ pub(super) fn install(
             // the stored part angle, and skips nested composites.
             let cosine = angle.cos();
             let sine = angle.sin();
-            for (part, bound_region) in parts.into_iter().zip(atlas_parts) {
+            for bound in parts.iter() {
+                let part = &bound.part;
                 let part_x = f64::from(part.x) * scale_x;
                 let part_y = f64::from(part.y) * scale_y;
                 bridge.push_render_command(native_direct_sprite_command(
-                    part.sprite,
-                    Arc::new(bound_region),
+                    bound.sprite.clone(),
+                    Arc::clone(&bound.region),
                     Some(shader.clone()),
                     NativeSpritePlacement {
                         x: x + cosine * part_x - sine * part_y,

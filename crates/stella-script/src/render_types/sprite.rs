@@ -38,8 +38,11 @@ pub struct SpriteCatalogRegion {
 /// later sheet shadow/release from rebinding an existing scene object.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BoundCompositePart {
+    /// Shared old-ABI COW label retained by the concrete CompoSprite Entry.
+    /// The parsed record remains available for Lua query/mutation semantics.
+    pub sprite: SharedSpriteName,
     pub part: CompositePart,
-    pub region: SpriteCatalogRegion,
+    pub region: Arc<SpriteCatalogRegion>,
 }
 
 /// Shared native-style CompoSprite object retained by ResourceManager,

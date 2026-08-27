@@ -3854,7 +3854,12 @@ fn deferred_host_sprite_catalog_tracks_native_shadow_and_release_lifetimes() {
 
     let runtime = StellaLua::new(&data_root).unwrap();
     runtime
-        .execute_source(r#"res.createSpriteSheet("first/FIRST.dat")"#)
+        .execute_source(
+            r#"
+                res.createSpriteSheet("first/FIRST.dat")
+                drawSpriteWithoutShader("SHARED", 0, 0, 1, 1, 0)
+            "#,
+        )
         .unwrap();
     let first = runtime.sprite_catalog_snapshot_since(0).unwrap();
     let first_revision = first.revision;
@@ -3883,6 +3888,16 @@ fn deferred_host_sprite_catalog_tracks_native_shadow_and_release_lifetimes() {
         assert!(Arc::ptr_eq(cached, &first_lookup));
         assert!(Arc::ptr_eq(&first_lookup, &repeated_lookup));
         assert!(Arc::ptr_eq(&first_lookup, retained_entry_region));
+        let bridge = runtime.render.lock().unwrap();
+        let command = &bridge.commands[0];
+        assert!(Arc::ptr_eq(
+            command.sprite.as_arc(),
+            active_entry.name.as_arc()
+        ));
+        assert!(Arc::ptr_eq(
+            command.bound_region.as_ref().unwrap(),
+            retained_entry_region
+        ));
         assert_eq!(cached.sprite.width, 10);
         assert!(cached.texture_source.ends_with("first/first.pvr"));
     }
@@ -3983,9 +3998,24 @@ fn composite_loader_freezes_the_first_ordered_sheet_pointer_across_shadow_and_re
             .ends_with("first/first.pvr")
     );
     let bridge = runtime.render.lock().unwrap();
-    let retained = bridge.commands[0].bound_region.as_ref().unwrap();
+    let command = &bridge.commands[0];
+    let retained = command.bound_region.as_ref().unwrap();
     assert_eq!(retained.sprite.width, 10);
     assert!(retained.texture_source.ends_with("first/first.pvr"));
+    let resources = runtime.resource_runtime.lock().unwrap();
+    let owner = resources.sprite_entries["FROZEN"]
+        .last()
+        .unwrap()
+        .composite_sprite
+        .as_ref()
+        .unwrap();
+    let parts = owner.snapshot();
+    assert!(Arc::ptr_eq(
+        command.sprite.as_arc(),
+        parts[0].sprite.as_arc()
+    ));
+    assert!(Arc::ptr_eq(retained, &parts[0].region));
+    drop(resources);
     drop(bridge);
     fs::remove_dir_all(root).unwrap();
 }
