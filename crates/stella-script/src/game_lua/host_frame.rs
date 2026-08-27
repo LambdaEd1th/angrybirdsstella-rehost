@@ -44,6 +44,9 @@ impl StellaLua {
         // Channel 1.2 loading runs through the same native background-task
         // scheduler and reports its retained callback on the main thread.
         dispatch_channel_completions(&self.lua, &self.channel)?;
+        // Payment provider, voucher redemption and wallet reads all retain
+        // completion functors that re-enter Lua on the application thread.
+        dispatch_iap_completions(&self.lua, &self.iap)?;
         // AppController hands GameLua an `S0` value. `sub_10005E898` retains
         // that float as the raw delta, then performs the time-multiplier FMUL
         // in single precision before forwarding `float,float` to Lua. Keep

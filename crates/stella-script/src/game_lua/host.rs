@@ -20,6 +20,7 @@ pub struct StellaLua {
     pub(crate) channel: ChannelRuntime,
     pub(crate) game_server: GameServerRuntime,
     pub(crate) gamer_services: GamerServicesRuntime,
+    pub(crate) iap: IapRuntime,
     #[cfg(test)]
     pub(crate) draw_callbacks: Rc<RefCell<DrawCallbacks>>,
     pub(crate) touches: Arc<Mutex<Vec<(u64, i32, i32)>>>,
@@ -126,6 +127,7 @@ impl StellaLua {
             channel: installed.channel,
             game_server: installed.game_server,
             gamer_services: installed.gamer_services,
+            iap: installed.iap,
             #[cfg(test)]
             draw_callbacks,
             touches,

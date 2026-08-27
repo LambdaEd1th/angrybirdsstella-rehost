@@ -32,7 +32,7 @@ impl StellaLua {
         // scripts, but registers the six Lua callbacks only once iap.lua has
         // been evaluated. Its provider-success continuation then fetches the
         // wallet and calls onPaymentInitialized in that order.
-        complete_iap_initialization(&self.lua)?;
+        complete_iap_initialization(&self.lua, &self.iap)?;
         // The shipped 1.1.6 GameServerConnection chunk deliberately asserts
         // GAMESERVER-DISABLED for every endpoint. Preserve the recovered
         // asynchronous callback shape while making local challenge replay

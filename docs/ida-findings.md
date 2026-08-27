@@ -15623,3 +15623,47 @@ table and invokes `onChannelLoadingFailed()` before ordinary Lua update. A
 shipped-data regression proves call-stack deferral, pre-update delivery,
 one-shot completion and cancellation suppression while preserving the SDK's
 unavailable-view state.
+
+## IAP provider, redeem and wallet asynchronous chain
+
+The earlier offline IAP bridge preserved the callback values and wallet
+delivery order, but collapsed all provider work into the Lua call stack. The
+native lifecycle is asynchronous at three separate boundaries. Initialization
+at `sub_1000CE2A0` first changes manager state from zero to one, installs the
+provider continuations and calls the shipped `registerPaymentCallbacks` once.
+Provider success reaches `sub_1000CE5C4`: it starts wallet retrieval through
+`sub_1000CEDAC`, calls the retained root `onPaymentInitialized(bundleId)`, and
+only after that callback changes manager state to two.
+
+Redeem member `sub_1000CDD5C` enters `sub_1006B3B3C -> sub_1006B3140`.
+`sub_1006B3140` constructs a 0x68-byte `lang::Func4`, submits it through
+`sub_1005865AC`, and starts it through `sub_100586644`; consequently neither
+`CODE_OK` nor a mapped failure can occur before `native_redeemCode` returns.
+Success continuation `sub_1000CF178` calls retained root member
+`onRedeemResponse(code, "CODE_OK", productId)`. Failure continuation
+`sub_1000CF278` supplies the two-argument `(code, status)` form and maps
+provider statuses -31 through -37 and -101 to the recovered `CODE_*` names.
+The deterministic retired-provider substitute continues to use -31's
+`CODE_NOT_FOUND` result for an unknown local Telepod code.
+
+Wallet retrieval has its own retained job. `sub_1000CEDAC` refuses a second
+request while its processing byte is set; provider path `sub_1006AB4C8`
+constructs a 0xA0-byte `lang::Func3` and submits it to the same scheduler.
+Wallet processor `sub_1000CF4E4` keeps the processing byte set while calling
+`deliverItem(productId)` and then
+`onWalletProcessVoucher(voucherProductId, productId, source)`, clearing it only
+after the batch. This guard is observable because shipped `iap.lua` calls
+`native_fetchWallet` from every successful redeem callback: a burst of voucher
+responses coalesces into one wallet read instead of recursively processing
+each item.
+
+Rust now models the manager's 0/1/2 initialization field, wallet-processing
+guard, voucher queue and completion FIFO under one native owner. Frame-head
+dispatch snapshots that FIFO before entering Lua. Initialization therefore
+appears initialized only after its next-frame callback; a local redeem returns
+on the following frame; the wallet request created by that response cannot be
+seen until one further frame. Regression coverage exercises the shipped
+`iap.lua` rather than a synthetic facade and proves all 24 configured Telepod
+products, unknown-code mapping, listener transfer from code to product,
+coalesced wallet delivery, callback order and the absence of same-stack or
+same-snapshot completion.

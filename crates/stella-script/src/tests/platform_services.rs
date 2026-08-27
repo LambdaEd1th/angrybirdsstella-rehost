@@ -2039,6 +2039,17 @@ fn shipped_telepods_scanner_and_iap_wallet_complete_all_configured_products() {
     let runtime = StellaLua::new(&sandbox.data_root).unwrap();
     runtime.boot("scripts/game.lua").unwrap();
 
+    runtime
+        .execute_source(
+            r##"
+                assert(not IAP.isPaymentInitialized())
+                assert(not _G.IAP.native_isPaymentInitialized())
+            "##,
+        )
+        .unwrap();
+    runtime.update(1.0 / 60.0).unwrap();
+    runtime.update(1.0 / 60.0).unwrap();
+
     assert!(!runtime.submit_qr_code("hasbro.telepod.020").unwrap());
     runtime.set_qr_scanner_available(true).unwrap();
     runtime
@@ -2070,7 +2081,42 @@ fn shipped_telepods_scanner_and_iap_wallet_complete_all_configured_products() {
                         end,
                     })
                 end)
+            "##,
+        )
+        .unwrap();
 
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert_eq!(
+        environment.get::<String>("scanner_recognized").unwrap(),
+        "hasbro.telepod.020"
+    );
+    assert!(
+        environment
+            .get::<Value>("scanner_product")
+            .unwrap()
+            .is_nil()
+    );
+
+    runtime.update(1.0 / 60.0).unwrap();
+    assert!(
+        environment
+            .get::<Value>("scanner_product")
+            .unwrap()
+            .is_nil()
+    );
+    runtime.update(1.0 / 60.0).unwrap();
+    assert_eq!(
+        environment.get::<String>("scanner_product").unwrap(),
+        "hasbro.telepod.020"
+    );
+    assert_eq!(
+        environment.get::<String>("scanner_status").unwrap(),
+        "PURCHASE_SUCCEEDED"
+    );
+
+    runtime
+        .execute_source(
+            r##"
                 telepod_product_count = 0
                 telepod_success_count = 0
                 telepod_mapping_count = 0
@@ -2113,19 +2159,24 @@ fn shipped_telepods_scanner_and_iap_wallet_complete_all_configured_products() {
         )
         .unwrap();
 
-    let environment = game_environment(runtime.lua()).unwrap();
+    assert_eq!(environment.get::<i64>("telepod_success_count").unwrap(), 0);
+    assert!(environment.get::<Value>("unknown_code").unwrap().is_nil());
+
+    // The provider redeem functors return at the following frame head. Their
+    // shipped Lua callbacks request one coalesced wallet fetch, which must not
+    // be delivered re-entrantly in the same queue snapshot.
+    runtime.update(1.0 / 60.0).unwrap();
+    assert_eq!(environment.get::<i64>("telepod_success_count").unwrap(), 0);
     assert_eq!(
-        environment.get::<String>("scanner_recognized").unwrap(),
-        "hasbro.telepod.020"
+        environment.get::<String>("unknown_code").unwrap(),
+        "not-a-shipped-telepod"
     );
     assert_eq!(
-        environment.get::<String>("scanner_product").unwrap(),
-        "hasbro.telepod.020"
+        environment.get::<String>("unknown_status").unwrap(),
+        "CODE_NOT_FOUND"
     );
-    assert_eq!(
-        environment.get::<String>("scanner_status").unwrap(),
-        "PURCHASE_SUCCEEDED"
-    );
+
+    runtime.update(1.0 / 60.0).unwrap();
     assert_eq!(environment.get::<i64>("telepod_product_count").unwrap(), 24);
     assert_eq!(environment.get::<i64>("telepod_mapping_count").unwrap(), 24);
     assert_eq!(environment.get::<i64>("telepod_success_count").unwrap(), 24);

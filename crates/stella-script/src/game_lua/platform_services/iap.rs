@@ -1,21 +1,135 @@
 //! Native IAP provider boundary used by Telepods and the retired mobile store.
 
 use crate::*;
-use std::cell::RefCell;
 use std::collections::VecDeque;
-use std::rc::Rc;
 
-#[derive(Debug, Default)]
-struct OfflineWallet {
-    pending_products: VecDeque<String>,
+#[derive(Clone, Debug)]
+struct WalletVoucher {
+    voucher_product_id: String,
+    product_id: String,
+    source: String,
 }
 
-pub(super) fn install(lua: &Lua, globals: &mlua::Table, data_root: Arc<PathBuf>) -> LuaResult<()> {
+#[derive(Clone, Debug)]
+enum Completion {
+    Initialization,
+    RedeemSuccess { code: String, product: String },
+    RedeemFailure { code: String, status: String },
+    Wallet,
+}
+
+#[derive(Debug, Default)]
+struct IapState {
+    // IapManager+0xA0: 0 uninitialized, 1 initializing, 2 initialized.
+    initialization: u8,
+    wallet_processing: bool,
+    pending_vouchers: VecDeque<WalletVoucher>,
+    completions: VecDeque<Completion>,
+}
+
+/// Native payment/provider state and application-thread completions.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct IapRuntime {
+    state: Arc<Mutex<IapState>>,
+}
+
+impl IapRuntime {
+    fn is_initialized(&self) -> bool {
+        self.state
+            .lock()
+            .expect("IAP state lock poisoned")
+            .initialization
+            == 2
+    }
+
+    fn begin_initialization(&self) -> bool {
+        let mut state = self.state.lock().expect("IAP state lock poisoned");
+        if state.initialization != 0 {
+            return false;
+        }
+        state.initialization = 1;
+        state.completions.push_back(Completion::Initialization);
+        true
+    }
+
+    fn finish_initialization(&self) {
+        self.state
+            .lock()
+            .expect("IAP state lock poisoned")
+            .initialization = 2;
+    }
+
+    fn begin_wallet_fetch(&self, from_initialization: bool) {
+        let mut state = self.state.lock().expect("IAP state lock poisoned");
+        let provider_ready =
+            state.initialization == 2 || (from_initialization && state.initialization == 1);
+        if !provider_ready || state.wallet_processing {
+            return;
+        }
+        state.wallet_processing = true;
+        state.completions.push_back(Completion::Wallet);
+    }
+
+    fn queue_redeem(&self, code: String, product: Option<String>) {
+        let mut state = self.state.lock().expect("IAP state lock poisoned");
+        if state.initialization != 2 {
+            // rcs::payment::PaymentImpl::redeemVoucher returns an immediate
+            // provider-state error before retaining either callback.
+            return;
+        }
+        state.completions.push_back(match product {
+            Some(product) => Completion::RedeemSuccess { code, product },
+            None => Completion::RedeemFailure {
+                code,
+                status: "CODE_NOT_FOUND".to_owned(),
+            },
+        });
+    }
+
+    fn take_pending(&self) -> VecDeque<Completion> {
+        std::mem::take(
+            &mut self
+                .state
+                .lock()
+                .expect("IAP state lock poisoned")
+                .completions,
+        )
+    }
+
+    fn add_voucher(&self, voucher: WalletVoucher) {
+        self.state
+            .lock()
+            .expect("IAP state lock poisoned")
+            .pending_vouchers
+            .push_back(voucher);
+    }
+
+    fn take_wallet_vouchers(&self) -> VecDeque<WalletVoucher> {
+        std::mem::take(
+            &mut self
+                .state
+                .lock()
+                .expect("IAP state lock poisoned")
+                .pending_vouchers,
+        )
+    }
+
+    fn finish_wallet_fetch(&self) {
+        self.state
+            .lock()
+            .expect("IAP state lock poisoned")
+            .wallet_processing = false;
+    }
+}
+
+pub(super) fn install(
+    lua: &Lua,
+    globals: &mlua::Table,
+    data_root: Arc<PathBuf>,
+) -> LuaResult<IapRuntime> {
+    let runtime = IapRuntime::default();
     let native = lua.create_table()?;
-    let provider_state = lua.create_table()?;
-    provider_state.set("initialized", false)?;
-    let wallet = Rc::new(RefCell::new(OfflineWallet::default()));
-    let telepod_products = Rc::new(load_telepod_product_ids(&data_root));
+    let telepod_products = Arc::new(load_telepod_product_ids(&data_root));
 
     native.set(
         "native_buyItem",
@@ -42,40 +156,19 @@ pub(super) fn install(lua: &Lua, globals: &mlua::Table, data_root: Arc<PathBuf>)
         })?,
     )?;
 
-    let initialized_query = provider_state.clone();
+    let initialized_runtime = runtime.clone();
     native.set(
         "native_isPaymentInitialized",
-        lua.create_function(move |_, _: MultiValue| initialized_query.get::<bool>("initialized"))?,
+        lua.create_function(move |_, _: MultiValue| Ok(initialized_runtime.is_initialized()))?,
     )?;
 
-    let fetch_wallet = Rc::clone(&wallet);
+    let fetch_runtime = runtime.clone();
     native.set(
         "native_fetchWallet",
-        lua.create_function(move |lua, _: MultiValue| {
-            // IapManager::fetchWallet (sub_1000CEDAC/sub_1000CF4E4) processes
-            // each voucher in this order: deliverItem(productId), followed by
-            // onWalletProcessVoucher(voucherProductId, productId, source).
-            // Moving the queue out before invoking Lua permits the shipped
-            // callbacks to re-enter native_fetchWallet without a RefCell
-            // borrow crossing the Lua boundary.
-            let products = {
-                let mut wallet = fetch_wallet.borrow_mut();
-                wallet.pending_products.drain(..).collect::<Vec<_>>()
-            };
-            if products.is_empty() {
-                return Ok(());
-            }
-            let native: mlua::Table = lua.globals().get("IAP")?;
-            let deliver_item = native.get::<Value>("deliverItem")?;
-            let process_voucher = native.get::<Value>("onWalletProcessVoucher")?;
-            for product in products {
-                if let Value::Function(callback) = &deliver_item {
-                    callback.call::<()>(product.clone())?;
-                }
-                if let Value::Function(callback) = &process_voucher {
-                    callback.call::<()>((product.clone(), product, "telepod"))?;
-                }
-            }
+        lua.create_function(move |_, _: MultiValue| {
+            // sub_1000CEDAC sets its processing byte before asking the Wallet
+            // provider to complete through a retained asynchronous functor.
+            fetch_runtime.begin_wallet_fetch(false);
             Ok(())
         })?,
     )?;
@@ -87,30 +180,19 @@ pub(super) fn install(lua: &Lua, globals: &mlua::Table, data_root: Arc<PathBuf>)
         })?,
     )?;
 
-    let redeem_wallet = Rc::clone(&wallet);
-    let redeem_products = Rc::clone(&telepod_products);
+    let redeem_runtime = runtime.clone();
+    let redeem_products = Arc::clone(&telepod_products);
     native.set(
         "native_redeemCode",
-        lua.create_function(move |lua, args: MultiValue| {
+        lua.create_function(move |_, args: MultiValue| {
             let code = native_required_string(&args, 0, "native_redeemCode")?;
-            let native: mlua::Table = lua.globals().get("IAP")?;
-            let Value::Function(callback) = native.get::<Value>("onRedeemResponse")? else {
-                return Ok(());
-            };
 
             // The original RCS voucher endpoint is retired. Preserve its
             // callback ABI while allowing deterministic local redemption of
             // the 24 product identifiers shipped in telepod_configuration.
             // Unknown values follow provider error -31 / CODE_NOT_FOUND.
-            if let Some(product) = resolve_offline_telepod_product(&code, &redeem_products) {
-                redeem_wallet
-                    .borrow_mut()
-                    .pending_products
-                    .push_back(product.clone());
-                callback.call::<()>((code, "CODE_OK", product))?;
-            } else {
-                callback.call::<()>((code, "CODE_NOT_FOUND"))?;
-            }
+            let product = resolve_offline_telepod_product(&code, &redeem_products);
+            redeem_runtime.queue_redeem(code, product);
             Ok(())
         })?,
     )?;
@@ -119,47 +201,84 @@ pub(super) fn install(lua: &Lua, globals: &mlua::Table, data_root: Arc<PathBuf>)
         lua.create_function(|_, _: MultiValue| Ok(()))?,
     )?;
 
-    // Retain the provider state outside the visible table. The original
-    // native object owns this state as C++ fields and publishes exactly the
-    // eight methods above.
-    lua.set_named_registry_value("stella.iap.provider_state", provider_state)?;
     globals.set("IAP", native)?;
-    Ok(())
+    Ok(runtime)
 }
 
-pub(crate) fn complete_initialization(lua: &Lua) -> LuaResult<bool> {
+pub(crate) fn complete_initialization(lua: &Lua, runtime: &IapRuntime) -> LuaResult<bool> {
     let environment = game_environment(lua)?;
     let Value::Function(register_callbacks) =
         environment.get::<Value>("registerPaymentCallbacks")?
     else {
         return Ok(false);
     };
-    register_callbacks.call::<()>(())?;
-
-    let provider_state: mlua::Table = lua.named_registry_value("stella.iap.provider_state")?;
-    if provider_state.get::<bool>("initialized")? {
+    if !runtime.begin_initialization() {
         return Ok(false);
     }
-    provider_state.set("initialized", true)?;
-
-    let native: mlua::Table = lua.globals().get("IAP")?;
-    // The success callback sub_1000CE5C4 fetches the wallet before notifying
-    // Lua that payment initialization has completed.
-    if let Value::Function(fetch_wallet) = native.get::<Value>("native_fetchWallet")? {
-        fetch_wallet.call::<()>(())?;
-    }
-    if let Value::Function(callback) = native.get::<Value>("onPaymentInitialized")? {
-        let bundle_id = environment
-            .get::<Value>("g_iapBundleId")
-            .ok()
-            .and_then(|value| match value {
-                Value::String(value) => value.to_str().ok().map(|value| value.to_string()),
-                _ => None,
-            })
-            .unwrap_or_default();
-        callback.call::<()>(bundle_id)?;
-    }
+    register_callbacks.call::<()>(())?;
     Ok(true)
+}
+
+/// Deliver payment-provider, redeem and wallet functors on the app thread.
+pub(crate) fn dispatch_completions(lua: &Lua, runtime: &IapRuntime) -> LuaResult<()> {
+    let native: mlua::Table = lua.globals().get("IAP")?;
+    // Snapshot the queue. Redeem success calls into shipped iap.lua, which
+    // starts native_fetchWallet; that new request must complete next frame.
+    for completion in runtime.take_pending() {
+        match completion {
+            Completion::Initialization => {
+                // sub_1000CE5C4 starts wallet retrieval, calls Lua, and only
+                // then publishes IapManager state 2.
+                runtime.begin_wallet_fetch(true);
+                let environment = game_environment(lua)?;
+                let bundle_id = environment
+                    .get::<Value>("g_iapBundleId")
+                    .ok()
+                    .and_then(|value| match value {
+                        Value::String(value) => value.to_str().ok().map(|value| value.to_string()),
+                        _ => None,
+                    })
+                    .unwrap_or_default();
+                native
+                    .get::<mlua::Function>("onPaymentInitialized")?
+                    .call::<()>(bundle_id)?;
+                runtime.finish_initialization();
+            }
+            Completion::RedeemSuccess { code, product } => {
+                runtime.add_voucher(WalletVoucher {
+                    voucher_product_id: product.clone(),
+                    product_id: product.clone(),
+                    source: "telepod".to_owned(),
+                });
+                native
+                    .get::<mlua::Function>("onRedeemResponse")?
+                    .call::<()>((code, "CODE_OK", product))?;
+            }
+            Completion::RedeemFailure { code, status } => {
+                native
+                    .get::<mlua::Function>("onRedeemResponse")?
+                    .call::<()>((code, status))?;
+            }
+            Completion::Wallet => {
+                let vouchers = runtime.take_wallet_vouchers();
+                for voucher in vouchers {
+                    // sub_1000CF4E4 preserves this exact delivery order.
+                    native
+                        .get::<mlua::Function>("deliverItem")?
+                        .call::<()>(voucher.product_id.clone())?;
+                    native
+                        .get::<mlua::Function>("onWalletProcessVoucher")?
+                        .call::<()>((
+                            voucher.voucher_product_id,
+                            voucher.product_id,
+                            voucher.source,
+                        ))?;
+                }
+                runtime.finish_wallet_fetch();
+            }
+        }
+    }
+    Ok(())
 }
 
 fn load_telepod_product_ids(data_root: &Path) -> BTreeSet<String> {

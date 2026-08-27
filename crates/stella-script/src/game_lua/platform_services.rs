@@ -24,6 +24,7 @@ pub(crate) struct InstalledPlatformServices {
     pub(crate) channel: ChannelRuntime,
     pub(crate) game_server: GameServerRuntime,
     pub(crate) gamer_services: GamerServicesRuntime,
+    pub(crate) iap: IapRuntime,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -53,7 +54,7 @@ pub(crate) fn install(
     )?;
     analytics::install(lua, globals)?;
     let gamer_services = gamer_services::install(lua, globals)?;
-    iap::install(lua, globals, Arc::clone(&data_root))?;
+    let iap = iap::install(lua, globals, Arc::clone(&data_root))?;
     qr_scanner::install(lua, globals)?;
     zappar::install(lua, globals)?;
     let skynest_state = Arc::new(Mutex::new(skynest_account::OfflineState::default()));
@@ -74,6 +75,7 @@ pub(crate) fn install(
         channel,
         game_server,
         gamer_services,
+        iap,
     })
 }
 
@@ -88,5 +90,8 @@ pub(crate) use game_server::{
 pub(crate) use gamer_services::{
     GamerServicesRuntime, dispatch_completions as dispatch_gamer_services_completions,
 };
-pub(crate) use iap::complete_initialization as complete_iap_initialization;
+pub(crate) use iap::{
+    IapRuntime, complete_initialization as complete_iap_initialization,
+    dispatch_completions as dispatch_iap_completions,
+};
 pub(crate) use qr_scanner::{set_host_available as set_qr_scanner_available, submit_host_code};

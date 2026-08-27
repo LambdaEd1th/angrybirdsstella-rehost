@@ -15,6 +15,7 @@ pub(crate) struct InstalledRuntimes {
     pub(crate) channel: ChannelRuntime,
     pub(crate) game_server: GameServerRuntime,
     pub(crate) gamer_services: GamerServicesRuntime,
+    pub(crate) iap: IapRuntime,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -228,5 +229,6 @@ pub(crate) fn install_base_globals(
         channel: platform_services.channel,
         game_server: platform_services.game_server,
         gamer_services: platform_services.gamer_services,
+        iap: platform_services.iap,
     })
 }

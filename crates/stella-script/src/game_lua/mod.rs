@@ -135,9 +135,9 @@ pub(crate) use platform_services::complete_iap_initialization;
 pub(crate) use platform_services::install as install_platform_service_tables;
 pub(crate) use platform_services::install_offline_game_server_facade;
 pub(crate) use platform_services::{
-    AssetsRuntime, ChannelRuntime, GameServerRuntime, GamerServicesRuntime,
+    AssetsRuntime, ChannelRuntime, GameServerRuntime, GamerServicesRuntime, IapRuntime,
     dispatch_assets_completions, dispatch_channel_completions, dispatch_game_server_completions,
-    dispatch_gamer_services_completions, load_shipped_game_server_facade,
+    dispatch_gamer_services_completions, dispatch_iap_completions, load_shipped_game_server_facade,
 };
 pub(crate) use primitive_render_registration::install as install_primitive_render_bindings;
 pub(crate) use registration::install_base_globals;
