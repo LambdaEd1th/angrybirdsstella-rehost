@@ -77,6 +77,7 @@ impl ResourceRuntime {
                     owner: owner.clone(),
                     index,
                     metrics,
+                    atlas_region: None,
                 });
             self.sprite_sheet_catalog_regions.remove(&owner);
         }
@@ -138,6 +139,7 @@ impl ResourceRuntime {
                         pivot_x: i32::from(sprite.pivot_x),
                         pivot_y: i32::from(sprite.pivot_y),
                     },
+                    atlas_region: None,
                 });
         }
         self.sprite_sheet_values.insert(owner.to_owned(), sheet);
@@ -209,6 +211,7 @@ impl ResourceRuntime {
                     owner: owner.to_owned(),
                     index,
                     metrics,
+                    atlas_region: None,
                 });
         }
         self.composite_set_values.insert(owner.to_owned(), set);

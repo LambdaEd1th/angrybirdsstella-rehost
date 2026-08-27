@@ -3878,8 +3878,11 @@ fn deferred_host_sprite_catalog_tracks_native_shadow_and_release_lifetimes() {
         let repeated_lookup = resources
             .active_atlas_catalog_region("SHARED", runtime.data_root())
             .unwrap();
+        let active_entry = resources.sprite_entries["SHARED"].last().unwrap();
+        let retained_entry_region = active_entry.atlas_region.as_ref().unwrap();
         assert!(Arc::ptr_eq(cached, &first_lookup));
         assert!(Arc::ptr_eq(&first_lookup, &repeated_lookup));
+        assert!(Arc::ptr_eq(&first_lookup, retained_entry_region));
         assert_eq!(cached.sprite.width, 10);
         assert!(cached.texture_source.ends_with("first/first.pvr"));
     }

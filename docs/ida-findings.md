@@ -14762,3 +14762,58 @@ SHA-256 is
 The release `stella-app` and `stella-headless` hashes are respectively
 `40dc833d5d4a057582b79046806f089c84744ce4a489b86c10139615bd7e3d65`
 and `e49c347987719bb5e86222bd29e85557c6a9b53eb8a7598ba2fde274073f4236`.
+
+## Direct AtlasSprite owners in active resource-stack entries
+
+The retained-region follow-up removed the per-draw allocation but exposed one
+remaining ownership mismatch: `active_atlas_catalog_region` still resolved the
+last active resource entry to an owner string and vector index, then searched
+the owning SpriteSheet catalog again by sprite name. Purple's active resource
+entry already contains the concrete Sprite pointer, so this second tree walk
+has no native counterpart.
+
+IDA's central lookup `sub_10045BDDC` walks the ordered name tree at
+`Resources+0x588`, loads the selected priority-vector begin/end pair at
+`0x10045BEC8`, returns `end-0x18`, and applies the optional type tag directly
+to that record. Resource draw `sub_10045C0AC` calls it once at
+`0x10045C0D0`; both the CompoSprite and AtlasSprite branches then load the
+concrete resource pointer from returned entry `+0x10` at `0x10045C0E4` or
+`0x10045C110` before tail-calling the draw member. There is no owner lookup,
+sheet-vector scan or sprite-name comparison after the active entry has been
+selected. Hopper independently recovers the same `Resources+0x588` tree,
+`end-0x18` priority selection, type check and both `LDR X0, [X0,#0x10]`
+instructions.
+
+Each Rust atlas `SpriteResourceEntry` now receives its immutable
+`Arc<SpriteCatalogRegion>` once when the successful SpriteSheet constructor
+resolves texture bindings. Active lookup clones that direct owner from the
+last priority entry. Replacement and release remove only their corresponding
+stack records, while already deferred commands retain the prior owner as the
+native immediate caller would retain its pointer. The slower owner/name
+resolver remains solely for direct diagnostic fixtures that install parsed
+sheet values without completing the production constructor. The existing
+shadow/release regression now also proves pointer identity between the
+SpriteSheet cache, active stack entry and two repeated active lookups.
+
+Three alternating stripped-release runs each execute 30,000 complete
+Chapter01 L50 update/physics/draw frames. The first preceding run had a 7.02
+second wall-time scheduling outlier; the robust three-run medians are
+5.54/5.45 seconds real/user for the preceding build and 5.49/5.42 seconds for
+the direct-entry build. The change is a small approximately 0.9/0.6 percent
+reduction in this full-frame workload; its primary purpose is exact native
+ownership rather than a broad frame-rate claim.
+
+The complete workspace passes 675 tests with the intentional long-duration
+BirdRun audit ignored. Formatting, diff whitespace, documentation, strict
+all-target/all-feature Clippy and the locked release build are clean. The
+direct release-wgpu Chapter02 L16 checkpoint remains byte-identical to the
+established water baseline, SHA-256
+`63b5da87b1a55a57d0e5d3559336f604d35817b5651cf8cf7347f7def189d4d7`,
+and visual inspection confirms the translucent pool and submerged objects.
+A copied-AppData 1,200-frame island-map run completes with zero invoked
+fallbacks, zero remaining compatibility bindings and empty stderr; its
+visually checked PNG SHA-256 is
+`af6384ebf585acd81fcd72cc7ebf9780b086de01c2e4e3696ff01149f7077330`.
+The release `stella-app` and `stella-headless` hashes are respectively
+`64da40855cc7a450f3bc1e673cd53532dad7fed738a4f5eadee0e49f7573ffff`
+and `2adffe67fd351f38d255fc746135d0f36789a6ea2d120d0d0800c65efda031d0`.

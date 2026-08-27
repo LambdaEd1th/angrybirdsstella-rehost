@@ -151,6 +151,11 @@ pub(crate) struct SpriteResourceEntry {
     pub(crate) index: usize,
     /// Concrete Sprite fields read by getSpriteBounds/getSpritePivot.
     pub(crate) metrics: NativeSpriteMetrics,
+    /// Concrete AtlasSprite owner stored at native resource-stack entry
+    /// `+0x10`. Production SpriteSheet construction fills this once after the
+    /// sheet's texture bindings have been resolved; active draw lookup then
+    /// clones this pointer instead of searching the owning sheet again.
+    pub(crate) atlas_region: Option<Arc<SpriteCatalogRegion>>,
 }
 
 #[derive(Debug)]

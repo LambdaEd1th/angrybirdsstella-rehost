@@ -33,39 +33,63 @@ impl ResourceRuntime {
     /// Native draw calls retain pointers to those resources; they do not
     /// canonicalize the texture filename again for every submitted sprite.
     pub(crate) fn cache_sprite_sheet_host_bindings(&mut self, owner: &str, data_root: &Path) {
-        let Some(sheet) = self.sprite_sheet_values.get(owner) else {
-            return;
-        };
-        let descriptor = self.sprite_sheet_descriptor_paths.get(owner);
-        let texture_sources = sheet
-            .textures
-            .iter()
-            .map(|texture| {
-                (
-                    texture.clone(),
-                    resolve_texture_source(data_root, descriptor, texture),
-                )
-            })
-            .collect::<BTreeMap<_, _>>();
-        let native_sheet_id = self
-            .sprite_sheet_identities
-            .get(owner)
-            .copied()
-            .unwrap_or(0);
-        let regions = sheet
-            .sprites
-            .iter()
-            .filter_map(|sprite| {
-                let texture = sheet.texture_for(sprite)?;
-                Some((
-                    sprite.name.clone(),
-                    Arc::new(SpriteCatalogRegion {
+        let (texture_sources, regions_by_index) = {
+            let Some(sheet) = self.sprite_sheet_values.get(owner) else {
+                return;
+            };
+            let descriptor = self.sprite_sheet_descriptor_paths.get(owner);
+            let texture_sources = sheet
+                .textures
+                .iter()
+                .map(|texture| {
+                    (
+                        texture.clone(),
+                        resolve_texture_source(data_root, descriptor, texture),
+                    )
+                })
+                .collect::<BTreeMap<_, _>>();
+            let native_sheet_id = self
+                .sprite_sheet_identities
+                .get(owner)
+                .copied()
+                .unwrap_or(0);
+            let regions_by_index = sheet
+                .sprites
+                .iter()
+                .map(|sprite| {
+                    let texture = sheet.texture_for(sprite)?;
+                    Some(Arc::new(SpriteCatalogRegion {
                         native_sheet_id,
                         texture_source: texture_sources.get(texture)?.clone(),
                         sprite: sprite.clone(),
-                    }),
-                ))
-            })
+                    }))
+                })
+                .collect::<Vec<_>>();
+            (texture_sources, regions_by_index)
+        };
+
+        // Resources+0x588 stores the concrete Sprite pointer in every stack
+        // entry. Bind the same immutable owner once at sheet construction so
+        // the hot active lookup needs only the name-tree search and last item.
+        for (index, region) in regions_by_index.iter().enumerate() {
+            let Some(region) = region else {
+                continue;
+            };
+            let Some(entries) = self.sprite_entries.get_mut(&region.sprite.name) else {
+                continue;
+            };
+            if let Some(entry) = entries.iter_mut().rev().find(|entry| {
+                entry.kind == SpriteResourceKind::Atlas
+                    && entry.owner == owner
+                    && entry.index == index
+            }) {
+                entry.atlas_region = Some(Arc::clone(region));
+            }
+        }
+        let regions = regions_by_index
+            .into_iter()
+            .flatten()
+            .map(|region| (region.sprite.name.clone(), region))
             .collect::<BTreeMap<_, _>>();
         self.sprite_sheet_texture_sources
             .insert(owner.to_owned(), texture_sources);
@@ -192,7 +216,11 @@ impl ResourceRuntime {
     ) -> Option<Arc<SpriteCatalogRegion>> {
         let asset_name = name.split_once('#').map_or(name, |(base, _)| base);
         let entry = self.active_sprite_entry(asset_name, Some(SpriteResourceKind::Atlas))?;
-        self.sprite_sheet_catalog_region(&entry.owner, asset_name, data_root)
+        entry.atlas_region.clone().or_else(|| {
+            // Direct ResourceRuntime fixtures can install parsed values
+            // without completing the production SpriteSheet constructor.
+            self.sprite_sheet_catalog_region(&entry.owner, asset_name, data_root)
+        })
     }
 
     pub(crate) fn active_masked_texture_source(
