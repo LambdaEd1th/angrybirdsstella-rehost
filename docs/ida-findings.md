@@ -15418,3 +15418,48 @@ The complete workspace now passes 687 tests with the intentional long-duration
 BirdRun audit ignored. Strict all-target/all-feature Clippy, formatting and
 locked dependency checks are clean; CI also runs the two synthetic URL-thread
 regressions without requiring the separately distributed game data.
+
+## Installed-application HTTP worker and frame-tail delivery
+
+The adjacent `checkInstalledAppsOnline` binding still validated its URL and
+returned zero values without executing the native service. IDA resolves its
+generated one-string adapter `sub_100089E6C` to member `sub_1000505D8`. That
+member copies the URL into `GameLua+0xA8`, constructs a 0x30-byte worker at
+`+0xC0`, and starts callable `sub_10006DFD4`. The callable constructs the same
+`net::HttpFileInputStream` used by the generic URL worker, copies the complete
+response into the `std::string` at `GameLua+0xB0`, then stores byte one at
+`+0xB8`. Hopper independently recovers the shared URL field, worker owner and
+response/flag stores. Unlike `native_startURLThread`, this path posts no event
+to the process-global scheduler.
+
+The completion byte is consumed inside the monolithic GameLua frame rather
+than at the frame head. IDA decompiles the branch at
+`0x10005FD58..0x100060588`: it follows body/joint export and the three rolling-
+material audio loops, parses the raw response, and calls
+`setInstalledApps(installedNames, ttl, rawResponse)` immediately before Lua's
+ordinary `update(scaledDelta, rawDelta)`. Assembly from Hopper confirms the
+`LDRB [GameLua,#0xB8]`, response address `+0xB0`, integer address `+0xC8`,
+three-argument Lua call at `0x10005FE78`, and the final `STRB WZR` at
+`0x100060588`. Because that clear occurs after both parsing and the Lua call,
+a malformed response or callback error leaves the completion visible on the
+next frame.
+
+The shared parser is `sub_100060CBC`. It requires an object document, reads
+integer `ttl` into `GameLua+0xC8`, reads integer `gameCount`, and validates
+each non-empty `game_N` object plus its string `name` and `scheme`. Negative
+or zero counts simply skip the loop. On iOS it tests every authored
+`scheme://` through the platform application adapter and comma-joins the names
+whose schemes are installed; the cross-platform desktop host has no iOS
+application registry and therefore returns the native empty list while still
+validating the complete response. `checkInstalledAppsOffline` uses this same
+parser but retains its distinct one-argument `setInstalledAppsOffline(names)`
+callback.
+
+Rust now mirrors the online member with a named worker, the shared exact-200
+HTTP reader, one overwriteable response slot and a completion check at the
+recovered frame-tail position. The raw JSON remains byte-preserving when
+passed back to Lua. Loopback regressions prove zero-result/asynchronous
+behavior, the `(names, ttl, rawResponse)` values, delivery before ordinary Lua
+update, one-shot clearing after success, and repeated failure when malformed
+JSON prevents the native completion flag from clearing. CI runs these together
+with the binary-safe generic URL-worker regressions without needing game data.

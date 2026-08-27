@@ -117,24 +117,9 @@ pub(super) fn install_url(
             std::thread::Builder::new()
                 .name("stella-url-request".to_owned())
                 .spawn(move || {
-                    let Ok(mut response) = ureq::get(&url).call() else {
+                    let Some(body) = fetch_http_200(&url) else {
                         return;
                     };
-                    // net::HttpFileInputStream throws unless the final status
-                    // is exactly 200; other successful 2xx statuses do not
-                    // produce the GameLua event either.
-                    if response.status().as_u16() != 200 {
-                        return;
-                    }
-                    let mut body = Vec::new();
-                    if response
-                        .body_mut()
-                        .as_reader()
-                        .read_to_end(&mut body)
-                        .is_err()
-                    {
-                        return;
-                    }
                     completion_queue
                         .lock()
                         .expect("URL completion queue lock poisoned")
@@ -145,6 +130,25 @@ pub(super) fn install_url(
         })?,
     )?;
     Ok(runtime)
+}
+
+/// Read the complete body accepted by Purple's `net::HttpFileInputStream`.
+/// Both native URL-worker families use this constructor, whose post-redirect
+/// status contract is exactly 200 rather than the complete 2xx range.
+pub(super) fn fetch_http_200(url: &str) -> Option<Vec<u8>> {
+    let Ok(mut response) = ureq::get(url).call() else {
+        return None;
+    };
+    if response.status().as_u16() != 200 {
+        return None;
+    }
+    let mut body = Vec::new();
+    response
+        .body_mut()
+        .as_reader()
+        .read_to_end(&mut body)
+        .ok()?;
+    Some(body)
 }
 
 /// Execute the zero-delay events queued by completed URL workers. Purple's

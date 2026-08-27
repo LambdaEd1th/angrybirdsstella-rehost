@@ -26,7 +26,7 @@ fn spawn_url_response(body: Vec<u8>) -> (String, thread::JoinHandle<()>) {
 }
 
 #[test]
-fn native_url_thread_fetches_binary_body_and_dispatches_before_lua_update() {
+fn asynchronous_platform_service_url_fetches_binary_body_before_lua_update() {
     let body = vec![b'S', 0, 0x80, b'!'];
     let (url, server) = spawn_url_response(body.clone());
     let runtime = StellaLua::new("/tmp").unwrap();
@@ -81,7 +81,7 @@ fn native_url_thread_fetches_binary_body_and_dispatches_before_lua_update() {
 }
 
 #[test]
-fn native_url_thread_preserves_generated_adapter_argument_contract() {
+fn asynchronous_platform_service_url_preserves_generated_adapter_contract() {
     let runtime = StellaLua::new("/tmp").unwrap();
     runtime
         .execute_source(
@@ -116,6 +116,125 @@ fn native_url_thread_preserves_generated_adapter_argument_contract() {
     ] {
         assert!(environment.get::<bool>(name).unwrap(), "{name}");
     }
+}
+
+#[test]
+fn asynchronous_platform_service_installed_apps_delivers_native_three_arguments() {
+    let body = br#"{"ttl":300,"gameCount":2,"game_0":{"name":"Angry Birds","scheme":"angrybirds"},"game_1":{"name":"Bad Piggies","scheme":"badpiggies"}}"#.to_vec();
+    let (url, server) = spawn_url_response(body.clone());
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .execute_source(&format!(
+            r##"
+                installed_callback_count = 0
+                installed_names = nil
+                installed_ttl = nil
+                installed_response = nil
+                installed_preceded_update = false
+                setInstalledApps = function(names, ttl, response)
+                    installed_callback_count = installed_callback_count + 1
+                    installed_names = names
+                    installed_ttl = ttl
+                    installed_response = response
+                end
+                update = function()
+                    if installed_callback_count > 0 then
+                        installed_preceded_update = true
+                    end
+                end
+                installed_result_count = select("#",
+                    checkInstalledAppsOnline("{url}", "ignored"))
+            "##
+        ))
+        .unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert_eq!(
+        environment.get::<i64>("installed_callback_count").unwrap(),
+        0
+    );
+    assert_eq!(environment.get::<i64>("installed_result_count").unwrap(), 0);
+    server.join().unwrap();
+
+    for _ in 0..200 {
+        runtime.update(0.0).unwrap();
+        if environment.get::<i64>("installed_callback_count").unwrap() == 1 {
+            break;
+        }
+        thread::sleep(Duration::from_millis(2));
+    }
+
+    assert_eq!(
+        environment.get::<i64>("installed_callback_count").unwrap(),
+        1
+    );
+    assert_eq!(environment.get::<String>("installed_names").unwrap(), "");
+    assert_eq!(environment.get::<i32>("installed_ttl").unwrap(), 300);
+    assert_eq!(
+        environment
+            .get::<mlua::LuaString>("installed_response")
+            .unwrap()
+            .as_bytes()
+            .as_ref(),
+        body
+    );
+    assert!(
+        environment
+            .get::<bool>("installed_preceded_update")
+            .unwrap()
+    );
+
+    runtime.update(0.0).unwrap();
+    assert_eq!(
+        environment.get::<i64>("installed_callback_count").unwrap(),
+        1,
+        "GameLua+0xB8 must clear after the successful callback"
+    );
+}
+
+#[test]
+fn asynchronous_platform_service_installed_apps_retains_malformed_completion() {
+    let (url, server) = spawn_url_response(b"{".to_vec());
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .execute_source(&format!(
+            r#"
+                installed_update_count = 0
+                setInstalledApps = function() end
+                update = function()
+                    installed_update_count = installed_update_count + 1
+                end
+                checkInstalledAppsOnline("{url}")
+            "#
+        ))
+        .unwrap();
+    server.join().unwrap();
+
+    let mut first_error = None;
+    for _ in 0..200 {
+        match runtime.update(0.0) {
+            Ok(_) => thread::sleep(Duration::from_millis(2)),
+            Err(error) => {
+                first_error = Some(error.to_string());
+                break;
+            }
+        }
+    }
+    let first_error = first_error.expect("installed-app worker never completed");
+    assert!(first_error.contains("Malformed response"), "{first_error}");
+    let environment = game_environment(runtime.lua()).unwrap();
+    let updates_before_retry = environment.get::<i64>("installed_update_count").unwrap();
+
+    let second_error = runtime.update(0.0).unwrap_err().to_string();
+    assert!(
+        second_error.contains("Malformed response"),
+        "{second_error}"
+    );
+    assert_eq!(
+        environment.get::<i64>("installed_update_count").unwrap(),
+        updates_before_retry,
+        "a retained failed delivery must remain before the next Lua update"
+    );
 }
 
 #[test]

@@ -193,6 +193,10 @@ impl StellaLua {
         // 0x10005FA98..0x10005FD58 updates/stops the three material loops
         // after body/joint export and before installed-app delivery/Lua update.
         self.update_native_rolling_audio(rolling_audio_levels)?;
+        // 0x10005FD58..0x100060588 consumes the installed-app worker's single
+        // response slot, calls setInstalledApps(names, ttl, rawResponse), and
+        // clears GameLua+0xB8 only after that complete path succeeds.
+        dispatch_installed_apps(&self.lua, &self.installed_apps)?;
         let trace_input = std::env::var_os("STELLA_TRACE_INPUT").is_some();
         if trace_input {
             trace_input_tables(&environment, "before-update")?;

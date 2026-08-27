@@ -10,6 +10,7 @@ pub(crate) struct InstalledRuntimes {
     pub(crate) resources: Arc<Mutex<ResourceRuntime>>,
     pub(crate) audio: Arc<Mutex<AudioRuntime>>,
     pub(crate) url_requests: UrlRequestRuntime,
+    pub(crate) installed_apps: InstalledAppsRuntime,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -170,7 +171,7 @@ pub(crate) fn install_base_globals(
             libc_random: Arc::clone(&libc_random),
         },
     )?;
-    let url_requests = game_lua::install_platform(lua, &globals, &render)?;
+    let platform = game_lua::install_platform(lua, &globals, &render)?;
 
     notifications::install(lua, &globals)?;
 
@@ -212,6 +213,7 @@ pub(crate) fn install_base_globals(
     Ok(InstalledRuntimes {
         resources: resource_runtime,
         audio: audio_runtime,
-        url_requests,
+        url_requests: platform.url_requests,
+        installed_apps: platform.installed_apps,
     })
 }
