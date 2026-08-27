@@ -31,6 +31,10 @@ impl StellaLua {
         // 0x1004045D8 before entering the application update virtual. URL
         // workers post their successful response through that scheduler.
         dispatch_url_completions(&self.lua, &self.url_requests)?;
+        // GameServerConnection submits native HttpRequestTask instances with
+        // their Lua callbacks captured by request id. Task completion is
+        // delivered on the application thread before entering GameLua update.
+        dispatch_game_server_completions(&self.lua, &self.game_server)?;
         // AppController hands GameLua an `S0` value. `sub_10005E898` retains
         // that float as the raw delta, then performs the time-multiplier FMUL
         // in single precision before forwarding `float,float` to Lua. Keep

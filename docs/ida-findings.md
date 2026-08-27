@@ -15463,3 +15463,57 @@ behavior, the `(names, ttl, rawResponse)` values, delivery before ordinary Lua
 update, one-shot clearing after success, and repeated failure when malformed
 JSON prevents the native completion flag from clearing. CI runs these together
 with the binary-safe generic URL-worker regressions without needing game data.
+
+## Game-server native transport and retained facade split
+
+The native `GameServerConnection` constructor at `sub_1000D25D8` registers
+exactly `_G.GameServerConnection.native_getAsync` and `native_postAsync`, stores
+`https://stella-stage.appspot.com/api/v1` at owner offset `+0x28`, and loads
+`scripts_common/network/GameServerConnection.lua`. Its generated adapters at
+`sub_1000D8310` and `sub_1000D7F1C` recover the exact argument contracts: GET
+takes a numeric message ID and string route; POST takes a numeric message ID,
+string route, boolean encryption flag, string seed and Lua table. The numeric
+ID follows the original float narrowing and ARM `FCVTZS` conversion rather
+than an ordinary Rust integer cast.
+
+The GET and POST builders at `sub_1000D3FC0` and `sub_1000D44CC` append the
+route to that base URL, apply the native 30-second timeout and send the current
+`g_currentLocale` through `Accept-Language`. GET uses method zero. POST uses
+method one, adds `Content-Type: application/json`, and first serializes its Lua
+table through the recovered util::JSON path. Serialization failure is caught
+by the original adapter and submits no request.
+
+Encrypted POSTs take at most the first eight seed bytes, append the recovered
+literal `RAOzTXzh`, and pass the resulting 16-byte key through the AES code at
+`0x100557E5C..0x100558684`. The implementation is AES-128-CBC with an all-zero
+IV and PKCS#7 padding. `sub_100559560` then uses the alphabet initialized by
+`InitFunc_321`, `ABCDEFGHIJKLMNOPQRSTUVWXYZ234567`, producing unpadded RFC 4648
+base32 inside compact JSON field `data`. The regression vector for seed
+`12345678` and payload `{"a":"x","z":2}` is
+`{"data":"ATS5BS2VEJJELN5ULPWIRRDPC4"}`.
+
+Both request closures converge on `sub_1000D4A64`. Transport status `-1`
+invokes `onAsyncRequestTimedOut(messageId, -1)`. Every other status invokes
+`onAsyncRequestCompleted(messageId, status, responseTable)`; only status 200
+attempts JSON parsing, while non-200 or malformed-success bodies preserve the
+initial empty table. The shipped chunk creates its public high-level
+`GameServerConnection` inside the retained GameLua environment, but attaches
+these completion callbacks to the original root table. Purple's native
+LuaObject therefore retains `_G.GameServerConnection`; replacing or dispatching
+through the local facade would be observably wrong.
+
+The Rust host now preserves that split, loads the shipped facade at the
+constructor-equivalent bootstrap point, executes HTTP work off-thread and
+drains callbacks on the application thread before the ordinary Lua update.
+The shipped 1.1.6 facade still deliberately asserts `GAMESERVER-DISABLED`, so
+the later offline challenge facade remains in place for playable local replay
+while the complete native ABI and transport stay available. Loopback tests
+cover GET/POST method, path and headers, JSON canonicalization, status and
+timeout callback arity, malformed 200 handling, strict generated-adapter types,
+the encryption vector and the root-versus-local retained-table identity.
+
+The complete workspace now passes 696 tests with the intentional long-duration
+BirdRun audit ignored. Strict all-target/all-feature Clippy, formatting, diff
+validation and the locked release build are clean. The release headless host
+also boots the shipped data and advances 120 update/draw frames with zero
+invoked fallbacks and zero remaining compatibility bindings.

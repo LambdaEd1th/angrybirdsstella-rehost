@@ -134,6 +134,9 @@ pub(crate) use platform_services::announce_cloud_service_registrations;
 pub(crate) use platform_services::complete_iap_initialization;
 pub(crate) use platform_services::install as install_platform_service_tables;
 pub(crate) use platform_services::install_offline_game_server_facade;
+pub(crate) use platform_services::{
+    GameServerRuntime, dispatch_game_server_completions, load_shipped_game_server_facade,
+};
 pub(crate) use primitive_render_registration::install as install_primitive_render_bindings;
 pub(crate) use registration::install_base_globals;
 pub(crate) use registration_inventory::NATIVE_NOOP_FUNCTIONS;

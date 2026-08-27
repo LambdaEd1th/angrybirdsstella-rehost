@@ -16,6 +16,7 @@ pub struct StellaLua {
     pub(crate) _animation_runtime: Arc<Mutex<AnimationRuntime>>,
     pub(crate) url_requests: UrlRequestRuntime,
     pub(crate) installed_apps: InstalledAppsRuntime,
+    pub(crate) game_server: GameServerRuntime,
     #[cfg(test)]
     pub(crate) draw_callbacks: Rc<RefCell<DrawCallbacks>>,
     pub(crate) touches: Arc<Mutex<Vec<(u64, i32, i32)>>>,
@@ -118,6 +119,7 @@ impl StellaLua {
             _animation_runtime: animation_runtime,
             url_requests: installed.url_requests,
             installed_apps: installed.installed_apps,
+            game_server: installed.game_server,
             #[cfg(test)]
             draw_callbacks,
             touches,

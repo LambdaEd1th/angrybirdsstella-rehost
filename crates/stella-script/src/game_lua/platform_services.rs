@@ -28,10 +28,11 @@ pub(crate) fn install(
     render: Arc<Mutex<RenderBridge>>,
     animation_runtime: Arc<Mutex<AnimationRuntime>>,
     resource_runtime: Arc<Mutex<ResourceRuntime>>,
-) -> LuaResult<()> {
+) -> LuaResult<GameServerRuntime> {
     ads::install(lua, globals)?;
     app_store_launcher::install(lua, globals, Arc::clone(&data_root), Arc::clone(&render))?;
     force_update::install(lua, globals, Arc::clone(&render))?;
+    let game_server = game_server::install(lua, globals)?;
     animation_wrapper::install(
         lua,
         globals,
@@ -61,10 +62,14 @@ pub(crate) fn install(
     channel::install(lua, globals, resource_runtime)?;
     game_lua::install_simple_random(lua, globals)?;
     align::install(lua, globals)?;
-    Ok(())
+    Ok(game_server)
 }
 
 pub(crate) use cloud_service::announce_registrations as announce_cloud_service_registrations;
 pub(crate) use game_server::install_offline_facade as install_offline_game_server_facade;
+pub(crate) use game_server::{
+    GameServerRuntime, dispatch_completions as dispatch_game_server_completions,
+    load_shipped_facade as load_shipped_game_server_facade,
+};
 pub(crate) use iap::complete_initialization as complete_iap_initialization;
 pub(crate) use qr_scanner::{set_host_available as set_qr_scanner_available, submit_host_code};

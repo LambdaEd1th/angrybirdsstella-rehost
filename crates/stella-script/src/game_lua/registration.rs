@@ -11,6 +11,7 @@ pub(crate) struct InstalledRuntimes {
     pub(crate) audio: Arc<Mutex<AudioRuntime>>,
     pub(crate) url_requests: UrlRequestRuntime,
     pub(crate) installed_apps: InstalledAppsRuntime,
+    pub(crate) game_server: GameServerRuntime,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -81,7 +82,7 @@ pub(crate) fn install_base_globals(
             bitmap_font_assets: Arc::clone(&bitmap_font_assets),
         },
     )?;
-    install_platform_service_tables(
+    let game_server = install_platform_service_tables(
         lua,
         &globals,
         Arc::clone(&data_root),
@@ -107,6 +108,11 @@ pub(crate) fn install_base_globals(
     install_bootstrap_globals(lua, &globals, screen_width, screen_height, &data_root)?;
 
     install_loader_bindings(lua, &globals, Arc::clone(&data_root))?;
+    // GameServerConnection's C++ constructor loads this common facade
+    // immediately after publishing its two native members. The Rust host must
+    // first construct the retained GameLua environment and loader, so this is
+    // the earliest equivalent point in its split registration pipeline.
+    load_shipped_game_server_facade(lua, &data_root)?;
 
     install_time_bindings(lua, &globals)?;
 
@@ -215,5 +221,6 @@ pub(crate) fn install_base_globals(
         audio: audio_runtime,
         url_requests: platform.url_requests,
         installed_apps: platform.installed_apps,
+        game_server,
     })
 }

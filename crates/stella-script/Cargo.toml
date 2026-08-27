@@ -6,6 +6,8 @@ license = "(AGPL-3.0-or-later) AND BSL-1.0"
 rust-version.workspace = true
 
 [dependencies]
+aes.workspace = true
+cbc.workspace = true
 clap.workspace = true
 fontdb.workspace = true
 ttf-parser.workspace = true

@@ -3,6 +3,7 @@ use super::*;
 use std::{
     io::{Read, Write},
     net::TcpListener,
+    sync::mpsc,
     thread,
     time::Duration,
 };
@@ -23,6 +24,365 @@ fn spawn_url_response(body: Vec<u8>) -> (String, thread::JoinHandle<()>) {
         stream.write_all(&body).unwrap();
     });
     (format!("http://{address}/stella-data"), worker)
+}
+
+fn spawn_game_server_response(
+    status: u16,
+    body: Vec<u8>,
+) -> (String, mpsc::Receiver<Vec<u8>>, thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let (request_tx, request_rx) = mpsc::channel();
+    let worker = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut request = Vec::new();
+        let mut header_end = None;
+        let mut content_length = 0_usize;
+        loop {
+            let mut chunk = [0_u8; 2048];
+            let read = stream.read(&mut chunk).unwrap();
+            if read == 0 {
+                break;
+            }
+            request.extend_from_slice(&chunk[..read]);
+            if header_end.is_none()
+                && let Some(offset) = request.windows(4).position(|bytes| bytes == b"\r\n\r\n")
+            {
+                let end = offset + 4;
+                let headers = String::from_utf8_lossy(&request[..end]);
+                content_length = headers
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().ok())
+                            .flatten()
+                    })
+                    .unwrap_or(0);
+                header_end = Some(end);
+            }
+            if header_end.is_some_and(|end| request.len() >= end + content_length) {
+                break;
+            }
+        }
+        request_tx.send(request).unwrap();
+        write!(
+            stream,
+            "HTTP/1.1 {status} Stella\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        )
+        .unwrap();
+        stream.write_all(&body).unwrap();
+    });
+    (format!("http://{address}/api/v1"), request_rx, worker)
+}
+
+#[test]
+fn native_game_server_get_preserves_request_and_callback_contract() {
+    let response = br#"{"player":{"id":42}}"#.to_vec();
+    let (base_url, request_rx, server) = spawn_game_server_response(200, response);
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime.game_server.set_base_url_for_test(base_url);
+    runtime
+        .execute_source(
+            r##"
+                g_currentLocale = "fi_FI"
+                game_server_callback_count = 0
+                game_server_callback_preceded_update = false
+                GameServerConnection.onAsyncRequestCompleted = function(id, status, response)
+                    game_server_callback_count = game_server_callback_count + 1
+                    game_server_callback_id = id
+                    game_server_callback_status = status
+                    game_server_callback_player_id = response.player.id
+                end
+                GameServerConnection.onAsyncRequestTimedOut = function()
+                    game_server_unexpected_timeout = true
+                end
+                GameServerConnection.native_getAsync(7.9, "/player/status", "ignored")
+                update = function()
+                    if game_server_callback_count > 0 then
+                        game_server_callback_preceded_update = true
+                    end
+                end
+            "##,
+        )
+        .unwrap();
+
+    server.join().unwrap();
+    let request = String::from_utf8(request_rx.recv().unwrap()).unwrap();
+    assert!(
+        request.starts_with("GET /api/v1/player/status HTTP/1.1\r\n"),
+        "{request}"
+    );
+    assert!(
+        request
+            .to_ascii_lowercase()
+            .contains("accept-language: fi_fi"),
+        "{request}"
+    );
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert_eq!(
+        environment
+            .get::<i64>("game_server_callback_count")
+            .unwrap(),
+        0
+    );
+    for _ in 0..200 {
+        runtime.update(0.0).unwrap();
+        if environment
+            .get::<i64>("game_server_callback_count")
+            .unwrap()
+            != 0
+        {
+            break;
+        }
+        thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(
+        environment
+            .get::<i64>("game_server_callback_count")
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        environment.get::<i32>("game_server_callback_id").unwrap(),
+        7
+    );
+    assert_eq!(
+        environment
+            .get::<i32>("game_server_callback_status")
+            .unwrap(),
+        200
+    );
+    assert_eq!(
+        environment
+            .get::<i32>("game_server_callback_player_id")
+            .unwrap(),
+        42
+    );
+    assert!(
+        environment
+            .get::<bool>("game_server_callback_preceded_update")
+            .unwrap()
+    );
+    assert!(
+        !environment
+            .get::<bool>("game_server_unexpected_timeout")
+            .unwrap()
+    );
+}
+
+#[test]
+fn native_game_server_post_serializes_json_and_reports_non_success_status() {
+    let (base_url, request_rx, server) =
+        spawn_game_server_response(409, br#"{"ignored":true}"#.to_vec());
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime.game_server.set_base_url_for_test(base_url);
+    runtime
+        .execute_source(
+            r#"
+                g_currentLocale = "en_EN"
+                GameServerConnection.onAsyncRequestCompleted = function(id, status, response)
+                    game_server_post_id = id
+                    game_server_post_status = status
+                    game_server_post_response_empty = next(response) == nil
+                end
+                GameServerConnection.onAsyncRequestTimedOut = function()
+                    game_server_post_timeout = true
+                end
+                GameServerConnection.native_postAsync(
+                    11, "/competition/player", false, "unused", { z = 2, a = "x" }
+                )
+            "#,
+        )
+        .unwrap();
+
+    server.join().unwrap();
+    let request = request_rx.recv().unwrap();
+    let header_end = request
+        .windows(4)
+        .position(|bytes| bytes == b"\r\n\r\n")
+        .unwrap()
+        + 4;
+    let headers = String::from_utf8_lossy(&request[..header_end]).to_ascii_lowercase();
+    assert!(headers.starts_with("post /api/v1/competition/player http/1.1\r\n"));
+    assert!(
+        headers.contains("content-type: application/json"),
+        "{headers}"
+    );
+    assert_eq!(&request[header_end..], br#"{"a":"x","z":2}"#);
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    for _ in 0..200 {
+        runtime.update(0.0).unwrap();
+        if !matches!(
+            environment.get::<Value>("game_server_post_status").unwrap(),
+            Value::Nil
+        ) {
+            break;
+        }
+        thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(environment.get::<i32>("game_server_post_id").unwrap(), 11);
+    assert_eq!(
+        environment.get::<i32>("game_server_post_status").unwrap(),
+        409
+    );
+    assert!(
+        environment
+            .get::<bool>("game_server_post_response_empty")
+            .unwrap()
+    );
+    assert!(!environment.get::<bool>("game_server_post_timeout").unwrap());
+}
+
+#[test]
+fn native_game_server_transport_failure_uses_two_argument_timeout_callback() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .game_server
+        .set_base_url_for_test("http://127.0.0.1:1/api/v1");
+    runtime
+        .execute_source(
+            r##"
+                game_server_timeout_count = 0
+                GameServerConnection.onAsyncRequestCompleted = function()
+                    game_server_unexpected_completion = true
+                end
+                GameServerConnection.onAsyncRequestTimedOut = function(...)
+                    game_server_timeout_count = select("#", ...)
+                    game_server_timeout_id, game_server_timeout_status = ...
+                end
+                GameServerConnection.native_getAsync(19, "/timeout")
+            "##,
+        )
+        .unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    for _ in 0..200 {
+        runtime.update(0.0).unwrap();
+        if environment.get::<i64>("game_server_timeout_count").unwrap() != 0 {
+            break;
+        }
+        thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(
+        environment.get::<i64>("game_server_timeout_count").unwrap(),
+        2
+    );
+    assert_eq!(
+        environment.get::<i32>("game_server_timeout_id").unwrap(),
+        19
+    );
+    assert_eq!(
+        environment
+            .get::<i32>("game_server_timeout_status")
+            .unwrap(),
+        -1
+    );
+    assert!(
+        !environment
+            .get::<bool>("game_server_unexpected_completion")
+            .unwrap()
+    );
+}
+
+#[test]
+fn native_game_server_malformed_success_body_still_completes_with_empty_table() {
+    let (base_url, _request_rx, server) = spawn_game_server_response(200, b"not-json".to_vec());
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime.game_server.set_base_url_for_test(base_url);
+    runtime
+        .execute_source(
+            r##"
+                GameServerConnection.onAsyncRequestCompleted = function(id, status, response)
+                    game_server_malformed_id = id
+                    game_server_malformed_status = status
+                    game_server_malformed_empty = next(response) == nil
+                end
+                GameServerConnection.onAsyncRequestTimedOut = function()
+                    game_server_malformed_timed_out = true
+                end
+                GameServerConnection.native_getAsync(23, "/malformed")
+            "##,
+        )
+        .unwrap();
+
+    server.join().unwrap();
+    let environment = game_environment(runtime.lua()).unwrap();
+    for _ in 0..200 {
+        runtime.update(0.0).unwrap();
+        if !matches!(
+            environment
+                .get::<Value>("game_server_malformed_status")
+                .unwrap(),
+            Value::Nil
+        ) {
+            break;
+        }
+        thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(
+        environment.get::<i32>("game_server_malformed_id").unwrap(),
+        23
+    );
+    assert_eq!(
+        environment
+            .get::<i32>("game_server_malformed_status")
+            .unwrap(),
+        200
+    );
+    assert!(
+        environment
+            .get::<bool>("game_server_malformed_empty")
+            .unwrap()
+    );
+    assert!(
+        !environment
+            .get::<bool>("game_server_malformed_timed_out")
+            .unwrap()
+    );
+}
+
+#[test]
+fn native_game_server_generated_adapters_enforce_exact_argument_types() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .execute_source(
+            r##"
+                assert(not pcall(GameServerConnection.native_getAsync))
+                assert(not pcall(GameServerConnection.native_getAsync, false, "/route"))
+                assert(not pcall(GameServerConnection.native_getAsync, 1))
+                assert(not pcall(GameServerConnection.native_getAsync, 1, false))
+
+                assert(not pcall(GameServerConnection.native_postAsync))
+                assert(not pcall(
+                    GameServerConnection.native_postAsync,
+                    false, "/route", false, "seed", {}
+                ))
+                assert(not pcall(
+                    GameServerConnection.native_postAsync,
+                    1, false, false, "seed", {}
+                ))
+                assert(not pcall(
+                    GameServerConnection.native_postAsync,
+                    1, "/route", 0, "seed", {}
+                ))
+                assert(not pcall(
+                    GameServerConnection.native_postAsync,
+                    1, "/route", false, false, {}
+                ))
+                assert(not pcall(
+                    GameServerConnection.native_postAsync,
+                    1, "/route", false, "seed", false
+                ))
+            "##,
+        )
+        .unwrap();
 }
 
 #[test]
@@ -848,6 +1208,10 @@ fn recovered_platform_and_render_utilities_preserve_native_contracts() {
         (
             "ForceUpdate",
             &["native_checkForcedUpdate", "native_launchAppStore"][..],
+        ),
+        (
+            "GameServerConnection",
+            &["native_getAsync", "native_postAsync"][..],
         ),
         (
             "AppStoreLauncher",
@@ -2549,6 +2913,44 @@ fn offline_challenge_replay_preserves_the_shipped_async_result_route() {
     assert!(matches!(
         environment.get::<Value>("challenge_replay_failed").unwrap(),
         Value::Nil
+    ));
+}
+
+#[test]
+fn game_server_constructor_loads_shipped_facade_without_replacing_native_members() {
+    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data");
+    let runtime = StellaLua::new(data_root).unwrap();
+    let environment = game_environment(runtime.lua()).unwrap();
+    let native_connection: mlua::Table = runtime
+        .lua()
+        .globals()
+        .raw_get("GameServerConnection")
+        .unwrap();
+    for member in [
+        "native_getAsync",
+        "native_postAsync",
+        "onAsyncRequestCompleted",
+        "onAsyncRequestTimedOut",
+    ] {
+        assert!(
+            matches!(
+                native_connection.raw_get::<Value>(member),
+                Ok(Value::Function(_))
+            ),
+            "shipped native GameServerConnection member {member} is not callable"
+        );
+    }
+    let connection: mlua::Table = environment.get("GameServerConnection").unwrap();
+    for member in ["getPlayerStatus", "completeCompetitionLevel"] {
+        assert!(
+            matches!(connection.get::<Value>(member), Ok(Value::Function(_))),
+            "shipped GameServerConnection member {member} is not callable"
+        );
+    }
+    let error_codes: mlua::Table = environment.get("GameServerErrorCodes").unwrap();
+    assert!(matches!(
+        error_codes.get::<Value>("NOT_ENOUGH_TOKENS"),
+        Ok(Value::Number(_)) | Ok(Value::Integer(_))
     ));
 }
 

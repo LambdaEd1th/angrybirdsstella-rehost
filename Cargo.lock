@@ -2559,6 +2559,8 @@ dependencies = [
 name = "stella-script"
 version = "0.1.0"
 dependencies = [
+ "aes",
+ "cbc",
  "clap",
  "clipper2-rust",
  "fontdb",
