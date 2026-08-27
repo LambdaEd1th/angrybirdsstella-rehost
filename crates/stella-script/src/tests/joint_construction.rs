@@ -326,6 +326,43 @@ fn recovered_type_five_is_a_destroy_link_not_a_collision_joint() {
 }
 
 #[test]
+fn metadata_destroy_link_uses_and_publishes_native_one_second_default() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createBox("source", "", 0, 0, 1, 1, 1, 0, 0, true, false, 1)
+                createBox("linked", "", 2, 0, 1, 1, 1, 0, 0, true, false, 1)
+                createJoint({
+                    name = "default_delay", end1 = "source", end2 = "linked",
+                    type = 5, oneWayDestroy = false
+                })
+                observed_default_delay = objects.joints.default_delay.destroyTimer
+            "#,
+        )
+        .unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert_eq!(
+        environment.get::<f64>("observed_default_delay").unwrap(),
+        1.0
+    );
+    assert_eq!(
+        runtime.render.lock().unwrap().joints["default_delay"].destroy_timer,
+        f64::from(1.0_f32)
+    );
+
+    runtime
+        .execute_source(r#"removeJointsFromObject("source")"#)
+        .unwrap();
+    let bridge = runtime.render.lock().unwrap();
+    assert_eq!(
+        bridge.pending_object_destructions.get("linked"),
+        Some(&f64::from(1.0_f32))
+    );
+}
+
+#[test]
 fn object_joint_removal_callbacks_precede_descriptor_retirement() {
     let runtime = unlocked_test_runtime();
     runtime

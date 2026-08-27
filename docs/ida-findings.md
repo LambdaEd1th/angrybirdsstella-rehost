@@ -15768,3 +15768,13 @@ break-force and destruction-delay values, installs the native distance and
 revolute defaults, and mirrors the resolved distance fields into the retained
 Lua descriptor. Regression coverage proves the `4.0f`/`0.5f` spring defaults,
 single-precision pi limit, explicit-number rounding and descriptor publication.
+
+The type-five metadata branch carries another nonzero fallback. IDA shows
+`v155 = 1.0` at `0x10003978C`; only an authored `destroyTimer` replaces it via
+`sub_10052A014`, after which `sub_10002BAB8` publishes the resolved float into
+the Lua descriptor. Hopper independently shows `fmov s9, #1.0` at
+`0x10003978C`, the conditional float accessor, and the descriptor setter at
+`0x100039808`. The rehost now applies and publishes that one-second default
+for metadata-only type-five links while preserving the separate overloaded
+physical-prismatic compatibility branch. This prevents an omitted timer from
+turning the original delayed dependent-object teardown into an immediate one.

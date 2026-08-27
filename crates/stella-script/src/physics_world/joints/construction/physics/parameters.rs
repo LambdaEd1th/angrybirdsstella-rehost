@@ -49,6 +49,13 @@ pub(super) fn decode_joint_parameters(
             0.0_f32
         })
     });
+    let destroy_timer = native_optional_number(table, "destroyTimer")?.unwrap_or_else(|| {
+        f64::from(if geometry.joint_type == 5 && !geometry.is_physical {
+            1.0_f32
+        } else {
+            0.0_f32
+        })
+    });
 
     if geometry.joint_type == 1 {
         // The native distance-joint branch publishes the resolved definition
@@ -57,10 +64,15 @@ pub(super) fn decode_joint_parameters(
         table.set("dampingRatio", damping_ratio)?;
         table.set("collideConnected", collide_connected)?;
     }
+    if geometry.joint_type == 5 && !geometry.is_physical {
+        // Metadata-only destroy links always publish their resolved timer;
+        // Purple's omitted-value default is one second rather than zero.
+        table.set("destroyTimer", destroy_timer)?;
+    }
 
     Ok(JointParameters {
         collide_connected,
-        destroy_timer: native_optional_number(table, "destroyTimer")?.unwrap_or(0.0),
+        destroy_timer,
         breakable: table.get::<bool>("breakable").unwrap_or(false),
         break_force: native_optional_number(table, "breakForce")?.unwrap_or(0.0),
         motor_enabled,
