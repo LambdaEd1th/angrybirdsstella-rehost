@@ -57,19 +57,6 @@ pub(super) fn decode_joint_parameters(
         })
     });
 
-    if geometry.joint_type == 1 {
-        // The native distance-joint branch publishes the resolved definition
-        // fields back to the descriptor immediately after CreateJoint.
-        table.set("frequency", frequency)?;
-        table.set("dampingRatio", damping_ratio)?;
-        table.set("collideConnected", collide_connected)?;
-    }
-    if geometry.joint_type == 5 && !geometry.is_physical {
-        // Metadata-only destroy links always publish their resolved timer;
-        // Purple's omitted-value default is one second rather than zero.
-        table.set("destroyTimer", destroy_timer)?;
-    }
-
     Ok(JointParameters {
         collide_connected,
         destroy_timer,

@@ -299,6 +299,284 @@ fn native_joint_descriptor_is_published_only_after_success_and_is_not_borrowed()
 }
 
 #[test]
+fn native_joint_descriptor_uses_the_recovered_canonical_field_schema() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createBox("first", "", 0, 0, 1, 1, 0, 0, 0, true, false, 1)
+                createBox("second", "", 2, 0, 1, 1, 1, 0, 0, true, false, 1)
+                local source = {
+                    name = "canonical_hinge", end1 = "first", end2 = "second",
+                    type = 3, coordType = 2.49,
+                    x1 = 1.00000006, y1 = 0, x2 = -1, y2 = 0,
+                    breakable = "wrong type", breakForce = 1.00000006,
+                    isDrawn = false, sprite = "joint_sprite",
+                    angleTarget = 0.20000002,
+                    angleCorrectionTorque = 30,
+                    angleCorrectionMotorSpeed = 4,
+                    isMenuJoint = false,
+                    editorOnly = "must not leak"
+                }
+                createJoint(source)
+                source_was_not_filled = source.motor == nil
+                    and source.upperLimit == nil
+                    and source.backAndForth == nil
+            "#,
+        )
+        .unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert!(environment.get::<bool>("source_was_not_filled").unwrap());
+    let descriptor = environment
+        .get::<mlua::Table>("objects")
+        .unwrap()
+        .get::<mlua::Table>("joints")
+        .unwrap()
+        .get::<mlua::Table>("canonical_hinge")
+        .unwrap();
+    assert_eq!(
+        string_key_set(&descriptor),
+        std::collections::BTreeSet::from(
+            [
+                "angleTarget",
+                "backAndForth",
+                "breakForce",
+                "collideConnected",
+                "coordType",
+                "end1",
+                "end2",
+                "isDrawn",
+                "limit",
+                "lowerLimit",
+                "maxTorque",
+                "motor",
+                "motorSpeed",
+                "name",
+                "sprite",
+                "type",
+                "upperLimit",
+                "x1",
+                "x2",
+                "y1",
+                "y2",
+            ]
+            .map(str::to_owned)
+        ),
+    );
+    assert_eq!(descriptor.get::<f64>("coordType").unwrap(), 2.0);
+    assert_eq!(
+        descriptor.get::<f64>("x1").unwrap(),
+        f64::from(1.000_000_1_f32)
+    );
+    assert_eq!(
+        descriptor.get::<f64>("breakForce").unwrap(),
+        f64::from(1.000_000_1_f32)
+    );
+    assert_eq!(
+        descriptor.get::<f64>("angleTarget").unwrap(),
+        f64::from(0.200_000_02_f32)
+    );
+    assert!(!descriptor.get::<bool>("motor").unwrap());
+    assert_eq!(descriptor.get::<f64>("motorSpeed").unwrap(), 0.0);
+    assert_eq!(descriptor.get::<f64>("maxTorque").unwrap(), 10_000.0);
+    assert!(!descriptor.get::<bool>("limit").unwrap());
+    assert_eq!(descriptor.get::<f64>("lowerLimit").unwrap(), 0.0);
+    assert_eq!(
+        descriptor.get::<f64>("upperLimit").unwrap(),
+        f64::from(std::f32::consts::PI)
+    );
+    assert!(!descriptor.get::<bool>("backAndForth").unwrap());
+    assert!(!descriptor.get::<bool>("collideConnected").unwrap());
+    assert!(!descriptor.get::<bool>("isDrawn").unwrap());
+    assert_eq!(descriptor.get::<String>("sprite").unwrap(), "joint_sprite");
+}
+
+#[test]
+fn each_native_joint_class_publishes_only_its_recovered_fields() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createBox("first", "", 3, 4, 1, 1, 0, 0, 0, true, false, 1)
+                createBox("second", "", 8, 10, 1, 1, 1, 0, 0, true, false, 1)
+                createJoint({
+                    name = "distance", end1 = "first", end2 = "second",
+                    type = 1, coordType = 0,
+                    x1 = 99, y1 = 98, x2 = 97, y2 = 96, leaked = true
+                })
+                createJoint({
+                    name = "weld", end1 = "first", end2 = "second",
+                    type = 2, coordType = 2,
+                    x1 = 1, y1 = 2, x2 = 3, y2 = 4, leaked = true
+                })
+                createJoint({
+                    name = "slider", end1 = "first", end2 = "second",
+                    type = 4, coordType = 2,
+                    x1 = 1, y1 = 2, x2 = 3, y2 = 4,
+                    worldAxisX = 1, worldAxisY = 0, leaked = true
+                })
+                createJoint({
+                    name = "destroy_link", end1 = "first", end2 = "second",
+                    type = 5, coordType = 2,
+                    x1 = 1, y1 = 2, x2 = 3, y2 = 4,
+                    oneWayDestroy = false, leaked = true
+                })
+                createJoint({
+                    name = "rope", end1 = "first", end2 = "second",
+                    type = 6, coordType = 2,
+                    x1 = 1, y1 = 2, x2 = 3, y2 = 4,
+                    maxLength = 9, leaked = true
+                })
+            "#,
+        )
+        .unwrap();
+
+    let joints = game_environment(runtime.lua())
+        .unwrap()
+        .get::<mlua::Table>("objects")
+        .unwrap()
+        .get::<mlua::Table>("joints")
+        .unwrap();
+    let distance = joints.get::<mlua::Table>("distance").unwrap();
+    assert_eq!(
+        string_key_set(&distance),
+        std::collections::BTreeSet::from(
+            [
+                "collideConnected",
+                "coordType",
+                "dampingRatio",
+                "end1",
+                "end2",
+                "frequency",
+                "length",
+                "name",
+                "type",
+                "x1",
+                "x2",
+                "y1",
+                "y2",
+            ]
+            .map(str::to_owned)
+        ),
+    );
+    assert_eq!(distance.get::<f64>("x1").unwrap(), 3.0);
+    assert_eq!(distance.get::<f64>("y1").unwrap(), 4.0);
+    assert_eq!(distance.get::<f64>("x2").unwrap(), 8.0);
+    assert_eq!(distance.get::<f64>("y2").unwrap(), 10.0);
+
+    let weld = joints.get::<mlua::Table>("weld").unwrap();
+    assert_eq!(
+        string_key_set(&weld),
+        std::collections::BTreeSet::from(
+            [
+                "collideConnected",
+                "coordType",
+                "end1",
+                "end2",
+                "name",
+                "type",
+                "x1",
+                "x2",
+                "y1",
+                "y2",
+            ]
+            .map(str::to_owned)
+        ),
+    );
+
+    let slider = joints.get::<mlua::Table>("slider").unwrap();
+    assert_eq!(
+        string_key_set(&slider),
+        std::collections::BTreeSet::from(
+            [
+                "backAndForth",
+                "collideConnected",
+                "coordType",
+                "end1",
+                "end2",
+                "limit",
+                "lowerLimit",
+                "maxTorque",
+                "motor",
+                "motorSpeed",
+                "name",
+                "type",
+                "upperLimit",
+                "worldAxisX",
+                "worldAxisY",
+                "x1",
+                "x2",
+                "y1",
+                "y2",
+            ]
+            .map(str::to_owned)
+        ),
+    );
+    assert!(slider.get::<bool>("limit").unwrap());
+    assert!(slider.get::<bool>("motor").unwrap());
+    assert!(slider.get::<bool>("backAndForth").unwrap());
+
+    let destroy_link = joints.get::<mlua::Table>("destroy_link").unwrap();
+    assert_eq!(
+        string_key_set(&destroy_link),
+        std::collections::BTreeSet::from(
+            [
+                "coordType",
+                "destroyTimer",
+                "end1",
+                "end2",
+                "name",
+                "oneWayDestroy",
+                "type",
+                "x1",
+                "x2",
+                "y1",
+                "y2",
+            ]
+            .map(str::to_owned)
+        ),
+    );
+    assert_eq!(destroy_link.get::<f64>("destroyTimer").unwrap(), 1.0);
+    assert!(!destroy_link.get::<bool>("oneWayDestroy").unwrap());
+
+    let rope = joints.get::<mlua::Table>("rope").unwrap();
+    assert_eq!(
+        string_key_set(&rope),
+        std::collections::BTreeSet::from(
+            [
+                "collideConnected",
+                "coordType",
+                "end1",
+                "end2",
+                "name",
+                "type",
+                "x1",
+                "x2",
+                "y1",
+                "y2",
+            ]
+            .map(str::to_owned)
+        ),
+    );
+    assert!(matches!(
+        rope.raw_get::<Value>("maxLength").unwrap(),
+        Value::Nil
+    ));
+}
+
+fn string_key_set(table: &mlua::Table) -> std::collections::BTreeSet<String> {
+    table
+        .clone()
+        .pairs::<Value, Value>()
+        .filter_map(|pair| match pair.unwrap().0 {
+            Value::String(key) => Some(key.to_string_lossy()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
 fn joint_batch_separates_native_and_custom_descriptors() {
     let runtime = unlocked_test_runtime();
     runtime

@@ -32,8 +32,8 @@ pub(super) fn decode_joint_geometry(
         table.get::<f64>("y2").unwrap_or(0.0),
     );
     let coord_type = table
-        .get::<f64>("coordType")
-        .map(|value| (value + 0.5).floor() as i32)
+        .get::<f32>("coordType")
+        .map(|value| (value + 0.5_f32).floor() as i32)
         .unwrap_or(0);
     let (common_first_anchor, common_second_anchor) = match coord_type {
         // sub_1000386EC uses both body centers when coordType is absent/zero.

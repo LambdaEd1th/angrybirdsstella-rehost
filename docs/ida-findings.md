@@ -15803,3 +15803,26 @@ joint construction succeeds, leaves failed endpoint lookups absent, and does
 not pre-publish custom descriptors. Regression coverage proves distinct table
 identity, immunity to caller mutation, failed-creation cleanup, no type-seven
 artifact, and the recursive editor weld retaining its native type-two record.
+
+The allocated table is not a shallow copy. IDA's field setters establish a
+canonical schema: common fields occupy `0x100037644..0x1000379AC`; type-one
+distance fields occupy `0x100038734..0x1000387F0`; type-two weld fields occupy
+`0x100038980..0x1000389E8`; type-three revolute fields span
+`0x100038DF8..0x100039690`; type-four prismatic fields span
+`0x100039CBC..0x10003B31C`; metadata type five occupies
+`0x1000396D0..0x1000398E0`; and type-six rope writes only its anchors and
+`collideConnected` at `0x10003AA6C..0x10003AB10`. Hopper independently shows
+the same setters between its fresh-table call at `0x100037630` and late
+publication at `0x10003B430..0x10003B440`.
+
+This has several observable consequences. Numeric fields are narrowed to
+float32 before entering the published Lua table. Revolute `motor`, limits and
+`backAndForth` and prismatic defaults are always materialized. A numeric
+`angleTarget` is retained, but `angleCorrectionTorque` and
+`angleCorrectionMotorSpeed` are consumed without being published. Type six
+uses an optional `maxLength` for its native rope definition but does not copy
+that key to `objects.joints`. Arbitrary editor keys are likewise absent, and
+resolved defaults are never written into the caller's input table. The Rust
+bridge now constructs this per-type canonical table and has regressions for
+the exact key sets, optional-field type gates, default values, float32
+rounding, and type-one center-coordinate export.
