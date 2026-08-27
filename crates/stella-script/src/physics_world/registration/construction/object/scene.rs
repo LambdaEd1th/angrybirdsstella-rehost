@@ -40,7 +40,6 @@ pub(super) fn insert(
         .has_body()
         .then(|| bridge.allocate_body_allocation_slot());
     let initial_pose = NativeInterpolationPose::new(request.x, request.y, 0.0);
-    let composite_sprite = composite_sprite.map(Arc::new);
     let mut scene_object = SceneObject {
         physics_creation_order,
         body_allocation_slot,

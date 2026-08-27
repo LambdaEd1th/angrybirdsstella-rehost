@@ -13,7 +13,7 @@ use std::{
 use mlua::{Lua, Result as LuaResult, Table};
 
 use crate::{
-    BoundCompositePart, CollisionShape, DrawCallbacks, RenderBridge, ResourceRuntime,
+    CollisionShape, CompositeSpriteOwner, DrawCallbacks, RenderBridge, ResourceRuntime,
     SpriteCatalogRegion,
 };
 
@@ -81,7 +81,7 @@ struct PreparedConstruction {
     mass: f64,
     sprite_bound: bool,
     sprite_region: Option<Arc<SpriteCatalogRegion>>,
-    composite_sprite: Option<Vec<BoundCompositePart>>,
+    composite_sprite: Option<Arc<CompositeSpriteOwner>>,
 }
 
 pub(super) fn install(

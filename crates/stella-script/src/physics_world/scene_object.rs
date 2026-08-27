@@ -80,7 +80,7 @@ pub(crate) struct SceneObject {
     /// resource with the same name loads later.
     pub(crate) sprite_bound: bool,
     pub(crate) sprite_region: Option<Arc<SpriteCatalogRegion>>,
-    pub(crate) composite_sprite: Option<Arc<Vec<BoundCompositePart>>>,
+    pub(crate) composite_sprite: Option<Arc<CompositeSpriteOwner>>,
     /// Retained fill-image pointer and its masked-draw inputs. Purple stores
     /// the image pointer on RenderObjectData and reuses it on every draw.
     pub(crate) texture: Option<Arc<SpriteTextureSubmission>>,

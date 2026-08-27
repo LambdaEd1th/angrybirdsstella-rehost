@@ -14817,3 +14817,64 @@ visually checked PNG SHA-256 is
 The release `stella-app` and `stella-headless` hashes are respectively
 `64da40855cc7a450f3bc1e673cd53532dad7fed738a4f5eadee0e49f7573ffff`
 and `2adffe67fd351f38d255fc746135d0f36789a6ea2d120d0d0800c65efda031d0`.
+
+## Live CompoSprite owners and submission-time child snapshots
+
+The direct-entry audit also exposed a distinction between AtlasSprite and
+CompoSprite ownership. AtlasSprite records are immutable after construction,
+but Purple allows `setCompoSpriteEntry` to mutate the Entry records of an
+already-retained concrete CompoSprite. The previous Rust path rebuilt a new
+bound child vector during active lookup and then stored that frozen vector on
+scene objects and particles. Objects created before an Entry mutation could
+therefore keep drawing stale transforms even though the executable retains
+the same live CompoSprite pointer.
+
+IDA's `sub_100449CFC` resolves the concrete CompoSprite and selects its Entry
+by index or name, then writes x, y, scaleX, scaleY, flipX, flipY, angle and
+visible directly at Entry offsets `+0x28` through `+0x44`. A sprite-name
+change enters `sub_1004375E8`, which edits the same CompoSprite's ordered Entry
+map at `CompoSprite+0x30`, swaps the retained Entry/name/AtlasSprite pointer
+and calls `sub_100436D40` to refresh its bounds. IDA's native `setSprite`
+member `sub_10004C7FC` resolves the composite once and stores that exact
+pointer into RenderObjectData `+0x78` at `0x10004C850..0x10004C86C`.
+Hopper independently recovers the same in-place Entry/map update, bounds
+refresh and direct RenderObjectData pointer store. Together with the active
+resource-entry `+0x10` loads, this shows that resource stacks, particles and
+scene components share one concrete mutable owner rather than copied child
+arrays.
+
+Rust now creates one `CompositeSpriteOwner` for each successful CompoSprite
+constructor and stores that owner directly in its active resource-stack
+entry. Scene components and particles retain the same `Arc`. A successful
+`setCompoSpriteEntry` rebuilds the bound child snapshot only once and publishes
+it through that existing owner, so previously created objects observe the
+mutation without repeating part/region binding on every draw. The wgpu bridge
+still freezes an immutable `Arc<Vec<BoundCompositePart>>` at each native
+immediate-draw boundary: an Entry mutation later in the same frame updates
+future draws but cannot rewrite a command that has already been queued. A
+focused regression asserts the resource-entry/scene pointer identity, live
+visibility of an x-position mutation, stability of the older queued command
+and a distinct updated snapshot for the next draw.
+
+Two alternating stripped-release pairs each execute 30,000 complete
+Chapter01 L50 update/physics/draw frames. The preceding direct-Atlas build
+reports 5.47/5.42/0.04-0.05 seconds real/user/system in both runs; the live
+CompoSprite-owner build reports 5.18-5.20/5.14-5.15/0.04-0.05 seconds. This is
+approximately a 5.1 percent real-time and 5.0 percent user-CPU reduction in
+the dense deterministic route, primarily from removing repeated composite
+part-vector reconstruction. It is a workload-specific diagnostic rather than
+a universal frame-rate guarantee.
+
+The complete workspace passes 675 tests with the intentional long-duration
+BirdRun audit ignored. Formatting, diff whitespace, documentation, doctests,
+strict all-target/all-feature Clippy and the locked release build are clean.
+The direct release-wgpu Chapter02 L16 checkpoint remains byte-identical to the
+established translucent-water baseline, SHA-256
+`63b5da87b1a55a57d0e5d3559336f604d35817b5651cf8cf7347f7def189d4d7`.
+A visually inspected copied-AppData 1,200-frame island-map run completes with
+zero invoked fallbacks, zero remaining compatibility bindings and empty
+stderr; its PNG SHA-256 is
+`b1136cedded9c672f4a5818f0b4216783cba37e50fd822adc67f23fe1dcb183b`.
+The release `stella-app` and `stella-headless` hashes are respectively
+`128576b06b6cf8581c71c98e6800c084462ee8fccf5c5996744b7ef773194e06`
+and `140b152239fb110f4adb2d7a20745fd88579124d2183a1845e912f9e5c8c9339`.

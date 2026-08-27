@@ -89,7 +89,10 @@ impl From<&SceneObject> for SceneDrawObject {
             sprite: object.sprite.clone(),
             sprite_bound: object.sprite_bound,
             sprite_region: object.sprite_region.clone(),
-            composite_sprite: object.composite_sprite.clone(),
+            composite_sprite: object
+                .composite_sprite
+                .as_ref()
+                .map(|owner| owner.snapshot()),
             texture: object.texture.clone(),
             x: object.render_x,
             y: object.render_y,

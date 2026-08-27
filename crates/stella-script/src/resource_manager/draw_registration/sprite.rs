@@ -52,7 +52,9 @@ pub(crate) fn native_resource_sprite_command(
     // here. Keep that exact resolved region on the deferred wgpu command even
     // if Lua releases or shadows the sheet later in the same frame.
     let bound_region = resources.active_atlas_catalog_region(&draw.sprite, data_root);
-    let bound_composite = resources.active_bound_composite(&draw.sprite).map(Arc::new);
+    let bound_composite = resources
+        .active_bound_composite(&draw.sprite)
+        .map(|owner| owner.snapshot());
     let (anchor_x, anchor_y) = sprite_draw_anchor_offset_from_geometry(
         geometry,
         draw.horizontal_anchor,

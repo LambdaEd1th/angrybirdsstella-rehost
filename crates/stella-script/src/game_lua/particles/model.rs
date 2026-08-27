@@ -1,6 +1,9 @@
 //! Packed particle fields shared by native update and draw members.
 
-use crate::{BoundCompositePart, ResourceRuntime, SharedSpriteName, SpriteCatalogRegion};
+use crate::{
+    BoundCompositePart, CompositeSpriteOwner, ResourceRuntime, SharedSpriteName,
+    SpriteCatalogRegion,
+};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -17,7 +20,7 @@ pub(crate) struct Particle {
     /// frame resolves to an atlas sprite Purple leaves an older composite
     /// pointer retained in this lower-priority slot, so keep the two native
     /// ownership fields separate instead of collapsing them into an enum.
-    pub(crate) bound_composite: Option<Arc<Vec<BoundCompositePart>>>,
+    pub(crate) bound_composite: Option<Arc<CompositeSpriteOwner>>,
     pub(crate) x: f32,
     pub(crate) y: f32,
     pub(crate) velocity_x: f32,
@@ -50,7 +53,7 @@ impl Particle {
     pub(crate) fn bind_sprite(&mut self, resources: &ResourceRuntime, data_root: &Path) {
         self.bound_region = resources.active_atlas_catalog_region(&self.sprite, data_root);
         if self.bound_region.is_none() {
-            self.bound_composite = resources.active_bound_composite(&self.sprite).map(Arc::new);
+            self.bound_composite = resources.active_bound_composite(&self.sprite);
         }
     }
 
@@ -70,7 +73,7 @@ impl Particle {
             // members branch on +0x20 first and never visit +0x28.
             return (bound_region, None);
         }
-        let mut bound_composite = self.bound_composite.clone();
+        let mut bound_composite = self.bound_composite.as_ref().map(|owner| owner.snapshot());
         if bound_composite.is_none() {
             bound_composite = Some(Arc::new(Vec::new()));
         }

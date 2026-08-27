@@ -10,7 +10,7 @@ use stella_assets::ka3d::CompositePart;
 
 use super::{ResourceRuntime, SpriteResourceEntry, SpriteResourceKind};
 use crate::{
-    BoundCompositePart, SpriteCatalogRegion, SpriteCatalogSnapshot,
+    BoundCompositePart, CompositeSpriteOwner, SpriteCatalogRegion, SpriteCatalogSnapshot,
     resource_manager::{NativeSpriteMetrics, SpriteGeometry, native_composite_metrics_from_parts},
 };
 
@@ -282,16 +282,46 @@ impl ResourceRuntime {
         (parts.len() == regions.len()).then_some((parts, regions))
     }
 
-    pub(crate) fn active_bound_composite(&self, name: &str) -> Option<Vec<BoundCompositePart>> {
-        let (parts, regions) = self.active_composite_bound_parts(name)?;
-        Some(
+    pub(crate) fn active_bound_composite(&self, name: &str) -> Option<Arc<CompositeSpriteOwner>> {
+        let asset_name = name.split_once('#').map_or(name, |(base, _)| base);
+        self.active_sprite_entry(asset_name, Some(SpriteResourceKind::Composite))?
+            .composite_sprite
+            .clone()
+    }
+
+    /// Publish the latest mutable Entry records through the concrete
+    /// CompoSprite owner retained by already-created particles and scene
+    /// objects. Deferred render commands keep the older Arc snapshot they
+    /// captured before this replacement.
+    pub(crate) fn refresh_active_bound_composite(
+        &self,
+        name: &str,
+    ) -> Option<Arc<CompositeSpriteOwner>> {
+        let asset_name = name.split_once('#').map_or(name, |(base, _)| base);
+        let entry = self.active_sprite_entry(asset_name, Some(SpriteResourceKind::Composite))?;
+        let owner = Arc::clone(entry.composite_sprite.as_ref()?);
+        let parts = self
+            .composite_set_values
+            .get(&entry.owner)?
+            .sprites
+            .get(entry.index)?
+            .parts
+            .as_slice();
+        let regions = self
+            .composite_set_regions
+            .get(&entry.owner)?
+            .get(entry.index)?
+            .as_slice();
+        (parts.len() == regions.len()).then_some(())?;
+        owner.replace(
             parts
                 .iter()
                 .cloned()
                 .zip(regions.iter().cloned())
                 .map(|(part, region)| BoundCompositePart { part, region })
                 .collect(),
-        )
+        );
+        Some(owner)
     }
 
     pub(crate) fn active_composite_parts_mut(

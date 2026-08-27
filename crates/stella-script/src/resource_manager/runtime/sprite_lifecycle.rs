@@ -1,12 +1,12 @@
 //! SpriteSheet and CompoSpriteSet construction, replacement and release.
 
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 use stella_assets::ka3d::{CompositeSpriteSet, SpriteSheet};
 
 use super::{ResourceRuntime, SpriteResourceEntry, SpriteResourceKind};
 use crate::{
-    SpriteCatalogRegion,
+    BoundCompositePart, CompositeSpriteOwner, SpriteCatalogRegion,
     resource_manager::{NativeSpriteMetrics, native_composite_metrics_from_parts},
 };
 
@@ -78,6 +78,7 @@ impl ResourceRuntime {
                     index,
                     metrics,
                     atlas_region: None,
+                    composite_sprite: None,
                 });
             self.sprite_sheet_catalog_regions.remove(&owner);
         }
@@ -140,6 +141,7 @@ impl ResourceRuntime {
                         pivot_y: i32::from(sprite.pivot_y),
                     },
                     atlas_region: None,
+                    composite_sprite: None,
                 });
         }
         self.sprite_sheet_values.insert(owner.to_owned(), sheet);
@@ -194,6 +196,15 @@ impl ResourceRuntime {
             self.remove_sprite_entries(SpriteResourceKind::Composite, owner, &names);
         }
         for (index, sprite) in set.sprites.iter().enumerate() {
+            let part_regions = regions.get(index).map(Vec::as_slice).unwrap_or_default();
+            debug_assert_eq!(sprite.parts.len(), part_regions.len());
+            let bound_parts = sprite
+                .parts
+                .iter()
+                .cloned()
+                .zip(part_regions.iter().cloned())
+                .map(|(part, region)| BoundCompositePart { part, region })
+                .collect();
             let metrics = regions
                 .get(index)
                 .and_then(|regions| native_composite_metrics_from_parts(&sprite.parts, regions))
@@ -212,6 +223,7 @@ impl ResourceRuntime {
                     index,
                     metrics,
                     atlas_region: None,
+                    composite_sprite: Some(Arc::new(CompositeSpriteOwner::new(bound_parts))),
                 });
         }
         self.composite_set_values.insert(owner.to_owned(), set);

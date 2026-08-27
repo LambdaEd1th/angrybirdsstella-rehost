@@ -60,7 +60,10 @@ fn every_shipped_level_constructs_updates_and_reaches_native_draw() {
                 object.sprite_bound
                     && !object.sprite.is_empty()
                     && object.sprite_region.is_none()
-                    && object.composite_sprite.as_deref().is_none_or(Vec::is_empty)
+                    && object
+                        .composite_sprite
+                        .as_deref()
+                        .is_none_or(CompositeSpriteOwner::is_empty)
             })
             .map(|object| object.sprite.clone())
             .collect::<BTreeSet<_>>();

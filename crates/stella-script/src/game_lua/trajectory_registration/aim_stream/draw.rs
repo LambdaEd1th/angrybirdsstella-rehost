@@ -30,7 +30,9 @@ pub(in crate::game_lua::trajectory_registration) fn install_draw(
                 Vec::new()
             } else {
                 let bound_region = resources.active_atlas_catalog_region(&sprite, &data_root);
-                let mut bound_composite = resources.active_bound_composite(&sprite).map(Arc::new);
+                let mut bound_composite = resources
+                    .active_bound_composite(&sprite)
+                    .map(|owner| owner.snapshot());
                 if bound_region.is_none() && bound_composite.is_none() {
                     bound_composite = Some(Arc::new(Vec::new()));
                 }

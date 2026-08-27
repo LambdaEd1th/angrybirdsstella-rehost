@@ -33,7 +33,7 @@ pub(super) fn push_native_trajectory_streams(
                 resources.active_atlas_catalog_region(&stream.normal_sprite, data_root);
             let mut bound_composite = resources
                 .active_bound_composite(&stream.normal_sprite)
-                .map(Arc::new);
+                .map(|owner| owner.snapshot());
             if bound_region.is_none() && bound_composite.is_none() {
                 bound_composite = Some(Arc::new(Vec::new()));
             }
@@ -60,7 +60,7 @@ pub(super) fn push_native_trajectory_streams(
                 resources.active_atlas_catalog_region(&stream.special_sprite, data_root);
             let mut bound_composite = resources
                 .active_bound_composite(&stream.special_sprite)
-                .map(Arc::new);
+                .map(|owner| owner.snapshot());
             if bound_region.is_none() && bound_composite.is_none() {
                 bound_composite = Some(Arc::new(Vec::new()));
             }

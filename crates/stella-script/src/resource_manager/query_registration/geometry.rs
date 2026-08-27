@@ -181,6 +181,9 @@ pub(super) fn install(
                     "setCompoSpriteEntry atlas resource '{new_sprite}' was not found"
                 )));
             }
+            resources
+                .refresh_active_bound_composite(&name)
+                .expect("active composite must retain its concrete owner");
             resources.mark_sprite_catalog_changed();
             drop(resources);
             let mut bridge = render.lock().expect("render bridge lock poisoned");

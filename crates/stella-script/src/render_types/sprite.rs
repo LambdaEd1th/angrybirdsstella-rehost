@@ -1,6 +1,11 @@
 //! Deferred sprite-command payloads matching Purple's ResourceManager draws.
 
-use std::{collections::BTreeMap, fmt, ops::Deref, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    fmt,
+    ops::Deref,
+    sync::{Arc, RwLock},
+};
 
 use stella_assets::ka3d::{CompositePart, SpriteRegion};
 
@@ -35,6 +40,66 @@ pub struct SpriteCatalogRegion {
 pub struct BoundCompositePart {
     pub part: CompositePart,
     pub region: SpriteCatalogRegion,
+}
+
+/// Shared native-style CompoSprite object retained by ResourceManager,
+/// particles and scene components.
+///
+/// Purple mutates Entry records on the concrete CompoSprite after other
+/// objects have retained its pointer. The deferred host therefore shares one
+/// live owner, but publishes an immutable Arc snapshot at each immediate draw
+/// boundary so a later same-frame mutation cannot rewrite an earlier command.
+#[derive(Debug)]
+pub(crate) struct CompositeSpriteOwner {
+    parts: RwLock<Arc<Vec<BoundCompositePart>>>,
+}
+
+impl CompositeSpriteOwner {
+    pub(crate) fn new(parts: Vec<BoundCompositePart>) -> Self {
+        Self {
+            parts: RwLock::new(Arc::new(parts)),
+        }
+    }
+
+    pub(crate) fn snapshot(&self) -> Arc<Vec<BoundCompositePart>> {
+        Arc::clone(
+            &self
+                .parts
+                .read()
+                .expect("composite sprite owner lock poisoned"),
+        )
+    }
+
+    pub(crate) fn replace(&self, parts: Vec<BoundCompositePart>) {
+        *self
+            .parts
+            .write()
+            .expect("composite sprite owner lock poisoned") = Arc::new(parts);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn is_empty(&self) -> bool {
+        self.parts
+            .read()
+            .expect("composite sprite owner lock poisoned")
+            .is_empty()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.parts
+            .read()
+            .expect("composite sprite owner lock poisoned")
+            .len()
+    }
+
+    pub(crate) fn first_native_sheet_id(&self) -> Option<u64> {
+        self.parts
+            .read()
+            .expect("composite sprite owner lock poisoned")
+            .first()
+            .map(|part| part.region.native_sheet_id)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -232,10 +297,11 @@ pub struct RenderCommand {
     /// of copying its texture path and region name on every frame. This also
     /// preserves same-frame draw-then-release and same-name shadowing.
     pub bound_region: Option<Arc<SpriteCatalogRegion>>,
-    /// CompoSprite pointer retained by a native scene component. Every child
-    /// carries the AtlasSprite pointer resolved when its COMP file loaded.
-    /// Deferred commands share that immutable owner instead of cloning the
-    /// complete child array on every submission.
+    /// Immutable child-array snapshot taken from the retained CompoSprite at
+    /// this native immediate-draw boundary. Every child carries the
+    /// AtlasSprite pointer resolved by that live object. A later Entry
+    /// mutation replaces the live owner's snapshot without rewriting this
+    /// already deferred command.
     pub bound_composite: Option<Arc<Vec<BoundCompositePart>>>,
     /// Rare per-call vertex payload. Purple passes these arrays directly to
     /// its draw member; they are not part of the copied 0x9c-byte GL state.

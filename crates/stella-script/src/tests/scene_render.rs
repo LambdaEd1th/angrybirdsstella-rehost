@@ -1067,7 +1067,7 @@ fn native_scene_draw_command_retains_the_same_name_and_atlas_pointers() {
 }
 
 #[test]
-fn native_scene_composite_command_retains_the_same_part_vector_pointer() {
+fn native_scene_composite_owner_is_live_while_each_command_freezes_its_part_snapshot() {
     let unique = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -1097,15 +1097,59 @@ fn native_scene_composite_command_retains_the_same_part_vector_pointer() {
         )
         .unwrap();
 
+    let active_owner = {
+        let resources = runtime.resource_runtime.lock().unwrap();
+        let owner = resources.active_bound_composite("BODY").unwrap();
+        let entry_owner = resources.sprite_entries["BODY"]
+            .last()
+            .unwrap()
+            .composite_sprite
+            .as_ref()
+            .unwrap();
+        assert!(Arc::ptr_eq(&owner, entry_owner));
+        owner
+    };
     let bridge = runtime.render.lock().unwrap();
     let scene_object = bridge.scene.get("body").unwrap();
     let retained = scene_object.composite_sprite.as_ref().unwrap();
+    assert!(Arc::ptr_eq(&active_owner, retained));
     let snapshot = bridge.scene_draw_object("body").unwrap();
     let snapshot_parts = snapshot.composite_sprite.as_ref().unwrap();
-    assert!(Arc::ptr_eq(retained, snapshot_parts));
     let command = bridge.scene_object_command(&snapshot).unwrap();
     let command_parts = command.bound_composite.as_ref().unwrap();
-    assert!(Arc::ptr_eq(retained, command_parts));
+    assert!(Arc::ptr_eq(snapshot_parts, command_parts));
+    let initial_parts = Arc::clone(command_parts);
+
+    drop(bridge);
+    runtime
+        .execute_source(
+            r#"
+                res.setCompoSpriteEntry("BODY", 0, { x = 37 })
+            "#,
+        )
+        .unwrap();
+
+    let current_owner = runtime
+        .resource_runtime
+        .lock()
+        .unwrap()
+        .active_bound_composite("BODY")
+        .unwrap();
+    assert!(Arc::ptr_eq(&active_owner, &current_owner));
+    assert_eq!(initial_parts[0].part.x, 0.0);
+    assert_eq!(current_owner.snapshot()[0].part.x, 37.0);
+
+    let bridge = runtime.render.lock().unwrap();
+    let scene_object = bridge.scene.get("body").unwrap();
+    assert!(Arc::ptr_eq(
+        scene_object.composite_sprite.as_ref().unwrap(),
+        &current_owner
+    ));
+    let updated_snapshot = bridge.scene_draw_object("body").unwrap();
+    let updated_command = bridge.scene_object_command(&updated_snapshot).unwrap();
+    let updated_parts = updated_command.bound_composite.as_ref().unwrap();
+    assert_eq!(updated_parts[0].part.x, 37.0);
+    assert!(!Arc::ptr_eq(&initial_parts, updated_parts));
 
     drop(bridge);
     fs::remove_dir_all(root).unwrap();
@@ -1365,33 +1409,35 @@ fn native_scene_composite_callback_uses_integer_bounds_pivot_and_ignores_object_
         object.sprite_region = None;
         object.pivot_offset_x = 100.0;
         object.pivot_offset_y = 200.0;
-        object.composite_sprite = Some(Arc::new(vec![BoundCompositePart {
-            part: stella_assets::ka3d::CompositePart {
-                sprite: "PART".to_owned(),
-                x: 10.0,
-                y: -4.0,
-                scale_x: 2.0,
-                scale_y: 0.5,
-                flip_x: -1.0,
-                flip_y: 1.0,
-                angle: 0.0,
-                visible: true,
-            },
-            region: SpriteCatalogRegion {
-                native_sheet_id: 1,
-                texture_source: "part.pvr".to_owned(),
-                sprite: stella_assets::ka3d::SpriteRegion {
-                    name: "PART".to_owned(),
-                    x: 0,
-                    y: 0,
-                    width: 10,
-                    height: 20,
-                    pivot_x: 3,
-                    pivot_y: 7,
-                    atlas_rotation: 0,
+        object.composite_sprite = Some(Arc::new(CompositeSpriteOwner::new(vec![
+            BoundCompositePart {
+                part: stella_assets::ka3d::CompositePart {
+                    sprite: "PART".to_owned(),
+                    x: 10.0,
+                    y: -4.0,
+                    scale_x: 2.0,
+                    scale_y: 0.5,
+                    flip_x: -1.0,
+                    flip_y: 1.0,
+                    angle: 0.0,
+                    visible: true,
+                },
+                region: SpriteCatalogRegion {
+                    native_sheet_id: 1,
+                    texture_source: "part.pvr".to_owned(),
+                    sprite: stella_assets::ka3d::SpriteRegion {
+                        name: "PART".to_owned(),
+                        x: 0,
+                        y: 0,
+                        width: 10,
+                        height: 20,
+                        pivot_x: 3,
+                        pivot_y: 7,
+                        atlas_rotation: 0,
+                    },
                 },
             },
-        }]));
+        ])));
     }
 
     let bridge = runtime.render.lock().unwrap();

@@ -127,12 +127,6 @@ pub(crate) fn native_scene_sheet_id(object: &SceneObject) -> u64 {
         .sprite_region
         .as_ref()
         .map(|region| region.native_sheet_id)
-        .or_else(|| {
-            object
-                .composite_sprite
-                .as_ref()?
-                .first()
-                .map(|part| part.region.native_sheet_id)
-        })
+        .or_else(|| object.composite_sprite.as_ref()?.first_native_sheet_id())
         .unwrap_or(0)
 }

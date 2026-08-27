@@ -230,9 +230,11 @@ impl RenderBridge {
             let scale_y = object.scale_y as f32 * decoration_scale;
             let world_scale = self.world_scale as f32;
             let bound_region = resources.active_atlas_catalog_region(&decoration.sprite, data_root);
-            let bound_composite = resources.active_bound_composite(&decoration.sprite);
+            let bound_composite = resources
+                .active_bound_composite(&decoration.sprite)
+                .map(|owner| owner.snapshot());
             let (pivot_x, pivot_y) = native_scene_callback_pivot(
-                bound_composite.as_deref(),
+                bound_composite.as_deref().map(Vec::as_slice),
                 bound_region.as_deref(),
                 0.0,
                 0.0,

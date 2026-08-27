@@ -12,8 +12,8 @@ use std::{
 use mlua::{Lua, MultiValue, Result as LuaResult, Table};
 
 use crate::{
-    DrawCallbacks, RenderBridge, ResourceRuntime, describe_value, native_required_boolean,
-    native_required_number, native_required_string,
+    CompositeSpriteOwner, DrawCallbacks, RenderBridge, ResourceRuntime, describe_value,
+    native_required_boolean, native_required_number, native_required_string,
 };
 
 use super::{ConstructorKind, ConstructorRequest, object, shape};
@@ -46,7 +46,7 @@ pub(super) fn install(
                     )
                 };
                 if sprite_region.is_none() && composite_sprite.is_none() {
-                    composite_sprite = Some(Vec::new());
+                    composite_sprite = Some(Arc::new(CompositeSpriteOwner::new(Vec::new())));
                 }
                 let mut prepared = shape::prepare(&scene_bridge, request);
                 prepared.sprite_bound = true;

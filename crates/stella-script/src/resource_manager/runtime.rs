@@ -11,7 +11,8 @@ use stella_assets::ka3d::{BitmapFont, CompositeSpriteSet, LocalizationTable, Spr
 
 use super::{NativeSpriteMetrics, SystemFontState};
 use crate::{
-    AudioAssetSource, SpriteCatalogRegion, SpriteShader, TextFontBinding, resolve_data_file,
+    AudioAssetSource, CompositeSpriteOwner, SpriteCatalogRegion, SpriteShader, TextFontBinding,
+    resolve_data_file,
 };
 
 mod sprite_catalog;
@@ -141,7 +142,7 @@ pub(crate) enum SpriteResourceKind {
     Composite,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub(crate) struct SpriteResourceEntry {
     pub(crate) kind: SpriteResourceKind,
     pub(crate) owner: String,
@@ -156,6 +157,10 @@ pub(crate) struct SpriteResourceEntry {
     /// sheet's texture bindings have been resolved; active draw lookup then
     /// clones this pointer instead of searching the owning sheet again.
     pub(crate) atlas_region: Option<Arc<SpriteCatalogRegion>>,
+    /// Concrete CompoSprite owner stored in the same native `+0x10` slot for
+    /// type-two entries. Its Entry records remain mutable after scene objects
+    /// and particles retain this owner.
+    pub(crate) composite_sprite: Option<Arc<CompositeSpriteOwner>>,
 }
 
 #[derive(Debug)]

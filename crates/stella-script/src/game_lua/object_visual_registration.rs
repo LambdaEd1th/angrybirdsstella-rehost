@@ -29,7 +29,7 @@ pub(crate) fn install(
             // pointer sentinel: preserve callback submission, but never let
             // wgpu resolve this name against a resource loaded later.
             if sprite_region.is_none() && composite_sprite.is_none() {
-                composite_sprite = Some(Vec::new());
+                composite_sprite = Some(Arc::new(CompositeSpriteOwner::new(Vec::new())));
             }
             let mut bridge = sprite_bridge.lock().expect("render bridge lock poisoned");
             let (z_bucket, old_sheet_id) = bridge
@@ -45,12 +45,7 @@ pub(crate) fn install(
             let new_sheet_id = sprite_region
                 .as_ref()
                 .map(|region| region.native_sheet_id)
-                .or_else(|| {
-                    composite_sprite
-                        .as_ref()?
-                        .first()
-                        .map(|part| part.region.native_sheet_id)
-                })
+                .or_else(|| composite_sprite.as_ref()?.first_native_sheet_id())
                 .unwrap_or(0);
             bridge
                 .scene_render_index
@@ -62,7 +57,7 @@ pub(crate) fn install(
             object.sprite = sprite.into();
             object.sprite_bound = true;
             object.sprite_region = sprite_region;
-            object.composite_sprite = composite_sprite.map(Arc::new);
+            object.composite_sprite = composite_sprite;
             Ok(())
         })?,
     )?;
