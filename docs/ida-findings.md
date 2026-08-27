@@ -15699,3 +15699,40 @@ callback-issued nested read remains pending until the following frame instead
 of re-entering the current provider completion. The regression covers missing
 and found keys, write/read ordering, empty account maps, callback arity,
 strict generated-adapter tags and nested-request deferral.
+
+## Skynest account provider completion timing
+
+The adjacent identity bridge had the same collapsed provider boundary. IDA
+recovers the eleven-member `SkynestAccount` constructor at `sub_1000A744C`;
+Hopper confirms that `native_login` enters `sub_1000A3E04`, which sets the
+in-progress byte at account-manager offset `+0x41` and selects one of three
+provider login paths from its strict boolean arguments. The automatic-login
+branch `sub_1000A4AB0` and social branch `sub_1000A4978` likewise set provider
+state before constructing separate success and failure functors and calling
+the identity provider. Neither branch can invoke Lua from the submission
+stack.
+
+Success continuation `sub_1000A3F64` and failure continuation
+`sub_1000A4578` clear the in-progress byte before calling retained root members
+`onLoginSuccess` or `onLoginFailure`. Failure maps the provider code through
+the manager's error table and supplies `(errorName, message)` when no account
+details exist. The retired-provider substitute follows the recovered
+`ERROR_OTHER` branch and keeps its explanatory local message, but now delivers
+it only from a later application-thread completion.
+
+Nickname validation is independently retained by request ID.
+`sub_1000A79B8` increments owner offset `+0xB0`, stores the supplied
+LuaFunction in the tree rooted at `+0x80`, and gives paired functors to
+`sub_10074B9A0`. Success continuation `sub_1000A7EEC` calls the function with
+two booleans `(true, isValid)`; failure `sub_1000A7D80` calls it with one false
+value; both erase the request entry afterward. Hopper recovers the same owner
+offsets, functor allocation and provider call.
+
+Rust now gives the account owner a completion FIFO alongside its shared
+signed-out state. Explicit, social and constructor-equivalent automatic login
+remain in progress until frame-head dispatch; nickname callbacks are held by
+Lua registry keys and also wait for that boundary. Queue snapshots prevent a
+validation callback from completing a nested validation recursively. Tests
+prove the pre-completion state byte, deferred startup loading-screen release,
+two-value validation result, two-argument login failure, strict adapters,
+one-shot registry release and next-frame nested deferral.

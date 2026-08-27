@@ -47,6 +47,9 @@ impl StellaLua {
         // Payment provider, voucher redemption and wallet reads all retain
         // completion functors that re-enter Lua on the application thread.
         dispatch_iap_completions(&self.lua, &self.iap)?;
+        // Rovio Account login and nickname-validation providers complete
+        // through retained functors on the application thread.
+        dispatch_skynest_account_completions(&self.lua, &self.skynest_account)?;
         // Skynest key requests retain the supplied LuaFunction by request id;
         // their provider continuations run on the application thread.
         dispatch_skynest_storage_completions(&self.lua, &self.skynest_storage)?;

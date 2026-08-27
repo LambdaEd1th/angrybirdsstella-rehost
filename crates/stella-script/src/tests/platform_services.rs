@@ -2534,6 +2534,11 @@ fn skynest_native_account_and_storage_complete_retired_backend_calls_locally() {
                     "testplayer", function(...)
                         skynest_valid_count = select("#", ...)
                         skynest_valid_ok, skynest_valid_value = ...
+                        account.native_validateNickname("nested", function(...)
+                            skynest_validation_nested_count = select("#", ...)
+                            skynest_validation_nested_ok,
+                                skynest_validation_nested_value = ...
+                        end)
                     end, "ignored"
                 ))
                 account.native_validateNickname("   ", function(...)
@@ -2618,13 +2623,17 @@ fn skynest_native_account_and_storage_complete_retired_backend_calls_locally() {
     );
     for name in [
         "skynest_logged_in",
-        "skynest_login_in_progress_after",
         "skynest_load_started",
         "skynest_save_started",
         "skynest_transaction",
     ] {
         assert!(!environment.get::<bool>(name).unwrap(), "{name}");
     }
+    assert!(
+        environment
+            .get::<bool>("skynest_login_in_progress_after")
+            .unwrap()
+    );
     // Purple exposes `nickname.empty()` under this inverted native name.
     assert!(
         environment
@@ -2640,13 +2649,11 @@ fn skynest_native_account_and_storage_complete_retired_backend_calls_locally() {
         environment.get::<i64>("skynest_validate_results").unwrap(),
         0
     );
-    assert_eq!(environment.get::<i64>("skynest_valid_count").unwrap(), 2);
-    assert!(environment.get::<bool>("skynest_valid_ok").unwrap());
-    assert!(environment.get::<bool>("skynest_valid_value").unwrap());
-    assert_eq!(environment.get::<i64>("skynest_invalid_count").unwrap(), 2);
-    assert!(environment.get::<bool>("skynest_invalid_ok").unwrap());
-    assert!(!environment.get::<bool>("skynest_invalid_value").unwrap());
     for name in [
+        "skynest_valid_count",
+        "skynest_invalid_count",
+        "skynest_validation_nested_count",
+        "skynest_login_failure_count",
         "skynest_missing_count",
         "skynest_set_callback_count",
         "skynest_found_count",
@@ -2662,6 +2669,8 @@ fn skynest_native_account_and_storage_complete_retired_backend_calls_locally() {
             r##"
                 skynest_has_nickname_completed =
                     _G.SkynestAccount.native_hasNickname()
+                skynest_login_in_progress_completed =
+                    _G.SkynestAccount.native_isLoginInProgress()
             "##,
         )
         .unwrap();
@@ -2669,6 +2678,23 @@ fn skynest_native_account_and_storage_complete_retired_backend_calls_locally() {
         !environment
             .get::<bool>("skynest_has_nickname_completed")
             .unwrap()
+    );
+    assert!(
+        !environment
+            .get::<bool>("skynest_login_in_progress_completed")
+            .unwrap()
+    );
+    assert_eq!(environment.get::<i64>("skynest_valid_count").unwrap(), 2);
+    assert!(environment.get::<bool>("skynest_valid_ok").unwrap());
+    assert!(environment.get::<bool>("skynest_valid_value").unwrap());
+    assert_eq!(environment.get::<i64>("skynest_invalid_count").unwrap(), 2);
+    assert!(environment.get::<bool>("skynest_invalid_ok").unwrap());
+    assert!(!environment.get::<bool>("skynest_invalid_value").unwrap());
+    assert!(
+        environment
+            .get::<Value>("skynest_validation_nested_count")
+            .unwrap()
+            .is_nil()
     );
     assert!(
         environment
@@ -2702,6 +2728,22 @@ fn skynest_native_account_and_storage_complete_retired_backend_calls_locally() {
         0
     );
     runtime.update(1.0 / 60.0).unwrap();
+    assert_eq!(
+        environment
+            .get::<i64>("skynest_validation_nested_count")
+            .unwrap(),
+        2
+    );
+    assert!(
+        environment
+            .get::<bool>("skynest_validation_nested_ok")
+            .unwrap()
+    );
+    assert!(
+        environment
+            .get::<bool>("skynest_validation_nested_value")
+            .unwrap()
+    );
     assert_eq!(environment.get::<i64>("skynest_nested_count").unwrap(), 1);
     assert_eq!(
         environment.get::<String>("skynest_nested_value").unwrap(),
@@ -3801,6 +3843,22 @@ fn boot_announces_all_nine_native_cloud_services_before_menu_updates() {
     for name in ["loadFiles", "createSpriteSheet"] {
         assert!(native_assets.get::<Function>(name).is_ok(), "{name}");
     }
+    runtime
+        .execute_source(
+            r#"
+                skynest_initial_autologin_deferred =
+                    not SkynestAccount.initialAutologinDone and
+                    _G.SkynestAccount.native_isLoginInProgress()
+            "#,
+        )
+        .unwrap();
+    assert!(
+        game_environment(runtime.lua())
+            .unwrap()
+            .get::<bool>("skynest_initial_autologin_deferred")
+            .unwrap()
+    );
+    runtime.update(1.0 / 60.0).unwrap();
     runtime
         .execute_source(
             r#"

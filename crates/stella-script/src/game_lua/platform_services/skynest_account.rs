@@ -1,6 +1,53 @@
 //! Rovio Account/Identity Level 2 boundary for the retired Skynest backend.
 
 use crate::*;
+use mlua::{IntoLuaMulti, RegistryKey};
+use std::{cell::RefCell, collections::VecDeque, rc::Rc};
+
+enum Completion {
+    LoginUnavailable,
+    ValidateNickname {
+        callback: RegistryKey,
+        is_valid: bool,
+    },
+}
+
+/// Identity-provider state and retained application-thread completions.
+#[derive(Clone)]
+pub(crate) struct SkynestAccountRuntime {
+    state: Arc<Mutex<OfflineState>>,
+    completions: Rc<RefCell<VecDeque<Completion>>>,
+}
+
+impl SkynestAccountRuntime {
+    fn new(state: Arc<Mutex<OfflineState>>) -> Self {
+        Self {
+            state,
+            completions: Rc::new(RefCell::new(VecDeque::new())),
+        }
+    }
+
+    fn begin_login_unavailable(&self) -> LuaResult<()> {
+        self.state
+            .lock()
+            .map_err(|_| runtime_error("Skynest state lock poisoned"))?
+            .login_in_progress = true;
+        self.completions
+            .borrow_mut()
+            .push_back(Completion::LoginUnavailable);
+        Ok(())
+    }
+
+    fn queue_nickname_validation(&self, callback: RegistryKey, is_valid: bool) {
+        self.completions
+            .borrow_mut()
+            .push_back(Completion::ValidateNickname { callback, is_valid });
+    }
+
+    fn take_pending(&self) -> VecDeque<Completion> {
+        std::mem::take(&mut *self.completions.borrow_mut())
+    }
+}
 
 pub(super) struct OfflineState {
     pub(super) keys: BTreeMap<String, String>,
@@ -25,7 +72,8 @@ pub(super) fn install(
     lua: &Lua,
     globals: &mlua::Table,
     state: Arc<Mutex<OfflineState>>,
-) -> LuaResult<()> {
+) -> LuaResult<SkynestAccountRuntime> {
+    let runtime = SkynestAccountRuntime::new(Arc::clone(&state));
     let account = lua.create_table()?;
     account.set(
         "native_getServiceName",
@@ -52,27 +100,27 @@ pub(super) fn install(
         "native_getAccountDetailsUrl",
         lua.create_function(|_, _: MultiValue| Ok("https://account.rovio.com"))?,
     )?;
-    let login_state = Arc::clone(&state);
+    let login_runtime = runtime.clone();
     account.set(
         "native_login",
-        lua.create_function(move |lua, args: MultiValue| {
+        lua.create_function(move |_, args: MultiValue| {
             // Generated adapter sub_1000A8C1C consumes three strict
             // booleans and ignores the tail.
             native_required_boolean(&args, 0, "SkynestAccount.native_login")?;
             native_required_boolean(&args, 1, "SkynestAccount.native_login")?;
             native_required_boolean(&args, 2, "SkynestAccount.native_login")?;
-            begin_and_complete_login_unavailable(lua, &login_state)
+            login_runtime.begin_login_unavailable()
         })?,
     )?;
     account.set(
         "native_logout",
         lua.create_function(|_, _: MultiValue| Ok(()))?,
     )?;
-    let social_login_state = Arc::clone(&state);
+    let social_login_runtime = runtime.clone();
     account.set(
         "native_loginWithSocialNetwork",
-        lua.create_function(move |lua, _: MultiValue| {
-            begin_and_complete_login_unavailable(lua, &social_login_state)
+        lua.create_function(move |_, _: MultiValue| {
+            social_login_runtime.begin_login_unavailable()
         })?,
     )?;
     account.set(
@@ -94,9 +142,10 @@ pub(super) fn install(
                 .contains_key("nickname"))
         })?,
     )?;
+    let validation_runtime = runtime.clone();
     account.set(
         "native_validateNickname",
-        lua.create_function(|_, args: MultiValue| {
+        lua.create_function(move |lua, args: MultiValue| {
             // Adapter sub_1000A8998 reads a string and LuaFunction. Purple's
             // success completion calls callback(true, isValid); its transport
             // failure completion calls callback(false). Preserve the success
@@ -108,12 +157,14 @@ pub(super) fn install(
                 native_required_function(&args, 1, "SkynestAccount.native_validateNickname")?;
             let trimmed = nickname.trim();
             let is_valid = !trimmed.is_empty() && trimmed.chars().count() <= 32;
-            callback.call::<()>((true, is_valid))
+            validation_runtime
+                .queue_nickname_validation(lua.create_registry_value(callback)?, is_valid);
+            Ok(())
         })?,
     )?;
 
     globals.set("SkynestAccount", account)?;
-    Ok(())
+    Ok(runtime)
 }
 
 fn native_required_function(
@@ -152,17 +203,19 @@ pub(super) fn complete_initial_login(lua: &Lua) -> LuaResult<()> {
     login.call::<()>((false, false, false))
 }
 
-fn begin_and_complete_login_unavailable(
-    lua: &Lua,
-    state: &Arc<Mutex<OfflineState>>,
-) -> LuaResult<()> {
-    {
-        let mut state = state
-            .lock()
-            .map_err(|_| runtime_error("Skynest state lock poisoned"))?;
-        state.login_in_progress = true;
+/// Deliver retained identity-provider completions at the application frame head.
+pub(crate) fn dispatch_completions(lua: &Lua, runtime: &SkynestAccountRuntime) -> LuaResult<()> {
+    // A callback may submit another provider request. Keep it outside this
+    // snapshot so it cannot complete recursively on the same stack.
+    for completion in runtime.take_pending() {
+        match completion {
+            Completion::LoginUnavailable => notify_login_unavailable(lua, &runtime.state)?,
+            Completion::ValidateNickname { callback, is_valid } => {
+                call_retained(lua, callback, (true, is_valid))?;
+            }
+        }
     }
-    notify_login_unavailable(lua, state)
+    Ok(())
 }
 
 fn notify_login_unavailable(lua: &Lua, state: &Arc<Mutex<OfflineState>>) -> LuaResult<()> {
@@ -187,4 +240,11 @@ fn notify_login_unavailable(lua: &Lua, state: &Arc<Mutex<OfflineState>>) -> LuaR
         "ERROR_OTHER",
         "Rovio Account is unavailable on this offline host",
     ))
+}
+
+fn call_retained(lua: &Lua, callback: RegistryKey, args: impl IntoLuaMulti) -> LuaResult<()> {
+    let function = lua.registry_value::<mlua::Function>(&callback)?;
+    let result = function.call::<()>(args);
+    lua.remove_registry_value(callback)?;
+    result
 }

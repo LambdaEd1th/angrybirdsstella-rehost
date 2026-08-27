@@ -21,6 +21,7 @@ pub struct StellaLua {
     pub(crate) game_server: GameServerRuntime,
     pub(crate) gamer_services: GamerServicesRuntime,
     pub(crate) iap: IapRuntime,
+    pub(crate) skynest_account: SkynestAccountRuntime,
     pub(crate) skynest_storage: SkynestStorageRuntime,
     #[cfg(test)]
     pub(crate) draw_callbacks: Rc<RefCell<DrawCallbacks>>,
@@ -129,6 +130,7 @@ impl StellaLua {
             game_server: installed.game_server,
             gamer_services: installed.gamer_services,
             iap: installed.iap,
+            skynest_account: installed.skynest_account,
             skynest_storage: installed.skynest_storage,
             #[cfg(test)]
             draw_callbacks,

@@ -16,6 +16,7 @@ pub(crate) struct InstalledRuntimes {
     pub(crate) game_server: GameServerRuntime,
     pub(crate) gamer_services: GamerServicesRuntime,
     pub(crate) iap: IapRuntime,
+    pub(crate) skynest_account: SkynestAccountRuntime,
     pub(crate) skynest_storage: SkynestStorageRuntime,
 }
 
@@ -231,6 +232,7 @@ pub(crate) fn install_base_globals(
         game_server: platform_services.game_server,
         gamer_services: platform_services.gamer_services,
         iap: platform_services.iap,
+        skynest_account: platform_services.skynest_account,
         skynest_storage: platform_services.skynest_storage,
     })
 }
