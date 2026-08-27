@@ -25,7 +25,7 @@ env:
   RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
   RUNTIME_DATA_RELEASE: runtime-data-v1.1.6
   RUNTIME_DATA_ARCHIVE: angry-birds-stella-runtime-data-v1.1.6.tar.gz
-  RUNTIME_DATA_SHA256: 1935865424eca4294666dbf37235caba95eaba0bde69624286b1b61b64e573ea
+  RUNTIME_DATA_SHA256: bd72082495afb28f86f09bccfa074a3fb34d29a66a44408fd25e6a0cc0c19857
 
 jobs:
   validate:
@@ -207,6 +207,20 @@ jobs:
             --dir "$RUNNER_TEMP/runtime-data"
           echo "$RUNTIME_DATA_SHA256  $RUNNER_TEMP/runtime-data/$RUNTIME_DATA_ARCHIVE" \
             | sha256sum --check -
+          if tar -tzf "$RUNNER_TEMP/runtime-data/$RUNTIME_DATA_ARCHIVE" \
+            | grep -Eq '(^|/)(\.DS_Store|\._[^/]+|__MACOSX)(/|$)'; then
+            echo "macOS cache files found in private runtime data" >&2
+            exit 1
+          fi
+          gzip -dc "$RUNNER_TEMP/runtime-data/$RUNTIME_DATA_ARCHIVE" \
+            > "$RUNNER_TEMP/runtime-data/runtime-data.tar"
+          if LC_ALL=C grep -aEq \
+            '(SCHILY\.xattr|LIBARCHIVE\.xattr)\.com\.apple\.' \
+            "$RUNNER_TEMP/runtime-data/runtime-data.tar"; then
+            echo "macOS extended attributes found in private runtime data" >&2
+            exit 1
+          fi
+          rm "$RUNNER_TEMP/runtime-data/runtime-data.tar"
 
       - name: Add game data to every platform package
         shell: bash
