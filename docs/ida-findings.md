@@ -15260,3 +15260,54 @@ checkpoints at 60 and 1,800 display frames have SHA-256 values
 `398357769f817a2ccae7f557b67fee4beb61188a25e34d78f9c87af1b50c16ec`.
 Visual inspection shows the authored initial roll and the complete vehicle
 resting on the upper-right platform at the later checkpoint.
+
+## Telepods capability publication before the original UI snapshot
+
+The native QR and wallet members were complete, but the desktop command line
+originally advertised its virtual scanner only after `game.lua` returned.
+Decompiling the shipped `characters.lua` exposes why that made every ordinary
+game entry disappear: when `telepod_configuration.json` is accepted it stores
+`g_showTelepodButtons = showTelepodButtons and (not releaseBuild or
+Telepods.areSupported())` exactly once. `Scrapbook:onEntry`, `GameHud:onEntry`
+and the dynamically constructed `ExtraBirdBar` then consume that stored flag;
+they do not poll the camera predicate again.
+
+IDA places the QrScanner constructor thunk `sub_1000DE2A4` inside the large
+native service-graph constructor `sub_10002C274`. Its sole call site is
+`0x10002FAA8`, where the completed QrScanner is immediately retained at owner
+offset `+0x648` (`1608`). This is the same construction phase that publishes
+the five-member `QrScanner` Lua object, before the application boots its game
+scripts. Hopper independently reports `sub_10002C274` as the thunk's only
+caller and recovers the same object construction and publication sequence.
+The correct boundary is therefore capability publication before script boot,
+not mutation after the first menu has already been built.
+
+The desktop application now announces its virtual scanner immediately after
+constructing `StellaLua` and before booting `scripts/game.lua`. An optional
+`--telepod-code` is queued at that same point and remains pending until the
+shipped `TelepodPage` calls `start` and installs its recognition callback. The
+headless executable preserves its default no-camera branch, but when a code is
+requested it uses the same preboot ordering. No replacement menu was added:
+the visible UI remains the shipped `TelepodPage.layout.lua`, including both
+scan animations, electric logo, placement text, help and close buttons, while
+the original Scrapbook, in-level, last-chance and reward-wheel callers retain
+their own input and animation behavior.
+
+A complete-data regression enables the scanner before boot, proves
+`g_showTelepodButtons` is true, constructs all seven shipped scan-page children
+and advances the original page lifecycle for 180 frames. It requires both the
+electric Telepods logo and `TELEPOD_SCAN_*` animation sprites to reach the
+native render queue. A deterministic wgpu screenshot of the same page also
+confirms that the original board, text, logo and animated placement artwork are
+present rather than a host-side substitute; the settled release readback has
+SHA-256 `fc0302df52fdfc2dc1b5d3825e721b01659ba228a603d345c2c0da714ee7d2a0`.
+
+The complete workspace passes 682 tests with the intentional long-duration
+BirdRun audit ignored. Formatting, diff whitespace, strict all-target/all-
+feature Clippy and the locked release build are clean. A 600-frame release
+headless boot with a prequeued Telepod code proves the original capability
+snapshot, Telepods facade and initialized wallet remain live with zero invoked
+fallbacks and zero remaining compatibility bindings. The release `stella-app`
+and `stella-headless` hashes are respectively
+`7e0e3ac33414ed9b812a0795b241558ead9e7f1b50a1e237d10e95d4caf8962e` and
+`278a278bb10de1d68fd8acb64eec85dd722f9f64bad3ae6ad44d7b77abd2f4af`.

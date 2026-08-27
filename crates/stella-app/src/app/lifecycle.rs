@@ -80,8 +80,12 @@ mod tests {
             data_root,
             GameResolution::default(),
             false,
+            None,
         )
         .unwrap();
+        app.runtime
+            .execute_source("assert(g_showTelepodButtons)")
+            .unwrap();
         app.runtime
             .execute_source(
                 r#"

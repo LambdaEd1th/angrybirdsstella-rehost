@@ -25,9 +25,12 @@ selected explicitly:
 stella-app --data /path/to/data
 ```
 
-To exercise the reconstructed Telepods path without a camera, queue one of the
-product identifiers in `runtime/data/config/telepod_configuration.json` before
-opening the original scan page:
+The desktop host publishes its virtual scanner before the original scripts
+boot, so the shipped Scrapbook, in-level and reward-wheel Telepods buttons and
+scan page are visible during an ordinary run. To exercise redemption without a
+camera, queue one of the product identifiers in
+`runtime/data/config/telepod_configuration.json` before opening that original
+scan page:
 
 ```text
 stella-app --telepod-code hasbro.telepod.020

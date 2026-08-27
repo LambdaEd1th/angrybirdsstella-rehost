@@ -92,16 +92,12 @@ struct Args {
 pub(super) fn run() -> Result<()> {
     let args = Args::parse();
     let resolution = GameResolution::new(args.width, args.height)?;
-    let mut app =
-        StellaApp::new_with_missing_global_diagnostics(args.data, resolution, args.list_missing)?;
-    if let Some(code) = args.telepod_code.as_deref() {
-        app.runtime
-            .set_qr_scanner_available(true)
-            .map_err(|error| anyhow!(error.to_string()))?;
-        app.runtime
-            .submit_qr_code(code)
-            .map_err(|error| anyhow!(error.to_string()))?;
-    }
+    let mut app = StellaApp::new_with_missing_global_diagnostics(
+        args.data,
+        resolution,
+        args.list_missing,
+        args.telepod_code.as_deref(),
+    )?;
     if let Some(destination) = args.screenshot {
         let mut clicks = Vec::new();
         if let Some(values) = args.click.as_deref() {

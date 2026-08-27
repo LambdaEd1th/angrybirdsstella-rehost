@@ -1051,6 +1051,127 @@ fn shipped_telepods_facade_observes_the_native_no_camera_branch() {
 }
 
 #[test]
+fn shipped_telepods_ui_snapshots_a_preboot_scanner_capability() {
+    let sandbox = ShippedDataSandbox::new("telepods-preboot-ui");
+    let runtime = StellaLua::new(&sandbox.data_root).unwrap();
+    runtime.set_qr_scanner_available(true).unwrap();
+    runtime.boot("scripts/game.lua").unwrap();
+    runtime
+        .execute_source(
+            r##"
+                assert(Telepods.areSupported())
+                assert(g_showTelepodButtons)
+
+                telepodsUiProbe = ui.TelepodPage:new()
+                for _, childName in ipairs({
+                    "telepodScanAnimationForeground",
+                    "telepodScanAnimationBackground",
+                    "telepodsLogo",
+                    "telepodPlacementText",
+                    "btnBuyTelepods",
+                    "btnx",
+                    "tpscanbg",
+                }) do
+                    assert(telepodsUiProbe:getChild(childName), childName)
+                end
+                notificationsFrame:addChild(telepodsUiProbe)
+                assert(ui.TelepodPage.isShown)
+            "##,
+        )
+        .unwrap();
+
+    for _ in 0..180 {
+        runtime.update(1.0 / 60.0).unwrap();
+        runtime.draw().unwrap();
+    }
+    let commands = runtime.take_render_commands();
+    assert!(
+        commands
+            .iter()
+            .any(|command| command.sprite == "TELEPOD_LOGO_ELECTRIC"),
+        "the shipped scan page logo must be submitted"
+    );
+    assert!(
+        commands
+            .iter()
+            .any(|command| command.sprite.starts_with("TELEPOD_SCAN_")),
+        "the shipped background/foreground scan animations must be submitted"
+    );
+}
+
+#[test]
+fn shipped_telepods_in_game_and_reward_wheel_entries_use_the_preboot_capability() {
+    let sandbox = ShippedDataSandbox::new("telepods-entry-points");
+    let runtime = StellaLua::new(&sandbox.data_root).unwrap();
+    runtime.set_qr_scanner_available(true).unwrap();
+    runtime.boot("scripts/game.lua").unwrap();
+    runtime.execute_source("initializeEventSystem()").unwrap();
+    runtime
+        .execute_source(
+            r##"
+                SpriteSheetManager.useGroupSet("INGAME")
+                currentFolder = "Chapter02"
+                currentPack = "Chapter02"
+                currentLevel = 11
+                levelFolder = "levels/Chapter02/"
+                levelName = "Chapter02_L11"
+                loadLevelInternal(levelFolder .. levelName)
+
+                local hud = ui.GameHud:new()
+                menuManager:getRoot():addChild(hud)
+                local telepodButton = hud:getChild("extraBirdBar"):getChild("telepodButton")
+                assert(telepodButton)
+                assert(telepodButton.visible)
+                assert(telepodButton.returnValue == "OPEN_TELEPOD")
+
+                local rewardWheel = ui.ReSpinWheel:new()
+                assert(rewardWheel:getChild("btn3").returnValue == "UNLOCK_SCAN_TELEPOD")
+                assert(rewardWheel:getChild("telepodLogo"))
+            "##,
+        )
+        .unwrap();
+}
+
+#[test]
+fn shipped_telepods_page_consumes_a_code_queued_before_boot() {
+    let sandbox = ShippedDataSandbox::new("telepods-preboot-redemption");
+    let runtime = StellaLua::new(&sandbox.data_root).unwrap();
+    runtime.set_qr_scanner_available(true).unwrap();
+    assert!(!runtime.submit_qr_code("hasbro.telepod.020").unwrap());
+    runtime.boot("scripts/game.lua").unwrap();
+    runtime
+        .execute_source(
+            r##"
+                assert(g_showTelepodButtons)
+
+                -- TelepodPage's shipped success path only adds an extra bird
+                -- outside Scrapbook/result screens. Keep this deterministic
+                -- UI probe in its original Scrapbook branch.
+                local root = menuManager:getRoot()
+                local originalGetChild = root.getChild
+                root.getChild = function(self, name)
+                    if name == "Scrapbook" then
+                        return true
+                    end
+                    return originalGetChild(self, name)
+                end
+                notificationsFrame:addChild(ui.TelepodPage:new())
+                root.getChild = originalGetChild
+
+                assert(SettingsWrapper:isBirdSkinUnlocked("Piano Willow"))
+            "##,
+        )
+        .unwrap();
+
+    for _ in 0..180 {
+        runtime.update(1.0 / 60.0).unwrap();
+    }
+    runtime
+        .execute_source("assert(not ui.TelepodPage.isShown)")
+        .unwrap();
+}
+
+#[test]
 fn shipped_telepods_scanner_and_iap_wallet_complete_all_configured_products() {
     let sandbox = ShippedDataSandbox::new("telepods-wallet");
     let runtime = StellaLua::new(&sandbox.data_root).unwrap();

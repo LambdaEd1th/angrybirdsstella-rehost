@@ -40,6 +40,7 @@ impl StellaApp {
         data_root: PathBuf,
         resolution: GameResolution,
         track_missing_globals: bool,
+        telepod_code: Option<&str>,
     ) -> Result<Self> {
         let runtime = if track_missing_globals {
             StellaLua::new_with_resolution_and_missing_global_diagnostics(
@@ -51,6 +52,22 @@ impl StellaApp {
             StellaLua::new_with_resolution(&data_root, resolution.width, resolution.height)
         }
         .map_err(|error| anyhow!("create Lua runtime: {error}"))?;
+        // Purple constructs and publishes QrScanner while it builds the
+        // native service graph, before game.lua loads characters.lua.  That
+        // script snapshots Telepods.areSupported() into
+        // g_showTelepodButtons while parsing telepod_configuration.json.
+        //
+        // The desktop app always has the virtual scanner ingress available;
+        // a code is optional and remains queued until the shipped scan page
+        // starts the scanner and installs its recognition callback.
+        runtime
+            .set_qr_scanner_available(true)
+            .map_err(|error| anyhow!("publish virtual Telepods scanner: {error}"))?;
+        if let Some(code) = telepod_code {
+            runtime
+                .submit_qr_code(code)
+                .map_err(|error| anyhow!("queue Telepods code: {error}"))?;
+        }
         runtime
             .boot("scripts/game.lua")
             .map_err(|error| anyhow!("boot original scripts: {error}"))?;
