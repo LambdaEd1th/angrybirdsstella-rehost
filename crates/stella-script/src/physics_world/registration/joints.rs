@@ -50,7 +50,6 @@ pub(super) fn install_creation(
                 .checked_sub(1)
                 .ok_or_else(|| runtime_error("createJoints expects a table"))?;
             let descriptors = native_required_table(&args, index, "createJoints")?;
-            let mut custom_descriptors = Vec::new();
             for pair in descriptors.pairs::<Value, Value>() {
                 let (_, value) = pair?;
                 if std::env::var_os("STELLA_TRACE_JOINTS").is_some()
@@ -66,7 +65,10 @@ pub(super) fn install_creation(
                 };
                 let joint_type = table_required_number(&descriptor, "type", "createJoints")? as f32;
                 if joint_type >= 7.0 {
-                    custom_descriptors.push(descriptor);
+                    // sub_10003CC64 invokes createJoint inside its lua_next
+                    // loop. A custom handler therefore completes before the
+                    // next descriptor and may create an endpoint it uses.
+                    dispatch_custom_joint(lua, descriptor)?;
                 } else if let Some(created) = insert_physics_joint(
                     lua,
                     &mut joints_bridge.lock().expect("render bridge lock poisoned"),
@@ -74,13 +76,6 @@ pub(super) fn install_creation(
                 )? {
                     mirror_lua_joint_descriptor(lua, &descriptor, &created)?;
                 }
-            }
-            // sub_1000386EC releases the C++ scene lock before invoking the
-            // Lua custom-joint dispatcher. Type 7 can recursively create a
-            // rope (and therefore ordinary joints), so calling it while the
-            // bridge mutex is held would deadlock and would not match native.
-            for descriptor in custom_descriptors {
-                dispatch_custom_joint(lua, descriptor)?;
             }
             Ok(())
         })?,

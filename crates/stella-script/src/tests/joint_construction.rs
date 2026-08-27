@@ -708,6 +708,51 @@ fn joint_batch_separates_native_and_custom_descriptors() {
 }
 
 #[test]
+fn joint_batch_dispatches_each_custom_descriptor_before_the_next_native_value() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createBox("anchor", "", 0, 0, 1, 1, 0, 0, 0, true, false, 1)
+                batch_events = {}
+                createCustomJoint = function(descriptor)
+                    table.insert(batch_events, "custom:" .. descriptor.name)
+                    if descriptor.name == "builder" then
+                        createBox(
+                            "custom_endpoint", "", 2, 0,
+                            1, 1, 1, 0, 0, true, false, 1
+                        )
+                    end
+                end
+                createJoints({
+                    {
+                        name = "builder", end1 = "anchor", end2 = "anchor",
+                        type = 7, x1 = 0, y1 = 0, x2 = 0, y2 = 0
+                    },
+                    {
+                        name = "dependent", end1 = "anchor", end2 = "custom_endpoint",
+                        type = 2, coordType = 2,
+                        x1 = 0, y1 = 0, x2 = 0, y2 = 0
+                    },
+                    {
+                        name = "observer", end1 = "anchor", end2 = "anchor",
+                        type = 8
+                    }
+                })
+            "#,
+        )
+        .unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    let events = environment.get::<mlua::Table>("batch_events").unwrap();
+    assert_eq!(events.raw_get::<String>(1).unwrap(), "custom:builder");
+    assert_eq!(events.raw_get::<String>(2).unwrap(), "custom:observer");
+    let bridge = runtime.render.lock().unwrap();
+    assert!(bridge.scene.contains_key("custom_endpoint"));
+    assert!(bridge.joints.contains_key("dependent"));
+}
+
+#[test]
 fn recovered_type_five_is_a_destroy_link_not_a_collision_joint() {
     let runtime = unlocked_test_runtime();
     runtime

@@ -15869,3 +15869,20 @@ render-only objects while rejecting empty names. The construction boundary
 now reproduces all four cases, with regressions for both endpoint orders,
 splitter suppression, both null-body orders, publication absence and the
 empty-name key.
+
+The 144-byte `createJoints` wrapper preserves more than the set of table
+values. IDA decompiles `sub_10003CC64` as the exact Lua 5.1 iteration pattern:
+`sub_10052881C` pushes the initial nil at `0x10003CC84`,
+`sub_10052893C` performs `lua_next` at `0x10003CC90/0x10003CCD4`, and the
+current value is wrapped and passed immediately to full `createJoint` at
+`0x10003CCA8..0x10003CCB4` before the value is popped at `0x10003CCC8`.
+Hopper shows the same call inside, rather than after, the loop.
+
+Rust already covered the same keys with `Table::pairs`, but previously queued
+all type-seven-and-up descriptors until every ordinary constraint had been
+created. That reordered native/custom side effects and prevented a custom
+handler from creating an endpoint consumed by the following table value. The
+batch bridge now dispatches each custom descriptor inline, after no scene lock
+is retained, and then advances to the next `lua_next` value. A regression uses
+an array-ordered custom builder, dependent native weld and second custom
+observer to prove the original interleaving and reentrant endpoint creation.
