@@ -47,6 +47,9 @@ impl StellaLua {
         // Payment provider, voucher redemption and wallet reads all retain
         // completion functors that re-enter Lua on the application thread.
         dispatch_iap_completions(&self.lua, &self.iap)?;
+        // Skynest key requests retain the supplied LuaFunction by request id;
+        // their provider continuations run on the application thread.
+        dispatch_skynest_storage_completions(&self.lua, &self.skynest_storage)?;
         // AppController hands GameLua an `S0` value. `sub_10005E898` retains
         // that float as the raw delta, then performs the time-multiplier FMUL
         // in single precision before forwarding `float,float` to Lua. Keep

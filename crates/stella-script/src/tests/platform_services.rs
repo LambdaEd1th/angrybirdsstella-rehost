@@ -2548,6 +2548,10 @@ fn skynest_native_account_and_storage_complete_retired_backend_calls_locally() {
                 skynest_set_results = select("#", storage.native_setKey(
                     "nickname", "testplayer", function(...)
                         skynest_set_callback_count = select("#", ...)
+                        storage.native_getKey("nickname", function(...)
+                            skynest_nested_count = select("#", ...)
+                            skynest_nested_value = ...
+                        end)
                     end, "ignored"
                 ))
                 skynest_has_nickname_after = account.native_hasNickname()
@@ -2628,7 +2632,7 @@ fn skynest_native_account_and_storage_complete_retired_backend_calls_locally() {
             .unwrap()
     );
     assert!(
-        !environment
+        environment
             .get::<bool>("skynest_has_nickname_after")
             .unwrap()
     );
@@ -2642,6 +2646,36 @@ fn skynest_native_account_and_storage_complete_retired_backend_calls_locally() {
     assert_eq!(environment.get::<i64>("skynest_invalid_count").unwrap(), 2);
     assert!(environment.get::<bool>("skynest_invalid_ok").unwrap());
     assert!(!environment.get::<bool>("skynest_invalid_value").unwrap());
+    for name in [
+        "skynest_missing_count",
+        "skynest_set_callback_count",
+        "skynest_found_count",
+        "skynest_batch_count",
+        "skynest_nested_count",
+    ] {
+        assert!(environment.get::<Value>(name).unwrap().is_nil(), "{name}");
+    }
+
+    runtime.update(1.0 / 60.0).unwrap();
+    runtime
+        .execute_source(
+            r##"
+                skynest_has_nickname_completed =
+                    _G.SkynestAccount.native_hasNickname()
+            "##,
+        )
+        .unwrap();
+    assert!(
+        !environment
+            .get::<bool>("skynest_has_nickname_completed")
+            .unwrap()
+    );
+    assert!(
+        environment
+            .get::<Value>("skynest_nested_count")
+            .unwrap()
+            .is_nil()
+    );
     assert_eq!(environment.get::<i64>("skynest_missing_count").unwrap(), 0);
     assert!(matches!(
         environment.get::<Value>("skynest_missing_value").unwrap(),
@@ -2666,6 +2700,12 @@ fn skynest_native_account_and_storage_complete_retired_backend_calls_locally() {
             .unwrap()
             .raw_len(),
         0
+    );
+    runtime.update(1.0 / 60.0).unwrap();
+    assert_eq!(environment.get::<i64>("skynest_nested_count").unwrap(), 1);
+    assert_eq!(
+        environment.get::<String>("skynest_nested_value").unwrap(),
+        "testplayer"
     );
     assert_eq!(
         environment.get::<i64>("skynest_timeout_results").unwrap(),

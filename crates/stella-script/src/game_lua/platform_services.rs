@@ -25,6 +25,7 @@ pub(crate) struct InstalledPlatformServices {
     pub(crate) game_server: GameServerRuntime,
     pub(crate) gamer_services: GamerServicesRuntime,
     pub(crate) iap: IapRuntime,
+    pub(crate) skynest_storage: SkynestStorageRuntime,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -59,7 +60,7 @@ pub(crate) fn install(
     zappar::install(lua, globals)?;
     let skynest_state = Arc::new(Mutex::new(skynest_account::OfflineState::default()));
     skynest_account::install(lua, globals, Arc::clone(&skynest_state))?;
-    skynest_storage::install(lua, globals, skynest_state)?;
+    let skynest_storage = skynest_storage::install(lua, globals, skynest_state)?;
     social::install(lua, globals)?;
     let assets = assets::install(
         lua,
@@ -76,6 +77,7 @@ pub(crate) fn install(
         game_server,
         gamer_services,
         iap,
+        skynest_storage,
     })
 }
 
@@ -95,3 +97,6 @@ pub(crate) use iap::{
     dispatch_completions as dispatch_iap_completions,
 };
 pub(crate) use qr_scanner::{set_host_available as set_qr_scanner_available, submit_host_code};
+pub(crate) use skynest_storage::{
+    SkynestStorageRuntime, dispatch_completions as dispatch_skynest_storage_completions,
+};

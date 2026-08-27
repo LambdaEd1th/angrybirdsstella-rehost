@@ -15667,3 +15667,35 @@ seen until one further frame. Regression coverage exercises the shipped
 products, unknown-code mapping, listener transfer from code to product,
 coalesced wallet delivery, callback order and the absence of same-stack or
 same-snapshot completion.
+
+## Skynest key-provider request retention and frame delivery
+
+The retired Skynest key substitute previously invoked the callback supplied to
+`native_setKey`, `native_getKey` and `native_getKeyForAccountIds` before the
+native member returned. IDA recovers all seven storage registrations in
+constructor `sub_1000B9B38`; Hopper independently confirms the three key
+members at `sub_1000BA5B8`, `sub_1000BA714` and `sub_1000BA85C`. None of these
+members calls its LuaFunction directly.
+
+Each member increments the request counter at owner offset `+0x90`, inserts the
+supplied LuaFunction into the red-black tree rooted at `+0x60` under that
+request ID, constructs distinct provider success and failure functors carrying
+`(owner, requestId)`, and then calls the provider interface at
+`sub_100705DE8`, `sub_100706118` or `sub_100706390`. The later continuations
+look the request ID up again, call the retained function and erase its tree
+node. Set-key success and failure (`sub_1000BBEFC` and `sub_1000BBD90`) both
+call with zero arguments. Get-key success `sub_1000BBC14` supplies one string,
+whereas failure `sub_1000BBAA8` supplies none. Batch success
+`sub_1000BB8B0` converts the provider string map to one Lua table; its failure
+`sub_1000BB744` again supplies no arguments.
+
+Rust now retains those callback functions through Lua registry keys in a
+storage-owner FIFO. Submission validates the recovered ABI and returns zero
+results without mutating the local provider state or entering Lua. Frame-head
+dispatch snapshots the queue, applies successful offline writes in request
+order, resolves reads against the state reached by earlier requests, calls the
+exact success/failure argument shape and releases each registry reference. A
+callback-issued nested read remains pending until the following frame instead
+of re-entering the current provider completion. The regression covers missing
+and found keys, write/read ordering, empty account maps, callback arity,
+strict generated-adapter tags and nested-request deferral.
