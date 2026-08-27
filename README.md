@@ -115,7 +115,7 @@ git push origin v0.1.0
 The Release workflow can also be started manually with the same tag in the
 GitHub Actions interface. It builds the four workspace executables for all five
 targets, publishes `.tar.gz` archives for macOS/Linux and `.zip` archives for
-Windows, injects the private verified `runtime/data` payload into every archive,
+Windows, injects the verified `runtime/data` payload into every archive,
 and attaches a shared `SHA256SUMS` file. Each package therefore runs without a
 separate extraction step and contains its runtime instructions in
 `RELEASE-README.md`.
@@ -539,3 +539,13 @@ assets through a cross-platform host. Physical video output, discontinued
 services and a few platform/driver-dependent ordering, resampling or subpixel
 details remain bounded compatibility surfaces; see `docs/ida-findings.md` for
 the exact list.
+
+## License
+
+Unless otherwise noted, repository-authored source code is licensed under the
+[GNU Affero General Public License, version 3 or later](LICENSE)
+(`AGPL-3.0-or-later`). Third-party components remain under their respective
+licenses.
+
+The original Angry Birds Stella application, `runtime/data`, and all other
+Rovio-owned game resources are not covered or relicensed by this license.

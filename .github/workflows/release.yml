@@ -195,7 +195,7 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Download and verify private runtime data
+      - name: Download and verify runtime data
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -209,7 +209,7 @@ jobs:
             | sha256sum --check -
           if tar -tzf "$RUNNER_TEMP/runtime-data/$RUNTIME_DATA_ARCHIVE" \
             | grep -Eq '(^|/)(\.DS_Store|\._[^/]+|__MACOSX)(/|$)'; then
-            echo "macOS cache files found in private runtime data" >&2
+            echo "macOS cache files found in runtime data" >&2
             exit 1
           fi
           gzip -dc "$RUNNER_TEMP/runtime-data/$RUNTIME_DATA_ARCHIVE" \
@@ -217,7 +217,7 @@ jobs:
           if LC_ALL=C grep -aEq \
             '(SCHILY\.xattr|LIBARCHIVE\.xattr)\.com\.apple\.' \
             "$RUNNER_TEMP/runtime-data/runtime-data.tar"; then
-            echo "macOS extended attributes found in private runtime data" >&2
+            echo "macOS extended attributes found in runtime data" >&2
             exit 1
           fi
           rm "$RUNNER_TEMP/runtime-data/runtime-data.tar"

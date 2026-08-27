@@ -9,7 +9,7 @@ This archive contains the native executables for one platform:
 
 ## Game data is included
 
-This private release includes the locally supplied, decrypted runtime resources
+This release includes the locally supplied, decrypted runtime resources
 under `runtime/data`. A writable `runtime/appdata` directory is included for
 saves, settings and downloaded-asset state. Start the desktop rehost from the
 archive root:
@@ -37,8 +37,20 @@ stella-app --telepod-code hasbro.telepod.020
 ```
 
 The bundled resources originate from a legally supplied Angry Birds Stella
-application and must not be redistributed outside the authorized private
-repository and its private releases.
+application and must not be redistributed outside the authorized repository
+and its release assets.
+
+## License and source
+
+The repository-authored program code is licensed under the GNU Affero General
+Public License, version 3 or later (`AGPL-3.0-or-later`). The complete license
+text is included as `LICENSE`. Corresponding source for the executables is
+available from
+<https://github.com/LambdaEd1th/angrybirdsstella-rehost> at the commit recorded
+in `BUILD-INFO.txt`.
+
+The bundled original game resources and other third-party components remain
+under their respective terms and are not covered or relicensed by the AGPL.
 
 ## Platform notes
 

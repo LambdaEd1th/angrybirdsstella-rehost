@@ -14,7 +14,7 @@ trap 'rm -rf "$work_dir"' EXIT
 mkdir -p "$work_dir/runtime"
 tar -xzf "$data_archive" -C "$work_dir/runtime"
 
-# Finder metadata is frequently introduced when the private runtime bundle is
+# Finder metadata is frequently introduced when the runtime bundle is
 # prepared on macOS.  The extracted tree is temporary and is the only source
 # copied into release packages, so remove it here before validating or
 # embedding the game data.  Keep this portable across GNU/BSD find (the

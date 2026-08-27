@@ -22,6 +22,7 @@ for binary in stella-app stella-headless stella-mp3-audit stella-tool; do
 done
 
 install -m 0644 "$root/README.md" "$package_root/README.md"
+install -m 0644 "$root/LICENSE" "$package_root/LICENSE"
 install -m 0644 "$root/docs/release-package.md" "$package_root/RELEASE-README.md"
 
 {
