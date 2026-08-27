@@ -33,10 +33,14 @@ pub(super) fn install(
             // sub_100026238, which opens the iOS App Store product whose
             // literal identifier is 875251011. Retain the request rather than
             // attempting a platform side effect during deterministic runs.
-            render
-                .lock()
-                .expect("render bridge lock poisoned")
-                .requested_app_store_product = Some(("875251011".to_owned(), 3));
+            let mut bridge = render.lock().expect("render bridge lock poisoned");
+            bridge.requested_app_store_product = Some(("875251011".to_owned(), 3));
+            bridge
+                .platform_action_requests
+                .push(PlatformActionRequest::OpenAppStoreProduct {
+                    product_id: "875251011".to_owned(),
+                    product_type: 3,
+                });
             Ok(())
         })?,
     )?;

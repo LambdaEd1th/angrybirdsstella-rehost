@@ -67,10 +67,13 @@ pub(super) fn install(
                 // sub_10009E940 opens launchId directly only when the cached
                 // canOpenURL result is true. Retain that request in the same
                 // host URL bridge if a future platform backend reports it.
-                render
-                    .lock()
-                    .expect("render bridge lock poisoned")
-                    .requested_url = Some(state.launch_id.clone());
+                let mut bridge = render.lock().expect("render bridge lock poisoned");
+                bridge.requested_url = Some(state.launch_id.clone());
+                bridge
+                    .platform_action_requests
+                    .push(PlatformActionRequest::OpenUrl {
+                        url: state.launch_id.clone(),
+                    });
                 return Ok(());
             }
 
@@ -78,10 +81,14 @@ pub(super) fn install(
             // the native StoreKit launcher (sub_1005340D0). Retain the
             // request in the same host bridge used by ForceUpdate rather
             // than causing a nondeterministic external side effect.
-            render
-                .lock()
-                .expect("render bridge lock poisoned")
-                .requested_app_store_product = Some((state.store_id.clone(), 3));
+            let mut bridge = render.lock().expect("render bridge lock poisoned");
+            bridge.requested_app_store_product = Some((state.store_id.clone(), 3));
+            bridge
+                .platform_action_requests
+                .push(PlatformActionRequest::OpenAppStoreProduct {
+                    product_id: state.store_id.clone(),
+                    product_type: 3,
+                });
             Ok(())
         })?,
     )?;

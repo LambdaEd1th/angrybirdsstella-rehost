@@ -14,11 +14,11 @@ use stella_assets::ka3d::{
 };
 use stella_script::{
     AudioOutputClock, AudioOutputState, BoundCompositePart, CaptureRenderCommand,
-    ColorMeshTopology, ColorProgram, DirtRenderCommand, MaskedTextureBinding, RectRenderCommand,
-    RenderCommand, RenderQuad, RenderTriangle, ScreenshotShareRequest, SpriteCatalogRegion,
-    SpriteCatalogSnapshot, SpriteGeometrySubmission, SpriteShader, StellaLua, SystemFontLayoutFace,
-    SystemFontRenderBinding, SystemFontShapedLine, TextFontBinding, TextProjection3D,
-    TextRenderCommand,
+    ColorMeshTopology, ColorProgram, DirtRenderCommand, MaskedTextureBinding,
+    PlatformActionRequest, RectRenderCommand, RenderCommand, RenderQuad, RenderTriangle,
+    ScreenshotShareRequest, SpriteCatalogRegion, SpriteCatalogSnapshot, SpriteGeometrySubmission,
+    SpriteShader, StellaLua, SystemFontLayoutFace, SystemFontRenderBinding, SystemFontShapedLine,
+    TextFontBinding, TextProjection3D, TextRenderCommand,
 };
 use winit::{
     application::ApplicationHandler,

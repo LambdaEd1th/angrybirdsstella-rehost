@@ -61,6 +61,7 @@ impl StellaApp {
         );
         self.screenshot_share_requests
             .extend(self.runtime.take_screenshot_share_requests());
+        self.dispatch_platform_actions();
         self.background_color = self.runtime.background_color();
         let audio_state = self.runtime.audio_output_state();
         let finished = if let Some(audio) = self.audio.as_mut() {

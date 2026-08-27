@@ -15336,3 +15336,38 @@ The complete workspace now contains 683 tests with the intentional
 long-duration BirdRun audit ignored. The functional priority remains on
 unexercised menu/gameplay/service routes; pure performance work is deferred
 until those routes are complete.
+
+## Resource URL and App Store host dispatch
+
+The next platform audit found an actual host-consumption gap rather than a
+Lua binding gap. IDA resolves the `openURL` registration at `0x100446D98` to
+`game::LuaResources::openURL` (`sub_10044AAF8`). That member constructs the
+iOS platform adapter, forwards the required string to `sub_10053CB90`, returns
+its boolean result and destroys the adapter. Decompiling `sub_10053CB90`
+recovers the complete Objective-C chain `UIApplication.sharedApplication ->
+NSURL.URLWithString -> UIApplication.openURL:`. Hopper independently recovers
+the same wrapper/callee sequence. The earlier Rust member validated the string
+but always returned false, so every original EULA, privacy-policy, Telepods
+help and redirect path was suppressed.
+
+The StoreKit side has an equally explicit boundary. IDA and Hopper both
+recover `ForceUpdate::native_launchAppStore` as `sub_100026238`, which builds
+the literal product id `875251011` and calls `sub_1005340D0` with type `3`.
+The cross-promotion launcher's non-installed branch uses that same product/type
+service, while its installed branch opens the cached launch URL directly.
+
+Rust now emits a public, ordered `PlatformActionRequest` stream. `res.openURL`
+accepts and returns true after preserving its strict string contract;
+ForceUpdate and cross-promotion retain their exact product ids and type values.
+The interactive desktop host drains the stream at the next native frame and
+uses `/usr/bin/open`, `rundll32` or `xdg-open` on macOS, Windows or Linux. A
+platform-launch failure remains non-fatal, matching the advisory native API.
+`native_startURLThread` is intentionally not routed into this stream: its
+recovered member `sub_100032688` owns an asynchronous network callback object,
+not a system-browser launch. `playVideo` also has no shipped Lua caller and the
+original application bundle contains no movie resource, so this change does
+not invent an external-player behavior for that unreachable service.
+
+A regression invokes `res.openURL` and ForceUpdate from the Lua VM, checks the
+strict argument failures and return ABI, and proves that URL then product
+requests reach the host in native call order without being coalesced.

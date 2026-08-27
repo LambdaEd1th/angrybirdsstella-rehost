@@ -2,6 +2,7 @@
 
 mod input;
 mod lifecycle;
+mod platform_actions;
 mod runtime;
 mod screenshot;
 mod sharing;

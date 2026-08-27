@@ -199,7 +199,12 @@ pub(crate) fn install(lua: &Lua, globals: &Table, context: RegistrationContext) 
         Arc::clone(&resource_runtime),
         Arc::clone(&audio_runtime),
     )?;
-    draw_registration::install_open_url_and_publish(lua, globals, &resource_api)?;
+    draw_registration::install_open_url_and_publish(
+        lua,
+        globals,
+        &resource_api,
+        Arc::clone(&render),
+    )?;
 
     install_legacy_resource_manager(
         lua,

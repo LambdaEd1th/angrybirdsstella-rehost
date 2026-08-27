@@ -202,6 +202,18 @@ impl StellaLua {
         )
     }
 
+    /// Drain platform-owned URL and store actions in the same order in which
+    /// the original native members accepted them from Lua.
+    pub fn take_platform_action_requests(&self) -> Vec<PlatformActionRequest> {
+        std::mem::take(
+            &mut self
+                .render
+                .lock()
+                .expect("render bridge lock poisoned")
+                .platform_action_requests,
+        )
+    }
+
     /// Drain composite definitions changed through `setCompoSpriteEntry` so
     /// the host renderer can update its asset-side expansion cache.
     pub fn take_composite_updates(&self) -> BTreeMap<String, Vec<CompositePart>> {

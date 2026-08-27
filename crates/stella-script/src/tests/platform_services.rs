@@ -1,6 +1,39 @@
 use super::*;
 
 #[test]
+fn external_url_and_store_members_queue_host_actions_in_native_call_order() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .execute_source(
+            r#"
+                open_url_result = res.openURL("https://example.invalid/stella")
+                open_url_missing_fails = not pcall(res.openURL)
+                open_url_type_fails = not pcall(res.openURL, false)
+                ForceUpdate.native_launchAppStore()
+            "#,
+        )
+        .unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert!(environment.get::<bool>("open_url_result").unwrap());
+    assert!(environment.get::<bool>("open_url_missing_fails").unwrap());
+    assert!(environment.get::<bool>("open_url_type_fails").unwrap());
+    assert_eq!(
+        runtime.take_platform_action_requests(),
+        vec![
+            PlatformActionRequest::OpenUrl {
+                url: "https://example.invalid/stella".to_owned(),
+            },
+            PlatformActionRequest::OpenAppStoreProduct {
+                product_id: "875251011".to_owned(),
+                product_type: 3,
+            },
+        ]
+    );
+    assert!(runtime.take_platform_action_requests().is_empty());
+}
+
+#[test]
 fn screenshot_share_queues_native_temp_names_titles_and_wrap_order() {
     set_screenshot_sequence_for_test(0);
     let runtime = StellaLua::new("/tmp").unwrap();

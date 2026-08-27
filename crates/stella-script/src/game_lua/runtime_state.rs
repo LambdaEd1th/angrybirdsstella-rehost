@@ -234,6 +234,7 @@ pub(crate) struct RenderBridge {
     pub(crate) requested_video: Option<String>,
     pub(crate) requested_url: Option<String>,
     pub(crate) requested_app_store_product: Option<(String, u32)>,
+    pub(crate) platform_action_requests: Vec<PlatformActionRequest>,
     pub(crate) screenshot_share_requests: Vec<ScreenshotShareRequest>,
     pub(crate) smooth_zooming: bool,
     pub(crate) input_zoom: NativeInputZoom,
@@ -446,6 +447,7 @@ impl Default for RenderBridge {
             requested_video: None,
             requested_url: None,
             requested_app_store_product: None,
+            platform_action_requests: Vec::new(),
             screenshot_share_requests: Vec::new(),
             // GameApp::GameApp stores one at +0x514 after loading the native
             // game configuration; +0x50C/+0x510 begin at -1.0f.

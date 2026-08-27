@@ -24,12 +24,22 @@ pub(crate) fn install_open_url_and_publish(
     lua: &Lua,
     globals: &mlua::Table,
     resource_api: &mlua::Table,
+    render: Arc<Mutex<RenderBridge>>,
 ) -> LuaResult<()> {
     resource_api.set(
         "openURL",
-        lua.create_function(|_, args: MultiValue| {
-            let _ = native_required_string(&args, 0, "openURL")?;
-            Ok(false)
+        lua.create_function(move |_, args: MultiValue| {
+            let url = native_required_string(&args, 0, "openURL")?;
+            // LuaResources::openURL (`sub_10044AAF8`) constructs the iOS
+            // platform adapter, calls UIApplication openURL:, and returns its
+            // boolean. The desktop host accepts the request synchronously and
+            // performs the platform call at the next application frame.
+            render
+                .lock()
+                .expect("render bridge lock poisoned")
+                .platform_action_requests
+                .push(PlatformActionRequest::OpenUrl { url });
+            Ok(true)
         })?,
     )?;
     globals.set("res", resource_api)
