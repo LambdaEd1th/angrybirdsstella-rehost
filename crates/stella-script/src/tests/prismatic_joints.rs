@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn recovered_type_four_and_fieldless_type_five_create_prismatic_joints() {
+fn recovered_type_four_is_prismatic_and_fieldless_type_five_is_metadata_only() {
     let runtime = StellaLua::new("/tmp").unwrap();
     runtime
         .execute_source(
@@ -32,10 +32,13 @@ fn recovered_type_four_and_fieldless_type_five_create_prismatic_joints() {
     assert!(type_four.motor_enabled);
     assert_eq!(type_four.max_torque, 10_000.0);
     let type_five = &bridge.joints["prismatic5"];
-    assert!(type_five.is_physical);
-    assert_eq!(type_five.local_axis, (0.0, 1.0));
+    assert!(!type_five.is_physical);
+    assert_eq!(type_five.local_axis, (0.0, 0.0));
     assert!(!type_five.limits_enabled);
     assert!(!type_five.motor_enabled);
+    assert_eq!(type_five.destroy_timer, 1.0);
+    assert!(!type_five.one_way_destroy);
+    assert_eq!(bridge.native_joint_body_orders.len(), 1);
 }
 
 #[test]

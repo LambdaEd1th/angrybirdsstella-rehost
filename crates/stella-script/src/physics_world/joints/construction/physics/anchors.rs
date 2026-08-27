@@ -56,9 +56,9 @@ pub(super) fn decode_joint_geometry(
         return Ok(None);
     }
     let one_way_destroy_value = table.raw_get::<Value>("oneWayDestroy")?;
-    // Field existence selects metadata-only type 5 even when its value is false.
-    let has_one_way_destroy = matches!(&one_way_destroy_value, Value::Boolean(_));
-    let is_physical = matches!(joint_type, 1..=4 | 6) || (joint_type == 5 && !has_one_way_destroy);
+    // Type 5 is always the metadata-only destroy-link record. The optional
+    // boolean affects direction, not the native joint class.
+    let is_physical = matches!(joint_type, 1..=4 | 6);
     let one_way_destroy = matches!(&one_way_destroy_value, Value::Boolean(true));
 
     let (descriptor_first_anchor, descriptor_second_anchor) = if joint_type == 6 {

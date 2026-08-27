@@ -769,12 +769,11 @@ mass fallback for dynamic zero-area edge bodies.
 `createJoint` (`sub_100037374`) for every descriptor in the supplied table.
 The complete switch is now recovered rather than inferred from the first
 level: script type 1 creates a distance joint, type 2 a weld, and type 3 a
-revolute. Type 4 and a type 5 descriptor without `oneWayDestroy` create a
-prismatic joint through `sub_1008673AC`; the native prismatic defaults are
-limit enabled, lower/upper translation `0/5`, motor enabled, speed `0`, and
-maximum force `10000`. A type 5 descriptor containing the boolean
-`oneWayDestroy` field creates no Box2D joint—even when the value is false—and
-instead stores the destruction-link timer/direction metadata. Type 6 creates
+revolute. Type 4 creates a prismatic joint through `sub_1008673AC`; its native
+defaults are limit enabled, lower/upper translation `0/5`, motor enabled,
+speed `0`, and maximum force `10000`. Type 5 always creates no Box2D joint and
+instead stores destruction-link timer/direction metadata; `oneWayDestroy` is
+an optional direction field rather than a class-selection discriminator. Type 6 creates
 a Box2D rope joint (enum value 10), with local anchors `(-1,0)/(1,0)` and an
 optional `maxLength`. Types 7-10 dispatch through `createCustomJoint`; the
 shipped retail handlers do not all create constraints. Type 7 calls
@@ -832,8 +831,8 @@ A one-process audit booted all 153 extracted levels: 86,450 level objects
 referenced 558 of 797 block definitions with zero missing definitions. It
 found 3,799 typed joint records: type 2 = 2,843, type 3 = 519, type 5 = 196,
 type 7 = 207, and type 8 = 34. Every type 5 record contains
-`oneWayDestroy` (25 true, 171 false), so all shipped type 5 records select the
-metadata-only branch; types 4 and 6 remain implemented for original API/editor
+`oneWayDestroy` (25 true, 171 false), though its presence is not required to
+select the metadata-only branch; types 4 and 6 remain implemented for original API/editor
 compatibility although retail levels do not instantiate them. Breakable
 records comprise 328 type-2, 12 type-3 and 2 type-7 descriptors. Only five
 physical descriptors enable `collideConnected` (one type 2, four type 3).
@@ -15775,8 +15774,8 @@ The type-five metadata branch carries another nonzero fallback. IDA shows
 the Lua descriptor. Hopper independently shows `fmov s9, #1.0` at
 `0x10003978C`, the conditional float accessor, and the descriptor setter at
 `0x100039808`. The rehost now applies and publishes that one-second default
-for metadata-only type-five links while preserving the separate overloaded
-physical-prismatic compatibility branch. This prevents an omitted timer from
+for metadata-only type-five links; type four remains the separate physical
+prismatic branch. This prevents an omitted timer from
 turning the original delayed dependent-object teardown into an immediate one.
 
 ## Joint descriptor ownership and successful-publication boundary
@@ -15826,3 +15825,24 @@ resolved defaults are never written into the caller's input table. The Rust
 bridge now constructs this per-type canonical table and has regressions for
 the exact key sets, optional-field type gates, default values, float32
 rounding, and type-one center-coordinate export.
+
+The three revolute angle-correction-looking keys do not form a hidden update
+system in Purple 1.1.6. IDA's complete string-reference query finds
+`angleTarget` only at `0x100038F28`, `0x100038F88` and `0x100038FCC`: the
+first two are the presence/read pair and the third publishes it to the new Lua
+descriptor. `angleCorrectionTorque` has only its presence/read references at
+`0x100039004` and `0x100039064`; `angleCorrectionMotorSpeed` likewise has only
+`0x1000390C4` and `0x100039124`. Their float32 stack locals have no subsequent
+use, and Hopper confirms no call or store consumes them. Rust therefore keeps
+the observable `angleTarget` field and intentionally does not invent a motor
+correction feature for the two dead legacy inputs.
+
+The same whole-switch review corrected a pre-existing type-five extension.
+Hopper compares the original float type to four at
+`0x100038BEC..0x100038BF4` before entering the only prismatic constructor, and
+separately compares it to five at `0x1000396AC..0x1000396B4` before entering
+the destroy-link metadata branch. That type-five branch reads
+`oneWayDestroy` only after its class is already selected. A fieldless type-five
+descriptor is consequently metadata-only with the one-second timer default,
+not a prismatic joint. Rust now matches that boundary and retains native joint
+topology only for type four.
