@@ -21,11 +21,11 @@ pub(crate) use placement::{
     native_system_label_horizontal_anchor, native_system_label_offset,
     native_system_label_vertical_anchor,
 };
+#[cfg(all(test, target_os = "macos"))]
+use raster::decode_system_raster;
 use raster::{append_line_glyphs, composite_system_mask, composite_system_rasters};
 #[cfg(test)]
-use raster::{
-    decode_system_bgra32, decode_system_coverage, decode_system_raster, glyph_outline_path,
-};
+use raster::{decode_system_bgra32, decode_system_coverage, glyph_outline_path};
 
 pub(crate) struct RasterizedSystemLabel {
     pub(crate) image: RgbaImage,
