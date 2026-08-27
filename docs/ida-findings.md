@@ -15517,3 +15517,49 @@ BirdRun audit ignored. Strict all-target/all-feature Clippy, formatting, diff
 validation and the locked release build are clean. The release headless host
 also boots the shipped data and advances 120 update/draw frames with zero
 invoked fallbacks and zero remaining compatibility bindings.
+
+## Game Center completion events and shipped subsystem translation
+
+The earlier `FusionGamerServices` table covered its generated direct-call ABI,
+but discarded all three asynchronous GameKit result paths. IDA and Hopper both
+recover the constructor at `sub_1000C9D70`: after publishing the seven native
+members it subscribes to the process GamerService authentication-status event.
+The retained completions enter `sub_1000CAA94`, `sub_1000CA884` and
+`sub_1000CB010`, respectively. Each constructs a Lua table and calls the
+retained GameLua member `notifyEventManager` through `sub_100065D18` with
+exactly two arguments rather than directly addressing the script event-manager
+object.
+
+The achievement table contains `achievementId` and `success` and is published
+as `EID_GS_POST_ACHIEVEMENT_FINISHED`. The score table contains
+`leaderboardId` and `success` and uses `EID_GS_POST_SCORE_FINISHED`. The
+authentication table contains `isSignedIn`, calculated as status exactly equal
+to one, and uses `EID_GS_AUTHENTICATION_STATUS_CHANGED`. The generated
+achievement adapter `sub_1000CC2F4` still requires only an exact string in slot
+one; score adapter `sub_1000CC0C4` requires an exact string followed by an
+exact number and narrows that score to the native float member boundary. Both
+ignore trailing Lua arguments and return zero results.
+
+`sub_1003BF240` submits an achievement at 100 percent and `sub_1003BF5A8`
+submits the authored score. Their Game Center completion blocks at
+`sub_10054CC94` and `sub_10054D164` report true for a nil error and, because of
+their legacy compatibility test, also for errors on every iOS version at least
+5.0. Stella 1.1.6 cannot run on an older target, so the portable no-GameKit
+completion surrogate correctly reports true. The authenticate handler is
+installed asynchronously; without a platform GameKit account its initial
+portable state is the recovered signed-out value.
+
+The Rust owner now retains a FIFO completion queue alongside GameServer state.
+It keeps the initial authentication callback pending until the shipped
+`notifyEventManager` exists, then drains authentication, achievement and score
+events on the application thread before ordinary Lua update. Strict synthetic
+tests prove asynchronous/one-shot delivery, exact field and event names,
+ordering, the pre-update boundary and the early-bootstrap pending state. A
+shipped-data integration test also lets `scripts_common/subsystems/
+FusionGamerServices.lua` consume the low-level achievement completion and
+observes its translated `EID_GAMERSERVICES_ACHIEVEMENT_POSTED` event.
+
+The complete workspace now passes 699 tests with the intentional long-duration
+BirdRun audit ignored. Repository-authored source remains explicitly licensed
+under `AGPL-3.0-or-later`; the full GNU Affero GPL v3 text, Cargo SPDX metadata
+and README notice agree, while Rovio game data remains outside that grant.

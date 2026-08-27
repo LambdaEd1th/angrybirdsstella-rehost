@@ -35,6 +35,9 @@ impl StellaLua {
         // their Lua callbacks captured by request id. Task completion is
         // delivered on the application thread before entering GameLua update.
         dispatch_game_server_completions(&self.lua, &self.game_server)?;
+        // GameCenter reports authentication, achievement and score completion
+        // through retained GameLua event calls on the application thread.
+        dispatch_gamer_services_completions(&self.lua, &self.gamer_services)?;
         // AppController hands GameLua an `S0` value. `sub_10005E898` retains
         // that float as the raw delta, then performs the time-multiplier FMUL
         // in single precision before forwarding `float,float` to Lua. Keep

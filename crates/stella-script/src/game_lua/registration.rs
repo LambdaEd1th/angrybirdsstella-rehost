@@ -12,6 +12,7 @@ pub(crate) struct InstalledRuntimes {
     pub(crate) url_requests: UrlRequestRuntime,
     pub(crate) installed_apps: InstalledAppsRuntime,
     pub(crate) game_server: GameServerRuntime,
+    pub(crate) gamer_services: GamerServicesRuntime,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -82,7 +83,7 @@ pub(crate) fn install_base_globals(
             bitmap_font_assets: Arc::clone(&bitmap_font_assets),
         },
     )?;
-    let game_server = install_platform_service_tables(
+    let platform_services = install_platform_service_tables(
         lua,
         &globals,
         Arc::clone(&data_root),
@@ -221,6 +222,7 @@ pub(crate) fn install_base_globals(
         audio: audio_runtime,
         url_requests: platform.url_requests,
         installed_apps: platform.installed_apps,
-        game_server,
+        game_server: platform_services.game_server,
+        gamer_services: platform_services.gamer_services,
     })
 }

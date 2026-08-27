@@ -19,6 +19,11 @@ mod zappar;
 
 use crate::*;
 
+pub(crate) struct InstalledPlatformServices {
+    pub(crate) game_server: GameServerRuntime,
+    pub(crate) gamer_services: GamerServicesRuntime,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn install(
     lua: &Lua,
@@ -28,7 +33,7 @@ pub(crate) fn install(
     render: Arc<Mutex<RenderBridge>>,
     animation_runtime: Arc<Mutex<AnimationRuntime>>,
     resource_runtime: Arc<Mutex<ResourceRuntime>>,
-) -> LuaResult<GameServerRuntime> {
+) -> LuaResult<InstalledPlatformServices> {
     ads::install(lua, globals)?;
     app_store_launcher::install(lua, globals, Arc::clone(&data_root), Arc::clone(&render))?;
     force_update::install(lua, globals, Arc::clone(&render))?;
@@ -45,7 +50,7 @@ pub(crate) fn install(
         },
     )?;
     analytics::install(lua, globals)?;
-    gamer_services::install(lua, globals)?;
+    let gamer_services = gamer_services::install(lua, globals)?;
     iap::install(lua, globals, Arc::clone(&data_root))?;
     qr_scanner::install(lua, globals)?;
     zappar::install(lua, globals)?;
@@ -62,7 +67,10 @@ pub(crate) fn install(
     channel::install(lua, globals, resource_runtime)?;
     game_lua::install_simple_random(lua, globals)?;
     align::install(lua, globals)?;
-    Ok(game_server)
+    Ok(InstalledPlatformServices {
+        game_server,
+        gamer_services,
+    })
 }
 
 pub(crate) use cloud_service::announce_registrations as announce_cloud_service_registrations;
@@ -70,6 +78,9 @@ pub(crate) use game_server::install_offline_facade as install_offline_game_serve
 pub(crate) use game_server::{
     GameServerRuntime, dispatch_completions as dispatch_game_server_completions,
     load_shipped_facade as load_shipped_game_server_facade,
+};
+pub(crate) use gamer_services::{
+    GamerServicesRuntime, dispatch_completions as dispatch_gamer_services_completions,
 };
 pub(crate) use iap::complete_initialization as complete_iap_initialization;
 pub(crate) use qr_scanner::{set_host_available as set_qr_scanner_available, submit_host_code};

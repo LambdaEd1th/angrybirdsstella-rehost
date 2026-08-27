@@ -81,6 +81,171 @@ fn spawn_game_server_response(
 }
 
 #[test]
+fn native_gamer_services_deliver_exact_events_before_lua_update() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .execute_source(
+            r##"
+                gamer_events = {}
+                notifyEventManager = function(name, event)
+                    gamer_events[#gamer_events + 1] = {
+                        name = name,
+                        achievementId = event.achievementId,
+                        leaderboardId = event.leaderboardId,
+                        isSignedIn = event.isSignedIn,
+                        success = event.success
+                    }
+                end
+                gamer_update_event_count = 0
+                update = function()
+                    gamer_update_event_count = #gamer_events
+                end
+                FusionGamerServices.postAchievement("ACH_TEST", "ignored")
+                FusionGamerServices.postScore("SCORE_TEST", 42.75, false)
+            "##,
+        )
+        .unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    let events: mlua::Table = environment.get("gamer_events").unwrap();
+    assert_eq!(events.raw_len(), 0);
+
+    assert!(runtime.update(1.0 / 60.0).unwrap());
+    assert_eq!(events.raw_len(), 3);
+    assert_eq!(
+        environment.get::<i64>("gamer_update_event_count").unwrap(),
+        3
+    );
+
+    let authentication: mlua::Table = events.raw_get(1).unwrap();
+    assert_eq!(
+        authentication.get::<String>("name").unwrap(),
+        "EID_GS_AUTHENTICATION_STATUS_CHANGED"
+    );
+    assert!(!authentication.get::<bool>("isSignedIn").unwrap());
+    assert!(matches!(
+        authentication.get::<Value>("success").unwrap(),
+        Value::Nil
+    ));
+
+    let achievement: mlua::Table = events.raw_get(2).unwrap();
+    assert_eq!(
+        achievement.get::<String>("name").unwrap(),
+        "EID_GS_POST_ACHIEVEMENT_FINISHED"
+    );
+    assert_eq!(
+        achievement.get::<String>("achievementId").unwrap(),
+        "ACH_TEST"
+    );
+    assert!(achievement.get::<bool>("success").unwrap());
+
+    let score: mlua::Table = events.raw_get(3).unwrap();
+    assert_eq!(
+        score.get::<String>("name").unwrap(),
+        "EID_GS_POST_SCORE_FINISHED"
+    );
+    assert_eq!(score.get::<String>("leaderboardId").unwrap(), "SCORE_TEST");
+    assert!(score.get::<bool>("success").unwrap());
+
+    assert!(runtime.update(1.0 / 60.0).unwrap());
+    assert_eq!(events.raw_len(), 3, "native completions must be one-shot");
+}
+
+#[test]
+fn native_gamer_authentication_waits_for_game_event_bridge() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime.execute_source("update = function() end").unwrap();
+
+    // The native authentication callback may arrive before the shipped
+    // bootstrap has installed notifyEventManager. It remains pending.
+    assert!(runtime.update(0.0).unwrap());
+    runtime
+        .execute_source(
+            r##"
+                authentication_event_count = 0
+                notifyEventManager = function(name, event)
+                    authentication_event_count = authentication_event_count + 1
+                    authentication_event_name = name
+                    authentication_event_signed_in = event.isSignedIn
+                end
+            "##,
+        )
+        .unwrap();
+    assert!(runtime.update(0.0).unwrap());
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert_eq!(
+        environment
+            .get::<i64>("authentication_event_count")
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        environment
+            .get::<String>("authentication_event_name")
+            .unwrap(),
+        "EID_GS_AUTHENTICATION_STATUS_CHANGED"
+    );
+    assert!(
+        !environment
+            .get::<bool>("authentication_event_signed_in")
+            .unwrap()
+    );
+
+    assert!(runtime.update(0.0).unwrap());
+    assert_eq!(
+        environment
+            .get::<i64>("authentication_event_count")
+            .unwrap(),
+        1,
+        "authentication completion must be consumed exactly once"
+    );
+}
+
+#[test]
+fn shipped_gamer_services_translate_native_achievement_completion() {
+    let sandbox = ShippedDataSandbox::new("gamer-services-event-translation");
+    let runtime = StellaLua::new(&sandbox.data_root).unwrap();
+    runtime.boot("scripts/game.lua").unwrap();
+    runtime.execute_source("initializeEventSystem()").unwrap();
+    runtime
+        .execute_source(
+            r##"
+                gamer_achievement_translated = false
+                gamer_achievement_listener = {
+                    eventTriggered = function(self, event)
+                        gamer_achievement_translated = true
+                        gamer_achievement_id = event.achievementId
+                    end
+                }
+                eventManager:addEventListener(
+                    events.EID_GAMERSERVICES_ACHIEVEMENT_POSTED,
+                    gamer_achievement_listener
+                )
+                _G.FusionGamerServices.postAchievement("ACH_NATIVE")
+            "##,
+        )
+        .unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert!(
+        !environment
+            .get::<bool>("gamer_achievement_translated")
+            .unwrap()
+    );
+    assert!(runtime.update(1.0 / 60.0).unwrap());
+    assert!(
+        environment
+            .get::<bool>("gamer_achievement_translated")
+            .unwrap()
+    );
+    assert_eq!(
+        environment.get::<String>("gamer_achievement_id").unwrap(),
+        "ACH_NATIVE"
+    );
+}
+
+#[test]
 fn native_game_server_get_preserves_request_and_callback_contract() {
     let response = br#"{"player":{"id":42}}"#.to_vec();
     let (base_url, request_rx, server) = spawn_game_server_response(200, response);
