@@ -29,6 +29,7 @@ pub(super) fn install_creation(
                 lua,
                 &mut joint_bridge.lock().expect("render bridge lock poisoned"),
                 &descriptor,
+                joint_type,
             )? {
                 // Purple publishes a fresh resolved descriptor only after
                 // the ordinary native joint has been constructed.
@@ -73,6 +74,7 @@ pub(super) fn install_creation(
                     lua,
                     &mut joints_bridge.lock().expect("render bridge lock poisoned"),
                     &descriptor,
+                    joint_type,
                 )? {
                     mirror_lua_joint_descriptor(lua, &descriptor, &created)?;
                 }

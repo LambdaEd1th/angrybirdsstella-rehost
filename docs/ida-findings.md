@@ -15907,3 +15907,21 @@ options, and preserves the input table unchanged. Regression coverage
 distinguishes coerced versus default coordinates, numeric versus string rope
 limits, the canonical published distance length, and both wrong-typed Boolean
 fields.
+
+Joint-class selection keeps the original number in float32 rather than
+converting it to an integer. IDA shows `sub_10052A014` returning directly into
+`v8` at `0x100037418`, followed first by the float comparison `v8 >= 7.0` at
+`0x10003742C`. Values below that threshold are compared exactly against
+`1.0` through `6.0` at `0x100037E7C`, `0x1000387FC`, `0x1000389F4`,
+`0x100038BF4`, `0x1000396B4`, and `0x100039DC4`. Hopper independently shows
+the value retained in `s8`, an `fcmp`/`b.ge` custom threshold, and an
+`fcmp`/`b.ne` chain for all six native classes.
+
+Rust previously repeated the table lookup as `i32` inside the construction
+phase, which could truncate a fractional type such as `1.5` into a physical
+distance joint. The registration boundary now passes the already narrowed
+float32 value forward and the construction switch admits only exact class
+values. This also preserves native rounding at the boundary: a Lua double
+that rounds to exactly `1.0f` enters the distance branch, a nearby value that
+rounds above it does not, and a value just below seven that rounds to `7.0f`
+uses the custom handler. NaN follows the unordered non-custom, non-class path.

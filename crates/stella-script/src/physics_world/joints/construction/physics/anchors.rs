@@ -11,6 +11,7 @@ pub(super) fn decode_joint_geometry(
     lua: &Lua,
     bridge: &RenderBridge,
     table: &mlua::Table,
+    joint_type: f32,
 ) -> LuaResult<Option<JointGeometry>> {
     let name = table.get::<String>("name").unwrap_or_default();
     let first_name = table.get::<String>("end1").unwrap_or_default();
@@ -54,10 +55,10 @@ pub(super) fn decode_joint_geometry(
         2 => (raw_first_anchor, raw_second_anchor),
         _ => ((0.0, 0.0), (0.0, 0.0)),
     };
-    let joint_type = table.get::<i32>("type").unwrap_or(0);
-    if joint_type >= 7 {
-        return Ok(None);
-    }
+    // Purple narrows descriptor.type to float32 once, uses >= 7 for custom
+    // dispatch, then selects native classes with exact float comparisons.
+    // Values such as 1.5 must not be truncated into a distance joint.
+    let joint_type = exact_native_joint_class(joint_type);
     let one_way_destroy_value = table.raw_get::<Value>("oneWayDestroy")?;
     // Type 5 is always the metadata-only destroy-link record. The optional
     // boolean affects direction, not the native joint class.
@@ -163,6 +164,24 @@ pub(super) fn decode_joint_geometry(
         rest_length,
         one_way_destroy,
     }))
+}
+
+fn exact_native_joint_class(value: f32) -> i32 {
+    if value == 1.0 {
+        1
+    } else if value == 2.0 {
+        2
+    } else if value == 3.0 {
+        3
+    } else if value == 4.0 {
+        4
+    } else if value == 5.0 {
+        5
+    } else if value == 6.0 {
+        6
+    } else {
+        0
+    }
 }
 
 fn native_optional_number(table: &mlua::Table, field: &str) -> LuaResult<Option<f32>> {

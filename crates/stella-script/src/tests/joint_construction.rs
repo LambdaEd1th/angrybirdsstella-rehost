@@ -253,6 +253,90 @@ fn joint_creation_ignores_non_native_length_and_wrong_typed_optional_fields() {
 }
 
 #[test]
+fn joint_type_dispatch_uses_native_float32_threshold_and_exact_class_values() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createBox("first", "", 0, 0, 1, 1, 0, 0, 0, false, false, 1)
+                createBox("second", "", 10, 0, 1, 1, 1, 0, 0, false, false, 1)
+                custom_types = {}
+                createCustomJoint = function(descriptor)
+                    table.insert(custom_types, descriptor.type)
+                end
+                local function make_joint(name, joint_type)
+                    createJoint({
+                        name = name, end1 = "first", end2 = "second",
+                        type = joint_type, coordType = 2,
+                        x1 = 0, y1 = 0, x2 = 0, y2 = 0
+                    })
+                end
+                make_joint("fractional", 1.5)
+                make_joint("rounds_to_distance", 1.00000001)
+                make_joint("above_distance", 1.0000001)
+                make_joint("not_a_number", 0 / 0)
+                make_joint("rounds_to_custom", 6.9999999)
+            "#,
+        )
+        .unwrap();
+
+    let bridge = runtime.render.lock().unwrap();
+    assert_eq!(bridge.joints["fractional"].joint_type, 0);
+    assert!(!bridge.joints["fractional"].is_physical);
+    assert_eq!(bridge.joints["rounds_to_distance"].joint_type, 1);
+    assert!(bridge.joints["rounds_to_distance"].is_physical);
+    assert_eq!(bridge.joints["above_distance"].joint_type, 0);
+    assert!(!bridge.joints["above_distance"].is_physical);
+    assert_eq!(bridge.joints["not_a_number"].joint_type, 0);
+    assert!(!bridge.joints["not_a_number"].is_physical);
+    assert!(!bridge.joints.contains_key("rounds_to_custom"));
+    drop(bridge);
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    let custom_types = environment.get::<mlua::Table>("custom_types").unwrap();
+    assert_eq!(custom_types.raw_len(), 1);
+    assert_eq!(custom_types.raw_get::<f64>(1).unwrap(), 6.999_999_9);
+
+    let joints = environment
+        .get::<mlua::Table>("objects")
+        .unwrap()
+        .get::<mlua::Table>("joints")
+        .unwrap();
+    assert_eq!(
+        joints
+            .get::<mlua::Table>("fractional")
+            .unwrap()
+            .get::<f64>("type")
+            .unwrap(),
+        f64::from(1.5_f32)
+    );
+    assert_eq!(
+        joints
+            .get::<mlua::Table>("rounds_to_distance")
+            .unwrap()
+            .get::<f64>("type")
+            .unwrap(),
+        1.0
+    );
+    assert!(matches!(
+        joints
+            .get::<mlua::Table>("above_distance")
+            .unwrap()
+            .raw_get::<Value>("length")
+            .unwrap(),
+        Value::Nil
+    ));
+    assert!(
+        joints
+            .get::<mlua::Table>("not_a_number")
+            .unwrap()
+            .get::<f64>("type")
+            .unwrap()
+            .is_nan()
+    );
+}
+
+#[test]
 fn custom_joints_dispatch_to_lua_and_allow_editor_reentry() {
     let runtime = unlocked_test_runtime();
     runtime
