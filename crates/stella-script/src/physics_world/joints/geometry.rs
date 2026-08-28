@@ -77,15 +77,6 @@ pub(crate) struct PrismaticGeometry {
     pub(crate) s2: f64,
 }
 
-pub(crate) fn rotate_vector(vector: (f64, f64), angle: f64) -> (f64, f64) {
-    let cosine = angle.cos();
-    let sine = angle.sin();
-    (
-        cosine * vector.0 - sine * vector.1,
-        sine * vector.0 + cosine * vector.1,
-    )
-}
-
 pub(crate) fn inverse_rotate_vector(vector: (f64, f64), angle: f64) -> (f64, f64) {
     let cosine = angle.cos();
     let sine = angle.sin();
@@ -103,17 +94,25 @@ pub(crate) fn prismatic_geometry<F: JointBodyView + ?Sized, S: JointBodyView + ?
     let (r_a, r_b) = joint_anchor_offsets(joint, first, second);
     let delta = joint_anchor_delta(first, second, r_a, r_b);
     let axis = native_rotate_vector(joint.local_axis, first.angle());
+    let r_a = (r_a.0 as f32, r_a.1 as f32);
+    let r_b = (r_b.0 as f32, r_b.1 as f32);
+    let delta = (delta.0 as f32, delta.1 as f32);
+    let axis = (axis.0 as f32, axis.1 as f32);
     let perpendicular = (-axis.1, axis.0);
     let delta_plus_r_a = (delta.0 + r_a.0, delta.1 + r_a.1);
     PrismaticGeometry {
-        delta,
-        axis,
-        perpendicular,
-        a1: cross_2d(delta_plus_r_a, axis),
-        a2: cross_2d(r_b, axis),
-        s1: cross_2d(delta_plus_r_a, perpendicular),
-        s2: cross_2d(r_b, perpendicular),
+        delta: (f64::from(delta.0), f64::from(delta.1)),
+        axis: (f64::from(axis.0), f64::from(axis.1)),
+        perpendicular: (f64::from(perpendicular.0), f64::from(perpendicular.1)),
+        a1: f64::from(native_cross_2d(delta_plus_r_a, axis)),
+        a2: f64::from(native_cross_2d(r_b, axis)),
+        s1: f64::from(native_cross_2d(delta_plus_r_a, perpendicular)),
+        s2: f64::from(native_cross_2d(r_b, perpendicular)),
     }
+}
+
+fn native_cross_2d(first: (f32, f32), second: (f32, f32)) -> f32 {
+    (-first.1).mul_add(second.0, first.0 * second.1)
 }
 
 fn native_rotate_vector(vector: (f64, f64), angle: f64) -> (f64, f64) {

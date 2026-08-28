@@ -44,6 +44,21 @@ impl SceneObject {
         self.set_native_sweep_transform(new_center, new_angle);
     }
 
+    pub(crate) fn apply_native_position_impulse(
+        &mut self,
+        inverse_mass: f32,
+        impulse: (f32, f32),
+        inverse_inertia: f32,
+        angular_impulse: f32,
+    ) {
+        let new_center = (
+            inverse_mass.mul_add(impulse.0, self.sweep_center_x),
+            inverse_mass.mul_add(impulse.1, self.sweep_center_y),
+        );
+        let new_angle = inverse_inertia.mul_add(angular_impulse, self.angle as f32);
+        self.set_native_sweep_transform(new_center, new_angle);
+    }
+
     /// Integrate the transform branch used by Purple's dedicated one-body
     /// trajectory step (`sub_10086F6AC`). Unlike the island solver, that
     /// routine advances the sweep with fused multiply-adds directly from the
@@ -75,21 +90,6 @@ impl SceneObject {
         self.angle = f64::from(angle);
         self.sweep_center_x = center.0;
         self.sweep_center_y = center.1;
-    }
-
-    pub(crate) fn apply_position_delta(&mut self, center_x: f64, center_y: f64, angle: f64) {
-        let old_center = self.world_center();
-        // b2Sweep::a is continuous. RenderObject::setAngle normalizes its
-        // explicit input, but subsequent Box2D integration and joint
-        // corrections are not wrapped back into [0, 2π).
-        let new_angle = self.angle + angle;
-        let local_center = self.local_center();
-        let rotated_center = rotate_vector(local_center, new_angle);
-        self.x = old_center.0 + center_x - rotated_center.0;
-        self.y = old_center.1 + center_y - rotated_center.1;
-        self.angle = new_angle;
-        self.sweep_center_x = (old_center.0 + center_x) as f32;
-        self.sweep_center_y = (old_center.1 + center_y) as f32;
     }
 
     pub(crate) fn preserve_velocity_after_mass_reset(&mut self, old_center: (f64, f64)) {

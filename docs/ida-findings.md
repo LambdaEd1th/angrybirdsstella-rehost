@@ -15977,3 +15977,50 @@ errors and motor-limit boundary checks also perform the three-operand
 subtraction in float32 before widening. Regression coverage uses values whose
 float and host-double results differ, checks the exact local/world axis bit
 patterns, and verifies that string and Boolean axis fields publish as zero.
+
+## Complete prismatic solver float pipeline
+
+The prismatic vtable at `0x100AB1970` identifies the complete native solver
+chain: `sub_1008674D4` is `InitVelocityConstraints`, `sub_1008678E0` is
+`SolveVelocityConstraints`, and `sub_100867C68` is
+`SolvePositionConstraints`. IDA's decompiler types every body-array value,
+cached axis, lever arm, effective-mass entry, accumulated impulse and solver
+temporary as `float`; Hopper independently shows only scalar `S` registers
+and packed `.4S` warm-start scaling across these three functions.
+
+Initialization reconstructs the two anchor radii and delta at
+`0x1008675BC..0x1008675F8`, rotates the local axis and perpendicular with
+`FMUL`/`FNMSUB`/`FMADD` at `0x100867600..0x100867674`, and derives all four
+cross products and the packed 3-by-3 effective mass at
+`0x100867678..0x1008676F0`. Limit classification uses the exact float
+`0.002` stored at `0x100A0C9C8` and the float dot product at
+`0x10086772C..0x10086776C`. Its SIMD warm start scales four accumulated
+impulses and applies them to the float velocity arrays at
+`0x100867790..0x100867884`.
+
+The velocity solve forms its motor relative speed at
+`0x100867950..0x100867978`, then performs the accumulated motor update as one
+`FMADD` before the raw `FMIN`/`FMAX` clamp at
+`0x10086798C..0x1008679A4`. Purple does not pre-clamp a negative authored
+maximum force to zero; preserving that unusual input produces the native
+positive boundary result instead of silently disabling the motor. The
+perpendicular/angular/limit solve remains float through
+`0x1008679F0..0x100867BB8`, and the four final velocity fields are written at
+`0x100867BC4..0x100867C40`.
+
+Position solving likewise rebuilds float geometry at
+`0x100867C98..0x100867D9C`, evaluates and clamps the live limit error at
+`0x100867DE0..0x100867EA4`, solves the float matrices at
+`0x100867EBC..0x100867F98`, and uses fused mass/inertia updates before writing
+the position arrays at `0x100867FA4..0x100868058`. The success thresholds are
+the exact bit patterns `0x3A83126F` (linear slop) at `0x100A0C9D0` and
+`0x3D0EFA36` (angular slop) at `0x100A0C9E0`.
+
+Rust now narrows the complete prismatic geometry and solver boundary to
+float32, follows the recovered fused multiply-add grouping for effective
+masses, dot/cross products, warm starts, motor/limit accumulation and body
+writes, and widens only retained public state. The former unused host-double
+position-delta path was removed. Regressions cover exact axis/reference
+construction, constraint removal, live limit reclassification, the native
+negative-force motor clamp, and the shipped Chapter 02 level 56 vehicle's
+initial roll, sleep and long idle stability.

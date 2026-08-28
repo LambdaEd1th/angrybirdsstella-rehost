@@ -10,7 +10,7 @@ pub(crate) use construction::{
 };
 pub(crate) use geometry::{
     PrismaticGeometry, cross_2d, inverse_rotate_vector, joint_anchor_delta, joint_anchor_offsets,
-    point_velocity, prismatic_geometry, rotate_vector, trace_physics_body,
+    point_velocity, prismatic_geometry, trace_physics_body,
 };
 pub(crate) use matrix::{joint_mass_matrix, solve_symmetric_2x2, solve_symmetric_3x3};
 pub(crate) use model::{JointLimitState, PhysicsJoint};

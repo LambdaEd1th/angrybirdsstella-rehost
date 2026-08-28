@@ -137,6 +137,42 @@ fn recovered_prismatic_solver_removes_perpendicular_and_angular_motion() {
 }
 
 #[test]
+fn prismatic_motor_keeps_native_float_clamp_for_negative_force_limit() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createBox("rail", "", 0, 0, 1, 1, 0, 0, 0, false, false, 1)
+                createBox("slider", "", 2, 0, 1, 1, 1, 0, 0, false, false, 1)
+                createJoint({
+                    name = "slide", end1 = "rail", end2 = "slider", type = 4,
+                    coordType = 2, x1 = 0, y1 = 0, x2 = 0, y2 = 0,
+                    worldAxisX = 1, worldAxisY = 0,
+                    limit = false, motor = true, motorSpeed = 10, maxTorque = -3
+                })
+                "#,
+        )
+        .unwrap();
+
+    let mut bridge = runtime.render.lock().unwrap();
+    let step = 1.0 / 60.0;
+    bridge.begin_joint_step(step);
+    bridge.solve_joints(step, true, false);
+
+    let maximum_impulse = step as f32 * -3.0_f32;
+    let expected_impulse = 10.0_f32.min(maximum_impulse).max(-maximum_impulse);
+    assert_eq!(
+        bridge.joints["slide"].motor_impulse,
+        f64::from(expected_impulse)
+    );
+    let inverse_mass = bridge.scene["slider"].inverse_mass_for_solver() as f32;
+    assert_eq!(
+        bridge.scene["slider"].velocity_x,
+        f64::from(inverse_mass * expected_impulse)
+    );
+}
+
+#[test]
 fn prismatic_position_solver_rechecks_live_limit_translation() {
     let runtime = StellaLua::new("/tmp").unwrap();
     runtime

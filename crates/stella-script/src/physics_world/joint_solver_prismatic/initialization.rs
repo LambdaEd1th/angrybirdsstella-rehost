@@ -17,16 +17,20 @@ impl RenderBridge {
         if !joint.is_physical {
             return;
         }
-        const TWO_LINEAR_SLOPS: f64 = 0.002;
+        const TWO_LINEAR_SLOPS: f32 = 0.002;
         let geometry = prismatic_geometry(joint, first, second);
-        let translation = geometry.delta.0 * geometry.axis.0 + geometry.delta.1 * geometry.axis.1;
+        let delta = (geometry.delta.0 as f32, geometry.delta.1 as f32);
+        let axis = (geometry.axis.0 as f32, geometry.axis.1 as f32);
+        let translation = delta.0.mul_add(axis.0, delta.1 * axis.1);
+        let lower_limit = joint.lower_limit as f32;
+        let upper_limit = joint.upper_limit as f32;
         let new_state = if !joint.limits_enabled {
             JointLimitState::Inactive
-        } else if (joint.upper_limit - joint.lower_limit).abs() < TWO_LINEAR_SLOPS {
+        } else if (upper_limit - lower_limit).abs() < TWO_LINEAR_SLOPS {
             JointLimitState::Equal
-        } else if translation <= joint.lower_limit {
+        } else if translation <= lower_limit {
             JointLimitState::AtLower
-        } else if translation >= joint.upper_limit {
+        } else if translation >= upper_limit {
             JointLimitState::AtUpper
         } else {
             JointLimitState::Inactive
@@ -54,9 +58,9 @@ impl RenderBridge {
             second,
             geometry,
             (
-                joint.linear_impulse_x,
-                joint.motor_impulse + joint.limit_impulse,
-                joint.angular_impulse,
+                joint.linear_impulse_x as f32,
+                joint.motor_impulse as f32 + joint.limit_impulse as f32,
+                joint.angular_impulse as f32,
             ),
         );
     }

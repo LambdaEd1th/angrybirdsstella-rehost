@@ -12,30 +12,51 @@ impl RenderBridge {
         first: &F,
         second: &S,
         geometry: PrismaticGeometry,
-        impulse: (f64, f64, f64),
+        impulse: (f32, f32, f32),
     ) {
         let (perpendicular_impulse, axial_impulse, angular_impulse) = impulse;
-        let impulse = (
-            geometry.perpendicular.0 * perpendicular_impulse + geometry.axis.0 * axial_impulse,
-            geometry.perpendicular.1 * perpendicular_impulse + geometry.axis.1 * axial_impulse,
+        let perpendicular = (
+            geometry.perpendicular.0 as f32,
+            geometry.perpendicular.1 as f32,
         );
-        let angular_a =
-            geometry.s1 * perpendicular_impulse + geometry.a1 * axial_impulse + angular_impulse;
-        let angular_b =
-            geometry.s2 * perpendicular_impulse + geometry.a2 * axial_impulse + angular_impulse;
-        let mass_a = first.inverse_mass_for_solver();
-        let mass_b = second.inverse_mass_for_solver();
-        let inertia_a = first.inverse_inertia();
-        let inertia_b = second.inverse_inertia();
+        let axis = (geometry.axis.0 as f32, geometry.axis.1 as f32);
+        let (s1, s2, a1, a2) = (
+            geometry.s1 as f32,
+            geometry.s2 as f32,
+            geometry.a1 as f32,
+            geometry.a2 as f32,
+        );
+        let impulse = (
+            perpendicular
+                .0
+                .mul_add(perpendicular_impulse, axis.0 * axial_impulse),
+            perpendicular
+                .1
+                .mul_add(perpendicular_impulse, axis.1 * axial_impulse),
+        );
+        let angular_a = a1.mul_add(
+            axial_impulse,
+            s1.mul_add(perpendicular_impulse, angular_impulse),
+        );
+        let angular_b = a2.mul_add(
+            axial_impulse,
+            s2.mul_add(perpendicular_impulse, angular_impulse),
+        );
+        let mass_a = first.inverse_mass_for_solver() as f32;
+        let mass_b = second.inverse_mass_for_solver() as f32;
+        let inertia_a = first.inverse_inertia() as f32;
+        let inertia_b = second.inverse_inertia() as f32;
         if let Some(object) = self.scene.get_mut(&joint.first) {
-            object.velocity_x -= mass_a * impulse.0;
-            object.velocity_y -= mass_a * impulse.1;
-            object.angular_velocity -= inertia_a * angular_a;
+            object.velocity_x = f64::from((-mass_a).mul_add(impulse.0, object.velocity_x as f32));
+            object.velocity_y = f64::from((-mass_a).mul_add(impulse.1, object.velocity_y as f32));
+            object.angular_velocity =
+                f64::from((-inertia_a).mul_add(angular_a, object.angular_velocity as f32));
         }
         if let Some(object) = self.scene.get_mut(&joint.second) {
-            object.velocity_x += mass_b * impulse.0;
-            object.velocity_y += mass_b * impulse.1;
-            object.angular_velocity += inertia_b * angular_b;
+            object.velocity_x = f64::from(mass_b.mul_add(impulse.0, object.velocity_x as f32));
+            object.velocity_y = f64::from(mass_b.mul_add(impulse.1, object.velocity_y as f32));
+            object.angular_velocity =
+                f64::from(inertia_b.mul_add(angular_b, object.angular_velocity as f32));
         }
     }
 
@@ -48,34 +69,45 @@ impl RenderBridge {
         first: &F,
         second: &S,
         geometry: PrismaticGeometry,
-        impulse: (f64, f64, f64),
+        impulse: (f32, f32, f32),
     ) {
         let (perpendicular_impulse, axial_impulse, angular_impulse) = impulse;
-        let impulse = (
-            geometry.perpendicular.0 * perpendicular_impulse + geometry.axis.0 * axial_impulse,
-            geometry.perpendicular.1 * perpendicular_impulse + geometry.axis.1 * axial_impulse,
+        let perpendicular = (
+            geometry.perpendicular.0 as f32,
+            geometry.perpendicular.1 as f32,
         );
-        let angular_a =
-            geometry.s1 * perpendicular_impulse + geometry.a1 * axial_impulse + angular_impulse;
-        let angular_b =
-            geometry.s2 * perpendicular_impulse + geometry.a2 * axial_impulse + angular_impulse;
-        let mass_a = first.inverse_mass_for_solver();
-        let mass_b = second.inverse_mass_for_solver();
-        let inertia_a = first.inverse_inertia();
-        let inertia_b = second.inverse_inertia();
+        let axis = (geometry.axis.0 as f32, geometry.axis.1 as f32);
+        let (s1, s2, a1, a2) = (
+            geometry.s1 as f32,
+            geometry.s2 as f32,
+            geometry.a1 as f32,
+            geometry.a2 as f32,
+        );
+        let impulse = (
+            perpendicular
+                .0
+                .mul_add(perpendicular_impulse, axis.0 * axial_impulse),
+            perpendicular
+                .1
+                .mul_add(perpendicular_impulse, axis.1 * axial_impulse),
+        );
+        let angular_a = a1.mul_add(
+            axial_impulse,
+            s1.mul_add(perpendicular_impulse, angular_impulse),
+        );
+        let angular_b = a2.mul_add(
+            axial_impulse,
+            s2.mul_add(perpendicular_impulse, angular_impulse),
+        );
+        let mass_a = first.inverse_mass_for_solver() as f32;
+        let mass_b = second.inverse_mass_for_solver() as f32;
+        let inertia_a = first.inverse_inertia() as f32;
+        let inertia_b = second.inverse_inertia() as f32;
         if let Some(object) = self.scene.get_mut(&joint.first) {
-            object.apply_position_delta(
-                -mass_a * impulse.0,
-                -mass_a * impulse.1,
-                -inertia_a * angular_a,
-            );
+            object.apply_native_position_impulse(-mass_a, impulse, -inertia_a, angular_a);
         }
         if let Some(object) = self.scene.get_mut(&joint.second) {
-            object.apply_position_delta(
-                mass_b * impulse.0,
-                mass_b * impulse.1,
-                inertia_b * angular_b,
-            );
+            object.apply_native_position_impulse(mass_b, impulse, inertia_b, angular_b);
         }
     }
 }
