@@ -884,8 +884,11 @@ the native body is integrated from its corrected velocity rather than being
 teleported onto the polyline. Rust now follows that float32 island lifecycle.
 
 `objectAndTrackOverlap` is the separate `sub_10003D208`, not an AABB helper.
-It reads `points` from the second Lua table, rounds every point to float32 and
-constructs a temporary radius-`0.002f` Box2D chain. For child edges
+It reads `points` from the second Lua table, performs the throwing object
+lookup before iterating the strict point-table fields, rounds every point to
+float32 and constructs a temporary radius-`0.002f` Box2D chain. An existing
+non-physics object returns false, but a missing name raises `Missing object`.
+For child edges
 `0..pointCount-2`, it calls `sub_10086021C`: that routine builds distance
 proxies for only `b2Body::m_fixtureList` (the current head fixture) and the
 selected chain edge, runs radius-aware `b2Distance` with the body transform
@@ -3448,7 +3451,8 @@ enumeration, the order flip after fixture recreation, signed resized vertices,
 float32 position addition, and the native omission of body rotation.
 Track-overlap coverage now also locks the nested `points` ABI, shape-skin
 threshold, rejection of AABB-only diagonals and the head-fixture change after
-compound fixture recreation.
+compound fixture recreation, plus strict point fields and the throwing missing
+object lookup.
 Track-angle coverage additionally locks first-child tie handling, float32
 projection/atan2, absence of an implicit closing child, the existing-object
 zero fallback and the missing-object failure contract.
@@ -16937,4 +16941,38 @@ all-target/all-feature Clippy and the release build are clean. A fresh
 120-frame release-wgpu upload/readback reports 20 optional data probes, zero
 invoked fallbacks, zero remaining compatibility bindings and empty stderr;
 its PNG SHA-256 remains
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## Native track destruction and overlap lookup lifecycle
+
+IDA's six-instruction `destroyTrack` entry `sub_10003D638` tail-calls through
+the body member `sub_10086B970` into world removal `sub_10086E3E0`; Hopper
+exposes the same external tail chunks. The world member first tests bit 1 of
+the world flags at `+0x19298` and returns without mutation while Box2D is
+locked. A successful removal unlinks the track, sets the body's awake bit when
+needed, unconditionally clears `b2Body::m_sleepTime` at `+0xB4`, clears the
+body's track pointer at `+0x88`, decrements the world count and frees the
+168-byte record. Rust now keeps the track and sleep state untouched during a
+locked callback, then wakes the body and clears its timer on an unlocked
+destroy.
+
+The adjacent `objectAndTrackOverlap` entry `sub_10003D208` calls throwing
+`sub_10005DAF8` at `0x10003D27C` before testing the recovered body pointer at
+`0x10003D284`. Its former Rust path instead returned false for a missing name.
+The native point loop also indexes every element and its numeric `x`/`y`
+fields rather than filtering malformed entries out of the temporary chain.
+Both lookup order and strict point conversion now match, while an existing
+non-physics object retains the native false result.
+
+The same audit checked the apparently unused `openEnded` field rather than
+guessing behavior from its name. `sub_10086D9F0` stores it at track `+0x48`,
+but an instruction scan across the complete track/world implementation finds
+no read of that byte; only `rotateBlock` at `+0x49` is consumed by
+`sub_10086DB8C`. The retained-but-inactive Rust field is therefore deliberate.
+
+The complete workspace now passes 774 tests with the deliberate long-duration
+BirdRun audit ignored. Formatting, diff validation, strict all-target/all-
+feature Clippy and the release build are clean. A fresh 120-frame release-wgpu
+upload/readback reports 20 optional data probes, zero invoked fallbacks, zero
+remaining compatibility bindings and empty stderr. Its PNG SHA-256 remains
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.

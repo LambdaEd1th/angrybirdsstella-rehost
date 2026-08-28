@@ -230,6 +230,46 @@ fn current_track_angle_uses_native_chain_children_ties_and_float32() {
 }
 
 #[test]
+fn destroy_track_obeys_native_world_lock_and_wakes_the_body() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createBox("body", "", 0, 0, 1, 1,
+                    1, 0, 0, true, false, 1)
+                createTrack({
+                    points = { { x = 0, y = 0 }, { x = 4, y = 0 } },
+                    blocks = { "body" },
+                    openEnded = true,
+                    rotateBlock = false
+                })
+                setSleeping("body", true)
+            "#,
+        )
+        .unwrap();
+
+    {
+        let mut bridge = runtime.render.lock().unwrap();
+        bridge.scene.get_mut("body").unwrap().sleep_time = 0.75;
+        bridge.physics_world_locked = true;
+    }
+    runtime.execute_source(r#"destroyTrack("body")"#).unwrap();
+    {
+        let bridge = runtime.render.lock().unwrap();
+        assert!(bridge.tracks.contains_key("body"));
+        assert!(bridge.scene["body"].sleeping);
+        assert_eq!(bridge.scene["body"].sleep_time, 0.75);
+    }
+
+    runtime.render.lock().unwrap().physics_world_locked = false;
+    runtime.execute_source(r#"destroyTrack("body")"#).unwrap();
+    let bridge = runtime.render.lock().unwrap();
+    assert!(!bridge.tracks.contains_key("body"));
+    assert!(!bridge.scene["body"].sleeping);
+    assert_eq!(bridge.scene["body"].sleep_time, 0.0);
+}
+
+#[test]
 fn object_track_overlap_uses_chain_distance_and_only_the_body_list_head() {
     let runtime = unlocked_test_runtime();
     runtime
@@ -359,6 +399,19 @@ fn track_joint_registration_matches_native_adapters_types_and_float32() {
                 overlap_table_type_fails = not pcall(
                     objectAndTrackOverlap, "body", false
                 )
+                overlap_missing_object_fails = not pcall(
+                    objectAndTrackOverlap, "missing", {
+                        points = { { x = 0, y = 0 }, { x = 1, y = 0 } }
+                    }
+                )
+                overlap_point_type_fails = not pcall(
+                    objectAndTrackOverlap, "body", { points = { false } }
+                )
+                overlap_coordinate_type_fails = not pcall(
+                    objectAndTrackOverlap, "body", {
+                        points = { { x = false, y = 0 } }
+                    }
+                )
                 vertices_name_type_fails = not pcall(getObjectVertices, 1)
 
                 createBox("anchor", "", 0, 0, 1, 1, 0, 0, 0, true, false, 1)
@@ -406,6 +459,9 @@ fn track_joint_registration_matches_native_adapters_types_and_float32() {
         "flag_bool_type_fails",
         "overlap_name_type_fails",
         "overlap_table_type_fails",
+        "overlap_missing_object_fails",
+        "overlap_point_type_fails",
+        "overlap_coordinate_type_fails",
         "vertices_name_type_fails",
     ] {
         assert!(environment.get::<bool>(field).unwrap(), "{field}");
