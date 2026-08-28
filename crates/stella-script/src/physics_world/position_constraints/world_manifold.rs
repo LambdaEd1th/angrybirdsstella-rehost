@@ -46,12 +46,14 @@ impl PositionContactConstraint {
                 // 0x100864EB0..EB8 is FMUL(dy,dy), FMADD(dx,dx,dy²),
                 // FSQRT. `hypot` has a different scaling/rounding contract.
                 let distance = delta.0.mul_add(delta.0, delta.1 * delta.1).sqrt();
-                let normal =
-                    if distance.partial_cmp(&f32::EPSILON) != Some(std::cmp::Ordering::Less) {
-                        (delta.0 / distance, delta.1 / distance)
-                    } else {
-                        (delta.0, delta.1)
-                    };
+                let normal = if matches!(
+                    distance.partial_cmp(&f32::EPSILON),
+                    Some(std::cmp::Ordering::Equal | std::cmp::Ordering::Greater)
+                ) {
+                    (delta.0 / distance, delta.1 / distance)
+                } else {
+                    (delta.0, delta.1)
+                };
                 (index == 0).then_some(PositionWorldPoint {
                     normal,
                     point: (
@@ -76,7 +78,7 @@ impl PositionContactConstraint {
                     local_normal.0.mul_add(cosine, -(local_normal.1 * sine)),
                     local_normal.0.mul_add(sine, local_normal.1 * cosine),
                 );
-                let plane_point = first.transform_point(
+                let (negative_plane_x, plane_y) = first.negative_plane_x_and_world_y(
                     self.first_local_center,
                     (local_plane_point.0 as f32, local_plane_point.1 as f32),
                 );
@@ -88,8 +90,8 @@ impl PositionContactConstraint {
                 Some(PositionWorldPoint {
                     normal,
                     point,
-                    separation: (point.0 - plane_point.0)
-                        .mul_add(normal.0, (point.1 - plane_point.1) * normal.1)
+                    separation: (point.0 + negative_plane_x)
+                        .mul_add(normal.0, (point.1 - plane_y) * normal.1)
                         - *first_radius as f32
                         - *second_radius as f32,
                 })
@@ -103,12 +105,18 @@ impl PositionContactConstraint {
             } => {
                 let (sine, cosine) = second.angle.sin_cos();
                 let local_normal = (local_normal.0 as f32, local_normal.1 as f32);
+                // The type-2 branch at 0x100864DB4..DC4 uses two FMULs and
+                // FSUB for x, unlike type 1's fused x rotation. Its final
+                // output normal repeats the subtraction in the opposite
+                // direction at 0x100864E48.
+                let cosine_x = local_normal.0 * cosine;
+                let sine_y = local_normal.1 * sine;
                 let reference_normal = (
-                    local_normal.0.mul_add(cosine, -(local_normal.1 * sine)),
+                    cosine_x - sine_y,
                     local_normal.0.mul_add(sine, local_normal.1 * cosine),
                 );
-                let normal = (-reference_normal.0, -reference_normal.1);
-                let plane_point = second.transform_point(
+                let normal = (sine_y - cosine_x, -reference_normal.1);
+                let (negative_plane_x, plane_y) = second.negative_plane_x_and_world_y(
                     self.second_local_center,
                     (local_plane_point.0 as f32, local_plane_point.1 as f32),
                 );
@@ -120,10 +128,9 @@ impl PositionContactConstraint {
                 Some(PositionWorldPoint {
                     normal,
                     point,
-                    separation: (point.0 - plane_point.0).mul_add(
-                        reference_normal.0,
-                        (point.1 - plane_point.1) * reference_normal.1,
-                    ) - *first_radius as f32
+                    separation: (point.0 + negative_plane_x)
+                        .mul_add(reference_normal.0, (point.1 - plane_y) * reference_normal.1)
+                        - *first_radius as f32
                         - *second_radius as f32,
                 })
             }
@@ -185,6 +192,49 @@ mod tests {
     }
 
     #[test]
+    fn unordered_circle_axis_takes_the_native_b_lt_path() {
+        let constraint = PositionContactConstraint {
+            first_local_center: (0.0, 0.0),
+            second_local_center: (0.0, 0.0),
+            first_inverse_mass: 1.0,
+            second_inverse_mass: 1.0,
+            first_inverse_inertia: 0.0,
+            second_inverse_inertia: 0.0,
+            manifold: PositionContactManifold::Circles {
+                local_first: (0.0, 0.0),
+                local_second: (0.0, 0.0),
+                first_radius: 0.0,
+                second_radius: 0.0,
+            },
+        };
+        let first = PositionBodyState {
+            center: (0.0, 0.0),
+            angle: 0.0,
+        };
+        let second = PositionBodyState {
+            center: (f32::NAN, 0.0),
+            angle: 0.0,
+        };
+        let point = constraint
+            .world_point_from_states(first, second, 0)
+            .unwrap();
+        assert!(point.normal.0.is_nan());
+        assert_eq!(point.normal.1.to_bits(), 0);
+    }
+
+    #[test]
+    fn face_second_x_rotation_keeps_both_native_fmul_roundings() {
+        let local_x = f32::from_bits(0x4229_6D75);
+        let local_y = f32::from_bits(0xC286_F8A3);
+        let sine = f32::from_bits(0xC2C1_8DD3);
+        let cosine = f32::from_bits(0x4261_5B7E);
+        let separate = local_x * cosine - local_y * sine;
+        let fused = local_x.mul_add(cosine, -(local_y * sine));
+        assert_eq!(separate.to_bits(), 0xC581_8592);
+        assert_eq!(fused.to_bits(), 0xC581_8591);
+    }
+
+    #[test]
     fn all_three_position_manifolds_keep_native_float32_order() {
         let first = PositionBodyState {
             center: (f32::from_bits(0x3F1A_B105), f32::from_bits(0xBF24_D17F)),
@@ -236,7 +286,7 @@ mod tests {
                 0x3ED0_FC18,
                 0x3F48_A5BB,
                 0x3F23_F429,
-                0x3F13_BFBC,
+                0x3F13_BFBB,
             ],
         );
         let face_second = base(PositionContactManifold::FaceSecond {

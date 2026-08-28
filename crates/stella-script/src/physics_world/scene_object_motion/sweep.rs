@@ -2,6 +2,17 @@
 
 use crate::*;
 
+fn native_transform_position_from_sweep(
+    center: (f32, f32),
+    local_center: (f32, f32),
+    angle: f32,
+) -> (f32, f32) {
+    let (sine, cosine) = angle.sin_cos();
+    let negative_rotated_x = local_center.1.mul_add(sine, -(local_center.0 * cosine));
+    let rotated_y = local_center.0.mul_add(sine, local_center.1 * cosine);
+    (center.0 + negative_rotated_x, center.1 - rotated_y)
+}
+
 impl SceneObject {
     pub(crate) fn local_center(&self) -> (f64, f64) {
         self.native_fixture_mass_data().1
@@ -81,11 +92,12 @@ impl SceneObject {
         let local_center = self.local_center();
         let local_x = local_center.0 as f32;
         let local_y = local_center.1 as f32;
-        let (sine, cosine) = angle.sin_cos();
-        let rotated_x = local_x.mul_add(cosine, -(local_y * sine));
-        let rotated_y = local_x.mul_add(sine, local_y * cosine);
-        self.x = f64::from(center.0 - rotated_x);
-        self.y = f64::from(center.1 - rotated_y);
+        // b2Island::Solve writes transform.p.x at 0x10086D3BC..D3D0 by
+        // rounding localCenter.x*cos first, then fusing the negative rotated
+        // x before the final centre FADD.
+        let position = native_transform_position_from_sweep(center, (local_x, local_y), angle);
+        self.x = f64::from(position.0);
+        self.y = f64::from(position.1);
         self.angle = f64::from(angle);
         self.sweep_center_x = center.0;
         self.sweep_center_y = center.1;
@@ -103,5 +115,24 @@ impl SceneObject {
         // the COM velocity by cross(angularVelocity, newCenter-oldCenter).
         self.velocity_x = f64::from(angular_velocity.mul_add(-delta_y, self.velocity_x as f32));
         self.velocity_y = f64::from(angular_velocity.mul_add(delta_x, self.velocity_y as f32));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::native_transform_position_from_sweep;
+
+    #[test]
+    fn sweep_writeback_rounds_local_x_cos_before_native_fnmsub() {
+        let center = (f32::from_bits(0x3F05_330A), f32::from_bits(0xBF02_86E1));
+        let local_center = (f32::from_bits(0x3F2C_0FBB), f32::from_bits(0xBF33_41DE));
+        let angle = f32::from_bits(0x3E1A_C320);
+        let native = native_transform_position_from_sweep(center, local_center, angle);
+        assert_eq!(native.0.to_bits(), 0xBE7F_8F1C);
+        assert_eq!(native.1.to_bits(), 0x3DA6_4060);
+
+        let (sine, cosine) = angle.sin_cos();
+        let old_x = center.0 - local_center.0.mul_add(cosine, -(local_center.1 * sine));
+        assert_eq!(old_x.to_bits(), 0xBE7F_8F18);
     }
 }

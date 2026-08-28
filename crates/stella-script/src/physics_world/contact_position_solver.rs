@@ -52,10 +52,13 @@ impl RenderBridge {
                 let first_radius_y = point_y - first_center.1;
                 let second_radius_x = point_x - second_center.0;
                 let second_radius_y = point_y - second_center.1;
+                let first_radius = (first_radius_x, first_radius_y);
+                let second_radius = (second_radius_x, second_radius_y);
+                let normal = (normal_x, normal_y);
                 let first_normal_lever =
-                    first_radius_x.mul_add(normal_y, -(first_radius_y * normal_x));
+                    native_contact_position_positive_cross(first_radius, normal);
                 let second_normal_lever =
-                    second_radius_x.mul_add(normal_y, -(second_radius_y * normal_x));
+                    native_contact_position_positive_cross(second_radius, normal);
                 let effective_inverse_mass = native_position_effective_inverse_mass(
                     first_inverse_mass,
                     second_inverse_mass,
@@ -74,11 +77,11 @@ impl RenderBridge {
                 let impulse_y = correction * normal_y;
                 if let Some(object) = self.scene.get_mut(&first_name) {
                     object.apply_native_position_impulse(
-                        first_inverse_mass,
-                        (-impulse_x, -impulse_y),
+                        -first_inverse_mass,
+                        (impulse_x, impulse_y),
                         first_inverse_inertia,
-                        -native_position_cross(
-                            (first_radius_x, first_radius_y),
+                        native_contact_position_negative_cross(
+                            first_radius,
                             (impulse_x, impulse_y),
                         ),
                     );
@@ -88,8 +91,8 @@ impl RenderBridge {
                         second_inverse_mass,
                         (impulse_x, impulse_y),
                         second_inverse_inertia,
-                        native_position_cross(
-                            (second_radius_x, second_radius_y),
+                        native_contact_position_positive_cross(
+                            second_radius,
                             (impulse_x, impulse_y),
                         ),
                     );

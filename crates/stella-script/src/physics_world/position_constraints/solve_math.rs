@@ -1,7 +1,22 @@
 //! Shared float32 kernel from Purple's ordinary and TOI position solvers.
 
-pub(crate) fn native_position_cross(radius: (f32, f32), impulse: (f32, f32)) -> f32 {
-    (-radius.1).mul_add(impulse.0, radius.0 * impulse.1)
+/// Contact body A's angular position write forms `-cross(radius, impulse)`
+/// with a rounded `radius.x * impulse.y`, then `FNMSUB` for the positive
+/// `radius.y * impulse.x` term.
+pub(crate) fn native_contact_position_negative_cross(
+    radius: (f32, f32),
+    impulse: (f32, f32),
+) -> f32 {
+    radius.1.mul_add(impulse.0, -(radius.0 * impulse.1))
+}
+
+/// Contact body B and both effective-mass levers round
+/// `radius.y * impulse.x` before fusing the positive product.
+pub(crate) fn native_contact_position_positive_cross(
+    radius: (f32, f32),
+    impulse: (f32, f32),
+) -> f32 {
+    radius.0.mul_add(impulse.1, -(radius.1 * impulse.0))
 }
 
 pub(crate) fn native_position_effective_inverse_mass(
@@ -24,7 +39,8 @@ pub(crate) fn native_position_correction(
     baumgarte: f32,
     effective_inverse_mass: f32,
 ) -> f32 {
-    if effective_inverse_mass <= 0.0_f32 {
+    // FCMP/B.LE also takes this branch for an unordered effective mass.
+    if effective_inverse_mass.partial_cmp(&0.0_f32) != Some(std::cmp::Ordering::Greater) {
         return 0.0_f32;
     }
     let scaled_error = (separation + 0.001_f32) * baumgarte;
@@ -39,7 +55,34 @@ pub(crate) fn native_position_correction(
 
 #[cfg(test)]
 mod tests {
-    use super::native_position_effective_inverse_mass;
+    use super::{
+        native_contact_position_negative_cross, native_contact_position_positive_cross,
+        native_position_correction, native_position_effective_inverse_mass,
+    };
+
+    #[test]
+    fn contact_position_crosses_keep_each_native_write_grouping() {
+        let radius = (f32::from_bits(0x4229_6D75), f32::from_bits(0xC286_F8A3));
+        let impulse = (f32::from_bits(0xC2C1_8DD3), f32::from_bits(0x4261_5B7E));
+
+        // The older shared helper fuses the negative product. Contact body B
+        // instead rounds that product and fuses the positive one.
+        let old_shared_grouping = (-radius.1).mul_add(impulse.0, radius.0 * impulse.1);
+        assert_eq!(old_shared_grouping.to_bits(), 0xC581_8592);
+        assert_eq!(
+            native_contact_position_positive_cross(radius, impulse).to_bits(),
+            0xC581_8591
+        );
+        assert_eq!(
+            native_contact_position_negative_cross(radius, impulse).to_bits(),
+            0x4581_8592
+        );
+    }
+
+    #[test]
+    fn unordered_effective_mass_skips_the_native_correction() {
+        assert_eq!(native_position_correction(-1.0, 0.2, f32::NAN).to_bits(), 0);
+    }
 
     #[test]
     fn effective_mass_squares_levers_before_the_two_native_fmadds() {

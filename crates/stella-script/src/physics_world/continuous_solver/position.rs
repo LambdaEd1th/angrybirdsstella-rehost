@@ -62,12 +62,8 @@ impl RenderBridge {
                 point.point.0 - second_center.0,
                 point.point.1 - second_center.1,
             );
-            let first_lever = first_radius
-                .0
-                .mul_add(point.normal.1, -(first_radius.1 * point.normal.0));
-            let second_lever = second_radius
-                .0
-                .mul_add(point.normal.1, -(second_radius.1 * point.normal.0));
+            let first_lever = native_contact_position_positive_cross(first_radius, point.normal);
+            let second_lever = native_contact_position_positive_cross(second_radius, point.normal);
             let inverse_mass = native_position_effective_inverse_mass(
                 first_inverse_mass,
                 second_inverse_mass,
@@ -83,10 +79,10 @@ impl RenderBridge {
             let impulse_vector = (impulse * point.normal.0, impulse * point.normal.1);
             if first_is_toi && let Some(object) = self.scene.get_mut(&contact.key.0) {
                 object.apply_native_position_impulse(
-                    first_inverse_mass,
-                    (-impulse_vector.0, -impulse_vector.1),
+                    -first_inverse_mass,
+                    impulse_vector,
                     first_inverse_inertia,
-                    -native_position_cross(first_radius, impulse_vector),
+                    native_contact_position_negative_cross(first_radius, impulse_vector),
                 );
             }
             if second_is_toi && let Some(object) = self.scene.get_mut(&contact.key.1) {
@@ -94,7 +90,7 @@ impl RenderBridge {
                     second_inverse_mass,
                     impulse_vector,
                     second_inverse_inertia,
-                    native_position_cross(second_radius, impulse_vector),
+                    native_contact_position_positive_cross(second_radius, impulse_vector),
                 );
             }
         }

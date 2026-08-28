@@ -16800,3 +16800,44 @@ writes, matching the branch-free native member. Bit regressions distinguish
 the old and native cross results (`0xC5818591` versus `0xC5818592`), separated
 and fused velocity writes (`0xC34BAD3E` versus `0xC34BAD3F`), and per-point
 versus pre-added block linear impulses (`0x4520F0BF` versus `0x4520F0C0`).
+
+## Native contact-position asymmetric float grouping
+
+A renewed instruction-level comparison of ordinary
+`SolvePositionConstraints` (`sub_1008646A4`) and
+`SolveTOIPositionConstraints` (`sub_1008649BC`) found that their two angular
+writes are not emitted through one algebraically shared cross-product form.
+For body A, `0x1008648E0..0x1008648E8` rounds `rA.x * P.y`, uses `FNMSUB` to
+form the negative cross, and fuses inverse inertia into the old angle. Body B
+instead rounds `rB.y * P.x` and fuses the positive term at
+`0x1008648FC..0x100864904`. The TOI member repeats the two distinct forms at
+`0x100864C20..0x100864C40`. IDA and Hopper independently expose the same
+sequences. The former Rust helper always fused the negative product, so body
+B could differ by one ULP. Ordinary and TOI position solves now have explicit
+positive and negative contact-cross kernels; a finite regression separates
+the two native words `0xC5818591` and `0xC5818592`.
+
+The called 137-instruction `b2PositionSolverManifold::Initialize` leaf has two
+more intentionally asymmetric paths. Both face modes retain the reference
+plane x coordinate in negated form: they round `plane.x * cosine`, fuse
+`plane.y * sine - product`, subtract transform.p.x, then add the clip point x
+at `0x100864D34..0x100864D7C` and `0x100864DE0..0x100864E20`. Reconstructing
+a conventional positive plane point and subtracting it reverses which product
+is fused. Type 2 also builds its reference-normal x with two independent
+`FMUL`s and `FSUB` at `0x100864DB4..0x100864DC4`, unlike type 1's fused
+rotation, and repeats the opposite subtraction for its output normal at
+`0x100864E48`. These paths now have separate helpers. The existing face-A
+fixture changes its recovered separation from `0x3F13BFBC` to the native
+`0x3F13BFBB`; direct counterexamples distinguish the fused and independently
+rounded results.
+
+The circle-axis threshold at `0x100864EB8..0x100864EE8` uses `FCMP`/`B.LT`;
+an unordered distance therefore retains the unnormalized delta rather than
+dividing it. The effective-mass guards at `0x10086488C..0x100864890` and
+`0x100864BC0..0x100864BC4` similarly skip correction for unordered values.
+The Rust comparisons now preserve both ARM unordered branches. Finally,
+ordinary island writeback reconstructs body transform.p.x at
+`0x10086D3BC..0x10086D3D0` by rounding `localCenter.x * cosine` before the
+fused negative rotation. The shared sweep writer now follows that order;
+its bit fixture changes the former `0xBE7F8F18` to `0xBE7F8F1C` while retaining
+the independently recovered y path.
