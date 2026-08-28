@@ -12,11 +12,13 @@ pub(super) fn install(
         "destroyTrack",
         lua.create_function(move |_, args: MultiValue| {
             let name = native_required_string(&args, 0, "destroyTrack")?;
-            destroy_track_bridge
+            let mut bridge = destroy_track_bridge
                 .lock()
-                .expect("render bridge lock poisoned")
-                .tracks
-                .remove(&name);
+                .expect("render bridge lock poisoned");
+            if !bridge.scene.contains_key(&name) {
+                return Err(runtime_error(format!("Missing object: {name}")));
+            }
+            bridge.tracks.remove(&name);
             Ok(())
         })?,
     )?;
@@ -28,6 +30,9 @@ pub(super) fn install(
             let bridge = track_angle_bridge
                 .lock()
                 .expect("render bridge lock poisoned");
+            if !bridge.scene.contains_key(&name) {
+                return Err(runtime_error(format!("Missing object: {name}")));
+            }
             let Some(track) = bridge.tracks.get(&name) else {
                 return Ok(0.0);
             };

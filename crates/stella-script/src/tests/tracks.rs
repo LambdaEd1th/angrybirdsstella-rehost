@@ -173,6 +173,16 @@ fn current_track_angle_uses_native_chain_children_ties_and_float32() {
                 })
                 precision_angle = getCurrentTrackAngle("precision")
 
+                createBox("untracked", "", 0, 0, 1, 1,
+                    1, 0, 0, true, false, 1)
+                untracked_angle = getCurrentTrackAngle("untracked")
+                missing_track_angle_fails = not pcall(
+                    getCurrentTrackAngle, "missing"
+                )
+                missing_destroy_track_fails = not pcall(
+                    destroyTrack, "missing"
+                )
+
                 createBox("open_chain", "", 0, 2, 1, 1,
                     1, 0, 0, true, false, 1)
                 createTrack({
@@ -182,7 +192,6 @@ fn current_track_angle_uses_native_chain_children_ties_and_float32() {
                     rotateBlock = false
                 })
                 no_implicit_closing_angle = getCurrentTrackAngle("open_chain")
-                missing_track_angle = getCurrentTrackAngle("missing")
                 "#,
         )
         .unwrap();
@@ -205,7 +214,19 @@ fn current_track_angle_uses_native_chain_children_ties_and_float32() {
         environment.get::<f64>("no_implicit_closing_angle").unwrap(),
         0.0
     );
-    assert_eq!(environment.get::<f64>("missing_track_angle").unwrap(), 0.0);
+    // sub_10003D650 returns zero only after a successful object lookup finds
+    // no track pointer. Both track members use throwing getRenderObject first.
+    assert_eq!(environment.get::<f64>("untracked_angle").unwrap(), 0.0);
+    assert!(
+        environment
+            .get::<bool>("missing_track_angle_fails")
+            .unwrap()
+    );
+    assert!(
+        environment
+            .get::<bool>("missing_destroy_track_fails")
+            .unwrap()
+    );
 }
 
 #[test]

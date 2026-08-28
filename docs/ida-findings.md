@@ -857,14 +857,17 @@ and invokes the shape's `TestPoint` virtual method. The rehost preserves that
 pre-test rounding rather than adding the two Lua numbers in double precision.
 These ABI distinctions are covered by regressions.
 
-`getCurrentTrackAngle` resolves the named object in `sub_10003D650`, reads its
-track object from body `+0x88`, and calls `sub_10085D364`. That helper expands
-the stored chain into child edges, projects the body's float32 position onto
-each edge and retains the first strictly smaller squared distance; it never
-adds an implicit closing edge. `sub_10085DAA4` then returns float32
-`atan2(edge.y2-edge.y1, edge.x2-edge.x1)`, or zero when the object has no
-track. The Rust track store now rounds input points to float32 and reproduces
-the native projection/FMA, tie order, open-chain children and atan2f result.
+`getCurrentTrackAngle` resolves the named object through the throwing
+`sub_10005DAF8` lookup in `sub_10003D650`, reads its track object from body
+`+0x88`, and calls `sub_10085D364`. A missing object therefore raises
+`Missing object: %s`; zero is returned only when an existing object has no
+track. The closest-child helper expands the stored chain into child edges,
+projects the body's float32 position onto each edge and retains the first
+strictly smaller squared distance; it never adds an implicit closing edge.
+`sub_10085DAA4` then returns float32
+`atan2(edge.y2-edge.y1, edge.x2-edge.x1)`. The Rust track store now rounds input
+points to float32 and reproduces the native throwing lookup, projection/FMA,
+tie order, open-chain children and atan2f result.
 
 The constraint itself is also no longer modeled as a post-step coordinate
 snap. `sub_10086DA58` selects and caches the closest child before island
@@ -3447,7 +3450,8 @@ Track-overlap coverage now also locks the nested `points` ABI, shape-skin
 threshold, rejection of AABB-only diagonals and the head-fixture change after
 compound fixture recreation.
 Track-angle coverage additionally locks first-child tie handling, float32
-projection/atan2, absence of an implicit closing child and the zero fallback.
+projection/atan2, absence of an implicit closing child, the existing-object
+zero fallback and the missing-object failure contract.
 The persistence regression also verifies native-shape Lua serialization,
 AppData-vs-bundle existence, object-loader routing, level round trips and legacy
 JSON migration. Resource lifecycle zero-result contracts, animation-shader
@@ -16910,4 +16914,27 @@ all-target/all-feature Clippy and the release build. A fresh 120-frame release
 wgpu upload/readback completes with 20 optional data probes, zero invoked
 fallbacks, zero remaining compatibility bindings and empty stderr. Its
 execution-evidence PNG SHA-256 remains
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## Native track entry throwing object lookup
+
+The Lua entry points were compared in both disassemblers after the closest
+track math audit. `destroyTrack` (`sub_10003D638`) first calls the throwing
+object lookup `sub_10005DAF8`, then destroys the body's track pointer when one
+exists. `getCurrentTrackAngle` (`sub_10003D650`) uses the same lookup before
+testing body `+0x88`; its zero return is therefore an existing-object/no-track
+case rather than a missing-name fallback. The lookup's failure branch formats
+`Missing object: %s` before raising the Lua error.
+
+The Rust entries now preserve that distinction: both reject a missing scene
+object, destroying a track on an existing untracked object remains a no-op,
+and querying that object still returns zero. The track regression pins both
+missing-object failures and the existing-object zero result.
+
+The complete workspace remains at 773 passing tests with the deliberate
+long-duration BirdRun audit ignored. Formatting, diff validation, strict
+all-target/all-feature Clippy and the release build are clean. A fresh
+120-frame release-wgpu upload/readback reports 20 optional data probes, zero
+invoked fallbacks, zero remaining compatibility bindings and empty stderr;
+its PNG SHA-256 remains
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
