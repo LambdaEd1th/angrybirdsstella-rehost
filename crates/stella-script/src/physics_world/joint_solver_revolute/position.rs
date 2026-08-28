@@ -36,14 +36,13 @@ impl RenderBridge {
                     .clamp(-MAX_ANGULAR_CORRECTION, MAX_ANGULAR_CORRECTION),
                 JointLimitState::Inactive => 0.0_f32,
             };
-            self.apply_joint_position_impulse(
-                joint,
-                first,
-                second,
-                0.0,
-                0.0,
-                f64::from(-(motor_mass * correction)),
-            );
+            let impulse = -(motor_mass * correction);
+            if let Some(object) = self.scene.get_mut(&joint.first) {
+                object.apply_native_position_impulse(0.0, (0.0, 0.0), inertia_a, -impulse);
+            }
+            if let Some(object) = self.scene.get_mut(&joint.second) {
+                object.apply_native_position_impulse(0.0, (0.0, 0.0), inertia_b, impulse);
+            }
         }
 
         // The angular limit is applied before anchor offsets are rebuilt.
@@ -60,22 +59,39 @@ impl RenderBridge {
         let inertia_b = joint.revolute_inverse_inertia_second;
         let matrix = joint_mass_matrix(mass_a, mass_b, inertia_a, inertia_b, r_a, r_b);
         let delta = joint_anchor_delta(&first, &second, r_a, r_b);
-        let linear_impulse = solve_symmetric_2x2(
+        // 0x1008694E4..0x100869510 solves positive C into the correction
+        // vector that Purple adds to body A and subtracts from body B.
+        let correction = solve_symmetric_2x2(
             matrix.0,
             matrix.1,
             matrix.3,
-            f64::from(-(delta.0 as f32)),
-            f64::from(-(delta.1 as f32)),
+            f64::from(delta.0 as f32),
+            f64::from(delta.1 as f32),
         )
         .unwrap_or((0.0, 0.0));
-        self.apply_joint_position_impulse(
-            joint,
-            &first,
-            &second,
-            linear_impulse.0,
-            linear_impulse.1,
-            0.0,
-        );
+        let correction = (correction.0 as f32, correction.1 as f32);
+        let radius_first = (r_a.0 as f32, r_a.1 as f32);
+        let radius_second = (r_b.0 as f32, r_b.1 as f32);
+        let cross_first = (-radius_first.1).mul_add(correction.0, radius_first.0 * correction.1);
+        let cross_second = radius_second
+            .1
+            .mul_add(correction.0, -radius_second.0 * correction.1);
+        if let Some(object) = self.scene.get_mut(&joint.first) {
+            object.apply_native_position_impulse(
+                mass_a as f32,
+                correction,
+                inertia_a as f32,
+                cross_first,
+            );
+        }
+        if let Some(object) = self.scene.get_mut(&joint.second) {
+            object.apply_native_position_impulse(
+                -(mass_b as f32),
+                correction,
+                inertia_b as f32,
+                cross_second,
+            );
+        }
         let delta = (delta.0 as f32, delta.1 as f32);
         let linear_error = delta.1.mul_add(delta.1, delta.0 * delta.0).sqrt();
         linear_error <= f32::from_bits(0x3a83_126f) && angular_error <= ANGULAR_SLOP

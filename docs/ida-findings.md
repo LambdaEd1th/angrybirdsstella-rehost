@@ -16156,3 +16156,13 @@ before rebuilding its live radii, and evaluates the linear norm with the
 native multiply/FMA/square-root sequence. Regressions cover exact widened
 cache values, the negative-torque clamp, eccentric limit coupling, Chapter 02
 level 11 wheel axles, and the level 56 upper vehicle's settle-to-sleep path.
+
+IDA's `0x1008694E4..0x100869588` tail and Hopper's independent pseudocode also
+show that the position write never asks either live body for mass data. It
+solves positive anchor error into `K^-1 C`, adds the result to body A, subtracts
+it from body B, and applies the two signed cross products with the inverse
+masses and inertias cached by initialization. The Rust position path now uses
+that direct cached write instead of passing through the generic helper that
+re-read body mass state. A focused regression changes the live inverse mass
+after initialization and proves the current position iteration still uses the
+retained native cache.

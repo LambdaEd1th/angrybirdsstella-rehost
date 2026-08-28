@@ -354,6 +354,46 @@ fn recovered_revolute_limit_solver_couples_anchor_and_angular_impulses() {
 }
 
 #[test]
+fn revolute_position_solver_uses_the_initialization_mass_cache_for_writes() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createBox("anchor", "", 0, 0, 1, 1, 0, 0, 0, true, false, 1)
+                createBox("body", "", 2, 0, 1, 1, 1, 0, 0, true, false, 1)
+                createJoint({
+                    name = "hinge", end1 = "anchor", end2 = "body",
+                    type = 3, coordType = 2,
+                    x1 = 0, y1 = 0, x2 = -2, y2 = 0
+                })
+            "#,
+        )
+        .unwrap();
+
+    let mut bridge = runtime.render.lock().unwrap();
+    bridge.begin_joint_step(1.0 / 60.0);
+    let cached_mass = bridge.joints["hinge"].revolute_inverse_mass_second;
+    assert!(cached_mass > 0.0);
+    {
+        let body = bridge.scene.get_mut("body").unwrap();
+        body.set_native_sweep_transform(
+            (body.sweep_center_x + 1.0, body.sweep_center_y),
+            body.angle as f32,
+        );
+        // b2Island cached the original mass already. A live body mutation
+        // cannot change the current constraint's position write coefficients.
+        body.inverse_mass = 0.0;
+    }
+    let displaced_x = bridge.scene["body"].sweep_center_x;
+    bridge.solve_joints(1.0 / 60.0, false, true);
+    assert!(bridge.scene["body"].sweep_center_x < displaced_x);
+    assert_eq!(
+        bridge.joints["hinge"].revolute_inverse_mass_second,
+        cached_mass
+    );
+}
+
+#[test]
 fn recovered_joint_limit_helpers_reverse_or_stop_motor_and_keep_void_abi() {
     let runtime = unlocked_test_runtime();
     runtime
