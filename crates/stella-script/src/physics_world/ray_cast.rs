@@ -177,13 +177,19 @@ pub(crate) fn native_polygon_ray_cast(
             if !native_ordered_greater_or_equal(numerator, 0.0_f32) {
                 return None;
             }
-        } else if denominator < 0.0_f32 && numerator < lower * denominator {
+        } else if denominator < 0.0_f32
+            && !native_ordered_greater_or_equal(numerator, lower * denominator)
+        {
             entry = Some(index);
             lower = numerator / denominator;
-        } else if denominator > 0.0_f32 && numerator < upper * denominator {
+        } else if denominator > 0.0_f32
+            && !native_ordered_greater_or_equal(numerator, upper * denominator)
+        {
             upper = numerator / denominator;
         }
-        if !native_ordered_greater_or_equal(upper, lower) {
+        // 0x10085DE30 uses FCMP/B.LT. Unlike an ordered `upper >= lower`
+        // test, an unordered pair therefore continues through the loop.
+        if upper < lower {
             return None;
         }
     }
@@ -206,7 +212,10 @@ pub(crate) fn native_polygon_normals(vertices: &[(f32, f32)]) -> Vec<(f32, f32)>
             let edge = (second.0 - first.0, second.1 - first.1);
             let mut normal = (edge.1, -edge.0);
             let length = edge.0.mul_add(edge.0, edge.1 * edge.1).sqrt();
-            if length >= f32::EPSILON {
+            // b2PolygonShape::Set uses FCMP/B.LT at 0x10085DC20. An
+            // unordered length does not take the skip branch and is divided,
+            // turning both stored normal lanes into NaN just like Purple.
+            if native_unordered_or_greater_or_equal(length, f32::EPSILON) {
                 let inverse_length = 1.0_f32 / length;
                 normal.0 *= inverse_length;
                 normal.1 *= inverse_length;
@@ -220,6 +229,13 @@ fn native_ordered_greater_or_equal(left: f32, right: f32) -> bool {
     matches!(
         left.partial_cmp(&right),
         Some(std::cmp::Ordering::Equal | std::cmp::Ordering::Greater)
+    )
+}
+
+fn native_unordered_or_greater_or_equal(left: f32, right: f32) -> bool {
+    matches!(
+        left.partial_cmp(&right),
+        None | Some(std::cmp::Ordering::Equal | std::cmp::Ordering::Greater)
     )
 }
 
@@ -286,11 +302,36 @@ mod tests {
     }
 
     #[test]
+    fn native_polygon_ray_continues_through_unordered_clip_bounds() {
+        let input = NativeRayCastInput {
+            start: (-2.0, 0.0),
+            end: (2.0, 0.0),
+            max_fraction: f32::NAN,
+        };
+        let vertices = [(-1.0, -0.5), (1.0, -0.5), (1.0, 0.5), (-1.0, 0.5)];
+        let hit =
+            native_polygon_ray_cast("polygon", input, NativeToiTransform::IDENTITY, &vertices)
+                .unwrap();
+
+        assert_eq!((hit.point_x, hit.point_y), (-1.0, 0.0));
+        assert_eq!((hit.normal_x, hit.normal_y), (-1.0, -0.0));
+        assert_eq!(hit.fraction, f64::from(0.25_f32));
+    }
+
+    #[test]
     fn polygon_normals_keep_setters_signed_vertex_order() {
         let clockwise = [(-1.0, -1.0), (-1.0, 1.0), (1.0, 1.0), (1.0, -1.0)];
         assert_eq!(
             native_polygon_normals(&clockwise),
             vec![(1.0, -0.0), (0.0, -1.0), (-1.0, -0.0), (0.0, 1.0)]
         );
+    }
+
+    #[test]
+    fn polygon_set_normalizes_an_unordered_length() {
+        let normals = native_polygon_normals(&[(0.0, 0.0), (f32::NAN, 0.0), (0.0, 1.0)]);
+
+        assert!(normals[0].0.is_nan());
+        assert!(normals[0].1.is_nan());
     }
 }

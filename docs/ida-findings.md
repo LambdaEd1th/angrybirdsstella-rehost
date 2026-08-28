@@ -17330,3 +17330,46 @@ zero invoked fallbacks and zero remaining compatibility bindings.
 `build/audit-native-edge-degenerate-20260829.png` is a 1024x768 RGBA PNG with
 SHA-256
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## Native polygon-ray unordered clipping and Set normalization
+
+An instruction-by-instruction IDA/Hopper recheck of
+`b2PolygonShape::RayCast` at `0x10085DD64` exposed three ARM unordered
+comparison paths hidden by the earlier high-level reconstruction. At
+`0x10085DDF0..0x10085DDF4`, `FCMP denominator, 0` followed by `B.NE` treats a
+NaN denominator as nonzero. The lower-bound path at
+`0x10085DE04..0x10085DE14` then uses `FCCMP numerator, lower * denominator,
+#0, LT` and `B.GE`: when the denominator is ordered negative, either an
+ordered less-than or an unordered numerator comparison updates the entry
+index and divides the new lower bound. The upper path at
+`0x10085DE1C..0x10085DE2C` has the symmetric `GT`-conditioned `FCCMP` and the
+same unordered update behavior. Finally, `FCMP upper, lower` / `B.LT` at
+`0x10085DE30..0x10085DE34` rejects only an ordered inverted interval; a NaN
+bound continues through the remaining planes.
+
+The adjacent polygon constructor was checked in both disassemblers and named
+`b2PolygonShape_Set` at `0x10085DB9C`. It stores each raw `(edge.y, -edge.x)`
+normal, computes the y-square followed by the x-square `FMADD`, and compares
+the square-root length with `FLT_EPSILON` at `0x10085DC20`. Its `B.LT` skips
+normalization only for an ordered sub-epsilon length. An unordered NaN length
+therefore takes the reciprocal path and turns both stored normal lanes into
+NaN. The IDA database now carries comments at all four condition-code
+boundaries and has been saved; Hopper independently exposes the same
+instruction sequences.
+
+Rust now spells the two conditioned `FCCMP` tests as “not ordered greater or
+equal”, uses a literal ordered less-than for the final interval rejection, and
+has an explicit unordered-or-greater/equal helper for polygon normal
+materialization. One regression supplies a NaN `maxFraction` to a finite
+rectangle and pins Purple's valid quarter-fraction hit instead of the former
+early rejection. A second proves that a NaN polygon edge normalizes both
+lanes to NaN.
+
+The complete workspace passes 799 tests with only the deliberate long-
+duration BirdRun audit ignored. Formatting, whitespace validation, strict
+all-target/all-feature Clippy and the release workspace build are clean. A
+fresh isolated-AppData 120-frame release-wgpu upload/render/readback reports
+20 optional probes, zero invoked fallbacks, zero remaining compatibility
+bindings and empty stderr. `build/audit-native-polygon-ray-nan-20260829.png`
+is a 1024x768 RGBA PNG with SHA-256
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
