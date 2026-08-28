@@ -16061,3 +16061,35 @@ instruction grouping, exact-zero divisions, short-axis rules, soft bias/gamma
 chain, accumulated impulse and fused position/velocity writes. Regressions
 cover the zero-axis warm start and a nontrivial soft spring whose entire cache
 and impulse remain exact widened float values.
+
+## Complete rope-joint cache, prediction and unilateral impulse
+
+The `11b2RopeJoint` RTTI record at `0x100A0CA64` is referenced by the vtable
+group at `0x100AB1B40`. Its recovered solver slots are
+`sub_10086983C` (`InitVelocityConstraints`), `sub_100869B30`
+(`SolveVelocityConstraints`) and `sub_100869C48`
+(`SolvePositionConstraints`). As with the adjacent distance joint, every
+solver record and body-array operand is float32.
+
+Initialization caches the two radii, live vector and current length at
+`0x100869920..0x10086999C`, classifies an upper-limit violation, and uses the
+exact `0.001f` short-axis branch at `0x1008699C4`. That branch zeros the axis,
+effective mass and accumulated impulse and skips the velocity writes. The
+ordinary branch normalizes once, builds the scalar mass in float/FMA order and
+warm-starts from the cached values at `0x1008699CC..0x100869B04`.
+
+Velocity solving never rebuilds geometry. It computes the cached-axis point
+velocity dot at `0x100869B5C..0x100869B8C`. While the rope is still slack,
+`0x100869B90..0x100869B9C` adds `lengthError * inv_dt`, anticipating a body
+that would cross the maximum length during this step. The solver then uses one
+fused multiply-add and `FMIN` to clamp the accumulated impulse to at most zero
+at `0x100869BA0..0x100869BB8`; the rope can pull but never push. Position
+solving recomputes the live vector, preserves the sub-FLT_EPSILON direction,
+clamps only positive error to `0.2f`, and deliberately reuses the mass cached
+during initialization.
+
+Rust now mirrors this cache lifetime and complete float32 pipeline, including
+the predictive slack term, exact-zero reciprocal, unilateral accumulator and
+fused body writes. Regressions cover the native short-axis cache reset and a
+slack four-unit rope that reduces a twenty-unit outward velocity to fifteen in
+one 30 Hz step before it can overextend.

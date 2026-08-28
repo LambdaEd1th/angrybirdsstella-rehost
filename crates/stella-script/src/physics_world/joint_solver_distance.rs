@@ -130,6 +130,7 @@ impl RenderBridge {
             f64::from(geometry.radius_second.0),
             f64::from(geometry.radius_second.1),
         );
+        joint.distance_current_length = f64::from(geometry.length);
         joint.distance_axis = (f64::from(axis.0), f64::from(axis.1));
         joint.distance_effective_mass = f64::from(effective_mass);
         joint.distance_gamma = f64::from(gamma);

@@ -58,6 +58,7 @@ pub(super) fn insert_joint(
             distance_axis: (0.0, 0.0),
             distance_radius_first: (0.0, 0.0),
             distance_radius_second: (0.0, 0.0),
+            distance_current_length: 0.0,
             distance_effective_mass: 0.0,
             distance_gamma: 0.0,
             distance_bias: 0.0,

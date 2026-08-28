@@ -36,6 +36,7 @@ pub(crate) struct PhysicsJoint {
     pub(crate) distance_axis: (f64, f64),
     pub(crate) distance_radius_first: (f64, f64),
     pub(crate) distance_radius_second: (f64, f64),
+    pub(crate) distance_current_length: f64,
     pub(crate) distance_effective_mass: f64,
     pub(crate) distance_gamma: f64,
     pub(crate) distance_bias: f64,
