@@ -3,9 +3,18 @@
 use crate::*;
 
 enum CollisionFixtureGeometry {
-    Circle { center: (f64, f64), radius: f64 },
-    Polygon(NativePolygon<(f64, f64)>),
-    Segment(((f64, f64), (f64, f64))),
+    Circle {
+        local_center: (f32, f32),
+        center: (f64, f64),
+        radius: f64,
+    },
+    Polygon {
+        local: NativePolygon<(f32, f32)>,
+        world: NativePolygon<(f64, f64)>,
+    },
+    Segment {
+        world: ((f64, f64), (f64, f64)),
+    },
 }
 
 impl SceneObject {
@@ -41,43 +50,77 @@ impl SceneObject {
         let manifold = match (first, second) {
             (
                 CollisionFixtureGeometry::Circle {
-                    center: first_center,
+                    local_center: first_local_center,
                     radius: first_radius,
+                    ..
                 },
                 CollisionFixtureGeometry::Circle {
-                    center: second_center,
+                    local_center: second_local_center,
                     radius: second_radius,
+                    ..
                 },
-            ) => circle_circle_manifold(first_center, first_radius, second_center, second_radius),
+            ) => circle_circle_manifold_at_transforms(
+                first_local_center,
+                first_radius as f32,
+                first_transform,
+                second_local_center,
+                second_radius as f32,
+                second_transform,
+            ),
             (
-                CollisionFixtureGeometry::Circle { center, radius },
-                CollisionFixtureGeometry::Polygon(polygon),
-            ) => circle_polygon_manifold(center, radius, &polygon, true),
+                CollisionFixtureGeometry::Circle {
+                    local_center,
+                    radius,
+                    ..
+                },
+                CollisionFixtureGeometry::Polygon { local, .. },
+            ) => circle_polygon_manifold_at_transforms(
+                local_center,
+                radius as f32,
+                first_transform,
+                &local,
+                second_transform,
+                true,
+            ),
             (
-                CollisionFixtureGeometry::Polygon(polygon),
-                CollisionFixtureGeometry::Circle { center, radius },
-            ) => circle_polygon_manifold(center, radius, &polygon, false),
+                CollisionFixtureGeometry::Polygon { local, .. },
+                CollisionFixtureGeometry::Circle {
+                    local_center,
+                    radius,
+                    ..
+                },
+            ) => circle_polygon_manifold_at_transforms(
+                local_center,
+                radius as f32,
+                second_transform,
+                &local,
+                first_transform,
+                false,
+            ),
             (
-                CollisionFixtureGeometry::Circle { center, radius },
-                CollisionFixtureGeometry::Segment(segment),
-            ) => circle_segment_manifold(center, radius, segment, true),
+                CollisionFixtureGeometry::Circle { center, radius, .. },
+                CollisionFixtureGeometry::Segment { world, .. },
+            ) => circle_segment_manifold(center, radius, world, true),
             (
-                CollisionFixtureGeometry::Segment(segment),
-                CollisionFixtureGeometry::Circle { center, radius },
-            ) => circle_segment_manifold(center, radius, segment, false),
+                CollisionFixtureGeometry::Segment { world, .. },
+                CollisionFixtureGeometry::Circle { center, radius, .. },
+            ) => circle_segment_manifold(center, radius, world, false),
             (
-                CollisionFixtureGeometry::Polygon(first),
-                CollisionFixtureGeometry::Polygon(second),
+                CollisionFixtureGeometry::Polygon { world: first, .. },
+                CollisionFixtureGeometry::Polygon { world: second, .. },
             ) => polygon_manifold(&first, &second),
             (
-                CollisionFixtureGeometry::Polygon(polygon),
-                CollisionFixtureGeometry::Segment(segment),
+                CollisionFixtureGeometry::Polygon { world: polygon, .. },
+                CollisionFixtureGeometry::Segment { world: segment, .. },
             ) => polygon_segment_manifold(&polygon, segment, true),
             (
-                CollisionFixtureGeometry::Segment(segment),
-                CollisionFixtureGeometry::Polygon(polygon),
+                CollisionFixtureGeometry::Segment { world: segment, .. },
+                CollisionFixtureGeometry::Polygon { world: polygon, .. },
             ) => polygon_segment_manifold(&polygon, segment, false),
-            (CollisionFixtureGeometry::Segment(_), CollisionFixtureGeometry::Segment(_)) => None,
+            (
+                CollisionFixtureGeometry::Segment { .. },
+                CollisionFixtureGeometry::Segment { .. },
+            ) => None,
         };
         manifold.map(|manifold| manifold.localize(first_transform, second_transform))
     }
@@ -91,20 +134,37 @@ impl SceneObject {
             CollisionShape::None => None,
             CollisionShape::Circle { .. } if fixture == 0 => {
                 let (center, radius) = self.collision_circle_at(transform)?;
-                Some(CollisionFixtureGeometry::Circle { center, radius })
+                Some(CollisionFixtureGeometry::Circle {
+                    local_center: (0.0, 0.0),
+                    center,
+                    radius,
+                })
             }
             CollisionShape::Circle { .. } => None,
             CollisionShape::Box { width, height } if fixture == 0 => {
-                let vertices = [
+                let local = [
                     (-width * 0.5, -height * 0.5),
                     (width * 0.5, -height * 0.5),
                     (width * 0.5, height * 0.5),
                     (-width * 0.5, height * 0.5),
                 ]
                 .into_iter()
-                .map(|point| self.transform_collision_point_at(transform, point))
+                .map(|(x, y)| {
+                    (
+                        x as f32 * self.physics_scale_x as f32,
+                        y as f32 * self.physics_scale_y as f32,
+                    )
+                })
                 .collect::<NativePolygon<_>>();
-                Some(CollisionFixtureGeometry::Polygon(vertices))
+                let world = local
+                    .iter()
+                    .copied()
+                    .map(|point| {
+                        let point = transform.point(point);
+                        (f64::from(point.0), f64::from(point.1))
+                    })
+                    .collect::<NativePolygon<_>>();
+                Some(CollisionFixtureGeometry::Polygon { local, world })
             }
             CollisionShape::Box { .. } => None,
             CollisionShape::Polygon { vertices, fixtures } => {
@@ -114,21 +174,44 @@ impl SceneObject {
                     fixtures.get(fixture)
                 }?;
                 (vertices.len() >= 3).then(|| {
-                    CollisionFixtureGeometry::Polygon(
-                        vertices
-                            .iter()
-                            .copied()
-                            .map(|point| self.transform_collision_point_at(transform, point))
-                            .collect::<NativePolygon<_>>(),
-                    )
+                    let local = vertices
+                        .iter()
+                        .copied()
+                        .map(|(x, y)| {
+                            (
+                                x as f32 * self.physics_scale_x as f32,
+                                y as f32 * self.physics_scale_y as f32,
+                            )
+                        })
+                        .collect::<NativePolygon<_>>();
+                    let world = local
+                        .iter()
+                        .copied()
+                        .map(|point| {
+                            let point = transform.point(point);
+                            (f64::from(point.0), f64::from(point.1))
+                        })
+                        .collect::<NativePolygon<_>>();
+                    CollisionFixtureGeometry::Polygon { local, world }
                 })
             }
             CollisionShape::Line { vertices } => {
                 let edge = vertices.get(fixture..fixture + 2)?;
-                let start = self.transform_collision_point_at(transform, edge[0]);
-                let end = self.transform_collision_point_at(transform, edge[1]);
-                ((end.0 - start.0).hypot(end.1 - start.1) > f64::EPSILON)
-                    .then_some(CollisionFixtureGeometry::Segment((start, end)))
+                let local = [edge[0], edge[1]].map(|(x, y)| {
+                    (
+                        x as f32 * self.physics_scale_x as f32,
+                        y as f32 * self.physics_scale_y as f32,
+                    )
+                });
+                let world = local.map(|point| {
+                    let point = transform.point(point);
+                    (f64::from(point.0), f64::from(point.1))
+                });
+                ((world[1].0 - world[0].0).hypot(world[1].1 - world[0].1) > f64::EPSILON).then_some(
+                    CollisionFixtureGeometry::Segment {
+                        world: (world[0], world[1]),
+                    },
+                )
             }
         }
     }

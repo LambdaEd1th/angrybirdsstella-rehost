@@ -71,6 +71,51 @@ fn polygon_circle_uses_native_float_boundary_and_zero_feature_id() {
 }
 
 #[test]
+fn rotated_polygon_circle_keeps_shape_local_normal_and_reference_point() {
+    let polygon = [
+        (-0.7_f32, -0.4_f32),
+        (1.3_f32, -0.4_f32),
+        (1.3_f32, 0.6_f32),
+        (-0.7_f32, 0.6_f32),
+    ];
+    let angle = 0.37_f32;
+    let (sine, cosine) = angle.sin_cos();
+    let polygon_transform = NativeToiTransform {
+        position: (12.25, -7.5),
+        sine,
+        cosine,
+    };
+    let circle_world_center = polygon_transform.point((0.2, 1.1));
+    let manifold = circle_polygon_manifold_at_transforms(
+        (0.0, 0.0),
+        0.5,
+        NativeToiTransform {
+            position: circle_world_center,
+            sine: 0.0,
+            cosine: 1.0,
+        },
+        &polygon,
+        polygon_transform,
+        false,
+    )
+    .expect("rotated polygon face contact");
+    let ContactPositionState::Local(local) = manifold.position else {
+        panic!("fixture dispatch must retain the native local manifold");
+    };
+    let expected_plane_x = (polygon[2].0 + polygon[3].0) * 0.5;
+    let expected_plane_y = (polygon[2].1 + polygon[3].1) * 0.5;
+    assert!(matches!(
+        local.manifold_type,
+        ContactManifoldType::FaceFirst
+    ));
+    assert_eq!(local.local_normal.0.to_bits(), 0.0_f32.to_bits());
+    assert_eq!(local.local_normal.1.to_bits(), 1.0_f32.to_bits());
+    assert_eq!(local.local_point.0.to_bits(), expected_plane_x.to_bits());
+    assert_eq!(local.local_point.1.to_bits(), expected_plane_y.to_bits());
+    assert_eq!(local.local_points[0], (0.0, 0.0));
+}
+
+#[test]
 fn circle_circle_uses_native_inclusive_boundary_and_small_delta_axis() {
     let touching = circle_circle_manifold((0.0, 0.0), 1.0, (2.0, 0.0), 1.0)
         .expect("native squared-radius boundary contact");

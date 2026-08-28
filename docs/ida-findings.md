@@ -3604,6 +3604,19 @@ endpoint contacts are type-0 circles with the edge vertex and circle centre as
 their two witnesses; only the edge-face region is type 1 (or type 2 after
 fixture-order reversal).
 
+The upstream circle leaves preserve that locality as well. Circle-circle
+`sub_10085E590` transforms both shape centres only for the overlap test, then
+copies the two original local centres from each shape's `+16` field into the
+manifold. Polygon-circle `sub_10085E624` first transforms the circle centre
+into polygon-local space, performs every face and vertex-region comparison
+there, copies a selected normal directly from the polygon's local normal array
+at `+88`, and copies either a local vertex or the local edge midpoint into
+`manifold.localPoint`. The circle manifold point again comes directly from
+the circle shape's local `+16` field. The corresponding Rust fixture dispatch
+now passes scaled local shapes plus the two compact transforms into these two
+leaves; rotations, nonzero world translations and interpolated TOI poses no
+longer create local witnesses by round-tripping world coordinates.
+
 The following arithmetic is shared byte-for-byte by those two leaves. At
 `0x1008647DC..0x100864810` (TOI `0x100864B18..0x100864B48`) each transformed
 local centre rounds its first multiply with `FMUL`, fuses the second term with

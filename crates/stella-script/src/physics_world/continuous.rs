@@ -106,6 +106,13 @@ pub(crate) struct NativeToiTransform {
 }
 
 impl NativeToiTransform {
+    #[cfg(test)]
+    pub(crate) const IDENTITY: Self = Self {
+        position: (0.0, 0.0),
+        sine: 0.0,
+        cosine: 1.0,
+    };
+
     pub(crate) fn point(self, local: (f32, f32)) -> (f32, f32) {
         (
             local

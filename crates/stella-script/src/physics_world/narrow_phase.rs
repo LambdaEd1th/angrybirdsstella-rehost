@@ -13,7 +13,11 @@ use smallvec::SmallVec;
 pub(crate) const BOX2D_MAX_POLYGON_VERTICES: usize = 8;
 pub(crate) type NativePolygon<T> = SmallVec<[T; BOX2D_MAX_POLYGON_VERTICES]>;
 
+#[cfg(test)]
 pub(crate) use circle::{circle_circle_manifold, circle_polygon_manifold};
+pub(crate) use circle::{
+    circle_circle_manifold_at_transforms, circle_polygon_manifold_at_transforms,
+};
 pub(crate) use edge::{circle_segment_manifold, polygon_segment_manifold};
 #[cfg(test)]
 pub(crate) use geometry::dot_2d;
