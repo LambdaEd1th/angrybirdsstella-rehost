@@ -16488,3 +16488,22 @@ regression uses an in-range alpha for which the former difference form is one
 ULP away. This finding applies to `GetTransform`; native `b2Sweep::Advance`
 remains a separately audited state-update boundary rather than being inferred
 from the interpolation member.
+
+## Exact b2Sweep angle normalization constants
+
+The next TOI prologue audit found another algebraic substitution in the sweep
+path. Purple does not divide the initial angle by a freshly expressed `2*pi`.
+At `0x100861C1C..0x100861C30` it loads the exact float32 constants
+`0x3E22F983` (`1/(2*pi)`) and `0x40C90FDB` (`2*pi`), multiplies the first
+sweep's `a0` by the reciprocal, and rounds downward with `FRINTM`. It then
+multiplies that turn count by the stored two-pi value once and subtracts the
+same rounded correction from both `a0` and `a` at
+`0x100861C50..0x100861C6C`. The second sweep repeats the sequence at
+`0x100861C40..0x100861CB0`.
+
+Hopper independently labels the reciprocal as `0.159155f`, shows the two
+`FRINTM` operations, and reuses each `turns * twoPi` product for both angles.
+Rust now uses the recovered bit patterns, explicit multiply/floor and one
+shared correction per sweep. A regression fixes an input around 986.46 radians
+where division chooses the next turn and produces a small negative remainder,
+while Purple's reciprocal multiply preserves a remainder just below `2*pi`.

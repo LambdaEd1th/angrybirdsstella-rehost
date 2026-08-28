@@ -69,10 +69,12 @@ impl NativeSweep {
     }
 
     pub(crate) fn normalize(&mut self) {
-        let two_pi = 2.0_f32 * std::f32::consts::PI;
-        let turns = (self.angle_0 / two_pi).floor();
-        self.angle_0 -= turns * two_pi;
-        self.angle -= turns * two_pi;
+        const NATIVE_INV_TWO_PI: f32 = f32::from_bits(0x3e22_f983);
+        const NATIVE_TWO_PI: f32 = f32::from_bits(0x40c9_0fdb);
+        let turns = (self.angle_0 * NATIVE_INV_TWO_PI).floor();
+        let correction = turns * NATIVE_TWO_PI;
+        self.angle_0 -= correction;
+        self.angle -= correction;
     }
 
     pub(crate) fn transform(self, alpha: f32) -> NativeToiTransform {
@@ -173,6 +175,28 @@ mod transform_tests {
 
         let difference_form = (end - start).mul_add(alpha, start);
         assert_eq!(difference_form.to_bits(), 0xc40b_887c);
+    }
+
+    #[test]
+    fn sweep_normalize_multiplies_by_native_inverse_two_pi() {
+        let angle = f32::from_bits(0x4476_9d72);
+        let mut sweep = NativeSweep {
+            local_center: (0.0, 0.0),
+            center_0: (0.0, 0.0),
+            center: (0.0, 0.0),
+            angle_0: angle,
+            angle: angle + 1.0,
+        };
+        sweep.normalize();
+        assert_eq!(sweep.angle_0.to_bits(), 0x40c9_0f80);
+        assert_eq!(
+            sweep.angle.to_bits(),
+            (f32::from_bits(0x40c9_0f80) + 1.0).to_bits()
+        );
+
+        let division_turns = (angle / f32::from_bits(0x40c9_0fdb)).floor();
+        let division_form = angle - division_turns * f32::from_bits(0x40c9_0fdb);
+        assert_eq!(division_form.to_bits(), 0xb880_0000);
     }
 
     #[test]
