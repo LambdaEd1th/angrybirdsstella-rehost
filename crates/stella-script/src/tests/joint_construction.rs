@@ -1598,6 +1598,13 @@ fn soft_distance_joint_keeps_native_float_solver_cache_and_accumulator() {
     bridge.initialize_distance_velocity_constraints(&mut joint, &first, &second, 1.0 / 59.94);
 
     assert_eq!(
+        (joint.distance_effective_mass as f32).to_bits(),
+        0x3E82_37B7
+    );
+    assert_eq!((joint.distance_gamma as f32).to_bits(), 0x4034_8663);
+    assert_eq!((joint.distance_bias as f32).to_bits(), 0);
+
+    assert_eq!(
         joint.distance_effective_mass,
         f64::from(joint.distance_effective_mass as f32)
     );

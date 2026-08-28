@@ -16294,8 +16294,8 @@ lever arms and scalar inverse effective mass are accumulated in a fixed
 float/FMA order at `0x1008653FC..0x100865424`, with exact-zero reciprocal
 semantics.
 
-The soft branch at `0x100865450..0x1008654D0` uses the bundled `6.2832f`
-constant, stores gamma and bias on the joint, and replaces the cached scalar
+The soft branch at `0x100865450..0x1008654D0` uses the exact float32 `2π`
+word `0x40C90FDB`, stores gamma and bias on the joint, and replaces the cached scalar
 mass with `1 / (inverseMass + gamma)`. Warm starting scales and applies the
 cached impulse using those stored radii and axis at
 `0x1008654D4..0x1008655A4`. The velocity function consumes the same cache
@@ -16741,3 +16741,29 @@ an FMA. The host now uses the exact words, inclusive comparisons and the same
 two-rounded-squares addition. Focused tests cover both a value exactly on the
 native linear threshold and an input where fused versus separated arithmetic
 changes the result by one ULP.
+
+## Exact soft-distance frequency constant and per-frame bundle draw audit
+
+The distance-joint initializer multiplies the authored frequency by a
+constant loaded at `0x100865458..0x100865460`. IDA resolves that load to
+`0x100A0C958`, whose bytes are `DB 0F C9 40`, or float32 word
+`0x40C90FDB`. Hopper independently shows the same `ADRP`/`LDR S18`/`FMUL`
+sequence. This is the correctly rounded float32 representation of `2π`, not
+the former host decimal `6.2832f` (`0x40C90FF9`, thirty ULP higher).
+
+That input feeds every soft distance joint's omega, damping denominator,
+gamma, bias and final effective mass. The host now loads the recovered word
+directly. A nontrivial spring regression pins the resulting native gamma and
+effective-mass words; with the old approximation both differ. The surrounding
+operation order remains the native chain: omega multiply, doubled effective
+mass times damping ratio, squared-omega stiffness, one `FMADD` for damping
+plus `stiffness * step`, outer step multiply, reciprocal gamma, bias chain and
+the softened-mass reciprocal.
+
+The whole-bundle regression was also extended from one update and one final
+draw to sixty update/draw pairs for each of the 149 shipped levels. Every
+frame therefore executes live Lua draw callbacks and native resource lookups,
+while only the last frame's command buffer is retained for structural checks.
+Extended 600-frame per-level draw coverage and 7,200-frame update-only idle
+coverage complete without a Lua error, unresolved sprite or compatibility
+fallback.

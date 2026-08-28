@@ -1,4 +1,4 @@
-//! Whole-bundle level construction and first-frame regression coverage.
+//! Whole-bundle level construction and first-second regression coverage.
 
 use super::*;
 
@@ -44,7 +44,7 @@ fn every_shipped_level_constructs_updates_and_reaches_native_draw() {
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .filter(|frames| *frames != 0)
-        .unwrap_or(1);
+        .unwrap_or(60);
 
     for level in &levels {
         runtime
@@ -122,6 +122,21 @@ fn every_shipped_level_constructs_updates_and_reaches_native_draw() {
             runtime.update(1.0 / 60.0).unwrap_or_else(|error| {
                 panic!("{level} failed update frame {}: {error}", frame + 1)
             });
+            assert!(
+                runtime
+                    .call_global("drawGameNative")
+                    .unwrap_or_else(|error| {
+                        panic!("{level} failed native draw frame {}: {error}", frame + 1)
+                    }),
+                "{level} lost the native draw entry on frame {}",
+                frame + 1
+            );
+            // Keep only the last frame for the command-level assertions
+            // below. Every earlier draw has nevertheless executed all live
+            // Lua callbacks and native resource lookups.
+            if frame + 1 != update_frames {
+                runtime.take_render_commands();
+            }
         }
         if lacks_active_body {
             runtime
@@ -135,12 +150,6 @@ fn every_shipped_level_constructs_updates_and_reaches_native_draw() {
                 )
                 .unwrap();
         }
-        assert!(
-            runtime
-                .call_global("drawGameNative")
-                .unwrap_or_else(|error| panic!("{level} failed native draw: {error}")),
-            "{level} lost the native draw entry"
-        );
         let invalid_masked_commands = runtime
             .render
             .lock()

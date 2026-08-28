@@ -4,8 +4,9 @@ use crate::*;
 
 const NATIVE_LINEAR_SLOP: f32 = 0.001_f32;
 
-#[allow(clippy::approx_constant)]
-const NATIVE_TWO_PI: f32 = 6.2832_f32;
+// b2DistanceJoint::InitVelocityConstraints loads this exact word from
+// Purple's constant pool at 0x100A0C958.
+const NATIVE_TWO_PI: f32 = f32::from_bits(0x40C9_0FDB);
 
 #[derive(Clone, Copy)]
 struct NativeDistanceGeometry {
