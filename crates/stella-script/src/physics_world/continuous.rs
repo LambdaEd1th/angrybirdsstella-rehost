@@ -124,7 +124,6 @@ pub(crate) struct NativeToiTransform {
 }
 
 impl NativeToiTransform {
-    #[cfg(test)]
     pub(crate) const IDENTITY: Self = Self {
         position: (0.0, 0.0),
         sine: 0.0,

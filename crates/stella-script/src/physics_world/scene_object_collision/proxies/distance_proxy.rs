@@ -10,7 +10,10 @@ impl SceneObject {
             CollisionShape::None => None,
             CollisionShape::Circle { radius } if fixture == 0 => Some(NativeDistanceProxy {
                 vertices: vec![(0.0_f32, 0.0_f32)],
-                radius: (radius.abs() as f32) * scale.0.abs().min(scale.1.abs()),
+                // b2DistanceProxy::Set copies b2Shape::m_radius verbatim at
+                // 0x10086035C..0x100860360. native_resizeRadius can install a
+                // negative value, so only the scale magnitude is unsigned.
+                radius: (*radius as f32) * scale.0.abs().min(scale.1.abs()),
             }),
             CollisionShape::Circle { .. } => None,
             CollisionShape::Box { width, height } if fixture == 0 => {

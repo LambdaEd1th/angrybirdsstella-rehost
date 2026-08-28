@@ -17054,3 +17054,49 @@ AppData 120-frame release-wgpu upload/readback reports 20 optional probes,
 zero invoked fallbacks, zero remaining compatibility bindings and empty
 stderr. Its PNG SHA-256 remains
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## Fixed-step track warm start and exact GJK overlap
+
+The track warm-start audit was closed by following `sub_10086DA58` back
+through `b2Island::Solve` (`sub_10086CE84`), `b2World::Solve`
+(`sub_10086E634`) and `b2World::Step` (`sub_10086F3FC`). The step constructor
+stores `dt`, `inv_dt`, `dtRatio = world.previousInvDt * dt`, both iteration
+counts and the world warm-start byte at `0x10086F464..0x10086F4B0`.
+`b2World` construction at `sub_10086DCE8` writes `previousInvDt=0` at
+`0x10086DE1C` and `warmStarting=true` at `0x10086DDBC`; after every positive
+step, `0x10086F590..0x10086F594` commits the new inverse step. Purple always
+calls this world with the recovered fixed `1/30f` interval, so the ratio is
+zero on the first step and one thereafter. A new custom track already has
+zero cached impulse, and its first resolved child clears that cache as well;
+there is consequently no stable first-step difference to manufacture in the
+safe Rust model. The unchanged-child additions and exact `0.9f` angular
+multiply remain aligned.
+
+The neighboring `objectAndTrackOverlap` narrow phase did have an observable
+difference. At `0x10003D45C..0x10003D494`, Purple selects only
+`b2Body::m_fixtureList`, walks every temporary chain child, and calls
+`b2TestOverlap` (`sub_10086021C`) with child zero for the object fixture, the
+current child for the chain, the live body transform and an identity chain
+transform. `b2TestOverlap` clears a fresh simplex cache, builds both
+`b2DistanceProxy` records, runs the shared float32 GJK distance member with
+radii enabled, then compares the final distance strictly below word
+`0x35A00000` (`10 * FLT_EPSILON`) at `0x1008602A8..0x1008602B8`.
+
+The former track-only path approximated polygon/segment distance in float64
+and compared against only one epsilon. It now shares the already recovered
+float32 GJK, simplex, support, transform and use-radii path used by ordinary
+fixture overlap. This also removes the obsolete approximate segment helpers.
+Finally, `b2DistanceProxy::Set` copies `b2Shape::m_radius` directly at
+`0x10086035C..0x100860360`; it never takes an absolute value. The shared proxy
+builder now preserves a negative radius installed by `native_resizeRadius`,
+while retaining the unsigned magnitude of the separately modelled physics
+scale. Regressions cover the ten-epsilon boundary, negative-radius core and
+separated cases, head-fixture ordering and the recovered fused body transform.
+
+The complete workspace remains at 775 passing tests with the deliberate
+long-duration BirdRun audit ignored. Formatting, diff validation, strict all-
+target/all-feature Clippy and the release build are clean. A fresh isolated-
+AppData 120-frame release-wgpu upload/readback reports 20 optional probes,
+zero invoked fallbacks, zero remaining compatibility bindings and empty
+stderr. Its PNG SHA-256 remains
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.

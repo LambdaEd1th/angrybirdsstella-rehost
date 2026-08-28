@@ -416,6 +416,11 @@ fn object_track_overlap_uses_chain_distance_and_only_the_body_list_head() {
                 outside_skin = objectAndTrackOverlap("box", {
                     points = { { x = -3, y = 1.005 }, { x = 3, y = 1.005 } }
                 })
+                within_gjk_tolerance = objectAndTrackOverlap("box", {
+                    points = {
+                        { x = -3, y = 1.0040005 }, { x = 3, y = 1.0040005 }
+                    }
+                })
                 aabb_only = objectAndTrackOverlap("box", {
                     points = { { x = -2, y = 0.1 }, { x = -0.1, y = 2 } }
                 })
@@ -454,6 +459,7 @@ fn object_track_overlap_uses_chain_distance_and_only_the_body_list_head() {
     let environment = game_environment(runtime.lua()).unwrap();
     assert!(environment.get::<bool>("within_skin").unwrap());
     assert!(!environment.get::<bool>("outside_skin").unwrap());
+    assert!(environment.get::<bool>("within_gjk_tolerance").unwrap());
     assert!(!environment.get::<bool>("aabb_only").unwrap());
     assert!(environment.get::<bool>("wrong_table_shape_fails").unwrap());
     assert!(environment.get::<bool>("coerced_coordinates").unwrap());

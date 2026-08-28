@@ -25,10 +25,7 @@ pub(crate) use edge::{
 };
 #[cfg(test)]
 pub(crate) use geometry::dot_2d;
-pub(crate) use geometry::{
-    closest_point_on_segment, closest_segment_points, polygon_contains_point,
-    polygon_segment_core_distance,
-};
+pub(crate) use geometry::polygon_contains_point;
 #[cfg(test)]
 pub(crate) use polygon::polygon_manifold;
 pub(crate) use polygon::polygon_manifold_at_transforms;
