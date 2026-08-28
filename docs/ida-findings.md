@@ -16662,3 +16662,26 @@ updates sweep starts/alpha values for every moving island body but invalidates
 cached contact TOIs only for the returned dynamic-body subset. The selected
 dynamic/kinematic regression asserts that the dynamic body is the sole cache
 invalidation owner, while the bullet dynamic/dynamic regression returns both.
+
+`Contact::Update` is also a transactional boundary inside the TOI pass. Purple
+saves both selected sweeps before advancing them, calls the listener-bearing
+update at `0x10086EFD8..0x10086EFE0`, clears that contact's cached-TOI flag and
+increments its sub-step count, and only then tests enabled plus touching at
+`0x10086EFFC..0x10086F004`. The selected bodies are woken later at
+`0x10086F008..0x10086F030`. If the callback invalidated the contact, execution
+instead enters `0x10086EBB4..0x10086EC54`, clears the speculative flags,
+restores both saved sweeps/transforms and resumes candidate scanning. The
+auxiliary path has the matching saved-sweep restore at
+`0x10086F248..0x10086F294`.
+
+The host callback boundary now mirrors that transaction. Selected and newly
+reached bodies remain only speculatively advanced until the synchronous Lua
+collision callback returns. A still-active, solid, enabled and touching
+contact is accepted and its moving endpoints are then woken; a rejected
+contact restores only the sweeps advanced for that candidate. A rejected
+selected contact also invalidates its own cached TOI and resumes the outer
+scan while retaining the native sub-step count. Regressions reverse velocity
+and disable the selected body inside its real `blockCollision` callback,
+proving the end-of-discrete-step sweep is restored, and separately prove that
+a kinematic auxiliary endpoint returns from the island alpha to its exact
+pre-advance pose when its callback rejects the contact.

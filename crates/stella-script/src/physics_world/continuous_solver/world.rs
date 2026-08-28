@@ -156,6 +156,8 @@ impl RenderBridge {
                 key,
                 first_impact,
                 second_impact,
+                NativeSweepStart::capture(first_end),
+                NativeSweepStart::capture(second_end),
                 manifold,
                 event,
             );
@@ -167,14 +169,20 @@ impl RenderBridge {
                 selected = Some(hit);
             }
         }
-        let (world_alpha, key, first_impact, second_impact, manifold, event) = selected?;
+        let (
+            world_alpha,
+            key,
+            first_impact,
+            second_impact,
+            first_rollback,
+            second_rollback,
+            manifold,
+            event,
+        ) = selected?;
         *toi_state.counts.entry(key.clone()).or_insert(0) += 1;
         for (name, impact) in [(&key.0, first_impact), (&key.1, second_impact)] {
             if let Some(object) = self.scene.get_mut(name) {
                 object.set_native_sweep_transform(impact.center, impact.angle);
-                if object.moves_during_step() {
-                    object.wake();
-                }
             }
         }
         self.active_contacts.insert(key.clone(), false);
@@ -184,12 +192,13 @@ impl RenderBridge {
         }
         self.solver_contact_impulses.remove(&key);
         self.contact_velocity_bias.remove(&key);
-        if event.began {
-            self.wake_contact_bodies(&key);
-        }
         Some(vec![(
             NativeToiContact {
                 toi_bodies: (key.0.clone(), key.1.clone()),
+                rollback_poses: vec![
+                    (key.0.clone(), first_rollback),
+                    (key.1.clone(), second_rollback),
+                ],
                 key,
                 alpha: world_alpha,
                 manifold,
@@ -342,15 +351,6 @@ impl RenderBridge {
             }
             self.solver_contact_impulses.remove(&extra_key);
             self.contact_velocity_bias.remove(&extra_key);
-            if extra_event.began {
-                self.wake_contact_bodies(&extra_key);
-            }
-            if !other_in_island
-                && let Some(other) = self.scene.get_mut(&other_name)
-                && other.moves_during_step()
-            {
-                other.wake();
-            }
             return Some((
                 NativeToiContact {
                     toi_bodies: (
@@ -360,10 +360,48 @@ impl RenderBridge {
                     key: extra_key,
                     alpha,
                     manifold: extra_manifold,
+                    rollback_poses: restore_pose
+                        .map(|pose| vec![(other_name, pose)])
+                        .unwrap_or_default(),
                 },
                 extra_event,
             ));
         }
         None
+    }
+
+    /// Complete the Contact::Update boundary after its synchronous Lua
+    /// callback. Purple accepts the contact only if it is still enabled and
+    /// touching; otherwise it restores every sweep advanced speculatively for
+    /// this contact and resumes the world-list/contact-edge scan.
+    pub(crate) fn finish_toi_contact_update(&mut self, contact: &NativeToiContact) -> bool {
+        let accepted = self.active_contacts.contains_key(&contact.key)
+            && self
+                .scene
+                .get(&contact.key.0)
+                .zip(self.scene.get(&contact.key.1))
+                .is_some_and(|(first, second)| {
+                    first.active
+                        && second.active
+                        && !first.sensor
+                        && !second.sensor
+                        && Self::native_objects_should_collide(first, second)
+                });
+        if accepted {
+            for name in [&contact.key.0, &contact.key.1] {
+                if let Some(object) = self.scene.get_mut(name)
+                    && object.moves_during_step()
+                {
+                    object.wake();
+                }
+            }
+            return true;
+        }
+        for (name, pose) in &contact.rollback_poses {
+            if let Some(object) = self.scene.get_mut(name) {
+                object.set_native_sweep_transform(pose.center, pose.angle);
+            }
+        }
+        false
     }
 }

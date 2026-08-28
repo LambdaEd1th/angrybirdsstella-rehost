@@ -28,7 +28,9 @@ impl StellaLua {
             };
             let selected = pending[0].0.clone();
             let mut callback_index = 0;
+            let mut selected_rejected = false;
             while callback_index < pending.len() {
+                let contact = pending[callback_index].0.clone();
                 let event = pending[callback_index].1.clone();
                 let (contact_callbacks, broken_joints) = {
                     let mut bridge = self.render.lock().expect("render bridge lock poisoned");
@@ -42,6 +44,22 @@ impl StellaLua {
                     dispatch_and_remove_lua_joint(&self.lua, name)?;
                 }
                 dispatch_native_contact_callbacks(&self.lua, &self.render, contact_callbacks)?;
+                let accepted = self
+                    .render
+                    .lock()
+                    .expect("render bridge lock poisoned")
+                    .finish_toi_contact_update(&contact);
+                if accepted {
+                    callback_index += 1;
+                } else {
+                    contact_events.push(event);
+                    if callback_index == 0 {
+                        toi_state.invalidate_contact(&contact.key);
+                        selected_rejected = true;
+                        break;
+                    }
+                    pending.remove(callback_index);
+                }
                 let island_contacts = pending
                     .iter()
                     .map(|(contact, _)| contact.key.clone())
@@ -60,7 +78,9 @@ impl StellaLua {
                 if let Some(auxiliary) = auxiliary {
                     pending.push(auxiliary);
                 }
-                callback_index += 1;
+            }
+            if selected_rejected {
+                continue;
             }
             let contacts = pending
                 .iter()

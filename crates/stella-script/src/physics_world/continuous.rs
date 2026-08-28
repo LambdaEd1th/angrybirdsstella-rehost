@@ -258,6 +258,7 @@ pub(crate) struct NativeToiContact {
     pub(crate) toi_bodies: (String, String),
     pub(crate) alpha: f32,
     pub(crate) manifold: ContactManifold,
+    pub(crate) rollback_poses: Vec<(String, NativeSweepStart)>,
 }
 
 #[derive(Debug, Default)]
@@ -270,6 +271,10 @@ impl NativeToiStepState {
     pub(crate) fn invalidate_body(&mut self, body: &str) {
         self.cached_world_alphas
             .retain(|(first, second, _, _), _| first != body && second != body);
+    }
+
+    pub(crate) fn invalidate_contact(&mut self, contact: &ContactKey) {
+        self.cached_world_alphas.remove(contact);
     }
 }
 

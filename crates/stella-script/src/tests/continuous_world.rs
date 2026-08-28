@@ -114,6 +114,7 @@ fn continuous_step_stops_a_fast_circle_at_a_static_thin_edge() {
     assert_eq!(toi_state.counts.get(&key), Some(&1));
     assert!(toi_state.cached_world_alphas.contains_key(&key));
     assert!(pending[0].1.began);
+    assert!(bridge.finish_toi_contact_update(&pending[0].0));
     // totalRadius=0.012 and Purple targets totalRadius-3*0.001,
     // so the core centre reaches 0.009 at alpha=(0.08-0.009)/0.16.
     assert!(
@@ -147,6 +148,54 @@ fn continuous_step_stops_a_fast_circle_at_a_static_thin_edge() {
         bridge.body_proxy_states["unrelated"].tight_aabbs[0],
         old_unrelated_aabb
     );
+}
+
+#[test]
+fn selected_toi_contact_disabled_by_its_callback_restores_both_sweeps() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                clearVertices()
+                addVertex(0, -1)
+                addVertex(0, 1)
+                createLineShape("wall", "", 0.05, 0, 0, 2, 0, 0, 0, true, false, 1)
+                createCircle("body", "", 0, 0, 0.01, 1, 0, 0, true, false, 1)
+                setWorldGravity(0, 0)
+                setVelocity("body", 4.8, 0)
+                objects.world.body.strength = 100
+                objects.world.body.defence = 0
+                objects.world.wall.strength = 100
+                objects.world.wall.defence = 0
+                scoreTable = { blocks = { score = 0 } }
+                worldAttributes = { scoreDamageMultiplier = 1 }
+                toi_blocks = 0
+                blockCollision = function()
+                    toi_blocks = toi_blocks + 1
+                    setVelocity("body", -4.8, 0)
+                    setCollisionEnabled("body", false)
+                end
+                update = function() end
+                updatePhysics = function() end
+                "#,
+        )
+        .unwrap();
+
+    runtime.update(1.0 / 30.0).unwrap();
+
+    assert_eq!(
+        game_environment(runtime.lua())
+            .unwrap()
+            .get::<i64>("toi_blocks")
+            .unwrap(),
+        1
+    );
+    let bridge = runtime.render.lock().unwrap();
+    let body = &bridge.scene["body"];
+    assert!(body.x > 0.15 && body.x < 0.17, "restored x={}", body.x);
+    assert!((body.velocity_x + 4.8).abs() < 1e-6);
+    assert!(!body.collision_enabled);
+    assert!(bridge.active_contacts.is_empty());
 }
 
 #[test]
@@ -204,6 +253,7 @@ fn native_toi_advances_and_integrates_a_selected_kinematic_endpoint() {
         pending[0].0.toi_bodies,
         ("body".to_owned(), "wall".to_owned())
     );
+    assert!(bridge.finish_toi_contact_update(&pending[0].0));
     let wall_at_impact = bridge.scene["wall"].x;
     let wall_proxy_at_impact = bridge.body_proxy_states["wall"].tight_aabbs[0];
     let contacts = pending
@@ -263,6 +313,7 @@ fn native_toi_accepts_a_bullet_dynamic_dynamic_pair() {
         pending[0].0.toi_bodies,
         ("bullet".to_owned(), "target".to_owned())
     );
+    assert!(bridge.finish_toi_contact_update(&pending[0].0));
     assert!(bridge.scene["target"].motion_started);
     let contacts = pending
         .iter()
@@ -278,7 +329,7 @@ fn native_toi_accepts_a_bullet_dynamic_dynamic_pair() {
 }
 
 #[test]
-fn toi_auxiliary_walk_advances_a_new_kinematic_body_to_the_island_alpha() {
+fn toi_auxiliary_walk_rolls_back_a_kinematic_body_rejected_by_its_callback() {
     let runtime = unlocked_test_runtime();
     runtime
         .execute_source(
@@ -328,6 +379,9 @@ fn toi_auxiliary_walk_advances_a_new_kinematic_body_to_the_island_alpha() {
     );
     assert!((bridge.scene["moving"].x - 0.0375).abs() < 1e-6);
     assert!(bridge.scene["moving"].motion_started);
+    bridge.scene.get_mut("moving").unwrap().collision_enabled = false;
+    assert!(!bridge.finish_toi_contact_update(&auxiliary.0));
+    assert!(bridge.scene["moving"].x.abs() < 1e-6);
 }
 
 #[test]
@@ -555,6 +609,7 @@ fn toi_position_constraint_keeps_constructor_mass_cache() {
         toi_bodies: ("body".to_owned(), "wall".to_owned()),
         alpha: 0.5,
         manifold,
+        rollback_poses: Vec::new(),
     };
 
     let before = bridge.scene["body"].native_world_center();
