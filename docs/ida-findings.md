@@ -6494,6 +6494,7 @@ draw and completed with 15 optional reads, zero invoked fallbacks and zero
 compatibility bindings. It emitted
 `build/audit-system-font-smoke-20260820.png`, SHA-256
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
 The image was deliberately not viewed or compared. It proves only that the
 live SystemFont/wgpu path executed; still images, including original-game
 captures without precisely matching runtime state and time, remain
@@ -16872,4 +16873,41 @@ all-target/all-feature Clippy and the release build. A fresh 120-frame release
 wgpu upload/readback completes with 20 optional data probes, zero invoked
 fallbacks, zero remaining compatibility bindings and empty stderr. Its
 execution-evidence PNG SHA-256 is
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## Native closest-track projection and unordered child selection
+
+The neighboring closest-child member `sub_10085D364` and closest-point leaf
+`sub_10085DA40` were compared instruction by instruction in both IDA and
+Hopper. The leaf first rounds the y product, folds the x product into it with
+`FMADD`, and uses the same y-square-then-x-`FMADD` grouping for the squared
+edge length. After `FDIV`, `FMIN fraction, 1.0` and `FMAX fraction, +0` at
+`0x10085DA8C..0x10085DA94` perform the clamp. There is no zero-length guard:
+a degenerate edge retains an unordered fraction, while negative zero becomes
+positive zero. Its two projected coordinates are then written with separate
+`FMADD` instructions.
+
+The parent does not reuse that fused grouping for the point distance.
+`0x10085D4B0..0x10085D4B8` subtracts the closest point, squares both SIMD
+lanes independently with `FMUL`, and combines them with `FADDP`. The former
+host fused the x square into the already-rounded y square. A fixed finite
+counterexample now pins native `0x405EB618` against the old fused
+`0x405EB619`, preserving this one-ULP distinction.
+
+Candidate ordering is intentionally unusual for unordered values. Purple
+uses `FCMP distance, best` followed by `B.GE` at
+`0x10085D4BC..0x10085D4C0`; only an ordered greater-or-equal candidate is
+skipped. A NaN therefore falls through to the candidate write at
+`0x10085D4C4`, while an equal finite distance still retains the earlier
+child. Rust now mirrors that branch instead of using `<`, and a degenerate
+final edge regression proves the unordered current child replaces the prior
+finite child. The adjacent five-instruction angle leaf `sub_10085DAA4`
+remains the already-matching `atan2f(end.y - start.y, end.x - start.x)` path.
+
+The complete workspace passes 773 tests with the deliberate long-duration
+BirdRun audit ignored, plus formatting, diff whitespace validation, strict
+all-target/all-feature Clippy and the release build. A fresh 120-frame release
+wgpu upload/readback completes with 20 optional data probes, zero invoked
+fallbacks, zero remaining compatibility bindings and empty stderr. Its
+execution-evidence PNG SHA-256 remains
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
