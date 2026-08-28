@@ -508,6 +508,47 @@ fn connected_island_sleeps_only_at_common_minimum_time() {
 }
 
 #[test]
+fn island_sleep_uses_native_threshold_word_and_nonfused_linear_sum() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createCircle("body", "", 0, 0, 0.5, 1, 1, 0, true, false, 1)
+                "#,
+        )
+        .unwrap();
+
+    let mut bridge = runtime.render.lock().unwrap();
+    {
+        let body = bridge.scene.get_mut("body").unwrap();
+        body.velocity_x = f64::from(f32::from_bits(0x3CF5_C07C));
+        body.velocity_y = f64::from(f32::from_bits(0x3D23_D7D2));
+        body.angular_velocity = 0.0;
+        body.motion_started = true;
+        body.sleeping = false;
+    }
+    bridge.assemble_box2d_islands();
+    bridge.update_box2d_island_sleep(f64::from(f32::from_bits(0x3D08_8889)), false);
+    assert_eq!(
+        bridge.scene["body"].sleep_time,
+        f64::from(f32::from_bits(0x3D08_8889)),
+        "the exact native 0x3B23D70B linear threshold is inclusive"
+    );
+
+    {
+        let body = bridge.scene.get_mut("body").unwrap();
+        body.velocity_x = f64::from(f32::from_bits(0x3CF5_C20D));
+        body.velocity_y = f64::from(f32::from_bits(0x3D23_D73C));
+        body.sleep_time = 0.25;
+    }
+    bridge.update_box2d_island_sleep(f64::from(f32::from_bits(0x3D08_8889)), false);
+    assert_eq!(
+        bridge.scene["body"].sleep_time, 0.0,
+        "native separate squares sum to 0x3B23D70C and exceed the threshold"
+    );
+}
+
+#[test]
 fn native_force_accumulates_torque_while_rotation_is_fixed() {
     let runtime = unlocked_test_runtime();
     runtime

@@ -16728,3 +16728,16 @@ separate addition, while the one-body trajectory path was already fused.
 All three paths now share one fused sweep-write helper. A regression selects
 float32 inputs whose results differ by one ULP (`0xC2C83424` separated versus
 native `0xC2C83423` fused), so the recovered operation order cannot regress.
+
+The ordinary-island sleep tail also uses bit-level constants rather than the
+rounded decimal labels shown by decompilers. At `0x10086D4B0..0x10086D4C0`,
+Purple loads max-float plus angular and linear squared thresholds from
+`0x100A0CABC`; their bytes decode to `0x7F7FFFFF`, `0x3A9FB511` and
+`0x3B23D70B`. The former host literals `0.00121847` and `0.0025` rounded to
+`0x3A9FB512` and `0x3B23D70A`, respectively. IDA further shows angular
+`FMUL`/strict-greater at `0x10086D4F4..0x10086D4FC`, then two lane-wise
+`FMUL`s and `FADDP` for linear speed at `0x10086D500..0x10086D510`; it is not
+an FMA. The host now uses the exact words, inclusive comparisons and the same
+two-rounded-squares addition. Focused tests cover both a value exactly on the
+native linear threshold and an input where fused versus separated arithmetic
+changes the result by one ULP.
