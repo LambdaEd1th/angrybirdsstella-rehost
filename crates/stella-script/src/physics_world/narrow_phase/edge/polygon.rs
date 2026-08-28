@@ -2,7 +2,7 @@
 
 use super::super::{
     NativePolygon,
-    geometry::{normalized_axis_f32, polygon_centroid_f32},
+    geometry::{native_world_point, normalized_axis_f32, polygon_centroid_f32},
     polygon::{ClipVertex, clip_segment_to_line, polygon_normals_f32},
 };
 use crate::{
@@ -46,7 +46,7 @@ pub(crate) fn polygon_segment_manifold_at_transforms(
     let polygon = polygon_local
         .iter()
         .copied()
-        .map(|point| relative_transform.point(point))
+        .map(|point| native_world_point(relative_transform, point))
         .collect::<NativePolygon<_>>();
     let polygon_local_normals = polygon_normals_f32(polygon_local)?;
     let polygon_normals = polygon_local_normals
@@ -63,7 +63,8 @@ pub(crate) fn polygon_segment_manifold_at_transforms(
 
     // With no adjacent vertices (the independent edge fixtures created by
     // Purple), sub_10085EADC chooses the edge side from the polygon centroid.
-    let polygon_centroid = relative_transform.point(polygon_centroid_f32(polygon_local)?);
+    let polygon_centroid =
+        native_world_point(relative_transform, polygon_centroid_f32(polygon_local)?);
     let centroid_delta = (
         polygon_centroid.0 - edge_start.0,
         polygon_centroid.1 - edge_start.1,
@@ -253,7 +254,7 @@ pub(crate) fn polygon_segment_manifold_at_transforms(
                 (-0.5_f32 * separation).mul_add(reference_normal.0, point.0),
                 (-0.5_f32 * separation).mul_add(reference_normal.1, point.1),
             );
-            let contact_world = segment_transform.point(contact_edge);
+            let contact_world = native_world_point(segment_transform, contact_edge);
             let incident_local = if reference_is_polygon {
                 point
             } else {

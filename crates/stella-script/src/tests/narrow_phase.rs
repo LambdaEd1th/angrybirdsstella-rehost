@@ -234,7 +234,11 @@ fn rotated_edge_circle_face_keeps_native_shape_local_witnesses() {
         cosine,
     };
     let circle_local_center = (0.25_f32, -0.125_f32);
-    let desired_center = segment_transform.point((0.0, combined - 0.001));
+    let desired_edge_center = segment_transform.rotate((0.0, combined - 0.001));
+    let desired_center = (
+        desired_edge_center.0 + segment_transform.position.0,
+        desired_edge_center.1 + segment_transform.position.1,
+    );
     let rotated_center = segment_transform.rotate(circle_local_center);
     let circle_transform = NativeToiTransform {
         position: (
@@ -280,7 +284,11 @@ fn rotated_circle_edge_endpoint_keeps_native_shape_local_witnesses() {
         cosine,
     };
     let circle_local_center = (-0.375_f32, 0.125_f32);
-    let desired_center = segment_transform.point((-1.0 - combined + 0.001, 0.0));
+    let desired_edge_center = segment_transform.rotate((-1.0 - combined + 0.001, 0.0));
+    let desired_center = (
+        desired_edge_center.0 + segment_transform.position.0,
+        desired_edge_center.1 + segment_transform.position.1,
+    );
     let rotated_center = segment_transform.rotate(circle_local_center);
     let circle_transform = NativeToiTransform {
         position: (

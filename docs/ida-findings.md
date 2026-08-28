@@ -3617,6 +3617,32 @@ now passes scaled local shapes plus the two compact transforms into these two
 leaves; rotations, nonzero world translations and interpolated TOI poses no
 longer create local witnesses by round-tripping world coordinates.
 
+The circle transform arithmetic is now matched at the instruction boundary as
+well. `sub_10085E590` completes each centre rotation at
+`0x10085E5A0..0x10085E5C8`, then adds both translations with packed `FADD`s at
+`0x10085E5D4/0x10085E5E0`. Polygon-circle `sub_10085E624` uses the same
+rotation-then-translation grouping at `0x10085E638..0x10085E650` before
+subtracting the polygon origin and inverse-rotating the result. The shared
+`b2WorldManifold` member `sub_10085FE58` independently repeats the separate
+translation additions for FaceA, FaceB and circles at
+`0x10085FEB4..0x10085F010`, `0x10085FFA0..0x10085FFEC` and
+`0x10086006C..0x1008600A0`. Discrete narrow phase now shares this recovered
+helper for circle centres, polygon plane points and polygon collision points;
+the position/TOI helper retains its deliberately different fused grouping. A
+bit-level regression distinguishes both coordinates by one ULP.
+
+The edge leaves close the same transform family. Edge-circle
+`sub_10085E8AC` rotates the circle centre at `0x10085E8BC..0x10085E8D0`, adds
+translation at `0x10085E8C8/0x10085E8D4`, then subtracts the edge origin
+before inverse rotation at `0x10085E8D8..0x10085E8F4`. Edge-polygon
+`sub_10085EADC` builds its polygon-to-edge transform at
+`0x10085EB14..0x10085EB58`; its local centroid at
+`0x10085EB5C..0x10085EB74` and every polygon vertex at
+`0x10085F014..0x10085F038` again receive translation only after rotation.
+The rehost now uses the shared discrete-collision transform for both edge
+leaves while retaining the native subtract-then-inverse-rotate order for
+clipped points returned to polygon-local space.
+
 Polygon-polygon `sub_10085F648` follows the same rule. Its two calls to
 `sub_10085FB84` use each shape's local centroid at `+16`, local vertices at
 `+24`, local normals at `+88` and the two transforms to choose the reference
