@@ -66,7 +66,7 @@ impl StellaLua {
                 .iter()
                 .map(|(contact, _)| contact.clone())
                 .collect::<Vec<_>>();
-            let (impulses, next_sweep_starts) = {
+            let (impulses, next_sweep_starts, cache_invalidation_bodies) = {
                 let mut bridge = self.render.lock().expect("render bridge lock poisoned");
                 bridge.finish_continuous_tunneling(
                     &contacts,
@@ -87,7 +87,9 @@ impl StellaLua {
             }
             for body in next_sweep_starts.keys() {
                 toi_sweep_alphas.insert(body.clone(), selected.alpha);
-                toi_state.invalidate_body(body);
+            }
+            for body in cache_invalidation_bodies {
+                toi_state.invalidate_body(&body);
             }
         }
         Ok(())

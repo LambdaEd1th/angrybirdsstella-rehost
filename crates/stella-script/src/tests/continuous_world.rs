@@ -125,7 +125,7 @@ fn continuous_step_stops_a_fast_circle_at_a_static_thin_edge() {
         .iter()
         .map(|(contact, _)| contact.clone())
         .collect::<Vec<_>>();
-    let (impulses, _) =
+    let (impulses, _, _) =
         bridge.finish_continuous_tunneling(&contacts, 1.0 / 30.0, 10, 0.16, 15_708.0 / 10_000.0);
 
     assert!(impulses[&key] > 0.0);
@@ -210,10 +210,11 @@ fn native_toi_advances_and_integrates_a_selected_kinematic_endpoint() {
         .iter()
         .map(|(contact, _)| contact.clone())
         .collect::<Vec<_>>();
-    let (_, sweep_starts) =
+    let (_, sweep_starts, cache_invalidation_bodies) =
         bridge.finish_continuous_tunneling(&contacts, 1.0 / 30.0, 10, 0.16, 15_708.0 / 10_000.0);
 
     assert!(sweep_starts.contains_key("wall"));
+    assert_eq!(cache_invalidation_bodies, ["body"]);
     assert!(bridge.scene["wall"].x > wall_at_impact);
     assert_eq!(
         bridge.body_proxy_states["wall"].tight_aabbs[0], wall_proxy_at_impact,
@@ -267,11 +268,12 @@ fn native_toi_accepts_a_bullet_dynamic_dynamic_pair() {
         .iter()
         .map(|(contact, _)| contact.clone())
         .collect::<Vec<_>>();
-    let (_, next_sweeps) =
+    let (_, next_sweeps, cache_invalidation_bodies) =
         bridge.finish_continuous_tunneling(&contacts, 1.0 / 30.0, 10, 0.16, 15_708.0 / 10_000.0);
 
     assert!(next_sweeps.contains_key("bullet"));
     assert!(next_sweeps.contains_key("target"));
+    assert_eq!(cache_invalidation_bodies, ["bullet", "target"]);
     assert!(bridge.scene["target"].velocity_x > 0.0);
 }
 

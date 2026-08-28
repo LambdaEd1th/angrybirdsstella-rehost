@@ -17,6 +17,7 @@ impl RenderBridge {
     ) -> (
         BTreeMap<ContactKey, f64>,
         BTreeMap<String, NativeSweepStart>,
+        Vec<String>,
     ) {
         let mut impulses = BTreeMap::new();
         let mut sweep_starts = BTreeMap::new();
@@ -127,9 +128,9 @@ impl RenderBridge {
                     .get(*name)
                     .is_some_and(|object| object.dynamic_body)
             })
-            .map(String::as_str)
+            .cloned()
             .collect::<Vec<_>>();
-        self.sync_native_broad_phase_bodies(dynamic_bodies);
-        (impulses, sweep_starts)
+        self.sync_native_broad_phase_bodies(dynamic_bodies.iter().map(String::as_str));
+        (impulses, sweep_starts, dynamic_bodies)
     }
 }

@@ -16653,3 +16653,12 @@ dynamic bodies; kinematic objects keep their native post-TOI proxy behavior.
 Focused regressions cover a selected dynamic/kinematic pair, a bullet
 dynamic/dynamic collision, accepted kinematic auxiliary advancement and exact
 rollback of a rejected kinematic auxiliary sweep.
+
+The same post-island loop also defines TOI-cache invalidation scope. After the
+type check at `0x10086F31C..0x10086F324`, only a dynamic body reaches fixture
+synchronization and the attached contact-edge flag clear at
+`0x10086F328..0x10086F34C`; a kinematic island body bypasses both. Rust now
+updates sweep starts/alpha values for every moving island body but invalidates
+cached contact TOIs only for the returned dynamic-body subset. The selected
+dynamic/kinematic regression asserts that the dynamic body is the sole cache
+invalidation owner, while the bullet dynamic/dynamic regression returns both.
