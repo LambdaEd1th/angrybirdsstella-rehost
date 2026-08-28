@@ -16528,3 +16528,21 @@ The rehost previously used the algebraically equivalent delta expression
 routes that commit through the recovered weighted-endpoint operation shared
 with `b2Sweep::GetTransform`. A bit regression uses values for which the old
 delta form differs from Purple by one ULP.
+
+## Native SolveTOI candidate order and strict minimum
+
+`b2World::SolveTOI` walks the intrusive world contact list from its head at
+`0x10086EC58` and follows each contact's `next` pointer at
+`0x10086EE68..0x10086EE6C`. Because `AddPair` head-inserts contacts, this is
+newest-to-oldest creation order. Candidate replacement compares the cached or
+newly calculated alpha against the current minimum at `0x10086EDE8`, branches
+away on `B.GE` at `0x10086EDEC`, and writes the new alpha/contact only at
+`0x10086EDF0..0x10086EDF4`. Hopper independently shows the same strict compare
+and linked-list traversal. Thus equal-alpha contacts retain the first (newest)
+contact, while an alpha of exactly `1.0` never replaces the initial minimum.
+
+The rehost formerly iterated a lexicographic `BTreeSet` and then sorted hits by
+alpha plus string key. SolveTOI candidate scanning now consumes the recovered
+native contact order in reverse creation order and performs the same strict
+replacement during the scan. Regressions cover coincident edges with equal TOI
+and an endpoint whose conservative advancement result is exactly one.

@@ -18,8 +18,17 @@ impl RenderBridge {
         sweep_alphas: &BTreeMap<String, f32>,
         toi_state: &mut NativeToiStepState,
     ) -> Option<Vec<(NativeToiContact, ContactEvent)>> {
-        let mut hits = Vec::new();
-        for key in self.broad_phase_contacts.iter().cloned() {
+        let candidate_keys = self
+            .native_contact_world_order
+            .iter()
+            .rev()
+            .map(|(_, key)| key)
+            .filter(|key| self.broad_phase_contacts.contains(*key))
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut selected_world_alpha = 1.0_f32;
+        let mut selected = None;
+        for key in candidate_keys {
             if self.active_contacts.contains_key(&key) {
                 continue;
             }
@@ -164,7 +173,7 @@ impl RenderBridge {
             };
             let event =
                 Self::native_contact_event(&key, first_end, second_end, manifold, false, true);
-            hits.push((
+            let hit = (
                 world_alpha,
                 alpha,
                 key,
@@ -173,16 +182,16 @@ impl RenderBridge {
                 impact_angle,
                 manifold,
                 event,
-            ));
+            );
+            // AddPair inserts at the native world-list head and SolveTOI
+            // replaces its candidate only for a strictly smaller alpha. Ties
+            // therefore retain the newest contact encountered first.
+            if world_alpha < selected_world_alpha {
+                selected_world_alpha = world_alpha;
+                selected = Some(hit);
+            }
         }
-
-        hits.sort_unstable_by(|left, right| {
-            left.0
-                .total_cmp(&right.0)
-                .then_with(|| left.2.cmp(&right.2))
-        });
-        let (_, alpha, key, dynamic_body, impact_center, impact_angle, manifold, event) =
-            hits.into_iter().next()?;
+        let (_, alpha, key, dynamic_body, impact_center, impact_angle, manifold, event) = selected?;
         *toi_state.counts.entry(key.clone()).or_insert(0) += 1;
         if let Some(object) = self.scene.get_mut(&dynamic_body) {
             object.set_native_sweep_transform(impact_center, impact_angle);

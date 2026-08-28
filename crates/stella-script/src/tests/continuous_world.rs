@@ -150,6 +150,96 @@ fn continuous_step_stops_a_fast_circle_at_a_static_thin_edge() {
 }
 
 #[test]
+fn equal_toi_candidates_retain_the_native_contact_list_head() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                clearVertices()
+                addVertex(0, -1)
+                addVertex(0, 1)
+                createLineShape("a_old", "", 0, 0, 0, 2, 0, 0, 0, true, false, 1)
+                clearVertices()
+                addVertex(0, -1)
+                addVertex(0, 1)
+                createLineShape("z_new", "", 0, 0, 0, 2, 0, 0, 0, true, false, 1)
+                createCircle("body", "", -0.08, 0, 0.01, 1, 0, 0, true, false, 1)
+                "#,
+        )
+        .unwrap();
+
+    let mut bridge = runtime.render.lock().unwrap();
+    let sweep_starts = bridge
+        .scene
+        .iter()
+        .map(|(name, object)| (name.clone(), NativeSweepStart::capture(object)))
+        .collect();
+    {
+        let body = bridge.scene.get_mut("body").unwrap();
+        body.motion_started = true;
+        body.sleeping = false;
+        body.apply_native_position_delta(0.16_f32, 0.0, 0.0);
+    }
+    bridge.sync_native_broad_phase();
+    let expected = bridge
+        .native_contact_world_order
+        .iter()
+        .rev()
+        .map(|(_, key)| key)
+        .find(|key| key.0 == "body" || key.1 == "body")
+        .cloned()
+        .expect("body must have a native contact-list head");
+    assert!(expected.0 == "z_new" || expected.1 == "z_new");
+
+    let pending = bridge
+        .advance_continuous_tunneling(
+            &sweep_starts,
+            &BTreeMap::new(),
+            &mut NativeToiStepState::default(),
+        )
+        .expect("coincident edges must produce one selected TOI contact");
+    assert_eq!(pending[0].0.key, expected);
+}
+
+#[test]
+fn toi_exactly_at_the_step_end_stays_in_the_discrete_solver() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                clearVertices()
+                addVertex(0, -1)
+                addVertex(0, 1)
+                createLineShape("wall", "", 0, 0, 0, 2, 0, 0, 0, true, false, 1)
+                createCircle("body", "", -0.08, 0, 0.01, 1, 0, 0, true, false, 1)
+                "#,
+        )
+        .unwrap();
+
+    let mut bridge = runtime.render.lock().unwrap();
+    let sweep_starts = bridge
+        .scene
+        .iter()
+        .map(|(name, object)| (name.clone(), NativeSweepStart::capture(object)))
+        .collect();
+    {
+        let body = bridge.scene.get_mut("body").unwrap();
+        body.motion_started = true;
+        body.sleeping = false;
+        // The core separation at the endpoint lies in Purple's target band,
+        // so b2TimeOfImpact returns exactly 1.0.
+        body.apply_native_position_delta(0.070_9_f32, 0.0, 0.0);
+    }
+    bridge.sync_native_broad_phase();
+    let pending = bridge.advance_continuous_tunneling(
+        &sweep_starts,
+        &BTreeMap::new(),
+        &mut NativeToiStepState::default(),
+    );
+    assert!(pending.is_none());
+}
+
+#[test]
 fn toi_position_constraint_keeps_constructor_mass_cache() {
     let runtime = unlocked_test_runtime();
     runtime
