@@ -16685,3 +16685,23 @@ and disable the selected body inside its real `blockCollision` callback,
 proving the end-of-discrete-step sweep is restored, and separately prove that
 a kinematic auxiliary endpoint returns from the island alpha to its exact
 pre-advance pose when its callback rejects the contact.
+
+IDA and Hopper also close the two world-state branches surrounding this loop.
+The world constructor `sub_10086DCE8` writes continuous physics on at
+`0x10086DDCC`, `subStepping=false` at `0x10086DDDC`, and
+`stepComplete=true` at `0x10086DDF0`. A whole-binary immediate scan finds the
+`0x19366` sub-stepping byte only in that constructor and `b2World::SolveTOI`;
+there is no setter or later write, so Purple always drains every TOI island in
+the same fixed step. `stepComplete` is consequently true at each new step and
+the native cache-reset prologue always runs, matching the host's step-local
+`NativeToiStepState`.
+
+The scan termination is slightly earlier than alpha 1.0. Purple loads the
+four bytes `EC FF 7F 3F` from `0x100A0CAEC` at `0x10086EBA4..0x10086EBA8`
+and exits when the strictly earliest alpha is greater at
+`0x10086EE74..0x10086EE78`. That is float32 bits `0x3F7FFFEC`, approximately
+`0.9999988079`, twenty representable values below 1.0. Candidate selection now
+retains native strict-minimum ordering and cached values, but completes before
+advancing or incrementing a contact whose minimum is above that exact bound.
+A focused cached-TOI regression uses the next float32 value and proves that
+the end-of-discrete-step pose and zero sub-step count are retained.

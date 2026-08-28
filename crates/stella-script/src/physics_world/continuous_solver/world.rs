@@ -2,6 +2,12 @@
 
 use crate::*;
 
+// Purple loads this exact float32 constant from 0x100A0CAEC and completes the
+// TOI pass when the strictly earliest cached alpha is greater than it. This is
+// intentionally twenty representable float32 values below 1.0, rather than a
+// source-level approximation such as `1.0 - f32::EPSILON`.
+const NATIVE_TOI_COMPLETION_ALPHA: f32 = f32::from_bits(0x3F7F_FFEC);
+
 impl RenderBridge {
     /// Recover the otherwise invisible contact made by a fast dynamic body
     /// whose fixture is separated at both ends of the discrete step. Purple
@@ -169,6 +175,10 @@ impl RenderBridge {
                 selected = Some(hit);
             }
         }
+        let selected = selected?;
+        if selected.0 > NATIVE_TOI_COMPLETION_ALPHA {
+            return None;
+        }
         let (
             world_alpha,
             key,
@@ -178,7 +188,7 @@ impl RenderBridge {
             second_rollback,
             manifold,
             event,
-        ) = selected?;
+        ) = selected;
         *toi_state.counts.entry(key.clone()).or_insert(0) += 1;
         for (name, impact) in [(&key.0, first_impact), (&key.1, second_impact)] {
             if let Some(object) = self.scene.get_mut(name) {

@@ -151,6 +151,60 @@ fn continuous_step_stops_a_fast_circle_at_a_static_thin_edge() {
 }
 
 #[test]
+fn solve_toi_completes_above_the_native_near_one_alpha_boundary() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                clearVertices()
+                addVertex(0, -1)
+                addVertex(0, 1)
+                createLineShape("wall", "", 0.15, 0, 0, 2, 0, 0, 0, true, false, 1)
+                createCircle("body", "", 0, 0, 0.01, 1, 0, 0, true, false, 1)
+                "#,
+        )
+        .unwrap();
+
+    let mut bridge = runtime.render.lock().unwrap();
+    let sweep_starts = bridge
+        .scene
+        .iter()
+        .map(|(name, object)| (name.clone(), NativeSweepStart::capture(object)))
+        .collect();
+    {
+        let body = bridge.scene.get_mut("body").unwrap();
+        body.motion_started = true;
+        body.sleeping = false;
+        body.apply_native_position_delta(0.16_f32, 0.0, 0.0);
+    }
+    bridge.sync_native_broad_phase();
+    let key = ("body".to_owned(), "wall".to_owned(), 0, 0);
+    assert!(bridge.broad_phase_contacts.contains(&key));
+
+    let mut toi_state = NativeToiStepState::default();
+    toi_state
+        .cached_world_alphas
+        .insert(key.clone(), f32::from_bits(0x3F7F_FFED));
+    assert!(
+        bridge
+            .advance_continuous_tunneling(&sweep_starts, &BTreeMap::new(), &mut toi_state)
+            .is_none(),
+        "Purple completes SolveTOI one float above its 0x3F7FFFEC boundary"
+    );
+    assert!(!toi_state.counts.contains_key(&key));
+    assert_eq!(bridge.scene["body"].x, f64::from(0.16_f32));
+
+    toi_state
+        .cached_world_alphas
+        .insert(key.clone(), f32::from_bits(0x3F7F_FFEC));
+    let pending = bridge
+        .advance_continuous_tunneling(&sweep_starts, &BTreeMap::new(), &mut toi_state)
+        .expect("Purple processes an alpha exactly on its completion boundary");
+    assert_eq!(pending[0].0.alpha.to_bits(), 0x3F7F_FFEC);
+    assert_eq!(toi_state.counts.get(&key), Some(&1));
+}
+
+#[test]
 fn selected_toi_contact_disabled_by_its_callback_restores_both_sweeps() {
     let runtime = unlocked_test_runtime();
     runtime
