@@ -35,6 +35,7 @@ impl SceneObject {
         self.sweep_center_y = center.1;
     }
 
+    #[cfg(test)]
     pub(crate) fn apply_native_position_delta(&mut self, center_x: f32, center_y: f32, angle: f32) {
         let new_center = (
             self.sweep_center_x + center_x,
@@ -59,11 +60,9 @@ impl SceneObject {
         self.set_native_sweep_transform(new_center, new_angle);
     }
 
-    /// Integrate the transform branch used by Purple's dedicated one-body
-    /// trajectory step (`sub_10086F6AC`). Unlike the island solver, that
-    /// routine advances the sweep with fused multiply-adds directly from the
-    /// post-damping velocities before rebuilding the body transform.
-    pub(crate) fn apply_native_trajectory_velocity_step(
+    /// Integrate post-clamp velocities with the fused writes shared by
+    /// Purple's ordinary island, TOI island and one-body trajectory paths.
+    pub(crate) fn apply_native_velocity_step(
         &mut self,
         step: f32,
         velocity_x: f32,

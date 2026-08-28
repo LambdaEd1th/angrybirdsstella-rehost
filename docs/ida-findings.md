@@ -16718,3 +16718,13 @@ shows the strict squared comparisons at `0x10086D1E0` and `0x10086D204`.
 but the formal island path passed a `1.5708` decimal approximation; both paths
 now share the recovered constants, eliminating the small extreme-angular-
 velocity divergence.
+
+The integration writeback is fused as well. In ordinary `b2Island::Solve`,
+`0x10086D228..0x10086D234` advances both centre components and the angle with
+three `FMADD` instructions after the clamp. The TOI copy repeats the same
+sequence at `0x10086D868..0x10086D874`; both IDA and Hopper expose those exact
+instructions. The former host island path rounded `step * velocity` before a
+separate addition, while the one-body trajectory path was already fused.
+All three paths now share one fused sweep-write helper. A regression selects
+float32 inputs whose results differ by one ULP (`0xC2C83424` separated versus
+native `0xC2C83423` fused), so the recovered operation order cannot regress.

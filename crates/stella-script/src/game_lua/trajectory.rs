@@ -82,7 +82,7 @@ pub(crate) fn step_native_trajectory_body(
     object.velocity_x = f64::from(velocity_x);
     object.velocity_y = f64::from(velocity_y);
     object.angular_velocity = f64::from(angular_velocity);
-    object.apply_native_trajectory_velocity_step(step, velocity_x, velocity_y, angular_velocity);
+    object.apply_native_velocity_step(step, velocity_x, velocity_y, angular_velocity);
 }
 
 pub(crate) fn native_trajectory_current_time_step(lua: &Lua) -> LuaResult<f32> {

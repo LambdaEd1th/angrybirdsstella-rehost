@@ -1064,3 +1064,37 @@ fn physics_step_uses_recovered_box2d_motion_clamps_and_sleep_thresholds() {
     }
     assert!(runtime.render.lock().unwrap().scene["body"].sleeping);
 }
+
+#[test]
+fn island_position_write_uses_native_fmadd_rounding() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createCircle("body", "", -100, 0, 1, 1, 0, 0, true, false, 1)
+                "#,
+        )
+        .unwrap();
+
+    let step = f32::from_bits(0x3D08_8889);
+    let velocity_x = f32::from_bits(0xC043_851F);
+    let separate = step * velocity_x + -100.0_f32;
+    let fused = velocity_x.mul_add(step, -100.0_f32);
+    assert_eq!(separate.to_bits(), 0xC2C8_3424);
+    assert_eq!(fused.to_bits(), 0xC2C8_3423);
+
+    let mut bridge = runtime.render.lock().unwrap();
+    let body = bridge.scene.get_mut("body").unwrap();
+    body.velocity_x = f64::from(velocity_x);
+    body.motion_started = true;
+    body.sleeping = false;
+    bridge.integrate_positions(
+        f64::from(step),
+        f64::from(NATIVE_MAX_TRANSLATION),
+        f64::from(NATIVE_MAX_ROTATION),
+    );
+
+    let body = &bridge.scene["body"];
+    assert_eq!((body.x as f32).to_bits(), fused.to_bits());
+    assert_ne!((body.x as f32).to_bits(), separate.to_bits());
+}

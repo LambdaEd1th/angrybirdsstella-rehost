@@ -57,16 +57,15 @@ impl RenderBridge {
                 velocity_x *= scale;
                 velocity_y *= scale;
             }
-            let mut rotation = step * angular_velocity;
+            let rotation = step * angular_velocity;
             if rotation * rotation > max_rotation * max_rotation {
                 angular_velocity *= max_rotation / rotation.abs();
-                rotation = step * angular_velocity;
             }
 
             object.velocity_x = f64::from(velocity_x);
             object.velocity_y = f64::from(velocity_y);
             object.angular_velocity = f64::from(angular_velocity);
-            object.apply_native_position_delta(step * velocity_x, step * velocity_y, rotation);
+            object.apply_native_velocity_step(step, velocity_x, velocity_y, angular_velocity);
 
             if ![
                 object.x,
