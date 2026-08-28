@@ -166,6 +166,18 @@ fn dynamic_tree_grows_balances_queries_and_reuses_full_node_free_list() {
 }
 
 #[test]
+fn dynamic_tree_ray_cast_keeps_native_lifo_candidates_and_segment_culling() {
+    let mut tree = NativeDynamicTree::default();
+    let near = tree.create_proxy((4.0, -1.0, 6.0, 1.0), ("near".to_owned(), 0));
+    let off_axis = tree.create_proxy((4.0, 3.0, 6.0, 5.0), ("off_axis".to_owned(), 0));
+    let far = tree.create_proxy((7.0, -1.0, 9.0, 1.0), ("far".to_owned(), 0));
+
+    let candidates = tree.ray_cast_candidates((0.0, 0.0), (10.0, 0.0), 1.0);
+    assert_eq!(candidates, vec![far, near]);
+    assert!(!candidates.contains(&off_axis));
+}
+
+#[test]
 fn fat_aabb_creates_contact_before_narrow_phase_begin_contact() {
     let runtime = unlocked_test_runtime();
     runtime

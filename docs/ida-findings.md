@@ -17135,3 +17135,39 @@ isolated-AppData 120-frame release-wgpu upload/render/readback completed with
 20 optional data probes, zero invoked fallbacks, zero remaining compatibility
 bindings and empty stderr. Its execution-evidence PNG SHA-256 is
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## Native dynamic-tree ray traversal and callback order
+
+The next IDA/Hopper pass followed `b2World::RayCast` into the instantiated
+`b2DynamicTree::RayCast<b2WorldRayCastWrapper>` at `sub_10086F834`. Purple
+normalizes the float32 ray direction with the same `FLT_EPSILON` threshold,
+builds the current segment AABB with FMADD plus `FMIN`/`FMAX`, and applies the
+Box2D separating-axis test to every 40-byte tree node. Branches push child1
+and then child2, so the LIFO stack visits child2 first. The former host bypassed
+this already-modelled tree, scanned the name-ordered scene and sorted results
+by fraction.
+
+The public callback `sub_10009366C` appends every nonsensor fixture record and
+always returns `1.0f`. The native tree therefore never clips this query to its
+closest hit, and the raw `getRayCastedObjects` table retains tree visitation
+order; only the shipped Lua `raycast` helper performs a later fraction sort.
+The host now traverses the actual live proxy tree, dispatches exactly the
+fixture child carried by each leaf, and publishes records in that native order.
+A regression deliberately keeps a farther child2 hit ahead of a nearer child1
+hit, while the broad-phase regression pins off-axis separation and LIFO order.
+
+LightBeam uses the same tree with a different callback at `sub_10008B7B0`.
+Sensors and chain shapes return `-1.0f` and do not shorten the ray; an accepted
+ordinary fixture stores its body/hit point and returns the hit fraction. Each
+later shape test consequently sees the clipped maximum, and an equal-fraction
+hit is still accepted and replaces the stored target. LightBeam now follows
+that proxy/fixture traversal rather than a scene-wide host minimum. Its new
+tie regression distinguishes native callback replacement from name-map order.
+
+The complete workspace now passes 781 tests with the deliberate long-duration
+BirdRun audit ignored. Formatting, whitespace validation, strict all-target/
+all-feature Clippy and the release workspace build are clean. A final fresh
+isolated-AppData 120-frame release-wgpu upload/render/readback reports 20
+optional probes, zero invoked fallbacks, zero remaining compatibility bindings
+and empty stderr. Its execution-evidence PNG SHA-256 remains
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.

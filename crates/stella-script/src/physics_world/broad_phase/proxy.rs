@@ -98,4 +98,84 @@ impl NativeDynamicTree {
         }
         leaves
     }
+
+    /// Candidate traversal from Purple's instantiated
+    /// `b2DynamicTree::RayCast<b2WorldRayCastWrapper>` (`sub_10086F834`). The
+    /// public world callback always returns `1.0f`, so the native segment AABB
+    /// never shortens while this stack walk is in progress.
+    pub(crate) fn ray_cast_candidates(
+        &self,
+        start: (f32, f32),
+        end: (f32, f32),
+        max_fraction: f32,
+    ) -> Vec<i32> {
+        let direction = (end.0 - start.0, end.1 - start.1);
+        let length = direction
+            .0
+            .mul_add(direction.0, direction.1 * direction.1)
+            .sqrt();
+        let mut unit = direction;
+        if length >= f32::EPSILON {
+            let inverse_length = 1.0_f32 / length;
+            unit.0 *= inverse_length;
+            unit.1 *= inverse_length;
+        }
+        let absolute = (unit.0.abs(), unit.1.abs());
+        let perpendicular = (-unit.1, unit.0);
+        let segment_end = (
+            direction.0.mul_add(max_fraction, start.0),
+            direction.1.mul_add(max_fraction, start.1),
+        );
+        let segment_aabb = (
+            start.0.min(segment_end.0),
+            start.1.min(segment_end.1),
+            start.0.max(segment_end.0),
+            start.1.max(segment_end.1),
+        );
+
+        let mut leaves = Vec::new();
+        let mut stack = vec![self.root];
+        while let Some(node_id) = stack.pop() {
+            if node_id == -1 {
+                continue;
+            }
+            let node = &self.nodes[node_id as usize];
+            if segment_aabb.0 - node.aabb.2 > 0.0_f32
+                || segment_aabb.1 - node.aabb.3 > 0.0_f32
+                || node.aabb.0 - segment_aabb.2 > 0.0_f32
+                || node.aabb.1 - segment_aabb.3 > 0.0_f32
+            {
+                continue;
+            }
+
+            let center = (
+                (-(node.aabb.2 + node.aabb.0)).mul_add(0.5_f32, start.0),
+                (-(node.aabb.3 + node.aabb.1)).mul_add(0.5_f32, start.1),
+            );
+            let extents = (
+                (node.aabb.2 - node.aabb.0) * 0.5_f32,
+                (node.aabb.3 - node.aabb.1) * 0.5_f32,
+            );
+            let mut separation = center.0.mul_add(perpendicular.0, unit.0 * center.1);
+            // The native FCMP/B.GT pair leaves a positive value alone and
+            // negates zero, negative and unordered values.
+            if separation <= 0.0_f32 || separation.is_nan() {
+                separation = -separation;
+            }
+            let radius = absolute.1.mul_add(extents.0, absolute.0 * extents.1);
+            if separation - radius > 0.0_f32 {
+                continue;
+            }
+
+            if node.is_leaf() {
+                leaves.push(node_id);
+            } else {
+                // Purple pushes child1 followed by child2; its LIFO stack
+                // visits child2 before child1.
+                stack.push(node.child1);
+                stack.push(node.child2);
+            }
+        }
+        leaves
+    }
 }

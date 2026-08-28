@@ -96,18 +96,22 @@ pub(super) fn install(
             {
                 return Ok(result);
             }
+            let input = NativeRayCastInput::complete(start, end);
             let bridge = ray_cast_bridge.lock().expect("render bridge lock poisoned");
-            let mut hits = bridge
-                .scene
-                .iter()
+            let hits = bridge
+                .dynamic_tree
+                .ray_cast_candidates(input.start, input.end, input.max_fraction)
+                .into_iter()
+                .filter_map(|proxy_id| bridge.dynamic_tree.proxy_user_data(proxy_id))
                 // sub_10009366C ignores sensor fixtures, but deliberately
                 // does not inspect Box2D filter data or Lua's
                 // `collisionEnabled`; the Lua `raycast` helper filters the
                 // latter after receiving the complete native hit list.
-                .filter(|(_, object)| object.active && !object.sensor)
-                .flat_map(|(name, object)| object.ray_cast_hits(name, start, end))
+                .filter_map(|(name, fixture)| {
+                    let object = bridge.scene.get(name)?;
+                    (!object.sensor).then(|| object.ray_cast_fixture_hit(name, input, *fixture))?
+                })
                 .collect::<Vec<_>>();
-            hits.sort_by(|left, right| left.fraction.total_cmp(&right.fraction));
             let mut index = 1;
             for hit in &hits {
                 result.raw_set(index, hit.name.as_str())?;

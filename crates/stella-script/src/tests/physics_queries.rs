@@ -161,13 +161,13 @@ fn object_vertices_follow_native_fixture_list_and_resized_f32_vertices() {
 }
 
 #[test]
-fn native_ray_cast_returns_flat_six_value_records_in_hit_order() {
+fn native_ray_cast_returns_flat_records_in_dynamic_tree_order() {
     let runtime = unlocked_test_runtime();
     runtime
         .execute_source(
             r#"
-                createBox("far", "", 8, 0, 2, 2, 0, 0, 0, true, false, 1)
                 createBox("near", "", 5, 0, 2, 2, 0, 0, 0, true, false, 1)
+                createBox("far", "", 8, 0, 2, 2, 0, 0, 0, true, false, 1)
                 ray_hits = getRayCastedObjects({ x1 = 0, y1 = 0, x2 = 10, y2 = 0 })
                 ray_query_missing_fails = not pcall(getRayCastedObjects)
                 ray_query_type_fails = not pcall(getRayCastedObjects, false)
@@ -198,11 +198,14 @@ fn native_ray_cast_returns_flat_six_value_records_in_hit_order() {
     }
     let hits: mlua::Table = environment.get("ray_hits").unwrap();
     assert_eq!(hits.raw_len(), 12);
-    assert_eq!(hits.raw_get::<String>(1).unwrap(), "near");
-    assert!((hits.raw_get::<f64>(2).unwrap() - 4.0).abs() < 1e-9);
+    // The native tree pushes child1 then child2 and visits its LIFO child2
+    // first. The callback returns 1.0 rather than clipping to a closest hit,
+    // so a farther last-inserted leaf remains first in this raw binding.
+    assert_eq!(hits.raw_get::<String>(1).unwrap(), "far");
+    assert!((hits.raw_get::<f64>(2).unwrap() - 7.0).abs() < 1e-9);
     assert_eq!(hits.raw_get::<f64>(4).unwrap(), -1.0);
-    assert_eq!(hits.raw_get::<f64>(6).unwrap(), f64::from(0.4_f32));
-    assert_eq!(hits.raw_get::<String>(7).unwrap(), "far");
+    assert_eq!(hits.raw_get::<f64>(6).unwrap(), f64::from(0.7_f32));
+    assert_eq!(hits.raw_get::<String>(7).unwrap(), "near");
 }
 
 #[test]
@@ -225,8 +228,8 @@ fn native_ray_cast_skips_sensors_but_keeps_collision_disabled_fixtures() {
     let environment = game_environment(runtime.lua()).unwrap();
     let hits: mlua::Table = environment.get("filtered_ray_hits").unwrap();
     assert_eq!(hits.raw_len(), 12);
-    assert_eq!(hits.raw_get::<String>(1).unwrap(), "disabled");
-    assert_eq!(hits.raw_get::<String>(7).unwrap(), "solid");
+    assert_eq!(hits.raw_get::<String>(1).unwrap(), "solid");
+    assert_eq!(hits.raw_get::<String>(7).unwrap(), "disabled");
     let inside: mlua::Table = environment.get("inside_ray_hits").unwrap();
     assert_eq!(inside.raw_len(), 0);
 }
@@ -448,6 +451,30 @@ fn light_beam_object_plots_native_segment_path_and_disposes() {
     let query: mlua::Table = environment.get("beam_query").unwrap();
     let path: mlua::Table = query.get("path").unwrap();
     assert_eq!(path.raw_len(), 4);
+}
+
+#[test]
+fn light_beam_equal_fraction_hit_uses_last_native_tree_callback() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createBox("z_first", "", 3, 0, 2, 2, 1, 0, 0, true, false, 1)
+                createBox("a_second", "", 3, 0, 2, 2, 1, 0, 0, true, false, 1)
+                beam = makeLightBeam()
+                beam_query = { startAngle = 0, startPoint = { x = 0, y = 0 } }
+                beam:plotPath(beam_query)
+                beam_tie_keeps_first_inserted = beam_query.target == objects.world.z_first
+                "#,
+        )
+        .unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert!(
+        environment
+            .get::<bool>("beam_tie_keeps_first_inserted")
+            .unwrap()
+    );
 }
 
 #[test]

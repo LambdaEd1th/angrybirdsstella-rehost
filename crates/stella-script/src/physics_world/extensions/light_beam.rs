@@ -61,25 +61,35 @@ fn plot_path(lua: &Lua, render: &Arc<Mutex<RenderBridge>>, query: &mlua::Table) 
         let end = (current.0 + direction.0, current.1 + direction.1);
         let (closest, limits) = {
             let bridge = render.lock().expect("render bridge lock poisoned");
-            let closest = bridge
-                .scene
-                .iter()
+            let mut input = NativeRayCastInput {
+                start: current,
+                end,
+                max_fraction: 1.0_f32,
+            };
+            let candidates =
+                bridge
+                    .dynamic_tree
+                    .ray_cast_candidates(input.start, input.end, input.max_fraction);
+            let mut closest = None;
+            for proxy_id in candidates {
+                let Some((name, fixture)) = bridge.dynamic_tree.proxy_user_data(proxy_id) else {
+                    continue;
+                };
+                let Some(object) = bridge.scene.get(name) else {
+                    continue;
+                };
                 // LightBeam's ReportFixture callback at sub_10008B7B0
-                // rejects sensors and b2Shape::e_chain (type 3). It does not
-                // inspect the game-side collisionEnabled filter.
-                .filter(|(_, object)| {
-                    object.active
-                        && !object.sensor
-                        && !matches!(object.collision_shape, CollisionShape::Line { .. })
-                })
-                .flat_map(|(name, object)| {
-                    object.ray_cast_hits(
-                        name,
-                        (f64::from(current.0), f64::from(current.1)),
-                        (f64::from(end.0), f64::from(end.1)),
-                    )
-                })
-                .min_by(|left, right| left.fraction.total_cmp(&right.fraction));
+                // returns -1 for sensors and b2Shape::e_chain (type 3), so
+                // neither shortens the current dynamic-tree segment. It does
+                // not inspect the game-side collisionEnabled filter.
+                if object.sensor || matches!(object.collision_shape, CollisionShape::Line { .. }) {
+                    continue;
+                }
+                if let Some(hit) = object.ray_cast_fixture_hit(name, input, *fixture) {
+                    input.max_fraction = hit.fraction as f32;
+                    closest = Some(hit);
+                }
+            }
             (closest, bridge.level_limits)
         };
         if let Some(hit) = closest {
