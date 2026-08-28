@@ -6,6 +6,19 @@ use mlua::{Lua, MultiValue, Result as LuaResult, Table, Value};
 
 use crate::*;
 
+fn native_lua51_truthy(value: &Value) -> bool {
+    !matches!(value, Value::Nil | Value::Boolean(false))
+}
+
+fn native_table_entry_count(table: &Table) -> LuaResult<usize> {
+    let mut count = 0;
+    for pair in table.clone().pairs::<Value, Value>() {
+        pair?;
+        count += 1;
+    }
+    Ok(count)
+}
+
 pub(super) fn install(
     lua: &Lua,
     globals: &Table,
@@ -21,39 +34,51 @@ pub(super) fn install(
                 Value::Table(table) => table,
                 _ => return Err(runtime_error("createTrack points must be table")),
             };
-            let mut points = Vec::with_capacity(points_table.raw_len());
-            for index in 1..=points_table.raw_len() {
-                let Value::Table(point) = points_table.raw_get::<Value>(index)? else {
-                    return Err(runtime_error(format!(
-                        "createTrack point #{index} must be table"
-                    )));
-                };
-                points.push((
-                    f64::from(table_required_number(&point, "x", "createTrack")? as f32),
-                    f64::from(table_required_number(&point, "y", "createTrack")? as f32),
-                ));
-            }
-            if points.is_empty() {
-                return Ok(());
-            }
             let blocks_table = match descriptor.get::<Value>("blocks")? {
                 Value::Table(table) => table,
                 _ => return Err(runtime_error("createTrack blocks must be table")),
             };
-            let mut blocks = Vec::with_capacity(blocks_table.raw_len());
-            for index in 1..=blocks_table.raw_len() {
-                let value = blocks_table.raw_get::<Value>(index)?;
-                let Some(name) = value_string(&value) else {
+            let mut points = Vec::with_capacity(native_table_entry_count(&points_table)?);
+            let mut point_index = 1;
+            while point_index <= native_table_entry_count(&points_table)? {
+                let Value::Table(point) = points_table.raw_get::<Value>(point_index)? else {
                     return Err(runtime_error(format!(
-                        "createTrack block #{index} must be string"
+                        "createTrack point #{point_index} must be table"
                     )));
                 };
-                blocks.push(name);
+                let x = point.get::<Value>("x")?;
+                let y = point.get::<Value>("y")?;
+                points.push((
+                    native_lua51_number(&x).unwrap_or(0.0),
+                    native_lua51_number(&y).unwrap_or(0.0),
+                ));
+                point_index += 1;
             }
-            let open_ended = descriptor.get::<bool>("openEnded").unwrap_or(false);
-            let rotate_block = descriptor.get::<bool>("rotateBlock").unwrap_or(false);
-            let mut bridge = track_bridge.lock().expect("render bridge lock poisoned");
-            for object in blocks {
+            if points.is_empty() {
+                return Ok(());
+            }
+            let mut index = 1;
+            while index <= native_table_entry_count(&blocks_table)? {
+                let value = blocks_table.raw_get::<Value>(index)?;
+                // sub_100529FB4 delegates to lua_tolstring. Numbers are
+                // formatted by Purple's float VM; other types yield a null
+                // pointer and therefore an empty std::string.
+                let object = native_lua51_string(&value).unwrap_or_default();
+                {
+                    let bridge = track_bridge.lock().expect("render bridge lock poisoned");
+                    if !bridge.scene.contains_key(&object) {
+                        return Err(runtime_error(format!("Missing object: {object}")));
+                    }
+                }
+
+                // sub_10003CD0C performs the throwing object lookup first and
+                // then reads both flags for every block. LuaObject::operator
+                // bool delegates to lua_toboolean, so every value except nil
+                // and literal false is true.
+                let open_ended = native_lua51_truthy(&descriptor.get::<Value>("openEnded")?);
+                let rotate_block = native_lua51_truthy(&descriptor.get::<Value>("rotateBlock")?);
+
+                let mut bridge = track_bridge.lock().expect("render bridge lock poisoned");
                 if !bridge.scene.contains_key(&object) {
                     return Err(runtime_error(format!("Missing object: {object}")));
                 }
@@ -72,6 +97,7 @@ pub(super) fn install(
                         impulse_y: 0.0,
                     },
                 );
+                index += 1;
             }
             Ok(())
         })?,

@@ -83,9 +83,13 @@ fn native_track_projects_body_motion_onto_recovered_polyline() {
                     points = { false }, blocks = { "cart" },
                     openEnded = true, rotateBlock = false
                 })
-                track_coordinate_fails = not pcall(createTrack, {
-                    points = { { x = "0", y = 0 }, { x = 1, y = 0 } },
-                    blocks = { "cart" }, openEnded = true, rotateBlock = false
+                createBox("coerced_coordinates", "", 0, 0, 1, 1,
+                    1, 0, 0, true, false, 1)
+                track_coordinates_coerce = pcall(createTrack, {
+                    points = { { x = "0", y = false },
+                        { x = "1", y = "not-a-number" } },
+                    blocks = { "coerced_coordinates" },
+                    openEnded = true, rotateBlock = false
                 })
                 track_blocks_fails = not pcall(createTrack, {
                     points = { { x = 0, y = 0 }, { x = 1, y = 0 } },
@@ -110,18 +114,18 @@ fn native_track_projects_body_motion_onto_recovered_polyline() {
         "track_first_argument_fails",
         "track_points_fails",
         "track_point_fails",
-        "track_coordinate_fails",
         "track_blocks_fails",
         "track_block_type_fails",
         "track_missing_object_fails",
     ] {
         assert!(environment.get::<bool>(field).unwrap(), "{field}");
     }
+    assert!(environment.get::<bool>("track_coordinates_coerce").unwrap());
     runtime.update(1.0 / 30.0).unwrap();
 
     {
         let bridge = runtime.render.lock().unwrap();
-        assert_eq!(bridge.tracks.len(), 1);
+        assert_eq!(bridge.tracks.len(), 2);
         let cart = &bridge.scene["cart"];
         // sub_10086DB8C is a ten-pass velocity constraint. It does not
         // snap the position onto the line and its position solver is the
@@ -146,6 +150,100 @@ fn native_track_projects_body_motion_onto_recovered_polyline() {
     assert_eq!(cart.velocity_x, 3.0);
     assert_eq!(cart.velocity_y, f64::from(-1.9377928_f32));
     assert_eq!(bridge.tracks["cart"].impulse_y, f64::from(-0.026794612_f32));
+}
+
+#[test]
+fn create_track_reads_native_flags_per_block_after_object_lookup() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createBox("first", "", 0, 0, 1, 1,
+                    1, 0, 0, true, false, 1)
+                createBox("second", "", 0, 0, 1, 1,
+                    1, 0, 0, true, false, 1)
+
+                flag_reads = {}
+                local descriptor = setmetatable({
+                    points = { { x = 0, y = 0 }, { x = 4, y = 0 } },
+                    blocks = { "first", "second" }
+                }, {
+                    __index = function(_, key)
+                        table.insert(flag_reads, key)
+                        if key == "rotateBlock" then
+                            return "truthy"
+                        end
+                        return false
+                    end
+                })
+                createTrack(descriptor)
+
+                missing_flag_reads = 0
+                local missing = setmetatable({
+                    points = { { x = 0, y = 0 }, { x = 4, y = 0 } },
+                    blocks = { "missing" }
+                }, {
+                    __index = function()
+                        missing_flag_reads = missing_flag_reads + 1
+                        return true
+                    end
+                })
+                missing_track_fails = not pcall(createTrack, missing)
+
+                createBox("partial", "", 0, 0, 1, 1,
+                    1, 0, 0, true, false, 1)
+                partial_track_fails = not pcall(createTrack, {
+                    points = { { x = 0, y = 0 }, { x = 4, y = 0 } },
+                    blocks = { "partial", false },
+                    openEnded = true,
+                    rotateBlock = false
+                })
+
+                createBox("1", "", 0, 0, 1, 1,
+                    1, 0, 0, true, false, 1)
+                numeric_block_name_succeeds = pcall(createTrack, {
+                    points = { { x = 0, y = 0 }, { x = 4, y = 0 } },
+                    blocks = { 1 },
+                    openEnded = true,
+                    rotateBlock = false
+                })
+
+                createBox("extra_key", "", 0, 0, 1, 1,
+                    1, 0, 0, true, false, 1)
+                extra_point_key_fails = not pcall(createTrack, {
+                    points = {
+                        { x = 0, y = 0 }, { x = 4, y = 0 }, marker = true
+                    },
+                    blocks = { "extra_key" },
+                    openEnded = true,
+                    rotateBlock = false
+                })
+            "#,
+        )
+        .unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    let reads = environment.get::<mlua::Table>("flag_reads").unwrap();
+    assert_eq!(reads.raw_len(), 4);
+    assert_eq!(reads.raw_get::<String>(1).unwrap(), "openEnded");
+    assert_eq!(reads.raw_get::<String>(2).unwrap(), "rotateBlock");
+    assert_eq!(reads.raw_get::<String>(3).unwrap(), "openEnded");
+    assert_eq!(reads.raw_get::<String>(4).unwrap(), "rotateBlock");
+    assert_eq!(environment.get::<i64>("missing_flag_reads").unwrap(), 0);
+    assert!(environment.get::<bool>("missing_track_fails").unwrap());
+    assert!(environment.get::<bool>("partial_track_fails").unwrap());
+    assert!(
+        environment
+            .get::<bool>("numeric_block_name_succeeds")
+            .unwrap()
+    );
+    assert!(environment.get::<bool>("extra_point_key_fails").unwrap());
+
+    let bridge = runtime.render.lock().unwrap();
+    assert!(bridge.tracks["first"].rotate_block);
+    assert!(bridge.tracks["second"].rotate_block);
+    assert!(bridge.tracks.contains_key("partial"));
+    assert!(bridge.tracks.contains_key("1"));
 }
 
 #[test]

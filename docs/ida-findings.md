@@ -16976,3 +16976,45 @@ feature Clippy and the release build are clean. A fresh 120-frame release-wgpu
 upload/readback reports 20 optional data probes, zero invoked fallbacks, zero
 remaining compatibility bindings and empty stderr. Its PNG SHA-256 remains
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## Native per-block track construction and Lua coercion
+
+The complete `createTrack` entry `sub_10003CD0C` was revisited in IDA and
+Hopper instead of treating its descriptor as an ordinary Rust structure. It
+fetches `points` and `blocks` before parsing either collection. For each block
+it then indexes the name, performs throwing `sub_10005DAF8` object lookup,
+reads `openEnded`, reads `rotateBlock`, and only then allocates and links the
+track with `sub_10086E580`. Both flags therefore run descriptor `__index`
+once per successfully resolved block, and a missing object prevents the flag
+reads for that block. Rust now preserves this order and the native partial-
+commit behavior when a later block fails.
+
+The two conversion helpers were also recovered rather than inferred from the
+field names. `sub_100529F8C` calls `sub_100508D2C`, whose nil/false/type-tag
+branches are exactly Lua 5.1 `lua_toboolean`: all values except nil and literal
+false are true. Block conversion `sub_100529FB4` delegates to the
+`lua_tolstring` path `sub_100508E38`; strings and Purple float numbers become
+names while other values produce an empty `std::string`. Point coordinates go
+through `sub_10052A014` and `sub_100508AF0`, accepting numeric strings and
+returning zero for nonnumeric values. The Rust binding now uses the same
+truthiness, float-string and numeric coercions.
+
+Finally, `sub_10052B324` does not use Lua's array boundary. It copies the table
+and counts every key through `lua_next`; the surrounding loops recount on each
+condition and still index consecutive integers from one. Track point and block
+tables now use that same total-entry contract, including the native failure
+surface for holes or extra associative keys. Recreating a track for one body
+still exposes only the newest body track pointer to island assembly; Purple's
+superseded world-list allocation is intentionally not leaked by the safe host.
+Likewise, the host keeps its empty-point early return instead of reproducing
+the undefined zero-child Box2D chain construction.
+
+The complete workspace now passes 775 tests with the deliberate long-duration
+BirdRun audit ignored. The added regressions cover per-block metatable order,
+lookup-before-flags, Lua truthiness, numeric block names, coordinate coercion,
+partial commits and total-key table counting. Formatting, diff validation,
+strict all-target/all-feature Clippy and the release build are clean. A fresh
+isolated-AppData 120-frame release-wgpu upload/readback reports 20 optional
+data probes, zero invoked fallbacks, zero remaining compatibility bindings and
+empty stderr. Its PNG SHA-256 remains
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
