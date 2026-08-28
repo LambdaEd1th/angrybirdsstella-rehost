@@ -31,29 +31,9 @@ impl RenderBridge {
     ) -> Vec<f64> {
         let mut impulses = Vec::with_capacity(contact_keys.len());
         for key in contact_keys {
-            let Some(manifold) = self.velocity_contacts.get(key).copied() else {
-                impulses.push(0.0);
-                continue;
-            };
-            let Some(first) = self
-                .scene
-                .get(&key.0)
-                .map(|object| ContactBodyState::capture(object, key.2))
-            else {
-                impulses.push(0.0);
-                continue;
-            };
-            let Some(second) = self
-                .scene
-                .get(&key.1)
-                .map(|object| ContactBodyState::capture(object, key.3))
-            else {
-                impulses.push(0.0);
-                continue;
-            };
             // Sequential Gauss-Seidel deliberately reads the live body
             // velocities changed by every earlier fixture-pair constraint.
-            let impulse = self.solve_contact_velocity_constraint(key, first, second, manifold);
+            let impulse = self.solve_contact_velocity_constraint(key);
             impulses.push(impulse);
         }
         impulses

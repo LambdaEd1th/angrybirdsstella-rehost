@@ -32,6 +32,33 @@ pub(crate) struct ContactVelocityBodies<'a> {
     pub(crate) second: ContactBodyState,
 }
 
+/// One 36-byte point from Purple's 152-byte
+/// `b2ContactVelocityConstraint`. The accumulated impulses remain in the
+/// solver-local impulse record so StoreImpulses can publish them separately.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct NativeContactVelocityPoint {
+    pub(crate) first_radius: (f32, f32),
+    pub(crate) second_radius: (f32, f32),
+    pub(crate) normal_mass: f32,
+    pub(crate) tangent_mass: f32,
+    pub(crate) velocity_bias: f32,
+}
+
+/// Constraint scalars frozen by `b2ContactSolver::InitializeVelocityConstraints`.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct NativeContactVelocityConstraint {
+    pub(crate) points: [NativeContactVelocityPoint; 2],
+    pub(crate) normal: (f32, f32),
+    /// Inverse of the two-point normal K matrix `(m11, m12, m22)`.
+    pub(crate) normal_mass: (f32, f32, f32),
+    /// Two-point normal K matrix `(k11, k12, k22)`.
+    pub(crate) normal_k: (f32, f32, f32),
+    pub(crate) first: ContactBodyState,
+    pub(crate) second: ContactBodyState,
+    pub(crate) friction: f32,
+    pub(crate) point_count: usize,
+}
+
 impl ContactBodyState {
     pub(crate) fn capture(object: &SceneObject, fixture: usize) -> Self {
         Self {

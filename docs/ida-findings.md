@@ -3546,6 +3546,29 @@ modules. Cached feature alignment, restitution-bias snapshot order, the
 1000:1 block-matrix guard, scalar fallback and two-point impulse order remain
 covered by focused regressions.
 
+IDA and Hopper also agree on the lifetime and exact layout of each 152-byte
+velocity constraint. Its two 36-byte point records occupy `+0..+71` and retain
+`rA`, `rB`, normal/tangent accumulated impulses, reciprocal normal/tangent
+mass and restitution bias. The normal is at `+72/+76`; the inverse block
+matrix is at `+80..+92`, its K matrix at `+96..+108`, body indices at
+`+112/+116`, inverse masses/inertias at `+120..+132`, friction at `+136`,
+restitution at `+140`, and point count at `+144`. Initialization writes all of
+these fields at `0x100863D64..0x100863F68`. WarmStart then reads the cached
+radii and coefficients at `0x100864010..0x10086407C`, while every later solve
+iteration begins by loading the same mass block at
+`0x10086410C..0x100864158`; neither member rebuilds geometry from live bodies.
+
+The Rust solver now owns an equivalent per-island constraint record. Contact
+centres, radii, normal/tangent effective masses, bias, mixed friction, body
+coefficients, K and its inverse are frozen before WarmStart and reused through
+all ten velocity passes. Only the compact body-indexed velocity triples remain
+live between constraints. The two-point solve also mirrors Purple's mixed
+SIMD arithmetic: the first inverse-matrix row uses two rounded products plus
+`FADDP`, while the second uses `FMUL` followed by `FMADD`. Regressions mutate a
+body transform and clear its live inverse mass after initialization, verify
+the cached constraint still removes velocity, and exercise the initialization
+time 1000:1 point reduction before warm start.
+
 The original solver also has two physically separate impulse stores. IDA and
 Hopper show `WarmStart` reading the 152-byte solver constraint array, while the
 112-byte `StoreImpulses` leaf walks that array only after every velocity

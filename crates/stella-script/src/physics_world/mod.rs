@@ -42,6 +42,7 @@ mod world_control;
 pub(crate) use broad_phase::*;
 pub(crate) use contact_velocity_solver::{
     ContactBodyState, ContactVelocityBodies, NativeContactVelocityCache,
+    NativeContactVelocityConstraint, NativeContactVelocityPoint,
 };
 pub(crate) use contacts::*;
 pub(crate) use continuous::*;

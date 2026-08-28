@@ -164,12 +164,47 @@ fn recovered_two_point_manifold_and_block_solver_balance_face_contact() {
         .unwrap();
     let mut bridge = runtime.render.lock().unwrap();
     bridge.solve_contacts();
+    let pair = ("mover".to_owned(), "wall".to_owned(), 0, 0);
+    let constraint = bridge.contact_velocity_constraints[&pair];
+    assert_eq!(constraint.point_count, 2);
+    assert!(constraint.normal_k.0 > 0.0);
+    assert!(constraint.normal_k.2 > 0.0);
+    assert!(
+        [
+            constraint.points[0].first_radius.0,
+            constraint.points[0].first_radius.1,
+            constraint.points[0].second_radius.0,
+            constraint.points[0].second_radius.1,
+            constraint.points[0].normal_mass,
+            constraint.points[0].tangent_mass,
+            constraint.points[0].velocity_bias,
+            constraint.points[1].first_radius.0,
+            constraint.points[1].first_radius.1,
+            constraint.points[1].second_radius.0,
+            constraint.points[1].second_radius.1,
+            constraint.points[1].normal_mass,
+            constraint.points[1].tangent_mass,
+            constraint.points[1].velocity_bias,
+            constraint.normal_mass.0,
+            constraint.normal_mass.1,
+            constraint.normal_mass.2,
+            constraint.normal_k.0,
+            constraint.normal_k.1,
+            constraint.normal_k.2,
+        ]
+        .into_iter()
+        .all(f32::is_finite)
+    );
     let mover = &bridge.scene["mover"];
     assert!(mover.velocity_x < 6.0);
-    assert!(mover.angular_velocity.abs() < 1e-9);
+    assert!(
+        mover.angular_velocity.abs() < 1e-9,
+        "angular_velocity={}",
+        mover.angular_velocity
+    );
     let impulse = bridge
         .contact_impulses
-        .get(&("mover".to_owned(), "wall".to_owned(), 0, 0))
+        .get(&pair)
         .expect("cached face impulse");
     assert!(impulse.normal > 0.0);
     assert!(impulse.secondary_normal > 0.0);

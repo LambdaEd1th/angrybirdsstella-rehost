@@ -28,23 +28,17 @@ impl RenderBridge {
 
     pub(crate) fn relative_contact_velocity(
         &self,
-        first_name: &str,
-        second_name: &str,
-        body_indices: Option<(usize, usize)>,
-        first: ContactBodyState,
-        second: ContactBodyState,
-        point: ContactPoint,
+        bodies: ContactVelocityBodies<'_>,
+        point: NativeContactVelocityPoint,
     ) -> (f32, f32) {
-        let first_center = first.center;
-        let second_center = second.center;
-        let first_radius = (
-            point.point_x as f32 - first_center.0,
-            point.point_y as f32 - first_center.1,
-        );
-        let second_radius = (
-            point.point_x as f32 - second_center.0,
-            point.point_y as f32 - second_center.1,
-        );
+        let ContactVelocityBodies {
+            names: (first_name, second_name),
+            indices: body_indices,
+            first,
+            second,
+        } = bodies;
+        let first_radius = point.first_radius;
+        let second_radius = point.second_radius;
         let cached = self.contact_velocity_cache.as_ref();
         let first_live = body_indices
             .and_then(|indices| cached.and_then(|cache| cache.velocity_at(indices.0)))
@@ -91,7 +85,7 @@ impl RenderBridge {
     pub(crate) fn apply_contact_velocity_impulse(
         &mut self,
         bodies: ContactVelocityBodies<'_>,
-        point: ContactPoint,
+        point: NativeContactVelocityPoint,
         impulse: (f32, f32),
     ) {
         let ContactVelocityBodies {
@@ -104,16 +98,8 @@ impl RenderBridge {
         let second_inverse_mass = second.inverse_mass;
         let first_inverse_inertia = first.inverse_inertia;
         let second_inverse_inertia = second.inverse_inertia;
-        let first_center = first.center;
-        let second_center = second.center;
-        let first_radius = (
-            point.point_x as f32 - first_center.0,
-            point.point_y as f32 - first_center.1,
-        );
-        let second_radius = (
-            point.point_x as f32 - second_center.0,
-            point.point_y as f32 - second_center.1,
-        );
+        let first_radius = point.first_radius;
+        let second_radius = point.second_radius;
         let first_cross = first_radius
             .0
             .mul_add(impulse.1, -(first_radius.1 * impulse.0));
@@ -160,7 +146,7 @@ impl RenderBridge {
     pub(crate) fn apply_contact_block_velocity_impulse(
         &mut self,
         bodies: ContactVelocityBodies<'_>,
-        points: [ContactPoint; 2],
+        points: [NativeContactVelocityPoint; 2],
         normal: (f32, f32),
         deltas: [f32; 2],
     ) {
@@ -174,27 +160,27 @@ impl RenderBridge {
         let second_inverse_mass = second.inverse_mass;
         let first_inverse_inertia = first.inverse_inertia;
         let second_inverse_inertia = second.inverse_inertia;
-        let first_center = first.center;
-        let second_center = second.center;
         let impulses = [
             (deltas[0] * normal.0, deltas[0] * normal.1),
             (deltas[1] * normal.0, deltas[1] * normal.1),
         ];
         let total_impulse = (impulses[0].0 + impulses[1].0, impulses[0].1 + impulses[1].1);
-        let first_cross = (points[0].point_x as f32 - first_center.0).mul_add(
-            impulses[0].1,
-            -((points[0].point_y as f32 - first_center.1) * impulses[0].0),
-        ) + (points[1].point_x as f32 - first_center.0).mul_add(
-            impulses[1].1,
-            -((points[1].point_y as f32 - first_center.1) * impulses[1].0),
-        );
-        let second_cross = (points[0].point_x as f32 - second_center.0).mul_add(
-            impulses[0].1,
-            -((points[0].point_y as f32 - second_center.1) * impulses[0].0),
-        ) + (points[1].point_x as f32 - second_center.0).mul_add(
-            impulses[1].1,
-            -((points[1].point_y as f32 - second_center.1) * impulses[1].0),
-        );
+        let first_cross = points[0]
+            .first_radius
+            .0
+            .mul_add(impulses[0].1, -(points[0].first_radius.1 * impulses[0].0))
+            + points[1]
+                .first_radius
+                .0
+                .mul_add(impulses[1].1, -(points[1].first_radius.1 * impulses[1].0));
+        let second_cross = points[0]
+            .second_radius
+            .0
+            .mul_add(impulses[0].1, -(points[0].second_radius.1 * impulses[0].0))
+            + points[1]
+                .second_radius
+                .0
+                .mul_add(impulses[1].1, -(points[1].second_radius.1 * impulses[1].0));
         let first_delta = (
             -(first_inverse_mass * total_impulse.0),
             -(first_inverse_mass * total_impulse.1),

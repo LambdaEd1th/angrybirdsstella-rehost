@@ -69,26 +69,7 @@ impl RenderBridge {
         self.begin_contact_velocity_cache(&velocity_contact_keys);
         for _ in 0..velocity_iterations {
             for (contact, _) in &constraints {
-                let Some(first) = self
-                    .scene
-                    .get(&contact.key.0)
-                    .map(|object| ContactBodyState::capture(object, contact.key.2))
-                else {
-                    continue;
-                };
-                let Some(second) = self
-                    .scene
-                    .get(&contact.key.1)
-                    .map(|object| ContactBodyState::capture(object, contact.key.3))
-                else {
-                    continue;
-                };
-                let impulse = self.solve_contact_velocity_constraint(
-                    &contact.key,
-                    first,
-                    second,
-                    contact.manifold,
-                );
+                let impulse = self.solve_contact_velocity_constraint(&contact.key);
                 if let Some(maximum) = impulses.get_mut(&contact.key) {
                     *maximum = maximum.max(impulse);
                 }

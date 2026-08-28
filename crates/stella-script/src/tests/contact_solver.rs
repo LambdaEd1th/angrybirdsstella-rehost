@@ -88,15 +88,28 @@ fn velocity_iterations_reuse_one_frozen_contact_manager_manifold() {
     bridge.assemble_box2d_islands();
     bridge.seed_contact_velocity_constraints();
     bridge.begin_contact_step();
+    let pair = ("mover".to_owned(), "wall".to_owned(), 0, 0);
+    let constraint = bridge.contact_velocity_constraints[&pair];
+    assert!(constraint.first.inverse_mass > 0.0);
+    assert!(constraint.points[0].normal_mass > 0.0);
 
     // Moving a body here models a would-be narrow-phase rerun between
-    // velocity passes. The native contact solver must continue consuming
-    // the manifold frozen by ContactManager::Collide until the next step.
+    // velocity passes. Clearing the live inverse mass also verifies that
+    // every body write still uses the coefficient frozen in the native
+    // 152-byte constraint record.
     bridge.scene.get_mut("wall").unwrap().x = 10.0;
+    bridge.scene.get_mut("mover").unwrap().inverse_mass = 0.0;
     let impulses = bridge.solve_contact_velocity_constraints_once();
-    let pair = ("mover".to_owned(), "wall".to_owned(), 0, 0);
     assert!(impulses[&pair] > 0.0);
     assert!(bridge.scene["mover"].velocity_x.abs() < 1e-9);
+    assert_eq!(
+        bridge.contact_velocity_constraints[&pair].normal,
+        constraint.normal
+    );
+    assert_eq!(
+        bridge.contact_velocity_constraints[&pair].points[0].first_radius,
+        constraint.points[0].first_radius
+    );
     assert!(bridge.active_contacts.contains_key(&pair));
 
     let next_lifecycle = bridge.refresh_contacts();

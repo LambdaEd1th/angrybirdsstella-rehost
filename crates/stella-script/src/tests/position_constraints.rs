@@ -79,7 +79,7 @@ fn velocity_constraint_drops_ill_conditioned_second_point_before_warm_start() {
                 "#,
         )
         .unwrap();
-    let bridge = runtime.render.lock().unwrap();
+    let mut bridge = runtime.render.lock().unwrap();
     let point = ContactPoint {
         penetration: 0.1,
         point_x: 0.25,
@@ -103,6 +103,23 @@ fn velocity_constraint_drops_ill_conditioned_second_point_before_warm_start() {
         velocity_contact_points(&bridge.scene["a"], &bridge.scene["b"], manifold).len(),
         1
     );
+    let pair = ("a".to_owned(), "b".to_owned(), 0, 0);
+    bridge.velocity_contacts.insert(pair.clone(), manifold);
+    bridge.contact_impulses.insert(
+        pair.clone(),
+        CachedContactImpulse {
+            normal: 1.0,
+            secondary_normal: 2.0,
+            primary_feature_id: point.feature_id,
+            secondary_feature_id: manifold.secondary.unwrap().feature_id,
+            point_count: 2,
+            ..CachedContactImpulse::default()
+        },
+    );
+    bridge.begin_contact_step();
+    assert_eq!(bridge.contact_velocity_constraints[&pair].point_count, 1);
+    assert_eq!(bridge.solver_contact_impulses[&pair].point_count, 1);
+    assert_eq!(bridge.solver_contact_impulses[&pair].secondary_normal, 0.0);
 }
 
 #[test]

@@ -77,6 +77,7 @@ impl RenderBridge {
         warm_starting: bool,
     ) {
         self.contact_velocity_bias.clear();
+        self.contact_velocity_constraints.clear();
         // InitializeVelocityConstraints computes every point's restitution
         // bias before the separate WarmStart member mutates any island body.
         for (pair, manifold) in constraints.iter().cloned() {
@@ -102,9 +103,142 @@ impl RenderBridge {
                 continue;
             }
 
+            let mut points = manifold.points();
+            let normal = (manifold.normal_x as f32, manifold.normal_y as f32);
+            let tangent = (normal.1, -normal.0);
+            let inverse_mass_sum = first.inverse_mass + second.inverse_mass;
+            let mut native_points = [NativeContactVelocityPoint::default(); 2];
+            let mut velocity_bias = [0.0_f32; 2];
+            let restitution = first.restitution.max(second.restitution);
+            for (index, point) in points.iter().copied().take(2).enumerate() {
+                let first_radius = (
+                    point.point_x as f32 - first.center.0,
+                    point.point_y as f32 - first.center.1,
+                );
+                let second_radius = (
+                    point.point_x as f32 - second.center.0,
+                    point.point_y as f32 - second.center.1,
+                );
+                let first_normal_lever = first_radius
+                    .0
+                    .mul_add(normal.1, -(first_radius.1 * normal.0));
+                let second_normal_lever = second_radius
+                    .0
+                    .mul_add(normal.1, -(second_radius.1 * normal.0));
+                let normal_inverse_mass = first
+                    .inverse_inertia
+                    .mul_add(first_normal_lever * first_normal_lever, inverse_mass_sum);
+                let normal_inverse_mass = second.inverse_inertia.mul_add(
+                    second_normal_lever * second_normal_lever,
+                    normal_inverse_mass,
+                );
+                let normal_mass = if normal_inverse_mass > 0.0 {
+                    normal_inverse_mass.recip()
+                } else {
+                    0.0
+                };
+                let first_tangent_lever = first_radius
+                    .0
+                    .mul_add(tangent.1, -(first_radius.1 * tangent.0));
+                let second_tangent_lever = second_radius
+                    .0
+                    .mul_add(tangent.1, -(second_radius.1 * tangent.0));
+                let tangent_inverse_mass = first
+                    .inverse_inertia
+                    .mul_add(first_tangent_lever * first_tangent_lever, inverse_mass_sum);
+                let tangent_inverse_mass = second.inverse_inertia.mul_add(
+                    second_tangent_lever * second_tangent_lever,
+                    tangent_inverse_mass,
+                );
+                let tangent_mass = if tangent_inverse_mass > 0.0 {
+                    tangent_inverse_mass.recip()
+                } else {
+                    0.0
+                };
+                let first_contact_velocity = (
+                    (-first.angular_velocity).mul_add(first_radius.1, first.velocity.0),
+                    first
+                        .angular_velocity
+                        .mul_add(first_radius.0, first.velocity.1),
+                );
+                let second_contact_velocity = (
+                    (-second.angular_velocity).mul_add(second_radius.1, second.velocity.0),
+                    second
+                        .angular_velocity
+                        .mul_add(second_radius.0, second.velocity.1),
+                );
+                let normal_velocity = (second_contact_velocity.0 - first_contact_velocity.0)
+                    .mul_add(
+                        normal.0,
+                        (second_contact_velocity.1 - first_contact_velocity.1) * normal.1,
+                    );
+                let bias = if normal_velocity < -1.0_f32 {
+                    -restitution * normal_velocity
+                } else {
+                    0.0
+                };
+                native_points[index] = NativeContactVelocityPoint {
+                    first_radius,
+                    second_radius,
+                    normal_mass,
+                    tangent_mass,
+                    velocity_bias: bias,
+                };
+                velocity_bias[index] = bias;
+            }
+
+            let mut normal_k = (0.0_f32, 0.0_f32, 0.0_f32);
+            let mut normal_mass = (0.0_f32, 0.0_f32, 0.0_f32);
+            if points.len() == 2 {
+                let normal_levers = native_points.map(|point| {
+                    (
+                        point
+                            .first_radius
+                            .0
+                            .mul_add(normal.1, -(point.first_radius.1 * normal.0)),
+                        point
+                            .second_radius
+                            .0
+                            .mul_add(normal.1, -(point.second_radius.1 * normal.0)),
+                    )
+                });
+                let first_weighted_1 = first.inverse_inertia * normal_levers[0].0;
+                let second_weighted_1 = second.inverse_inertia * normal_levers[0].1;
+                let k11 = normal_levers[0]
+                    .0
+                    .mul_add(first_weighted_1, inverse_mass_sum);
+                let k11 = normal_levers[0].1.mul_add(second_weighted_1, k11);
+                let k22 = first
+                    .inverse_inertia
+                    .mul_add(normal_levers[1].0 * normal_levers[1].0, inverse_mass_sum);
+                let k22 = second
+                    .inverse_inertia
+                    .mul_add(normal_levers[1].1 * normal_levers[1].1, k22);
+                let k12 = normal_levers[1]
+                    .0
+                    .mul_add(first_weighted_1, inverse_mass_sum);
+                let k12 = normal_levers[1].1.mul_add(second_weighted_1, k12);
+                let determinant = k11.mul_add(k22, -(k12 * k12));
+                if k11 * k11 < 1_000.0_f32 * determinant {
+                    normal_k = (k11, k12, k22);
+                    let inverse_determinant = if determinant != 0.0 {
+                        determinant.recip()
+                    } else {
+                        determinant
+                    };
+                    normal_mass = (
+                        k22 * inverse_determinant,
+                        -(inverse_determinant * k12),
+                        k11 * inverse_determinant,
+                    );
+                } else {
+                    points.truncate(1);
+                    velocity_bias[1] = 0.0;
+                }
+            }
+
             // Box2D transfers cached impulses by b2ContactID, not by the
             // contact point's array slot. A changed feature starts at zero.
-            let points = velocity_contact_points_for_states(first, second, manifold);
             let source = if warm_starting {
                 self.contact_impulses
                     .get(&pair)
@@ -115,43 +249,19 @@ impl RenderBridge {
             };
             self.solver_contact_impulses
                 .insert(pair.clone(), source.aligned_to(&points));
-
-            let mut velocity_bias = [0.0_f32; 2];
-            let restitution = first.restitution.max(second.restitution);
-            let first_center = first.center;
-            let second_center = second.center;
-            let normal_x = manifold.normal_x as f32;
-            let normal_y = manifold.normal_y as f32;
-            for (index, point) in points.into_iter().enumerate() {
-                let first_radius = (
-                    point.point_x as f32 - first_center.0,
-                    point.point_y as f32 - first_center.1,
-                );
-                let second_radius = (
-                    point.point_x as f32 - second_center.0,
-                    point.point_y as f32 - second_center.1,
-                );
-                let first_angular_velocity = first.angular_velocity;
-                let second_angular_velocity = second.angular_velocity;
-                let first_contact_velocity = (
-                    (-first_angular_velocity).mul_add(first_radius.1, first.velocity.0),
-                    first_angular_velocity.mul_add(first_radius.0, first.velocity.1),
-                );
-                let second_contact_velocity = (
-                    (-second_angular_velocity).mul_add(second_radius.1, second.velocity.0),
-                    second_angular_velocity.mul_add(second_radius.0, second.velocity.1),
-                );
-                let normal_velocity = (second_contact_velocity.0 - first_contact_velocity.0)
-                    .mul_add(
-                        normal_x,
-                        (second_contact_velocity.1 - first_contact_velocity.1) * normal_y,
-                    );
-                velocity_bias[index] = if normal_velocity < -1.0_f32 {
-                    -restitution * normal_velocity
-                } else {
-                    0.0_f32
-                };
-            }
+            self.contact_velocity_constraints.insert(
+                pair.clone(),
+                NativeContactVelocityConstraint {
+                    points: native_points,
+                    normal,
+                    normal_mass,
+                    normal_k,
+                    first,
+                    second,
+                    friction: (first.friction * second.friction).sqrt(),
+                    point_count: points.len(),
+                },
+            );
             self.contact_velocity_bias.insert(pair, velocity_bias);
         }
     }

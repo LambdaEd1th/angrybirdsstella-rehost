@@ -1,8 +1,7 @@
 //! Contact manifold records and velocity-point conditioning.
 
-use crate::ContactBodyState;
 #[cfg(test)]
-use crate::SceneObject;
+use crate::{ContactBodyState, SceneObject};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum ContactManifoldType {
@@ -51,6 +50,7 @@ pub(crate) fn velocity_contact_points(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn velocity_contact_points_for_states(
     first: ContactBodyState,
     second: ContactBodyState,

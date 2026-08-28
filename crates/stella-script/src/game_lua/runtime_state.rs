@@ -150,6 +150,10 @@ pub(crate) struct RenderBridge {
     /// separate from the contact manifold until StoreImpulses runs after the
     /// final velocity iteration.
     pub(crate) solver_contact_impulses: BTreeMap<ContactKey, CachedContactImpulse>,
+    /// Current island's 152-byte-equivalent contact velocity constraints.
+    /// InitializeVelocityConstraints freezes these before WarmStart and all
+    /// ten Gauss-Seidel passes.
+    pub(crate) contact_velocity_constraints: BTreeMap<ContactKey, NativeContactVelocityConstraint>,
     /// Temporary b2ContactSolver body-index array. It exists only while one
     /// island contact pass runs and is committed before joints run again.
     pub(crate) contact_velocity_cache: Option<NativeContactVelocityCache>,
@@ -393,6 +397,7 @@ impl Default for RenderBridge {
             contact_manifolds: BTreeMap::new(),
             velocity_contacts: BTreeMap::new(),
             solver_contact_impulses: BTreeMap::new(),
+            contact_velocity_constraints: BTreeMap::new(),
             contact_velocity_cache: None,
             contact_impulses: BTreeMap::new(),
             contact_velocity_bias: BTreeMap::new(),

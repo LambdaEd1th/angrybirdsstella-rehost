@@ -7,4 +7,7 @@ mod solve;
 mod storage;
 mod warm_start;
 
-pub(crate) use model::{ContactBodyState, ContactVelocityBodies, NativeContactVelocityCache};
+pub(crate) use model::{
+    ContactBodyState, ContactVelocityBodies, NativeContactVelocityCache,
+    NativeContactVelocityConstraint, NativeContactVelocityPoint,
+};
