@@ -49,8 +49,8 @@ fn chapter02_level02_trap_sucker_retains_authored_fixture() {
 }
 
 #[test]
-fn chapter02_level02_moving_intake_captures_a_sleeping_right_structure() {
-    let (_sandbox, runtime) = load_chapter02_level02("chapter02-l02-sleeping-capture");
+fn chapter02_level02_moving_static_intake_does_not_wake_a_sleeping_structure() {
+    let (_sandbox, runtime) = load_chapter02_level02("chapter02-l02-sleeping-intake");
     const TARGET: &str = "BLOCK_WOOD_1X10_1_9";
     {
         let mut bridge = runtime.render.lock().unwrap();
@@ -77,6 +77,26 @@ fn chapter02_level02_moving_intake_captures_a_sleeping_right_structure() {
         )
         .unwrap();
 
+    let pair_matches = |key: &ContactKey| {
+        (key.0 == TARGET && key.1 == "TrapSuckerSensor_1")
+            || (key.0 == "TrapSuckerSensor_1" && key.1 == TARGET)
+    };
+    {
+        let bridge = runtime.render.lock().unwrap();
+        assert!(
+            bridge.scene[TARGET].sleeping,
+            "SetTransform must not wake the sleeping dynamic endpoint"
+        );
+        assert!(
+            bridge.broad_phase_contacts.iter().any(pair_matches),
+            "SetTransform must still create the broad-phase pair"
+        );
+        assert!(
+            !bridge.active_contacts.keys().any(pair_matches),
+            "the sleeping pair must remain outside Contact::Update"
+        );
+    }
+
     // Purple runs physics at 30 Hz while the host callback runs at the
     // display cadence, so two 60 Hz updates cross one complete contact step.
     runtime.update(1.0 / 60.0).unwrap();
@@ -87,8 +107,8 @@ fn chapter02_level02_moving_intake_captures_a_sleeping_right_structure() {
         .get::<mlua::Table>(TARGET)
         .unwrap();
     assert!(
-        target.get::<bool>("inTrapSucker").unwrap_or(false),
-        "the sleeping right-hand structure overlapped the intake without entering it"
+        !target.get::<bool>("inTrapSucker").unwrap_or(false),
+        "a moving static sensor must not bypass ContactManager::Collide's awake gate"
     );
 }
 

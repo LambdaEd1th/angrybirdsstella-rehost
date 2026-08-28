@@ -12867,18 +12867,20 @@ wake either endpoint. The decisive gate is visible at
 a non-static body type. Therefore a moving static sensor may have a valid
 broad-phase pair with a sleeping building without ever producing BeginContact.
 
-This is the Chapter02_L02 failure reproduced in the rehost: the sensor tightly
-overlapped `BLOCK_WOOD_1X10_1_9`, but the right-hand structure had settled to
-sleep before the slightly divergent trap chain reached it. The previous 1.4
-fixture enlargement was not the underlying fix and has been removed. The
-compatibility path now retains the exact 0.5 by 0.5 fixture and, only for a
-moving `TrapSuckerSensor_*`, wakes a sleeping dynamic endpoint after an exact
-tight-fixture overlap. Fat-AABB proximity is insufficient, and every ordinary
-SetTransform call retains the no-wake native behavior. The following 30 Hz
-contact step then takes the unmodified Collide/BeginContact path and the shipped
-`blockTrapped` callback disables gravity/collision and starts its suction tween.
-A real Chapter02_L02 regression verifies the original fixture dimensions and
-capture of the sleeping right-hand structure.
+The earlier rehost failure was caused by the right-hand structure settling to
+sleep before a slightly divergent trap chain reached it. A temporary
+compatibility path woke sleeping bodies when a specifically named intake
+sensor tightly overlapped them, but that behavior does not exist in Purple and
+has now been removed. The later float32 solver, shape, broad-phase and contact
+alignment keeps the naturally simulated Chapter02_L02 target awake through
+the authored capture window, so the unmodified 0.5 by 0.5 fixture takes the
+ordinary Collide/BeginContact path and the shipped `blockTrapped` callback
+disables gravity/collision and starts its suction tween.
+
+Regressions now pin both sides of this boundary: the naturally toppled intake
+captures the authored right-hand structure, while an artificially sleeping
+structure receives a broad-phase pair but is neither woken nor passed through
+`Contact::Update` at the moving static sensor's `SetTransform` boundary.
 
 ## Animation playback update split at native procedure boundaries
 
@@ -17247,3 +17249,34 @@ AppData 120-frame release-wgpu upload/render/readback reports 20 optional data
 probes, zero invoked fallbacks, zero remaining compatibility bindings and
 empty stderr. `build/audit-native-test-point-20260829.png` retains the expected
 SHA-256 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## Native SetTransform sleep gate and trap-sucker cleanup
+
+A live IDA/Hopper recheck of `b2Body::SetTransform` at `0x10086B794`
+confirms that it writes the transform and sweep, calls
+`b2Fixture::Synchronize` for each attached fixture, then tail-calls
+`b2ContactManager::FindNewContacts` at `0x10086BC24`. It never writes either
+body's awake flag. `b2ContactManager::Collide` at `0x10086BAB0` separately
+tests whether each endpoint is both non-static and awake; when neither is, the
+loop advances without calling `b2Contact::Update` at `0x10086373C`. Hopper's
+assembly exposes the same branch and no hidden trap-sucker special case. The
+corresponding IDA symbols, plus `b2ContactManager::Destroy` at `0x10086B9B8`
+and `b2Body::ShouldCollide` at `0x10086B73C`, are named and saved in the IDB.
+
+The rehost's former `TrapSuckerSensor_*` compatibility hook violated that
+boundary by looking for tight overlaps after `SetTransform` and explicitly
+waking sleeping dynamic bodies. It has been removed. A focused original-data
+regression now proves that moving the static Chapter02_L02 intake onto an
+artificially sleeping structure creates the broad-phase pair immediately but
+does not wake the target, activate the contact, or invoke the shipped trap
+callback. The independent naturally simulated level regression still captures
+the authored right-hand structure, showing that later exact solver and contact
+alignment removed the trajectory mismatch that originally motivated the hook.
+
+The complete workspace passes 789 tests with the deliberate long-duration
+BirdRun audit ignored. Formatting, whitespace validation, strict all-target/
+all-feature Clippy and the release workspace build are clean. A fresh isolated-
+AppData 120-frame release-wgpu upload/render/readback reports 20 optional data
+probes, zero invoked fallbacks, zero remaining compatibility bindings and
+empty stderr. `build/audit-native-trap-sucker-sleep-20260829.png` has SHA-256
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.

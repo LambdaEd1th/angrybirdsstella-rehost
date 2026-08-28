@@ -8,57 +8,6 @@ impl RenderBridge {
     pub(crate) fn sync_native_body_broad_phase(&mut self, name: &str) {
         self.synchronize_native_body_proxies(name);
         self.find_new_broad_phase_contacts();
-        self.wake_trap_sucker_capture_target(name);
-    }
-
-    /// `TrapSucker.lua` drives its density-zero intake sensor with
-    /// `SetTransform` after each physics step. Purple's contact manager only
-    /// updates a static/dynamic pair while the dynamic endpoint is awake, and
-    /// the shipped level reaches the intake before that endpoint's original
-    /// island sleeps. Small trajectory differences in the rehost can instead
-    /// let the Chapter02_L02 structure settle first, leaving an exact sensor
-    /// overlap permanently stuck behind the native awake gate.
-    ///
-    /// Keep the authored 0.5 x 0.5 fixture and native contact callback. The
-    /// compatibility action is limited to a *tight-shape* overlap made by the
-    /// uniquely named moving intake sensor; fat-AABB proximity and every
-    /// other transformed static body retain ordinary SetTransform semantics.
-    fn wake_trap_sucker_capture_target(&mut self, name: &str) {
-        let Some(sensor) = self.scene.get(name).filter(|object| {
-            name.starts_with("TrapSuckerSensor_")
-                && object.sensor
-                && !object.moves_during_step()
-                && object.active
-        }) else {
-            return;
-        };
-        let sensor = sensor.clone();
-        let targets = self
-            .broad_phase_contacts
-            .iter()
-            .filter_map(|key| {
-                let (target_name, sensor_fixture, target_fixture) = if key.0 == name {
-                    (&key.1, key.2, key.3)
-                } else if key.1 == name {
-                    (&key.0, key.3, key.2)
-                } else {
-                    return None;
-                };
-                let target = self.scene.get(target_name)?;
-                (target.moves_during_step()
-                    && target.active
-                    && target.sleeping
-                    && sensor
-                        .collision_fixture_manifold(target, sensor_fixture, target_fixture)
-                        .is_some())
-                .then(|| target_name.clone())
-            })
-            .collect::<BTreeSet<_>>();
-        for target in targets {
-            if let Some(object) = self.scene.get_mut(&target) {
-                object.wake();
-            }
-        }
     }
 
     /// Synchronize exactly the bodies whose fixtures Box2D marked dirty while
