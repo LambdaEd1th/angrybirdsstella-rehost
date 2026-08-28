@@ -10,15 +10,6 @@ fn native_lua51_truthy(value: &Value) -> bool {
     !matches!(value, Value::Nil | Value::Boolean(false))
 }
 
-fn native_table_entry_count(table: &Table) -> LuaResult<usize> {
-    let mut count = 0;
-    for pair in table.clone().pairs::<Value, Value>() {
-        pair?;
-        count += 1;
-    }
-    Ok(count)
-}
-
 pub(super) fn install(
     lua: &Lua,
     globals: &Table,
@@ -38,10 +29,10 @@ pub(super) fn install(
                 Value::Table(table) => table,
                 _ => return Err(runtime_error("createTrack blocks must be table")),
             };
-            let mut points = Vec::with_capacity(native_table_entry_count(&points_table)?);
+            let mut points = Vec::with_capacity(native_lua51_table_entry_count(&points_table)?);
             let mut point_index = 1;
-            while point_index <= native_table_entry_count(&points_table)? {
-                let Value::Table(point) = points_table.raw_get::<Value>(point_index)? else {
+            while point_index <= native_lua51_table_entry_count(&points_table)? {
+                let Value::Table(point) = points_table.get::<Value>(point_index)? else {
                     return Err(runtime_error(format!(
                         "createTrack point #{point_index} must be table"
                     )));
@@ -58,8 +49,8 @@ pub(super) fn install(
                 return Ok(());
             }
             let mut index = 1;
-            while index <= native_table_entry_count(&blocks_table)? {
-                let value = blocks_table.raw_get::<Value>(index)?;
+            while index <= native_lua51_table_entry_count(&blocks_table)? {
+                let value = blocks_table.get::<Value>(index)?;
                 // sub_100529FB4 delegates to lua_tolstring. Numbers are
                 // formatted by Purple's float VM; other types yield a null
                 // pointer and therefore an empty std::string.

@@ -218,6 +218,35 @@ fn create_track_reads_native_flags_per_block_after_object_lookup() {
                     openEnded = true,
                     rotateBlock = false
                 })
+
+                createBox("metafill_first", "", 0, 0, 1, 1,
+                    1, 0, 0, true, false, 1)
+                createBox("metafill_second", "", 0, 0, 1, 1,
+                    1, 0, 0, true, false, 1)
+                local metafill_points = setmetatable({
+                    { x = 0, y = 0 }, { x = 4, y = 0 }, marker = true
+                }, {
+                    __index = function(_, key)
+                        if key == 3 then
+                            return { x = 8, y = 0 }
+                        end
+                    end
+                })
+                local metafill_blocks = setmetatable({
+                    "metafill_first", marker = true
+                }, {
+                    __index = function(_, key)
+                        if key == 2 then
+                            return "metafill_second"
+                        end
+                    end
+                })
+                numeric_index_metafill_succeeds = pcall(createTrack, {
+                    points = metafill_points,
+                    blocks = metafill_blocks,
+                    openEnded = true,
+                    rotateBlock = false
+                })
             "#,
         )
         .unwrap();
@@ -238,12 +267,19 @@ fn create_track_reads_native_flags_per_block_after_object_lookup() {
             .unwrap()
     );
     assert!(environment.get::<bool>("extra_point_key_fails").unwrap());
+    assert!(
+        environment
+            .get::<bool>("numeric_index_metafill_succeeds")
+            .unwrap()
+    );
 
     let bridge = runtime.render.lock().unwrap();
     assert!(bridge.tracks["first"].rotate_block);
     assert!(bridge.tracks["second"].rotate_block);
     assert!(bridge.tracks.contains_key("partial"));
     assert!(bridge.tracks.contains_key("1"));
+    assert_eq!(bridge.tracks["metafill_first"].points.len(), 3);
+    assert_eq!(bridge.tracks["metafill_second"].points.len(), 3);
 }
 
 #[test]
@@ -383,8 +419,16 @@ fn object_track_overlap_uses_chain_distance_and_only_the_body_list_head() {
                 aabb_only = objectAndTrackOverlap("box", {
                     points = { { x = -2, y = 0.1 }, { x = -0.1, y = 2 } }
                 })
-                wrong_table_shape = objectAndTrackOverlap("box", {
-                    { x = -3, y = 0 }, { x = 3, y = 0 }
+                wrong_table_shape_fails = not pcall(
+                    objectAndTrackOverlap, "box", {
+                        { x = -3, y = 0 }, { x = 3, y = 0 }
+                    }
+                )
+                coerced_coordinates = objectAndTrackOverlap("box", {
+                    points = {
+                        { x = "-3", y = false },
+                        { x = "3", y = "not-a-number" }
+                    }
                 })
                 createCircle("negative_circle", "", 0, 5, 1,
                     1, 0, 0, true, false, 1)
@@ -411,7 +455,8 @@ fn object_track_overlap_uses_chain_distance_and_only_the_body_list_head() {
     assert!(environment.get::<bool>("within_skin").unwrap());
     assert!(!environment.get::<bool>("outside_skin").unwrap());
     assert!(!environment.get::<bool>("aabb_only").unwrap());
-    assert!(!environment.get::<bool>("wrong_table_shape").unwrap());
+    assert!(environment.get::<bool>("wrong_table_shape_fails").unwrap());
+    assert!(environment.get::<bool>("coerced_coordinates").unwrap());
     // b2Distance's use-radii branch returns zero when the two shape cores
     // overlap, even when native_resizeRadius installed a negative radius.
     assert!(environment.get::<bool>("negative_core_overlap").unwrap());
@@ -505,9 +550,32 @@ fn track_joint_registration_matches_native_adapters_types_and_float32() {
                 overlap_point_type_fails = not pcall(
                     objectAndTrackOverlap, "body", { points = { false } }
                 )
-                overlap_coordinate_type_fails = not pcall(
+                overlap_coordinates_coerce = pcall(
                     objectAndTrackOverlap, "body", {
                         points = { { x = false, y = 0 } }
+                    }
+                )
+                overlap_points_read = 0
+                local missing_descriptor = setmetatable({}, {
+                    __index = function(_, key)
+                        if key == "points" then
+                            overlap_points_read = overlap_points_read + 1
+                            return {}
+                        end
+                    end
+                })
+                overlap_missing_after_points_fails = not pcall(
+                    objectAndTrackOverlap, "missing", missing_descriptor
+                )
+                createNonPhysicsObject("overlap_nonphysics", "", 0, 0, 1)
+                overlap_nonphysics_still_checks_points = not pcall(
+                    objectAndTrackOverlap, "overlap_nonphysics", {}
+                )
+                overlap_extra_key_fails = not pcall(
+                    objectAndTrackOverlap, "body", {
+                        points = {
+                            { x = -2, y = 0 }, { x = 2, y = 0 }, marker = true
+                        }
                     }
                 )
                 vertices_name_type_fails = not pcall(getObjectVertices, 1)
@@ -559,11 +627,19 @@ fn track_joint_registration_matches_native_adapters_types_and_float32() {
         "overlap_table_type_fails",
         "overlap_missing_object_fails",
         "overlap_point_type_fails",
-        "overlap_coordinate_type_fails",
+        "overlap_missing_after_points_fails",
+        "overlap_nonphysics_still_checks_points",
+        "overlap_extra_key_fails",
         "vertices_name_type_fails",
     ] {
         assert!(environment.get::<bool>(field).unwrap(), "{field}");
     }
+    assert!(
+        environment
+            .get::<bool>("overlap_coordinates_coerce")
+            .unwrap()
+    );
+    assert_eq!(environment.get::<i64>("overlap_points_read").unwrap(), 1);
     let world = environment
         .get::<mlua::Table>("objects")
         .unwrap()

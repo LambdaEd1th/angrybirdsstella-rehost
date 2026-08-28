@@ -9,7 +9,7 @@ mod value;
 
 pub(crate) use conversion::{native_fcvtzs_f32, native_fcvtzu_f32};
 pub(crate) use diagnostics::{describe_value, trace_object_loader};
-pub(crate) use lua51::{native_lua51_number, native_lua51_string};
+pub(crate) use lua51::{native_lua51_number, native_lua51_string, native_lua51_table_entry_count};
 pub(crate) use strict::{
     native_required_boolean, native_required_borrowed_string, native_required_integer,
     native_required_number, native_required_string, native_required_table,

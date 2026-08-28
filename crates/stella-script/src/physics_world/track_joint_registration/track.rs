@@ -63,45 +63,54 @@ pub(super) fn install(
             let track = args.iter().nth(1).and_then(value_table).ok_or_else(|| {
                 runtime_error("bad argument #2 to 'objectAndTrackOverlap' (table expected)")
             })?;
+            // sub_1000222E4 resolves and type-checks this field before the
+            // throwing object lookup. Normal table access intentionally
+            // retains a descriptor __index callback.
+            let points_table = match track.get::<Value>("points")? {
+                Value::Table(points) => points,
+                _ => {
+                    return Err(runtime_error("objectAndTrackOverlap points must be table"));
+                }
+            };
+            {
+                let bridge = track_overlap_bridge
+                    .lock()
+                    .expect("render bridge lock poisoned");
+                let Some(object) = bridge.scene.get(&name) else {
+                    // sub_10003D208 uses the same throwing sub_10005DAF8 lookup
+                    // as createTrack/getCurrentTrackAngle before it inspects the
+                    // temporary chain points.
+                    return Err(runtime_error(format!("Missing object: {name}")));
+                };
+                if !object.has_physics_body() {
+                    return Ok(false);
+                }
+            }
+            let mut points = Vec::with_capacity(native_lua51_table_entry_count(&points_table)?);
+            let mut index = 1;
+            while index <= native_lua51_table_entry_count(&points_table)? {
+                let Value::Table(point) = points_table.get::<Value>(index)? else {
+                    return Err(runtime_error(format!(
+                        "objectAndTrackOverlap point #{index} must be table"
+                    )));
+                };
+                let x = point.get::<Value>("x")?;
+                let y = point.get::<Value>("y")?;
+                points.push((
+                    native_lua51_number(&x).unwrap_or(0.0),
+                    native_lua51_number(&y).unwrap_or(0.0),
+                ));
+                index += 1;
+            }
             let bridge = track_overlap_bridge
                 .lock()
                 .expect("render bridge lock poisoned");
             let Some(object) = bridge.scene.get(&name) else {
-                // sub_10003D208 uses the same throwing sub_10005DAF8 lookup
-                // as createTrack/getCurrentTrackAngle before it inspects the
-                // temporary chain points.
                 return Err(runtime_error(format!("Missing object: {name}")));
             };
-            if !object.has_physics_body() {
-                return Ok(false);
-            }
-            let points = match track.raw_get::<Value>("points")? {
-                Value::Table(points) => {
-                    let mut parsed = Vec::with_capacity(points.raw_len());
-                    for index in 1..=points.raw_len() {
-                        let Value::Table(point) = points.raw_get::<Value>(index)? else {
-                            return Err(runtime_error(format!(
-                                "objectAndTrackOverlap point #{index} must be table"
-                            )));
-                        };
-                        parsed.push((
-                            f64::from(
-                                table_required_number(&point, "x", "objectAndTrackOverlap")? as f32
-                            ),
-                            f64::from(
-                                table_required_number(&point, "y", "objectAndTrackOverlap")? as f32
-                            ),
-                        ));
-                    }
-                    Some(parsed)
-                }
-                _ => None,
-            };
-            Ok(points.is_some_and(|points| {
-                points
-                    .windows(2)
-                    .any(|pair| object.head_fixture_overlaps_track_segment((pair[0], pair[1])))
-            }))
+            Ok(points
+                .windows(2)
+                .any(|pair| object.head_fixture_overlaps_track_segment((pair[0], pair[1]))))
         })?,
     )?;
     Ok(())

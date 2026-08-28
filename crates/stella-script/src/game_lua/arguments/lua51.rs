@@ -1,6 +1,17 @@
 //! Coercions used only by hand-written Lua 5.1 C-API members.
 
-use mlua::Value;
+use mlua::{Result as LuaResult, Table, Value};
+
+/// Purple's `LuaTable::size` walks every key with `lua_next`; it is not the
+/// array boundary returned by `lua_objlen`/`raw_len`.
+pub(crate) fn native_lua51_table_entry_count(table: &Table) -> LuaResult<usize> {
+    let mut count = 0;
+    for pair in table.clone().pairs::<Value, Value>() {
+        pair?;
+        count += 1;
+    }
+    Ok(count)
+}
 
 /// Lua 5.1's direct `lua_isnumber`/`lua_tonumber` pair also accepts numeric
 /// strings. Generated adapters use `arguments::strict` instead.

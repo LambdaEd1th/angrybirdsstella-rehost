@@ -16959,10 +16959,10 @@ destroy.
 The adjacent `objectAndTrackOverlap` entry `sub_10003D208` calls throwing
 `sub_10005DAF8` at `0x10003D27C` before testing the recovered body pointer at
 `0x10003D284`. Its former Rust path instead returned false for a missing name.
-The native point loop also indexes every element and its numeric `x`/`y`
-fields rather than filtering malformed entries out of the temporary chain.
-Both lookup order and strict point conversion now match, while an existing
-non-physics object retains the native false result.
+The native point loop indexes every element rather than filtering malformed
+entries out of the temporary chain. An existing non-physics object retains the
+native false result; the descriptor-field and coordinate coercion order is
+covered by the later complete entry audit below.
 
 The same audit checked the apparently unused `openEnded` field rather than
 guessing behavior from its name. `sub_10086D9F0` stores it at track `+0x48`,
@@ -17017,4 +17017,40 @@ strict all-target/all-feature Clippy and the release build are clean. A fresh
 isolated-AppData 120-frame release-wgpu upload/readback reports 20 optional
 data probes, zero invoked fallbacks, zero remaining compatibility bindings and
 empty stderr. Its PNG SHA-256 remains
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## Native overlap descriptor order and table indexing
+
+Re-reading all of `objectAndTrackOverlap` (`sub_10003D208`) corrected an
+overly strict interpretation from the earlier lookup audit. The entry obtains
+argument two, resolves `points` through strict-table helper `sub_1000222E4`,
+and only then calls throwing object lookup `sub_10005DAF8`. It tests the body
+pointer before walking point elements, so a missing or non-table `points`
+field fails even for a non-physics object, while a missing object still avoids
+the per-point reads after the field itself was resolved. Rust now keeps this
+exact observable ordering without holding its scene mutex across Lua
+metamethod callbacks.
+
+Both overlap and create paths call `sub_10052B324`, which counts every table
+entry through `lua_next`, followed by numeric-index helper `sub_100070444`.
+That helper uses ordinary Lua get-table semantics and therefore honors an
+`__index` value supplied for a missing consecutive integer; it then strictly
+requires the result to be a point table. The shared Rust Lua 5.1 entry-count
+helper now serves both paths, and their numeric indexing uses normal rather
+than raw table access.
+
+The point fields themselves remain deliberately non-strict. Each `x` and `y`
+value reaches `sub_10052A014`/`sub_100508AF0`: numeric strings are converted in
+Purple float32 precision and nil, booleans or other nonnumeric values become
+zero. Regressions now distinguish malformed point elements from coercible
+coordinates, pin `points`-before-object lookup, cover non-physics ordering,
+extra-key failures, and prove metatable-filled numeric slots work in
+`createTrack`.
+
+The complete workspace remains at 775 passing tests with the deliberate
+long-duration BirdRun audit ignored. Formatting, diff validation, strict all-
+target/all-feature Clippy and the release build are clean. A fresh isolated-
+AppData 120-frame release-wgpu upload/readback reports 20 optional probes,
+zero invoked fallbacks, zero remaining compatibility bindings and empty
+stderr. Its PNG SHA-256 remains
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
