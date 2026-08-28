@@ -15925,3 +15925,25 @@ values. This also preserves native rounding at the boundary: a Lua double
 that rounds to exactly `1.0f` enters the distance branch, a nearby value that
 rounds above it does not, and a value just below seven that rounds to `7.0f`
 uses the custom handler. NaN follows the unordered non-custom, non-class path.
+
+The common joint fields use Purple's float-based Lua 5.1 coercions. IDA shows
+`name`, `end1` and `end2` entering `sub_100529FB4` at
+`0x100037478`, `0x1000374CC` and `0x100037520`. Its lower helper
+`sub_100508E38` accepts an existing string or calls `sub_100522214` for a
+number. Both IDA and Hopper recover that conversion exactly: the float32 value
+is promoted with `fcvt d0, s0` and passed to `sprintf("%.9g")` at
+`0x10052224C..0x100522268`; nil, Boolean and table values become the empty
+string instead. The four anchors are direct `sub_10052A014` reads at
+`0x100037A48`, `0x100037A98`, `0x100037AF0` and `0x100037B44`. Its
+`sub_100508AF0` implementation accepts float32 values and Lua numeric strings,
+including the Lua 5.1 hexadecimal path, while every other type becomes zero.
+
+The shared Rust Lua 5.1 coercion layer now narrows both direct numbers and
+parsed numeric strings to float32, and its number-to-string path implements
+Purple's locale-independent `%.9g` result. A 100,000-value Apple corpus checks
+the pure-Rust formatter byte-for-byte against Darwin `snprintf`. Joint names
+and endpoint lookups use this conversion, and coordType-one anchor subtraction
+now occurs in float32 before widening into retained state. A focused
+regression covers numeric names in fixed/scientific forms, hexadecimal and
+wrong-typed anchors, canonical publication, and a 16,777,217 boundary where
+the former host-double subtraction produced the wrong local anchor.

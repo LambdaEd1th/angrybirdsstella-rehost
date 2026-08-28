@@ -253,6 +253,56 @@ fn joint_creation_ignores_non_native_length_and_wrong_typed_optional_fields() {
 }
 
 #[test]
+fn joint_common_fields_use_purple_float_lua_string_and_anchor_coercions() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createBox("1e+09", "", 16777215, 0, 1, 1, 0, 0, 0, false, false, 1)
+                createBox("9.99999975e-06", "", 0, 0, 1, 1, 1, 0, 0, false, false, 1)
+                createJoint({
+                    name = 123456789,
+                    end1 = 1000000000,
+                    end2 = 0.00001,
+                    type = 1,
+                    coordType = 1,
+                    x1 = 16777217,
+                    y1 = "0x10",
+                    x2 = false,
+                    y2 = {}
+                })
+            "#,
+        )
+        .unwrap();
+
+    let bridge = runtime.render.lock().unwrap();
+    let joint = &bridge.joints["123456792"];
+    assert_eq!(joint.first, "1e+09");
+    assert_eq!(joint.second, "9.99999975e-06");
+    // The Lua number first narrows to 16,777,216f before subtracting the
+    // body's exact 16,777,215f position. Double subtraction would yield 2.
+    assert_eq!(joint.first_anchor, (1.0, 16.0));
+    assert_eq!(joint.second_anchor, (0.0, 0.0));
+    drop(bridge);
+
+    let descriptor = game_environment(runtime.lua())
+        .unwrap()
+        .get::<mlua::Table>("objects")
+        .unwrap()
+        .get::<mlua::Table>("joints")
+        .unwrap()
+        .get::<mlua::Table>("123456792")
+        .unwrap();
+    assert_eq!(descriptor.get::<String>("name").unwrap(), "123456792");
+    assert_eq!(descriptor.get::<String>("end1").unwrap(), "1e+09");
+    assert_eq!(descriptor.get::<String>("end2").unwrap(), "9.99999975e-06");
+    assert_eq!(descriptor.get::<f64>("x1").unwrap(), 16_777_216.0);
+    assert_eq!(descriptor.get::<f64>("y1").unwrap(), 16.0);
+    assert_eq!(descriptor.get::<f64>("x2").unwrap(), 0.0);
+    assert_eq!(descriptor.get::<f64>("y2").unwrap(), 0.0);
+}
+
+#[test]
 fn joint_type_dispatch_uses_native_float32_threshold_and_exact_class_values() {
     let runtime = unlocked_test_runtime();
     runtime

@@ -2,7 +2,10 @@
 
 use mlua::{Lua, Result as LuaResult, Value};
 
-use crate::{RenderBridge, game_environment, native_hypot, runtime_error};
+use crate::{
+    RenderBridge, game_environment, native_hypot, native_lua51_number, native_lua51_string,
+    runtime_error,
+};
 
 use super::super::super::geometry::inverse_rotate_vector;
 use super::model::JointGeometry;
@@ -13,9 +16,9 @@ pub(super) fn decode_joint_geometry(
     table: &mlua::Table,
     joint_type: f32,
 ) -> LuaResult<Option<JointGeometry>> {
-    let name = table.get::<String>("name").unwrap_or_default();
-    let first_name = table.get::<String>("end1").unwrap_or_default();
-    let second_name = table.get::<String>("end2").unwrap_or_default();
+    let name = native_table_string(table, "name")?;
+    let first_name = native_table_string(table, "end1")?;
+    let second_name = native_table_string(table, "end2")?;
     let Some(first) = bridge.scene.get(&first_name) else {
         return missing_endpoint(lua, &first_name, &name);
     };
@@ -29,12 +32,12 @@ pub(super) fn decode_joint_geometry(
         return Ok(None);
     }
     let raw_first_anchor = (
-        table.get::<f64>("x1").unwrap_or(0.0),
-        table.get::<f64>("y1").unwrap_or(0.0),
+        native_table_number(table, "x1")?,
+        native_table_number(table, "y1")?,
     );
     let raw_second_anchor = (
-        table.get::<f64>("x2").unwrap_or(0.0),
-        table.get::<f64>("y2").unwrap_or(0.0),
+        native_table_number(table, "x2")?,
+        native_table_number(table, "y2")?,
     );
     let coord_type = native_optional_number(table, "coordType")?
         .map(|value| (value + 0.5_f32).floor() as i32)
@@ -45,14 +48,23 @@ pub(super) fn decode_joint_geometry(
         // sub_100038474 subtracts translation but deliberately does not
         // inverse-rotate before the joint definition later rotates it.
         1 => (
-            (raw_first_anchor.0 - first.x, raw_first_anchor.1 - first.y),
             (
-                raw_second_anchor.0 - second.x,
-                raw_second_anchor.1 - second.y,
+                f64::from(raw_first_anchor.0 - first.x as f32),
+                f64::from(raw_first_anchor.1 - first.y as f32),
+            ),
+            (
+                f64::from(raw_second_anchor.0 - second.x as f32),
+                f64::from(raw_second_anchor.1 - second.y as f32),
             ),
         ),
         // All 3,803 shipped physical descriptors already use body-local data.
-        2 => (raw_first_anchor, raw_second_anchor),
+        2 => (
+            (f64::from(raw_first_anchor.0), f64::from(raw_first_anchor.1)),
+            (
+                f64::from(raw_second_anchor.0),
+                f64::from(raw_second_anchor.1),
+            ),
+        ),
         _ => ((0.0, 0.0), (0.0, 0.0)),
     };
     // Purple narrows descriptor.type to float32 once, uses >= 7 for custom
@@ -182,6 +194,14 @@ fn exact_native_joint_class(value: f32) -> i32 {
     } else {
         0
     }
+}
+
+fn native_table_number(table: &mlua::Table, field: &str) -> LuaResult<f32> {
+    Ok(native_lua51_number(&table.raw_get::<Value>(field)?).unwrap_or(0.0) as f32)
+}
+
+fn native_table_string(table: &mlua::Table, field: &str) -> LuaResult<String> {
+    Ok(native_lua51_string(&table.raw_get::<Value>(field)?).unwrap_or_default())
 }
 
 fn native_optional_number(table: &mlua::Table, field: &str) -> LuaResult<Option<f32>> {
