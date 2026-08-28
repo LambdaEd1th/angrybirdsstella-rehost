@@ -18,6 +18,24 @@ fn recovered_weld_matrix_couples_off_center_linear_and_angular_velocity() {
         .unwrap();
 
     let mut bridge = runtime.render.lock().unwrap();
+    bridge.begin_joint_step(1.0 / 30.0);
+    {
+        let joint = &bridge.joints["weld"];
+        for value in [
+            joint.weld_radius_first.0,
+            joint.weld_radius_first.1,
+            joint.weld_radius_second.0,
+            joint.weld_radius_second.1,
+            joint.weld_mass_matrix.0,
+            joint.weld_mass_matrix.1,
+            joint.weld_mass_matrix.2,
+            joint.weld_mass_matrix.3,
+            joint.weld_mass_matrix.4,
+            joint.weld_mass_matrix.5,
+        ] {
+            assert_eq!(value, f64::from(value as f32));
+        }
+    }
     for _ in 0..10 {
         bridge.solve_joints(1.0 / 30.0, true, false);
     }

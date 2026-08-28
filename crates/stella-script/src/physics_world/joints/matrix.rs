@@ -17,10 +17,16 @@ pub(crate) fn joint_mass_matrix(
     let r_a = (r_a.0 as f32, r_a.1 as f32);
     let r_b = (r_b.0 as f32, r_b.1 as f32);
     let mass_sum = mass_a + mass_b;
-    let k11 = (inertia_a * r_a.1).mul_add(r_a.1, (inertia_b * r_b.1).mul_add(r_b.1, mass_sum));
+    let r_a_y_squared = r_a.1 * r_a.1;
+    let mut k11 = inertia_a.mul_add(r_a_y_squared, mass_sum);
+    let r_b_y_squared = r_b.1 * r_b.1;
+    k11 = inertia_b.mul_add(r_b_y_squared, k11);
     let k12 = (-inertia_a * r_a.0).mul_add(r_a.1, (-inertia_b * r_b.0) * r_b.1);
     let k13 = (-inertia_a).mul_add(r_a.1, -inertia_b * r_b.1);
-    let k22 = (inertia_a * r_a.0).mul_add(r_a.0, (inertia_b * r_b.0).mul_add(r_b.0, mass_sum));
+    let r_a_x_squared = r_a.0 * r_a.0;
+    let mut k22 = inertia_a.mul_add(r_a_x_squared, mass_sum);
+    let r_b_x_squared = r_b.0 * r_b.0;
+    k22 = inertia_b.mul_add(r_b_x_squared, k22);
     let k23 = inertia_a.mul_add(r_a.0, inertia_b * r_b.0);
     (
         f64::from(k11),

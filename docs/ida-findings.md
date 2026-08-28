@@ -16093,3 +16093,36 @@ the predictive slack term, exact-zero reciprocal, unilateral accumulator and
 fused body writes. Regressions cover the native short-axis cache reset and a
 slack four-unit rope that reduces a twenty-unit outward velocity to fifteen in
 one 30 Hz step before it can overextend.
+
+## Complete weld-joint cache and 3-by-3 solver pipeline
+
+The `11b2WeldJoint` RTTI string at `0x100A0CA7C` identifies the vtable group
+at `0x100AB1BC8`. Its three solver slots resolve to `sub_100869F54`
+(`InitVelocityConstraints`), `sub_10086A214` (`SolveVelocityConstraints`) and
+`sub_10086A398` (`SolvePositionConstraints`). IDA and Hopper show float32
+body-array operands throughout all three functions.
+
+Initialization reconstructs and stores both rotated anchor radii at joint
+offsets `+168..+180`, builds the complete symmetric 3-by-3 effective-mass
+matrix at `+216..+248`, scales the three accumulated impulses, and warm-starts
+the bodies. The diagonal matrix entries preserve Purple's native order: start
+with the two inverse masses, fuse body A's squared lever arm, then fuse body
+B's squared lever arm. Velocity iterations read this cache instead of
+rebuilding geometry.
+
+The relative point velocity at `0x10086A278..0x10086A2A8` first forms body
+B's rotational point velocity, subtracts body A's linear velocity, and only
+then fuses body A's rotational terms. `sub_100862D60` solves the cached
+symmetric matrix against that positive error; the result is subtracted from
+the accumulated impulse and its negation is applied to both bodies. This
+ordering matters for the exact float result of eccentric beams and compound
+vehicle frames.
+
+Position solving recomputes the live radii and effective-mass matrix, keeps
+the unwrapped relative-angle error, solves the positive position error and
+applies its negation. Its acceptance thresholds are the exact native bit
+patterns `0x3A83126F` for linear error and `0x3D0EFA36` for angular error.
+Rust now follows this cache lifecycle, float/FMA ordering, 3-by-3 solve and
+threshold behavior. The regression initializes once before repeated velocity
+iterations and verifies that every cached radius and matrix component is an
+exact widened float32 value.

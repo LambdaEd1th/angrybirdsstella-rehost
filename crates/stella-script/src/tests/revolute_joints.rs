@@ -288,7 +288,10 @@ fn recovered_revolute_limit_solver_couples_anchor_and_angular_impulses() {
     assert!(joint.linear_impulse_x.abs() > 0.0 || joint.linear_impulse_y.abs() > 0.0);
     assert_eq!(
         bridge.scene["arm"].angular_velocity,
-        f64::from(20.0_f32 * f32::EPSILON)
+        // 0x100868C98..0x100868CF4 accumulates body A and then body B into
+        // each diagonal matrix entry; retaining the old nested grouping left
+        // twenty ULPs here instead of Purple's fourteen.
+        f64::from(14.0_f32 * f32::EPSILON)
     );
 }
 
