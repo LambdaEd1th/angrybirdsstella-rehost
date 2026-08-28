@@ -142,6 +142,42 @@ fn revolute_motor_uses_type_three_and_accumulates_max_torque_once_per_step() {
 }
 
 #[test]
+fn revolute_motor_keeps_native_float_clamp_for_negative_torque_limit() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createBox("anchor", "", 0, 0, 1, 1, 0, 0, 0, true, false, 1)
+                createBox("rotor", "", 0, 0, 1, 1, 1, 0, 0, true, false, 1)
+                createJoint({
+                    name = "motor", end1 = "anchor", end2 = "rotor",
+                    type = 3, x1 = 0, y1 = 0, x2 = 0, y2 = 0,
+                    motor = true, motorSpeed = 10, maxTorque = -3
+                })
+            "#,
+        )
+        .unwrap();
+
+    let mut bridge = runtime.render.lock().unwrap();
+    let step = 1.0 / 60.0;
+    bridge.begin_joint_step(step);
+    bridge.solve_joints(step, true, false);
+
+    let maximum_impulse = step as f32 * -3.0_f32;
+    let expected_impulse = (10.0_f32 / 6.0_f32)
+        .min(maximum_impulse)
+        .max(-maximum_impulse);
+    assert_eq!(
+        bridge.joints["motor"].motor_impulse,
+        f64::from(expected_impulse)
+    );
+    assert_eq!(
+        bridge.scene["rotor"].angular_velocity,
+        f64::from(6.0_f32 * expected_impulse)
+    );
+}
+
+#[test]
 fn awake_island_borrows_native_joint_edges_and_wakes_the_complete_sleeping_chain() {
     let runtime = unlocked_test_runtime();
     runtime
@@ -278,6 +314,28 @@ fn recovered_revolute_limit_solver_couples_anchor_and_angular_impulses() {
 
     let mut bridge = runtime.render.lock().unwrap();
     bridge.begin_joint_step(1.0 / 60.0);
+    {
+        let joint = &bridge.joints["limited"];
+        for value in [
+            joint.revolute_radius_first.0,
+            joint.revolute_radius_first.1,
+            joint.revolute_radius_second.0,
+            joint.revolute_radius_second.1,
+            joint.revolute_inverse_mass_first,
+            joint.revolute_inverse_mass_second,
+            joint.revolute_inverse_inertia_first,
+            joint.revolute_inverse_inertia_second,
+            joint.revolute_mass_matrix.0,
+            joint.revolute_mass_matrix.1,
+            joint.revolute_mass_matrix.2,
+            joint.revolute_mass_matrix.3,
+            joint.revolute_mass_matrix.4,
+            joint.revolute_mass_matrix.5,
+            joint.revolute_motor_mass,
+        ] {
+            assert_eq!(value, f64::from(value as f32));
+        }
+    }
     assert_eq!(
         bridge.joints["limited"].limit_state,
         JointLimitState::AtUpper

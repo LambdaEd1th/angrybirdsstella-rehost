@@ -14,14 +14,10 @@ impl RenderBridge {
     ) -> bool {
         const ANGULAR_SLOP: f32 = f32::from_bits(0x3d0e_fa36);
         const MAX_ANGULAR_CORRECTION: f32 = f32::from_bits(0x3e0e_fa36);
-        let inertia_a = first.inverse_inertia() as f32;
-        let inertia_b = second.inverse_inertia() as f32;
+        let inertia_a = joint.revolute_inverse_inertia_first as f32;
+        let inertia_b = joint.revolute_inverse_inertia_second as f32;
         let inverse_angular_mass = inertia_a + inertia_b;
-        let motor_mass = if inverse_angular_mass > 0.0_f32 {
-            inverse_angular_mass.recip()
-        } else {
-            0.0_f32
-        };
+        let motor_mass = joint.revolute_motor_mass as f32;
         let mut angular_error = 0.0_f32;
         if joint.limit_state != JointLimitState::Inactive && inverse_angular_mass != 0.0_f32 {
             let angle = second.angle() as f32 - first.angle() as f32 - joint.rest_angle as f32;
@@ -58,10 +54,10 @@ impl RenderBridge {
             return true;
         };
         let (r_a, r_b) = joint_anchor_offsets(joint, &first, &second);
-        let mass_a = first.inverse_mass_for_solver();
-        let mass_b = second.inverse_mass_for_solver();
-        let inertia_a = first.inverse_inertia();
-        let inertia_b = second.inverse_inertia();
+        let mass_a = joint.revolute_inverse_mass_first;
+        let mass_b = joint.revolute_inverse_mass_second;
+        let inertia_a = joint.revolute_inverse_inertia_first;
+        let inertia_b = joint.revolute_inverse_inertia_second;
         let matrix = joint_mass_matrix(mass_a, mass_b, inertia_a, inertia_b, r_a, r_b);
         let delta = joint_anchor_delta(&first, &second, r_a, r_b);
         let linear_impulse = solve_symmetric_2x2(
@@ -80,6 +76,8 @@ impl RenderBridge {
             linear_impulse.1,
             0.0,
         );
-        (delta.0 as f32).hypot(delta.1 as f32) <= 0.001_f32 && angular_error <= ANGULAR_SLOP
+        let delta = (delta.0 as f32, delta.1 as f32);
+        let linear_error = delta.1.mul_add(delta.1, delta.0 * delta.0).sqrt();
+        linear_error <= f32::from_bits(0x3a83_126f) && angular_error <= ANGULAR_SLOP
     }
 }

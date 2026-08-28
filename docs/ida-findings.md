@@ -16126,3 +16126,33 @@ Rust now follows this cache lifecycle, float/FMA ordering, 3-by-3 solve and
 threshold behavior. The regression initializes once before repeated velocity
 iterations and verifies that every cached radius and matrix component is an
 exact widened float32 value.
+
+## Complete revolute-joint cache, motor and limit pipeline
+
+The revolute solver vtable maps `sub_100868B90` to initialization,
+`sub_100868F20` to a velocity iteration and `sub_1008692B4` to a position
+iteration. Initialization stores both body indices and local centers, then
+caches the two radii at `+196..+208`, inverse masses/inertias at `+228..+240`,
+the symmetric 3-by-3 matrix at `+244..+276`, and the reciprocal angular motor
+mass at `+280`. The matrix diagonal construction at
+`0x100868C98..0x100868CF4` adds body A before body B; the old nested host
+grouping left a different residual in an eccentric limited hinge.
+
+Limit classification uses the exact two-angular-slop value `0x3D8EFA36`,
+clears the accumulated limit impulse whenever the class changes, and preserves
+the native four-float warm-start vector layout. Velocity iterations consume
+the cached radii, masses, inertias, matrix and motor mass. Their point-velocity
+error at `0x100869000..0x100869038` forms body B first, subtracts body A's
+linear velocity and then fuses body A's rotation. The inactive-limit branch
+independently constructs the negative error at `0x1008690AC..0x1008690E0`
+instead of negating the already rounded positive pair.
+
+The motor clamp at `0x100868FB4..0x100868FC8` multiplies the authored torque
+by the time step and executes raw `FMIN` followed by `FMAX`; it does not
+pre-clamp a negative torque to zero. Rust now preserves that unusual boundary,
+matching the already recovered prismatic motor behavior. Position solving
+uses the cached inverse masses and inertias, applies the angular correction
+before rebuilding its live radii, and evaluates the linear norm with the
+native multiply/FMA/square-root sequence. Regressions cover exact widened
+cache values, the negative-torque clamp, eccentric limit coupling, Chapter 02
+level 11 wheel axles, and the level 56 upper vehicle's settle-to-sleep path.

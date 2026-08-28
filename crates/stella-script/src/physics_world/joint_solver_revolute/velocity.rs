@@ -13,27 +13,21 @@ impl RenderBridge {
         second: &S,
         step: f64,
     ) {
-        let (r_a, r_b) = joint_anchor_offsets(joint, first, second);
-        let mass_a = first.inverse_mass_for_solver() as f32;
-        let mass_b = second.inverse_mass_for_solver() as f32;
-        let inertia_a = first.inverse_inertia() as f32;
-        let inertia_b = second.inverse_inertia() as f32;
-        let r_a = (r_a.0 as f32, r_a.1 as f32);
-        let r_b = (r_b.0 as f32, r_b.1 as f32);
-        let matrix = joint_mass_matrix(
-            f64::from(mass_a),
-            f64::from(mass_b),
-            f64::from(inertia_a),
-            f64::from(inertia_b),
-            (f64::from(r_a.0), f64::from(r_a.1)),
-            (f64::from(r_b.0), f64::from(r_b.1)),
+        let r_a = (
+            joint.revolute_radius_first.0 as f32,
+            joint.revolute_radius_first.1 as f32,
         );
+        let r_b = (
+            joint.revolute_radius_second.0 as f32,
+            joint.revolute_radius_second.1 as f32,
+        );
+        let mass_a = joint.revolute_inverse_mass_first as f32;
+        let mass_b = joint.revolute_inverse_mass_second as f32;
+        let inertia_a = joint.revolute_inverse_inertia_first as f32;
+        let inertia_b = joint.revolute_inverse_inertia_second as f32;
+        let matrix = joint.revolute_mass_matrix;
         let inverse_angular_mass = inertia_a + inertia_b;
-        let motor_mass = if inverse_angular_mass > 0.0_f32 {
-            inverse_angular_mass.recip()
-        } else {
-            0.0_f32
-        };
+        let motor_mass = joint.revolute_motor_mass as f32;
         let first_velocity = first.velocity();
         let second_velocity = second.velocity();
         let mut velocity_a = (first_velocity.0 as f32, first_velocity.1 as f32);
@@ -47,38 +41,44 @@ impl RenderBridge {
         {
             let target_speed = joint.motor_speed.unwrap_or(0.0) as f32;
             let old_impulse = joint.motor_impulse as f32;
-            let maximum_impulse = step as f32 * (joint.max_torque as f32).max(0.0_f32);
+            let maximum_impulse = step as f32 * joint.max_torque as f32;
             let speed_error = target_speed + angular_velocity_a - angular_velocity_b;
             let new_impulse = motor_mass
                 .mul_add(speed_error, old_impulse)
-                .clamp(-maximum_impulse, maximum_impulse);
+                .min(maximum_impulse)
+                .max(-maximum_impulse);
             let motor_delta = new_impulse - old_impulse;
             new_motor_impulse = new_impulse;
             angular_velocity_a = (-inertia_a).mul_add(motor_delta, angular_velocity_a);
             angular_velocity_b = inertia_b.mul_add(motor_delta, angular_velocity_b);
         }
 
-        // 0x100868F20 constructs Cdot in float32 after the motor adjustment.
-        let point_velocity_a = (
-            (-angular_velocity_a).mul_add(r_a.1, velocity_a.0),
-            angular_velocity_a.mul_add(r_a.0, velocity_a.1),
-        );
-        let point_velocity_b = (
-            (-angular_velocity_b).mul_add(r_b.1, velocity_b.0),
-            angular_velocity_b.mul_add(r_b.0, velocity_b.1),
-        );
-        let point_error = (
-            point_velocity_b.0 - point_velocity_a.0,
-            point_velocity_b.1 - point_velocity_a.1,
-        );
+        // Exact 0x100869000..0x100869038 order: build body B's point
+        // velocity, subtract body A's linear velocity, then fuse body A's
+        // rotational contribution.
+        let mut point_error_x = (-angular_velocity_b).mul_add(r_b.1, velocity_b.0);
+        let mut point_error_y = angular_velocity_b.mul_add(r_b.0, velocity_b.1);
+        point_error_x -= velocity_a.0;
+        point_error_y -= velocity_a.1;
+        point_error_x = angular_velocity_a.mul_add(r_a.1, point_error_x);
+        point_error_y = (-angular_velocity_a).mul_add(r_a.0, point_error_y);
+        let point_error = (point_error_x, point_error_y);
         let (linear_delta, limit_delta, new_limit_impulse) =
             if joint.limit_state == JointLimitState::Inactive {
+                // The inactive branch constructs -Cdot independently rather
+                // than negating the rounded limit-branch pair.
+                let mut rhs_x = (-angular_velocity_b).mul_add(r_b.1, velocity_b.0);
+                let mut rhs_y = angular_velocity_b.mul_add(r_b.0, velocity_b.1);
+                rhs_x = velocity_a.0 - rhs_x;
+                rhs_y = velocity_a.1 - rhs_y;
+                rhs_x = (-angular_velocity_a).mul_add(r_a.1, rhs_x);
+                rhs_y = angular_velocity_a.mul_add(r_a.0, rhs_y);
                 let linear = solve_symmetric_2x2(
                     matrix.0,
                     matrix.1,
                     matrix.3,
-                    f64::from(point_velocity_a.0 - point_velocity_b.0),
-                    f64::from(point_velocity_a.1 - point_velocity_b.1),
+                    f64::from(rhs_x),
+                    f64::from(rhs_y),
                 )
                 .unwrap_or((0.0, 0.0));
                 ((linear.0 as f32, linear.1 as f32), 0.0_f32, 0.0_f32)

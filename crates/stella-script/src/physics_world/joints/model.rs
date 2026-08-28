@@ -44,6 +44,15 @@ pub(crate) struct PhysicsJoint {
     pub(crate) weld_radius_second: (f64, f64),
     /// Symmetric 3x3 matrix in `(k11, k12, k13, k22, k23, k33)` order.
     pub(crate) weld_mass_matrix: (f64, f64, f64, f64, f64, f64),
+    pub(crate) revolute_radius_first: (f64, f64),
+    pub(crate) revolute_radius_second: (f64, f64),
+    pub(crate) revolute_inverse_mass_first: f64,
+    pub(crate) revolute_inverse_mass_second: f64,
+    pub(crate) revolute_inverse_inertia_first: f64,
+    pub(crate) revolute_inverse_inertia_second: f64,
+    /// Symmetric 3x3 matrix in `(k11, k12, k13, k22, k23, k33)` order.
+    pub(crate) revolute_mass_matrix: (f64, f64, f64, f64, f64, f64),
+    pub(crate) revolute_motor_mass: f64,
     pub(crate) previous_step: f64,
     pub(crate) limits_enabled: bool,
     pub(crate) lower_limit: f64,
