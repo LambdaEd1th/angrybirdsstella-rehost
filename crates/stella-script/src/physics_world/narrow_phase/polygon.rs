@@ -114,11 +114,11 @@ pub(crate) fn polygon_manifold_at_transforms(
     )?;
     let incident_vertices = [
         ClipVertex {
-            point: (f64::from(incident_edge.0.0), f64::from(incident_edge.0.1)),
+            point: incident_edge.0,
             feature_id: contact_feature_id(reference_edge, incident_index, 1, 0),
         },
         ClipVertex {
-            point: (f64::from(incident_edge.1.0), f64::from(incident_edge.1.1)),
+            point: incident_edge.1,
             feature_id: contact_feature_id(
                 reference_edge,
                 (incident_index + 1) % incident.len(),
@@ -129,13 +129,11 @@ pub(crate) fn polygon_manifold_at_transforms(
     ];
     let mut clipped = clip_segment_to_line(
         incident_vertices,
-        (f64::from(-world_tangent.0), f64::from(-world_tangent.1)),
-        f64::from(
-            -(world_tangent.0.mul_add(
-                reference_world_start.0,
-                world_tangent.1 * reference_world_start.1,
-            )) + total_radius,
-        ),
+        (-world_tangent.0, -world_tangent.1),
+        -(world_tangent.0.mul_add(
+            reference_world_start.0,
+            world_tangent.1 * reference_world_start.1,
+        )) + total_radius,
         reference_edge,
     );
     if clipped.len() < 2 {
@@ -143,13 +141,11 @@ pub(crate) fn polygon_manifold_at_transforms(
     }
     clipped = clip_segment_to_line(
         [clipped[0], clipped[1]],
-        (f64::from(world_tangent.0), f64::from(world_tangent.1)),
-        f64::from(
-            world_tangent.0.mul_add(
-                reference_world_end.0,
-                world_tangent.1 * reference_world_end.1,
-            ) + total_radius,
-        ),
+        world_tangent,
+        world_tangent.0.mul_add(
+            reference_world_end.0,
+            world_tangent.1 * reference_world_end.1,
+        ) + total_radius,
         (reference_edge + 1) % reference.len(),
     );
     if clipped.is_empty() {
@@ -163,7 +159,7 @@ pub(crate) fn polygon_manifold_at_transforms(
     let mut points = clipped
         .into_iter()
         .filter_map(|vertex| {
-            let point = (vertex.point.0 as f32, vertex.point.1 as f32);
+            let point = vertex.point;
             let separation = reference_normal
                 .0
                 .mul_add(point.0, reference_normal.1 * point.1)

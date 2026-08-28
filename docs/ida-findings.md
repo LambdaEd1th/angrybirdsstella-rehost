@@ -3672,6 +3672,20 @@ feature bytes and transformed normals. With every reachable narrow-phase leaf
 now returning native local data, the former world-witness compatibility enum
 and its second localization pass have been removed.
 
+The shared clip leaf `sub_100860148` is a 53-instruction fixed two-vertex
+operation. At `0x100860150/0x100860154` and
+`0x100860168/0x10086016C`, each signed distance is built as a rounded
+`normal.y * point.y`, a fused `normal.x * point.x + product`, then one offset
+subtraction. The crossing fraction is not formed from the two already-offset
+distances: `0x1008601C8..0x1008601CC` divides the first distance by the direct
+subtraction of the two original dot products. The previous Rust expression
+cancelled the offset only after two additional float32 roundings and differed
+by two ULPs in a recovered large-coordinate boundary. Intersection coordinates
+now follow the native `FSUB`/`FMADD` pair, while feature bytes copy the first
+input's incident index and write `(reference vertex, incident vertex, vertex,
+face)` exactly. Clip vertices and the two-slot output remain inline float32
+records rather than heap-allocated widened world points.
+
 The following arithmetic is shared byte-for-byte by those two leaves. At
 `0x1008647DC..0x100864810` (TOI `0x100864B18..0x100864B48`) each transformed
 local centre rounds its first multiply with `FMUL`, fuses the second term with

@@ -158,11 +158,11 @@ pub(crate) fn polygon_segment_manifold_at_transforms(
             true,
             [
                 ClipVertex {
-                    point: (f64::from(edge_start.0), f64::from(edge_start.1)),
+                    point: edge_start,
                     feature_id: contact_feature_id(face_index, 0, 1, 0),
                 },
                 ClipVertex {
-                    point: (f64::from(edge_end.0), f64::from(edge_end.1)),
+                    point: edge_end,
                     feature_id: contact_feature_id(face_index, 1, 1, 0),
                 },
             ],
@@ -195,11 +195,11 @@ pub(crate) fn polygon_segment_manifold_at_transforms(
             false,
             [
                 ClipVertex {
-                    point: (f64::from(incident_edge.0.0), f64::from(incident_edge.0.1)),
+                    point: incident_edge.0,
                     feature_id: contact_feature_id(0, incident_index, 1, 0),
                 },
                 ClipVertex {
-                    point: (f64::from(incident_edge.1.0), f64::from(incident_edge.1.1)),
+                    point: incident_edge.1,
                     feature_id: contact_feature_id(0, (incident_index + 1) % polygon.len(), 1, 0),
                 },
             ],
@@ -216,11 +216,8 @@ pub(crate) fn polygon_segment_manifold_at_transforms(
         + total_radius;
     let mut clipped = clip_segment_to_line(
         incident,
-        (
-            f64::from(-reference_tangent.0),
-            f64::from(-reference_tangent.1),
-        ),
-        f64::from(first_offset),
+        (-reference_tangent.0, -reference_tangent.1),
+        first_offset,
         reference_start_index,
     );
     if clipped.len() < 2 {
@@ -232,11 +229,8 @@ pub(crate) fn polygon_segment_manifold_at_transforms(
         + total_radius;
     clipped = clip_segment_to_line(
         [clipped[0], clipped[1]],
-        (
-            f64::from(reference_tangent.0),
-            f64::from(reference_tangent.1),
-        ),
-        f64::from(second_offset),
+        reference_tangent,
+        second_offset,
         reference_end_index,
     );
     if clipped.is_empty() {
@@ -250,7 +244,7 @@ pub(crate) fn polygon_segment_manifold_at_transforms(
     let mut points = clipped
         .into_iter()
         .filter_map(|vertex| {
-            let point = (vertex.point.0 as f32, vertex.point.1 as f32);
+            let point = vertex.point;
             let separation = reference_normal
                 .0
                 .mul_add(point.0, reference_normal.1 * point.1)
