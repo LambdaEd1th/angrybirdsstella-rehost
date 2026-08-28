@@ -4,7 +4,7 @@
 use super::super::geometry::polygon_signed_area_f32;
 use super::super::{
     NativePolygon,
-    geometry::{native_world_point, normalized_axis_f32, polygon_centroid_f32},
+    geometry::{normalized_axis_f32, polygon_centroid_f32},
 };
 use crate::NativeToiTransform;
 
@@ -104,8 +104,8 @@ pub(super) fn polygon_max_separation_at_transforms(
     let normals = polygon_normals_f32(reference)?;
     let reference_centroid = polygon_centroid_f32(reference)?;
     let incident_centroid = polygon_centroid_f32(incident)?;
-    let reference_world_centroid = native_world_point(reference_transform, reference_centroid);
-    let incident_world_centroid = native_world_point(incident_transform, incident_centroid);
+    let reference_world_centroid = reference_transform.point(reference_centroid);
+    let incident_world_centroid = incident_transform.point(incident_centroid);
     let centroid_delta = reference_transform.inverse_rotate((
         incident_world_centroid.0 - reference_world_centroid.0,
         incident_world_centroid.1 - reference_world_centroid.1,
@@ -198,8 +198,8 @@ fn polygon_edge_separation_at_transforms(
             support = point;
         }
     }
-    let reference_point = native_world_point(reference_transform, reference[edge]);
-    let incident_point = native_world_point(incident_transform, support);
+    let reference_point = reference_transform.point(reference[edge]);
+    let incident_point = incident_transform.point(support);
     world_normal.0.mul_add(
         incident_point.0 - reference_point.0,
         world_normal.1 * (incident_point.1 - reference_point.1),
@@ -294,8 +294,8 @@ pub(super) fn polygon_incident_edge_at_transforms(
     Some((
         best_index,
         (
-            native_world_point(polygon_transform, polygon[best_index]),
-            native_world_point(polygon_transform, polygon[(best_index + 1) % polygon.len()]),
+            polygon_transform.point(polygon[best_index]),
+            polygon_transform.point(polygon[(best_index + 1) % polygon.len()]),
         ),
     ))
 }

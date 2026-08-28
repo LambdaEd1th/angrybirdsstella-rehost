@@ -1,19 +1,6 @@
 //! Shared float32 geometry helpers used by Purple's narrow phase.
 
-use crate::{NativeToiTransform, cross_2d};
-
-pub(crate) fn native_world_point(transform: NativeToiTransform, local: (f32, f32)) -> (f32, f32) {
-    // Purple's discrete collision and b2WorldManifold members inline
-    // b2Mul(transform, point) as a completed rotation followed by two FADDs.
-    // NativeToiTransform::point intentionally keeps the distinct grouping
-    // recovered from the position/TOI paths, where translation is fused into
-    // an earlier FMA.
-    let rotated = transform.rotate(local);
-    (
-        rotated.0 + transform.position.0,
-        rotated.1 + transform.position.1,
-    )
-}
+use crate::cross_2d;
 
 #[cfg(test)]
 pub(crate) fn polygon_signed_area_f32(polygon: &[(f64, f64)]) -> f32 {
@@ -170,24 +157,4 @@ pub(crate) fn normalized_axis_f32(axis: (f32, f32)) -> Option<(f32, f32)> {
     }
     let inverse_length = length_squared.sqrt().recip();
     Some((axis.0 * inverse_length, axis.1 * inverse_length))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn native_world_point_adds_translation_after_rotation() {
-        let transform = NativeToiTransform {
-            position: (f32::from_bits(0x4028_c2d0), f32::from_bits(0xc06f_b7ef)),
-            sine: f32::from_bits(0x3f54_5d1c),
-            cosine: f32::from_bits(0x3f0e_f5d8),
-        };
-        let local = (f32::from_bits(0xc089_0dc8), f32::from_bits(0xc31f_1ccf));
-        let native = native_world_point(transform, local);
-        assert_eq!(native.0.to_bits(), 0x4304_3c7b);
-        assert_eq!(native.1.to_bits(), 0xc2c0_4e62);
-        assert_eq!(transform.point(local).0.to_bits(), 0x4304_3c7c);
-        assert_eq!(transform.point(local).1.to_bits(), 0xc2c0_4e63);
-    }
 }

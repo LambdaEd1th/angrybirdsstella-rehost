@@ -1,6 +1,5 @@
 //! b2CollideEdgeAndCircle (`sub_10085E8AC`).
 
-use super::super::geometry::native_world_point;
 use crate::{
     BOX2D_POLYGON_RADIUS, ContactLocalManifold, ContactManifold, ContactManifoldType,
     NativeToiTransform, contact_feature_id,
@@ -38,7 +37,7 @@ pub(crate) fn circle_segment_manifold_at_transforms(
     // into world space and then through the inverse edge transform. All three
     // region tests that follow are edge-local.
     let circle_center =
-        segment_transform.inverse_point(native_world_point(circle_transform, circle_local_center));
+        segment_transform.inverse_point(circle_transform.point(circle_local_center));
     let edge_radius = BOX2D_POLYGON_RADIUS as f32;
     let radius_sum = circle_radius + edge_radius;
     let start = segment_local.0;
@@ -151,7 +150,7 @@ pub(crate) fn circle_segment_manifold_at_transforms(
         (edge_surface.0 + circle_surface.0) * 0.5_f32,
         (edge_surface.1 + circle_surface.1) * 0.5_f32,
     );
-    let point = native_world_point(segment_transform, point_edge);
+    let point = segment_transform.point(point_edge);
     let reference_normal = edge_to_circle;
     if circle_is_first {
         edge_to_circle = (-edge_to_circle.0, -edge_to_circle.1);

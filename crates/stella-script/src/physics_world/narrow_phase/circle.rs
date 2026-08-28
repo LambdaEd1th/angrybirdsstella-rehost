@@ -1,6 +1,6 @@
 //! Circle-circle and polygon-circle narrow-phase members.
 
-use super::geometry::{native_world_point, normalized_axis_f32, polygon_signed_area_from_f32};
+use super::geometry::{normalized_axis_f32, polygon_signed_area_from_f32};
 #[cfg(test)]
 use crate::NativePolygon;
 use crate::{
@@ -33,8 +33,8 @@ pub(crate) fn circle_circle_manifold_at_transforms(
     second_radius: f32,
     second_transform: NativeToiTransform,
 ) -> Option<ContactManifold> {
-    let first_center = native_world_point(first_transform, first_local_center);
-    let second_center = native_world_point(second_transform, second_local_center);
+    let first_center = first_transform.point(first_local_center);
+    let second_center = second_transform.point(second_local_center);
     let delta = (
         second_center.0 - first_center.0,
         second_center.1 - first_center.1,
@@ -120,7 +120,7 @@ pub(crate) fn circle_polygon_manifold_at_transforms(
     if polygon.len() < 3 {
         return None;
     }
-    let circle_world_center = native_world_point(circle_transform, circle_local_center);
+    let circle_world_center = circle_transform.point(circle_local_center);
     let circle_center = polygon_transform.inverse_point(circle_world_center);
     let polygon_radius = BOX2D_POLYGON_RADIUS as f32;
     let total_radius = circle_radius + polygon_radius;
@@ -228,7 +228,7 @@ pub(crate) fn circle_polygon_manifold_at_transforms(
     // Reconstruct b2WorldManifold's face point after the local collision leaf
     // has frozen the shape-local normal, reference point and circle center.
     let reference_normal = polygon_transform.rotate(polygon_to_circle);
-    let plane_world = native_world_point(polygon_transform, plane_point);
+    let plane_world = polygon_transform.point(plane_point);
     let world_delta = (
         circle_world_center.0 - plane_world.0,
         circle_world_center.1 - plane_world.1,

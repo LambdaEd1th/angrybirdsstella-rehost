@@ -3626,10 +3626,10 @@ subtracting the polygon origin and inverse-rotating the result. The shared
 `b2WorldManifold` member `sub_10085FE58` independently repeats the separate
 translation additions for FaceA, FaceB and circles at
 `0x10085FEB4..0x10085F010`, `0x10085FFA0..0x10085FFEC` and
-`0x10086006C..0x1008600A0`. Discrete narrow phase now shares this recovered
-helper for circle centres, polygon plane points and polygon collision points;
-the position/TOI helper retains its deliberately different fused grouping. A
-bit-level regression distinguishes both coordinates by one ULP.
+`0x10086006C..0x1008600A0`. `NativeToiTransform::point` now exposes this
+recovered ordering to circle centres, polygon plane points and polygon
+collision points. A bit-level regression distinguishes both coordinates from
+the former translation-fused grouping by one ULP.
 
 The edge leaves close the same transform family. Edge-circle
 `sub_10085E8AC` rotates the circle centre at `0x10085E8BC..0x10085E8D0`, adds
@@ -3639,9 +3639,9 @@ before inverse rotation at `0x10085E8D8..0x10085E8F4`. Edge-polygon
 `0x10085EB14..0x10085EB58`; its local centroid at
 `0x10085EB5C..0x10085EB74` and every polygon vertex at
 `0x10085F014..0x10085F038` again receive translation only after rotation.
-The rehost now uses the shared discrete-collision transform for both edge
-leaves while retaining the native subtract-then-inverse-rotate order for
-clipped points returned to polygon-local space.
+The rehost now uses the shared native point transform for both edge leaves
+while retaining the native subtract-then-inverse-rotate order for clipped
+points returned to polygon-local space.
 
 Polygon-polygon `sub_10085F648` follows the same rule. Its two calls to
 `sub_10085FB84` use each shape's local centroid at `+16`, local vertices at
@@ -3668,12 +3668,25 @@ The selected two local vertices are then rotated before their translations
 are added by separate `FADD`s at `0x10085F7F0..0x10085F840`.
 `sub_10085FB84` and its edge-separation leaf `sub_10085FD74` use that same
 rotate-then-translate ordering for transformed centroids, reference vertices
-and support vertices. Rust previously reused a transform helper whose inlined
-position/TOI contract fuses translation into an earlier FMA. The polygon
-narrow phase now owns the collider-specific ordering across incident-edge
-selection, max separation and reference endpoints. A bit-level regression
-distinguishes both output coordinates from the earlier fused grouping by one
-ULP.
+and support vertices. The shared transform now preserves this ordering across
+incident-edge selection, max separation and reference endpoints. A bit-level
+regression distinguishes both output coordinates from the earlier fused
+grouping by one ULP.
+
+The adjacent GJK/TOI audit disproved the earlier assumption that continuous
+collision used a different translation grouping. IDA shows
+`b2Simplex::ReadCache` at `0x100860C60` transforming every cached A/B vertex
+with rotation followed by separate `FADD`s at
+`0x100860CA4..0x100860CE4`; its empty-cache fallback repeats that sequence at
+`0x100860DC4..0x100860E08`. The main `b2Distance` loop independently does so
+for each new support pair at `0x100860898..0x100860940`. Hopper's pseudocode
+for `b2Simplex::ReadCache` exposes the same multiply/F(N)MADD rotation and
+subsequent scalar additions in both paths. `b2SeparationFunction::Initialize`,
+`FindMinSeparation` and `Evaluate` likewise retain separate point-translation
+adds throughout `sub_1008620E4`, `sub_1008624A4` and `sub_100862898`.
+Consequently the corrected `NativeToiTransform::point` is shared by discrete
+narrow phase, GJK distance, separation evaluation and fixture-world geometry;
+no host-only translation-fused point transform remains.
 
 The edge-polygon member `sub_10085EADC` first constructs the polygon-to-edge
 transform at `0x10085EB14..0x10085EB58`: its rotation is

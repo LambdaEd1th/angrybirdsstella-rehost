@@ -114,14 +114,11 @@ impl NativeToiTransform {
     };
 
     pub(crate) fn point(self, local: (f32, f32)) -> (f32, f32) {
-        (
-            local
-                .0
-                .mul_add(self.cosine, (-local.1).mul_add(self.sine, self.position.0)),
-            local
-                .0
-                .mul_add(self.sine, local.1.mul_add(self.cosine, self.position.1)),
-        )
+        // Every recovered b2Mul(transform, point) call completes the rotation
+        // before adding transform.p with two independent FADDs. This is used
+        // by both the discrete collision leaves and b2Distance/TOI.
+        let rotated = self.rotate(local);
+        (rotated.0 + self.position.0, rotated.1 + self.position.1)
     }
 
     pub(crate) fn rotate(self, local: (f32, f32)) -> (f32, f32) {
@@ -141,6 +138,37 @@ impl NativeToiTransform {
     pub(crate) fn inverse_point(self, world: (f32, f32)) -> (f32, f32) {
         let relative = (world.0 - self.position.0, world.1 - self.position.1);
         self.inverse_rotate(relative)
+    }
+}
+
+#[cfg(test)]
+mod transform_tests {
+    use super::NativeToiTransform;
+
+    #[test]
+    fn point_adds_translation_after_native_rotation() {
+        let transform = NativeToiTransform {
+            position: (f32::from_bits(0x4028_c2d0), f32::from_bits(0xc06f_b7ef)),
+            sine: f32::from_bits(0x3f54_5d1c),
+            cosine: f32::from_bits(0x3f0e_f5d8),
+        };
+        let local = (f32::from_bits(0xc089_0dc8), f32::from_bits(0xc31f_1ccf));
+        let native = transform.point(local);
+        assert_eq!(native.0.to_bits(), 0x4304_3c7b);
+        assert_eq!(native.1.to_bits(), 0xc2c0_4e62);
+
+        let fused_translation = (
+            local.0.mul_add(
+                transform.cosine,
+                (-local.1).mul_add(transform.sine, transform.position.0),
+            ),
+            local.0.mul_add(
+                transform.sine,
+                local.1.mul_add(transform.cosine, transform.position.1),
+            ),
+        );
+        assert_eq!(fused_translation.0.to_bits(), 0x4304_3c7c);
+        assert_eq!(fused_translation.1.to_bits(), 0xc2c0_4e63);
     }
 }
 
