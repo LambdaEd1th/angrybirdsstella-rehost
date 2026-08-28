@@ -85,3 +85,48 @@ pub(crate) fn normalized_axis_f32(axis: (f32, f32)) -> Option<(f32, f32)> {
     let inverse_length = length_squared.sqrt().recip();
     Some((axis.0 * inverse_length, axis.1 * inverse_length))
 }
+
+/// Match b2Vec2::Normalize as inlined by b2EPCollider::Collide. Purple forms
+/// the length in float32, skips only an *ordered* value below FLT_EPSILON,
+/// and otherwise multiplies by its reciprocal. Zero/sub-epsilon vectors are
+/// therefore preserved rather than rejected, while NaN follows the divide
+/// path because ARM's unordered comparison does not take B.LT.
+pub(crate) fn native_normalize_or_preserve_f32(axis: (f32, f32)) -> (f32, f32) {
+    let length = axis.0.mul_add(axis.0, axis.1 * axis.1).sqrt();
+    if length < f32::EPSILON {
+        axis
+    } else {
+        let inverse_length = length.recip();
+        (axis.0 * inverse_length, axis.1 * inverse_length)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::native_normalize_or_preserve_f32;
+
+    #[test]
+    fn native_normalize_preserves_ordered_sub_epsilon_vectors() {
+        let axis = (f32::EPSILON * 0.25, -0.0_f32);
+        let normalized = native_normalize_or_preserve_f32(axis);
+
+        assert_eq!(normalized.0.to_bits(), axis.0.to_bits());
+        assert_eq!(normalized.1.to_bits(), axis.1.to_bits());
+    }
+
+    #[test]
+    fn native_normalize_scales_the_epsilon_boundary() {
+        let normalized = native_normalize_or_preserve_f32((f32::EPSILON, 0.0));
+
+        assert_eq!(normalized.0.to_bits(), 1.0_f32.to_bits());
+        assert_eq!(normalized.1.to_bits(), 0.0_f32.to_bits());
+    }
+
+    #[test]
+    fn native_normalize_sends_unordered_length_through_reciprocal() {
+        let normalized = native_normalize_or_preserve_f32((f32::NAN, 1.0));
+
+        assert!(normalized.0.is_nan());
+        assert!(normalized.1.is_nan());
+    }
+}

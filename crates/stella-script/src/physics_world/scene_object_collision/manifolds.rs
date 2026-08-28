@@ -208,18 +208,16 @@ impl SceneObject {
                 })
             }
             CollisionShape::Line { vertices } => {
-                let edge = vertices.get(fixture..fixture + 2)?;
+                let edge = vertices.get(fixture..fixture.checked_add(2)?)?;
                 let local = [edge[0], edge[1]].map(|(x, y)| {
                     (
                         x as f32 * self.physics_scale_x as f32,
                         y as f32 * self.physics_scale_y as f32,
                     )
                 });
-                (f64::from(local[1].0 - local[0].0).hypot(f64::from(local[1].1 - local[0].1))
-                    > f64::EPSILON)
-                    .then_some(CollisionFixtureGeometry::Segment {
-                        local: (local[0], local[1]),
-                    })
+                Some(CollisionFixtureGeometry::Segment {
+                    local: (local[0], local[1]),
+                })
             }
         }
     }

@@ -151,7 +151,6 @@ impl SceneObject {
                     self.transform_collision_point(edge[1]),
                 )
             })
-            .filter(|(start, end)| (end.0 - start.0).hypot(end.1 - start.1) > f64::EPSILON)
             .collect()
     }
 }

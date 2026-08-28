@@ -69,13 +69,12 @@ impl SceneObject {
                 let segment = vertices.get(fixture..fixture.checked_add(2)?)?;
                 let start = self.transform_collision_point(segment[0]);
                 let end = self.transform_collision_point(segment[1]);
-                // Purple's b2ChainShape::ComputeAABB at 0x10085D2D8 is
-                // intentionally different from b2EdgeShape::ComputeAABB:
-                // it takes only the two transformed endpoint extrema and
-                // does not expand them by m_radius. It also emits an AABB for
-                // every child index without a degeneracy check, preserving
-                // the fixture/proxy array's one-to-one child numbering.
-                native_fixture_aabb(&[start, end], 0.0)
+                // createLineShape's loop at 0x100068238..0x1000682A4 calls
+                // b2EdgeShape::Set and CreateFixture once per consecutive
+                // pair. Its b2EdgeShape::ComputeAABB virtual at 0x10085D9A0
+                // expands both endpoint extrema by m_radius, even when the
+                // two vertices are equal.
+                native_fixture_aabb(&[start, end], BOX2D_POLYGON_RADIUS as f32)
             }
         }
     }
@@ -157,16 +156,32 @@ mod tests {
     }
 
     #[test]
-    fn chain_child_bounds_do_not_include_polygon_skin() {
-        let bounds = native_fixture_aabb(&[(-1.25, 2.5), (3.75, -4.0)], 0.0).unwrap();
+    fn independent_edge_bounds_include_polygon_skin() {
+        let bounds = native_fixture_aabb(&[(-1.25, 2.5), (3.75, -4.0)], 0.002_f32).unwrap();
 
-        assert_eq!(bounds, (-1.25, -4.0, 3.75, 2.5));
+        assert_eq!(
+            bounds,
+            (
+                -1.25_f32 - 0.002_f32,
+                -4.0_f32 - 0.002_f32,
+                3.75_f32 + 0.002_f32,
+                2.5_f32 + 0.002_f32,
+            )
+        );
     }
 
     #[test]
-    fn chain_child_bounds_retain_degenerate_fixture_slot() {
-        let bounds = native_fixture_aabb(&[(2.0, -3.0), (2.0, -3.0)], 0.0).unwrap();
+    fn degenerate_edge_bounds_retain_skin_and_fixture_slot() {
+        let bounds = native_fixture_aabb(&[(2.0, -3.0), (2.0, -3.0)], 0.002_f32).unwrap();
 
-        assert_eq!(bounds, (2.0, -3.0, 2.0, -3.0));
+        assert_eq!(
+            bounds,
+            (
+                2.0_f32 - 0.002_f32,
+                -3.0_f32 - 0.002_f32,
+                2.0_f32 + 0.002_f32,
+                -3.0_f32 + 0.002_f32,
+            )
+        );
     }
 }

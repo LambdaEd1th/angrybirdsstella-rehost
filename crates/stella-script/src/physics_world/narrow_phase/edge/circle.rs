@@ -1,5 +1,8 @@
 //! b2CollideEdgeAndCircle (`sub_10085E8AC`).
 
+use std::cmp::Ordering;
+
+use super::super::geometry::native_normalize_or_preserve_f32;
 use crate::{
     BOX2D_POLYGON_RADIUS, ContactLocalManifold, ContactManifold, ContactManifoldType,
     NativeToiTransform, contact_feature_id,
@@ -49,7 +52,7 @@ pub(crate) fn circle_segment_manifold_at_transforms(
     let end_region = from_end.0.mul_add(edge.0, from_end.1 * edge.1);
 
     let (closest, mut edge_to_circle, separation, segment_index, segment_type) =
-        if start_region <= 0.0_f32 {
+        if native_arm_le_zero(start_region) {
             let distance_squared = from_start
                 .0
                 .mul_add(from_start.0, from_start.1 * from_start.1);
@@ -67,7 +70,7 @@ pub(crate) fn circle_segment_manifold_at_transforms(
                 (1.0_f32, 0.0_f32)
             };
             (start, normal, distance, 0, 0)
-        } else if end_region <= 0.0_f32 {
+        } else if native_arm_le_zero(end_region) {
             let circle_from_end = (-from_end.0, -from_end.1);
             let distance_squared = circle_from_end
                 .0
@@ -88,13 +91,12 @@ pub(crate) fn circle_segment_manifold_at_transforms(
             (end, normal, distance, 1, 0)
         } else {
             let denominator = edge.0.mul_add(edge.0, edge.1 * edge.1);
-            if denominator <= f32::EPSILON * f32::EPSILON {
-                return None;
-            }
             // The native leaf does not materialize the closest point. It
             // rounds B*v, folds A*u into its negation with FNMADD, then forms
             // Q - (A*u + B*v) / dot(e,e) with FMADD. This is observable at
-            // the exact combined-radius boundary.
+            // the exact combined-radius boundary. There is deliberately no
+            // epsilon guard: a non-zero sub-epsilon edge can reach this face
+            // branch and Purple still divides by its squared length.
             let inverse_denominator = denominator.recip();
             let weighted_x = (-start.0).mul_add(end_region, -(end.0 * start_region));
             let weighted_y = (-start.1).mul_add(end_region, -(end.1 * start_region));
@@ -107,16 +109,12 @@ pub(crate) fn circle_segment_manifold_at_transforms(
                 return None;
             }
             let side = edge.0.mul_add(from_start.1, -(from_start.0 * edge.1));
-            let mut normal = if side < 0.0_f32 {
+            let normal = if side < 0.0_f32 {
                 (edge.1, -edge.0)
             } else {
                 (-edge.1, edge.0)
             };
-            let normal_length = normal.0.mul_add(normal.0, normal.1 * normal.1).sqrt();
-            if normal_length >= f32::EPSILON {
-                let inverse_length = normal_length.recip();
-                normal = (normal.0 * inverse_length, normal.1 * inverse_length);
-            }
+            let normal = native_normalize_or_preserve_f32(normal);
             // b2WorldManifold's face branch derives separation from the edge
             // plane rather than reusing sqrt(distanceSquared).
             let separation = from_start.0.mul_add(normal.0, from_start.1 * normal.1);
@@ -214,4 +212,8 @@ pub(crate) fn circle_segment_manifold_at_transforms(
         secondary: None,
         position,
     })
+}
+
+fn native_arm_le_zero(value: f32) -> bool {
+    !matches!(value.partial_cmp(&0.0_f32), Some(Ordering::Greater))
 }

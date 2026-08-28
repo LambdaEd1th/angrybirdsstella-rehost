@@ -45,13 +45,13 @@ impl SceneObject {
                 })
             }
             CollisionShape::Line { vertices } => {
-                // Set's native chain branch can wrap the final second endpoint
-                // to vertex zero. GetChildCount is vertexCount-1, however, so
-                // every valid caller reaches only an ordinary adjacent pair.
-                let first = *vertices.get(fixture)?;
-                let second = *vertices.get(fixture + 1).or_else(|| vertices.first())?;
+                // The Rust record groups the consecutive b2EdgeShape fixtures
+                // created by GameLua_CreateLineShapeBody. b2DistanceProxy::Set
+                // sees one selected edge's exact m_vertex1/m_vertex2 pair; it
+                // has no b2ChainShape end-to-start wrapping in this path.
+                let edge = vertices.get(fixture..fixture.checked_add(2)?)?;
                 Some(NativeDistanceProxy {
-                    vertices: vec![scaled(first), scaled(second)],
+                    vertices: vec![scaled(edge[0]), scaled(edge[1])],
                     radius: BOX2D_POLYGON_RADIUS as f32,
                 })
             }

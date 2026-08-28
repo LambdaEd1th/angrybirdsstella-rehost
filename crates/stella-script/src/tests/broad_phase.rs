@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn chain_proxy_aabb_matches_unskinned_native_child_bounds() {
+fn line_proxy_aabb_matches_skinned_independent_edge_bounds() {
     let runtime = unlocked_test_runtime();
     runtime
         .execute_source(
@@ -15,14 +15,20 @@ fn chain_proxy_aabb_matches_unskinned_native_child_bounds() {
         .unwrap();
 
     let bridge = runtime.render.lock().unwrap();
+    let skin = BOX2D_POLYGON_RADIUS as f32;
     assert_eq!(
         bridge.body_proxy_states["chain"].tight_aabbs,
-        [(4.0, 3.0, 8.0, 9.0)]
+        [(4.0 - skin, 3.0 - skin, 8.0 + skin, 9.0 + skin)]
     );
     let proxy_id = bridge.scene["chain"].fixture_proxy_ids[0].unwrap();
     assert_eq!(
         bridge.dynamic_tree.proxy_aabb(proxy_id).unwrap(),
-        (3.9, 2.9, 8.1, 9.1)
+        (
+            (4.0 - skin) - 0.1,
+            (3.0 - skin) - 0.1,
+            (8.0 + skin) + 0.1,
+            (9.0 + skin) + 0.1,
+        )
     );
 }
 

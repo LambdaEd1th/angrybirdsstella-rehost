@@ -2,7 +2,7 @@
 
 use super::super::{
     NativePolygon,
-    geometry::{normalized_axis_f32, polygon_centroid_f32},
+    geometry::{native_normalize_or_preserve_f32, normalized_axis_f32, polygon_centroid_f32},
     polygon::{ClipVertex, clip_segment_to_line, polygon_normals_f32},
 };
 use crate::{
@@ -58,7 +58,7 @@ pub(crate) fn polygon_segment_manifold_at_transforms(
     let edge_start = segment_local.0;
     let edge_end = segment_local.1;
     let edge_vector = (edge_end.0 - edge_start.0, edge_end.1 - edge_start.1);
-    let edge_tangent = normalized_axis_f32(edge_vector)?;
+    let edge_tangent = native_normalize_or_preserve_f32(edge_vector);
     let base_edge_normal = (edge_tangent.1, -edge_tangent.0);
 
     // With no adjacent vertices (the independent edge fixtures created by
@@ -206,10 +206,10 @@ pub(crate) fn polygon_segment_manifold_at_transforms(
         )
     };
 
-    let reference_tangent = normalized_axis_f32((
+    let reference_tangent = native_normalize_or_preserve_f32((
         reference_end.0 - reference_start.0,
         reference_end.1 - reference_start.1,
-    ))?;
+    ));
     let first_offset = -(reference_tangent
         .0
         .mul_add(reference_start.0, reference_tangent.1 * reference_start.1))

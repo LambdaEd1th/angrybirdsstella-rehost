@@ -17180,15 +17180,15 @@ The next shape-vtable pass recovered `ComputeAABB` for circle
 `0x10085D708`, edge `0x10085D9A0`, polygon `0x10085DE98` and chain
 `0x10085D2D8`, then followed their results through `b2Fixture::Synchronize`
 at `0x10086CB74` and `b2DynamicTree::MoveProxy` at `0x1008615A0`. IDA and
-Hopper agree on an important chain-specific exception: unlike an independent
+Hopper agree on a real chain-specific exception: unlike an independent
 `b2EdgeShape`, a `b2ChainShape` child takes only the transformed endpoint
 `FMIN`/`FMAX` and does not add the `0.002f` polygon radius. It also emits the
-child AABB unconditionally. The former host expanded every line child by the
-skin and discarded a degenerate child, which could both enlarge broad-phase
-candidate sets and desynchronize fixture indices from proxy slots. Line
-proxies now retain every child and use the unskinned native bound; the swept
-old/new union, displacement and fat-proxy extension remain identical to
-Purple's synchronization path.
+child AABB unconditionally. A later constructor audit established that this
+exception does **not** apply to GameLua `createLineShape`: its loop constructs
+one independent `b2EdgeShape` fixture per consecutive pair. Those line
+fixtures therefore use the skinned edge bound while still retaining every
+degenerate fixture/proxy slot. The swept old/new union, displacement and fat-
+proxy extension remain identical to Purple's synchronization path.
 
 The adjacent `ComputeMass` virtuals are circle `0x10085D74C`, edge
 `0x10085DA10`, polygon `0x10085E10C` and chain `0x10085D35C`. Purple's
@@ -17279,4 +17279,54 @@ all-feature Clippy and the release workspace build are clean. A fresh isolated-
 AppData 120-frame release-wgpu upload/render/readback reports 20 optional data
 probes, zero invoked fallbacks, zero remaining compatibility bindings and
 empty stderr. `build/audit-native-trap-sucker-sleep-20260829.png` has SHA-256
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## Native createLineShape edge fixtures and degenerate collision flow
+
+A constructor-level IDA/Hopper audit corrected the remaining ambiguity between
+GameLua lines and real Box2D chains. `GameLua_CreateLineShapeBody` at
+`0x100068130` walks `vertexCount - 1` consecutive pairs at
+`0x100068218..0x1000682A8`. Each iteration installs the `b2EdgeShape` vtable,
+calls `b2EdgeShape::Set` at `0x100068270`, then calls `b2Body::CreateFixture`
+at `0x1000682A4`. There is no equality/length test before fixture creation.
+The previously recovered unskinned `b2ChainShape::ComputeAABB` virtual at
+`0x10085D2D8` is therefore irrelevant to this API. Its actual virtual is
+`b2EdgeShape::ComputeAABB` at `0x10085D9A0`: both transformed endpoints feed
+`FMIN`/`FMAX`, then the shape's `m_radius` is subtracted from each lower bound
+and added to each upper bound. Equal endpoints consequently retain a skinned
+`0.004f`-wide tight AABB and their own fixture/proxy slot.
+
+The contact leaves also preserve these fixtures rather than rejecting them.
+`b2CollideEdgeAndCircle` at `0x10085E8AC` computes the two endpoint-region
+projections first. A zero edge produces projection zero and takes the first
+endpoint branch through `FCMP`/`B.LE` at `0x10085E934..0x10085E938`; ARM's
+unordered flags take that branch as well. A non-zero edge shorter than
+`FLT_EPSILON` can instead reach the face branch, whose reciprocal of
+`dot(edge, edge)` has no epsilon guard. Its later inlined `b2Vec2::Normalize`
+at `0x10085EA7C..0x10085EAA0` skips scaling only when the length is ordered
+below `FLT_EPSILON`, preserving the short vector. Hopper exposes the same
+instruction sequence and branches.
+
+`b2EPCollider::Collide` at `0x10085EADC` follows the same normalization rule.
+The two visible inlined instances at `0x10085EC28..0x10085EC54` and
+`0x10085EC90..0x10085ECBC` perform `FMUL`/`FMADD`, `FSQRT`, compare against
+`FLT_EPSILON`, and continue after `B.LT` without rejecting the vector. The
+rehost now shares this exact normalize-or-preserve helper, retains degenerate
+segments in fixture geometry, allows edge-circle and edge-polygon leaves to
+produce their native manifolds, and removes the nonnative sub-epsilon face
+denominator rejection. Its grouped Rust line storage also selects only the
+chosen independent edge pair for distance proxies; it no longer emulates a
+chain wrap at an invalid child index.
+
+Regressions cover skinned tight/fat proxy bounds, the retained degenerate
+fixture slot, direct and constructor-dispatched zero-edge circle contacts,
+zero-tangent two-point polygon contacts, unordered endpoint selection,
+sub-epsilon face division, and the exact float32 normalization boundary. The
+full workspace passes 797 tests with only the deliberate long-duration
+BirdRun audit ignored. Formatting, whitespace validation, strict all-target/
+all-feature Clippy and the release workspace build are clean. A fresh isolated-
+AppData 120-frame release-wgpu upload/readback reports 20 optional probes,
+zero invoked fallbacks and zero remaining compatibility bindings.
+`build/audit-native-edge-degenerate-20260829.png` is a 1024x768 RGBA PNG with
+SHA-256
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.

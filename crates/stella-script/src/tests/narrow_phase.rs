@@ -222,6 +222,68 @@ fn edge_circle_uses_native_regions_features_and_inclusive_radius() {
 }
 
 #[test]
+fn degenerate_edge_circle_uses_the_first_endpoint_region() {
+    let radius = 0.5_f32;
+    let combined = radius + BOX2D_POLYGON_RADIUS as f32;
+    let point = (2.0_f64, -3.0_f64);
+    let manifold = circle_segment_manifold(
+        (f64::from(2.0_f32 + combined), -3.0),
+        f64::from(radius),
+        (point, point),
+        false,
+    )
+    .expect("zero-length b2EdgeShape endpoint contact");
+
+    assert!(matches!(
+        manifold.manifold_type(),
+        ContactManifoldType::Circles
+    ));
+    assert_eq!((manifold.normal_x, manifold.normal_y), (1.0, 0.0));
+    // Adding the combined radius to a non-zero endpoint, subtracting it back,
+    // then taking sqrt(distanceSquared) leaves one native float32 epsilon.
+    assert_eq!(manifold.penetration, f64::from(f32::EPSILON));
+    assert_eq!(manifold.feature_id, contact_feature_id(0, 0, 0, 0));
+}
+
+#[test]
+fn edge_circle_arm_le_routes_unordered_projection_to_the_first_endpoint() {
+    let manifold = circle_segment_manifold((f64::NAN, 0.0), 0.5, ((0.0, 0.0), (1.0, 0.0)), false)
+        .expect("ARM B.LE accepts the unordered endpoint region");
+
+    assert!(matches!(
+        manifold.manifold_type(),
+        ContactManifoldType::Circles
+    ));
+    assert_eq!(manifold.feature_id, contact_feature_id(0, 0, 0, 0));
+}
+
+#[test]
+fn sub_epsilon_edge_circle_face_is_not_rejected_before_native_division() {
+    let edge_length = f32::EPSILON * 0.5_f32;
+    let radius = 0.5_f32;
+    let combined = radius + BOX2D_POLYGON_RADIUS as f32;
+    let manifold = circle_segment_manifold(
+        (f64::from(edge_length * 0.5_f32), f64::from(combined)),
+        f64::from(radius),
+        ((0.0, 0.0), (f64::from(edge_length), 0.0)),
+        false,
+    )
+    .expect("native face branch divides by a sub-epsilon edge length");
+
+    assert!(matches!(
+        manifold.manifold_type(),
+        ContactManifoldType::FaceFirst
+    ));
+    assert_eq!(manifold.normal_x.to_bits(), f64::from(-0.0_f32).to_bits());
+    assert_eq!(manifold.normal_y, f64::from(edge_length));
+    assert_eq!(
+        manifold.penetration,
+        f64::from(combined - combined * edge_length)
+    );
+    assert_eq!(manifold.feature_id, contact_feature_id(0, 0, 1, 0));
+}
+
+#[test]
 fn rotated_edge_circle_face_keeps_native_shape_local_witnesses() {
     let segment = ((-1.0_f32, 0.0_f32), (1.0_f32, 0.0_f32));
     let radius = 0.5_f32;
@@ -469,6 +531,26 @@ fn recovered_edge_polygon_manifold_clips_two_face_points() {
 }
 
 #[test]
+fn degenerate_edge_polygon_preserves_zero_tangent_and_two_contacts() {
+    let polygon = [(-0.5, -0.5), (0.5, -0.5), (0.5, 0.5), (-0.5, 0.5)];
+    let manifold = polygon_segment_manifold(&polygon, ((0.0, 0.0), (0.0, 0.0)), true)
+        .expect("zero-length b2EdgeShape/polygon manifold");
+
+    assert!(matches!(
+        manifold.manifold_type(),
+        ContactManifoldType::FaceSecond
+    ));
+    assert_eq!(manifold.position.point_count, 2);
+    assert_eq!(manifold.normal_x, 0.0);
+    assert_eq!(manifold.normal_y, 0.0);
+    assert_eq!(
+        manifold.penetration,
+        f64::from((2.0 * BOX2D_POLYGON_RADIUS) as f32)
+    );
+    assert!(manifold.secondary.is_some());
+}
+
+#[test]
 fn narrow_phase_rejects_aabb_only_circle_corner_overlap() {
     let runtime = StellaLua::new("/tmp").unwrap();
     runtime
@@ -514,6 +596,42 @@ fn recovered_edge_fixtures_are_independent_two_sided_capsules() {
     assert!(events.iter().filter(|event| event.impulse > 0.0).count() >= 2);
     assert!(bridge.scene["above"].velocity_y.abs() < f64::from(f32::EPSILON));
     assert!(bridge.scene["below"].velocity_y.abs() < f64::from(f32::EPSILON));
+}
+
+#[test]
+fn degenerate_create_line_fixture_reaches_native_contact_dispatch() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .execute_source(
+            r#"
+                clearVertices()
+                addVertex(0, 0)
+                addVertex(0, 0)
+                createLineShape("edge", "", 0, 0, 0, 0, 0, 0, 0, true, false, 1)
+                createCircle("circle", "", 0.5, 0, 0.5, 1, 0, 0, true, false, 1)
+                "#,
+        )
+        .unwrap();
+
+    let bridge = runtime.render.lock().unwrap();
+    let edge = &bridge.scene["edge"];
+    assert_eq!(edge.collision_segments(), vec![((0.0, 0.0), (0.0, 0.0))]);
+    assert_eq!(
+        edge.collision_fixture_aabb(0),
+        Some((-0.002_f32, -0.002_f32, 0.002_f32, 0.002_f32))
+    );
+    let manifold = edge
+        .collision_fixture_manifold(&bridge.scene["circle"], 0, 0)
+        .expect("degenerate line fixture must not be filtered before contact evaluation");
+    assert!(matches!(
+        manifold.manifold_type(),
+        ContactManifoldType::Circles
+    ));
+    assert_eq!(manifold.feature_id, contact_feature_id(0, 0, 0, 0));
+    assert_eq!(
+        manifold.penetration,
+        f64::from((0.5_f32 + BOX2D_POLYGON_RADIUS as f32) - 0.5_f32)
+    );
 }
 
 #[test]
