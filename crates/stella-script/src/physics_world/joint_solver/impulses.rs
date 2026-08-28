@@ -98,18 +98,20 @@ impl RenderBridge {
         let angular_impulse = angular_impulse as f32;
         if let Some(object) = self.scene.get_mut(&joint.first) {
             let cross = (-r_a.1).mul_add(impulse.0, r_a.0 * impulse.1);
-            object.apply_native_position_delta(
-                -mass_a * impulse.0,
-                -mass_a * impulse.1,
-                -inertia_a * (cross + angular_impulse),
+            object.apply_native_position_impulse(
+                -mass_a,
+                impulse,
+                -inertia_a,
+                cross + angular_impulse,
             );
         }
         if let Some(object) = self.scene.get_mut(&joint.second) {
             let cross = (-r_b.1).mul_add(impulse.0, r_b.0 * impulse.1);
-            object.apply_native_position_delta(
-                mass_b * impulse.0,
-                mass_b * impulse.1,
-                inertia_b * (cross + angular_impulse),
+            object.apply_native_position_impulse(
+                mass_b,
+                impulse,
+                inertia_b,
+                cross + angular_impulse,
             );
         }
     }

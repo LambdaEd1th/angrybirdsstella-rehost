@@ -90,7 +90,6 @@ impl RenderBridge {
     ) {
         if std::env::var_os("STELLA_DISABLE_JOINT_WARM_START").is_some() {
             Self::clear_constraint_impulses(constraints, step);
-            return;
         }
         for entry in &mut constraints.entries {
             let joint = &mut entry.joint;

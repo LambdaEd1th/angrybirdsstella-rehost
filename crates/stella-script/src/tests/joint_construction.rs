@@ -1540,6 +1540,10 @@ fn distance_joint_uses_native_short_axis_thresholds() {
     }
     let first = bridge.scene["anchor"].clone();
     let second = bridge.scene["payload"].clone();
+    joint.distance_impulse = 2.0;
+    bridge.initialize_distance_velocity_constraints(&mut joint, &first, &second, 1.0 / 30.0);
+    assert_eq!(joint.distance_axis, (0.0, 0.0));
+    assert_eq!(bridge.scene["payload"].velocity_x, 1.0);
     bridge.solve_distance_joint_velocity(&mut joint, &first, &second, 1.0 / 30.0);
     assert_eq!(bridge.scene["payload"].velocity_x, 1.0);
 
@@ -1555,4 +1559,54 @@ fn distance_joint_uses_native_short_axis_thresholds() {
     // unit-normalized replacement would incorrectly move this body by
     // roughly the full 0.2 maximum correction.
     assert!(bridge.scene["payload"].x.abs() < 1.0e-6);
+}
+
+#[test]
+fn soft_distance_joint_keeps_native_float_solver_cache_and_accumulator() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createBox("first", "", -0.375, 0.625, 1, 1, 1.75, 0, 0, false, false, 1)
+                createBox("second", "", 2.875, -0.4375, 1, 1, 2.25, 0, 0, false, false, 1)
+                createJoint({
+                    name = "spring", end1 = "first", end2 = "second", type = 1,
+                    coordType = 2, x1 = 0.3125, y1 = -0.1875, x2 = -0.28125, y2 = 0.21875,
+                    frequency = 3.125, dampingRatio = 0.4375
+                })
+                "#,
+        )
+        .unwrap();
+
+    let mut bridge = runtime.render.lock().unwrap();
+    {
+        let first = bridge.scene.get_mut("first").unwrap();
+        first.velocity_x = 0.81234567;
+        first.velocity_y = -0.45678901;
+        first.angular_velocity = 0.23456789;
+    }
+    {
+        let second = bridge.scene.get_mut("second").unwrap();
+        second.velocity_x = -0.34567891;
+        second.velocity_y = 0.67890123;
+        second.angular_velocity = -0.12345678;
+    }
+    let first = bridge.scene["first"].clone();
+    let second = bridge.scene["second"].clone();
+    let mut joint = bridge.joints["spring"].clone();
+    joint.distance_impulse = 0.123456789;
+    bridge.initialize_distance_velocity_constraints(&mut joint, &first, &second, 1.0 / 59.94);
+
+    assert_eq!(
+        joint.distance_effective_mass,
+        f64::from(joint.distance_effective_mass as f32)
+    );
+    assert_eq!(joint.distance_gamma, f64::from(joint.distance_gamma as f32));
+    assert_eq!(joint.distance_bias, f64::from(joint.distance_bias as f32));
+    bridge.solve_distance_joint_velocity(&mut joint, &first, &second, 1.0 / 59.94);
+    assert_eq!(
+        joint.distance_impulse,
+        f64::from(joint.distance_impulse as f32)
+    );
+    assert_ne!(joint.distance_impulse, 0.123456789);
 }

@@ -32,6 +32,13 @@ pub(crate) struct PhysicsJoint {
     pub(crate) motor_impulse: f64,
     pub(crate) limit_impulse: f64,
     pub(crate) distance_impulse: f64,
+    /// Float solver cache populated by b2DistanceJoint::InitVelocityConstraints.
+    pub(crate) distance_axis: (f64, f64),
+    pub(crate) distance_radius_first: (f64, f64),
+    pub(crate) distance_radius_second: (f64, f64),
+    pub(crate) distance_effective_mass: f64,
+    pub(crate) distance_gamma: f64,
+    pub(crate) distance_bias: f64,
     pub(crate) previous_step: f64,
     pub(crate) limits_enabled: bool,
     pub(crate) lower_limit: f64,

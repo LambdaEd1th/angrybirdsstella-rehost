@@ -16024,3 +16024,40 @@ position-delta path was removed. Regressions cover exact axis/reference
 construction, constraint removal, live limit reclassification, the native
 negative-force motor clamp, and the shipped Chapter 02 level 56 vehicle's
 initial roll, sleep and long idle stability.
+
+## Complete distance-joint solver cache and float pipeline
+
+The RTTI string `15b2DistanceJoint` at `0x100A0C970` leads to the vtable group
+at `0x100AB17C0`. Its solver slots map the complete lifecycle:
+`sub_100865270` initializes velocity constraints, `sub_1008655D0` solves a
+velocity iteration, and `sub_1008656D4` solves a position iteration. IDA and
+Hopper agree that the entire object cache and every body-array temporary use
+float32.
+
+Initialization reconstructs both anchor radii and the distance vector at
+`0x100865344..0x1008653B4`, then evaluates the length as one squared multiply,
+one fused multiply-add and `FSQRT` at `0x1008653B8..0x1008653C0`. Lengths at or
+below the native `0.001f` constant are assigned an exactly zero axis. The two
+lever arms and scalar inverse effective mass are accumulated in a fixed
+float/FMA order at `0x1008653FC..0x100865424`, with exact-zero reciprocal
+semantics.
+
+The soft branch at `0x100865450..0x1008654D0` uses the bundled `6.2832f`
+constant, stores gamma and bias on the joint, and replaces the cached scalar
+mass with `1 / (inverseMass + gamma)`. Warm starting scales and applies the
+cached impulse using those stored radii and axis at
+`0x1008654D4..0x1008655A4`. The velocity function consumes the same cache
+without rebuilding geometry: point velocities and the axial dot product are
+formed at `0x1008655FC..0x100865624`, bias and gamma are added at
+`0x100865630..0x100865638`, and the accumulated impulse is updated in float at
+`0x10086563C..0x100865648` before fused body writes.
+
+For hard constraints, position solving recomputes only the live radii,
+distance vector and normalized axis, while deliberately reusing the scalar
+mass cached during initialization. `sub_1008656D4` preserves a sub-FLT_EPSILON
+vector unnormalized, clamps the length error to `[-0.2f, 0.2f]`, and accepts a
+constraint only below `0.001f`. Rust now mirrors that cache lifetime, float32
+instruction grouping, exact-zero divisions, short-axis rules, soft bias/gamma
+chain, accumulated impulse and fused position/velocity writes. Regressions
+cover the zero-axis warm start and a nontrivial soft spring whose entire cache
+and impulse remain exact widened float values.
