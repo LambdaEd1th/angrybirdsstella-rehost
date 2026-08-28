@@ -17100,3 +17100,38 @@ AppData 120-frame release-wgpu upload/readback reports 20 optional probes,
 zero invoked fallbacks, zero remaining compatibility bindings and empty
 stderr. Its PNG SHA-256 remains
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## Native float32 per-shape ray casts
+
+Following the virtual call made by the world ray wrapper recovered the four
+concrete shape implementations: circle `sub_10085D604`, chain
+`sub_10085D260`, edge `sub_10085D848` and polygon `sub_10085DD64`. The prior
+host path instead intersected world-space edges and circles in float64. It now
+dispatches every live fixture through a float32 counterpart of the native
+virtual, using the object's fused Box2D transform and the same local proxy
+vertices and signed radius as overlap and time-of-impact queries.
+
+Circle casting now preserves Purple's FMA grouping for the discriminant and
+contact normal, its `FLT_EPSILON` short-ray cutoff, negative-zero root test and
+ordered ARM floating comparisons. Edge and chain children transform the ray
+into shape-local space and use the native segment-fraction tests. Notably,
+this Purple build's edge virtual returns the selected local normal without
+rotating it back through the shape transform; the host now preserves that
+observable quirk. Polygon casting reconstructs the per-edge normals stored by
+`b2PolygonShape::Set` (`sub_10085DB9C`) without changing signed vertex order,
+clips the lower and upper fractions in the same order, and rotates only its
+selected polygon normal back to world space.
+
+The final world hit point also follows `b2DynamicTree::RayCast`
+(`sub_10086F834`): each `fraction * p2` term is rounded first, then
+`(1 - fraction) * p1` is accumulated with FMADD. Regressions pin float32
+circle fractions and hit points, rotated polygon normals, the edge-local
+normal quirk, and clockwise setter normal materialization.
+
+The complete workspace now passes 779 tests with the deliberate long-duration
+BirdRun audit ignored. Formatting, whitespace validation, strict all-target/
+all-feature Clippy and the release workspace build are clean. A fresh
+isolated-AppData 120-frame release-wgpu upload/render/readback completed with
+20 optional data probes, zero invoked fallbacks, zero remaining compatibility
+bindings and empty stderr. Its execution-evidence PNG SHA-256 is
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.

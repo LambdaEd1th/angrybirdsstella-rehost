@@ -149,6 +149,7 @@ impl SceneObject {
             .collect()
     }
 
+    #[cfg(test)]
     pub(crate) fn collision_segments(&self) -> Vec<((f64, f64), (f64, f64))> {
         let CollisionShape::Line { vertices } = &self.collision_shape else {
             return Vec::new();
