@@ -6,41 +6,46 @@ use crate::SceneObject;
 /// native solver does not copy full render objects into every point pass.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct PositionBodyState {
-    pub(crate) position: (f32, f32),
-    pub(crate) angle: f32,
     pub(crate) center: (f32, f32),
-    pub(crate) inverse_mass: f32,
-    pub(crate) inverse_inertia: f32,
-    pub(crate) dynamic: bool,
+    pub(crate) angle: f32,
 }
 
 impl PositionBodyState {
     pub(crate) fn capture(object: &SceneObject) -> Self {
         Self {
-            position: (object.x as f32, object.y as f32),
-            angle: object.angle as f32,
             center: object.native_world_center(),
-            inverse_mass: object.inverse_mass_for_solver() as f32,
-            inverse_inertia: object.inverse_inertia() as f32,
-            dynamic: object.dynamic_body,
+            angle: object.angle as f32,
         }
     }
 
-    pub(crate) fn transform_point(self, point: (f32, f32)) -> (f32, f32) {
+    pub(crate) fn transform_point(self, local_center: (f32, f32), point: (f32, f32)) -> (f32, f32) {
         let (sine, cosine) = self.angle.sin_cos();
+        let position = (
+            self.center.0 - local_center.0.mul_add(cosine, -(local_center.1 * sine)),
+            self.center.1 - local_center.0.mul_add(sine, local_center.1 * cosine),
+        );
         (
             point
                 .0
-                .mul_add(cosine, (-point.1).mul_add(sine, self.position.0)),
-            point
-                .0
-                .mul_add(sine, point.1.mul_add(cosine, self.position.1)),
+                .mul_add(cosine, (-point.1).mul_add(sine, position.0)),
+            point.0.mul_add(sine, point.1.mul_add(cosine, position.1)),
         )
     }
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum PositionContactConstraint {
+pub(crate) struct PositionContactConstraint {
+    pub(crate) first_local_center: (f32, f32),
+    pub(crate) second_local_center: (f32, f32),
+    pub(crate) first_inverse_mass: f32,
+    pub(crate) second_inverse_mass: f32,
+    pub(crate) first_inverse_inertia: f32,
+    pub(crate) second_inverse_inertia: f32,
+    pub(crate) manifold: PositionContactManifold,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum PositionContactManifold {
     Circles {
         local_first: (f64, f64),
         local_second: (f64, f64),

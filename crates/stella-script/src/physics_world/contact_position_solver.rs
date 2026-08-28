@@ -42,10 +42,10 @@ impl RenderBridge {
                 let (point_x, point_y) = point.point;
                 let separation = point.separation;
                 minimum_separation = minimum_separation.min(separation);
-                let first_inverse_mass = first.inverse_mass;
-                let second_inverse_mass = second.inverse_mass;
-                let first_inverse_inertia = first.inverse_inertia;
-                let second_inverse_inertia = second.inverse_inertia;
+                let first_inverse_mass = constraint.first_inverse_mass;
+                let second_inverse_mass = constraint.second_inverse_mass;
+                let first_inverse_inertia = constraint.first_inverse_inertia;
+                let second_inverse_inertia = constraint.second_inverse_inertia;
                 let first_center = first.center;
                 let second_center = second.center;
                 let first_radius_x = point_x - first_center.0;

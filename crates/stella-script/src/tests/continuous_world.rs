@@ -150,6 +150,47 @@ fn continuous_step_stops_a_fast_circle_at_a_static_thin_edge() {
 }
 
 #[test]
+fn toi_position_constraint_keeps_constructor_mass_cache() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                clearVertices()
+                addVertex(0, -1)
+                addVertex(0, 1)
+                createLineShape("wall", "", 0, 0, 0, 2, 0, 0, 0, true, false, 1)
+                createCircle("body", "", -0.005, 0, 0.01, 1, 0, 0, true, false, 1)
+                "#,
+        )
+        .unwrap();
+
+    let mut bridge = runtime.render.lock().unwrap();
+    let key = ("body".to_owned(), "wall".to_owned(), 0, 0);
+    let manifold = bridge.scene["body"]
+        .collision_fixture_manifold(&bridge.scene["wall"], 0, 0)
+        .expect("overlapping circle/edge manifold");
+    let constraint = PositionContactConstraint::from_manifold(
+        &bridge.scene["body"],
+        &bridge.scene["wall"],
+        manifold,
+    );
+    assert!(constraint.first_inverse_mass > 0.0);
+    let contact = NativeToiContact {
+        key,
+        dynamic_body: "body".to_owned(),
+        alpha: 0.5,
+        manifold,
+    };
+
+    let before = bridge.scene["body"].native_world_center();
+    bridge.scene.get_mut("body").unwrap().inverse_mass = 0.0;
+    bridge.solve_toi_position_constraint(&contact, &constraint);
+    let after = bridge.scene["body"].native_world_center();
+
+    assert_ne!(after.0.to_bits(), before.0.to_bits());
+}
+
+#[test]
 fn native_time_of_impact_uses_purple_target_for_point_separation() {
     let moving = NativeDistanceProxy {
         vertices: vec![(0.0, 0.0)],

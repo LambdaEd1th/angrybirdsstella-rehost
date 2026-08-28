@@ -1,6 +1,8 @@
 //! `b2PositionSolverManifold::Initialize` (`sub_100864CFC`).
 
-use super::model::{PositionBodyState, PositionContactConstraint, PositionWorldPoint};
+use super::model::{
+    PositionBodyState, PositionContactConstraint, PositionContactManifold, PositionWorldPoint,
+};
 #[cfg(test)]
 use crate::SceneObject;
 
@@ -25,16 +27,21 @@ impl PositionContactConstraint {
         second: PositionBodyState,
         index: usize,
     ) -> Option<PositionWorldPoint> {
-        match self {
-            Self::Circles {
+        match &self.manifold {
+            PositionContactManifold::Circles {
                 local_first,
                 local_second,
                 first_radius,
                 second_radius,
             } => {
-                let point_a = first.transform_point((local_first.0 as f32, local_first.1 as f32));
-                let point_b =
-                    second.transform_point((local_second.0 as f32, local_second.1 as f32));
+                let point_a = first.transform_point(
+                    self.first_local_center,
+                    (local_first.0 as f32, local_first.1 as f32),
+                );
+                let point_b = second.transform_point(
+                    self.second_local_center,
+                    (local_second.0 as f32, local_second.1 as f32),
+                );
                 let delta = (point_b.0 - point_a.0, point_b.1 - point_a.1);
                 let distance = delta.0.hypot(delta.1);
                 let normal = if distance >= f32::EPSILON {
@@ -53,7 +60,7 @@ impl PositionContactConstraint {
                         - *second_radius as f32,
                 })
             }
-            Self::FaceFirst {
+            PositionContactManifold::FaceFirst {
                 local_normal,
                 local_plane_point,
                 local_clip_points,
@@ -66,11 +73,15 @@ impl PositionContactConstraint {
                     local_normal.0.mul_add(cosine, -(local_normal.1 * sine)),
                     local_normal.0.mul_add(sine, local_normal.1 * cosine),
                 );
-                let plane_point =
-                    first.transform_point((local_plane_point.0 as f32, local_plane_point.1 as f32));
+                let plane_point = first.transform_point(
+                    self.first_local_center,
+                    (local_plane_point.0 as f32, local_plane_point.1 as f32),
+                );
                 let local_clip_point = local_clip_points.get(index)?;
-                let point =
-                    second.transform_point((local_clip_point.0 as f32, local_clip_point.1 as f32));
+                let point = second.transform_point(
+                    self.second_local_center,
+                    (local_clip_point.0 as f32, local_clip_point.1 as f32),
+                );
                 Some(PositionWorldPoint {
                     normal,
                     point,
@@ -80,7 +91,7 @@ impl PositionContactConstraint {
                         - *second_radius as f32,
                 })
             }
-            Self::FaceSecond {
+            PositionContactManifold::FaceSecond {
                 local_normal,
                 local_plane_point,
                 local_clip_points,
@@ -94,11 +105,15 @@ impl PositionContactConstraint {
                     local_normal.0.mul_add(sine, local_normal.1 * cosine),
                 );
                 let normal = (-reference_normal.0, -reference_normal.1);
-                let plane_point = second
-                    .transform_point((local_plane_point.0 as f32, local_plane_point.1 as f32));
+                let plane_point = second.transform_point(
+                    self.second_local_center,
+                    (local_plane_point.0 as f32, local_plane_point.1 as f32),
+                );
                 let local_clip_point = local_clip_points.get(index)?;
-                let point =
-                    first.transform_point((local_clip_point.0 as f32, local_clip_point.1 as f32));
+                let point = first.transform_point(
+                    self.first_local_center,
+                    (local_clip_point.0 as f32, local_clip_point.1 as f32),
+                );
                 Some(PositionWorldPoint {
                     normal,
                     point,

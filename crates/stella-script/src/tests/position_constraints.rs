@@ -219,6 +219,77 @@ fn two_point_position_constraint_rebuilds_transform_after_first_impulse() {
 }
 
 #[test]
+fn position_constraint_keeps_constructor_mass_cache_after_live_body_mutation() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .execute_source(
+            r#"
+                createBox("mover", "", 0, 0.45, 2, 1, 1, 0, 0, true, false, 1)
+                createBox("ground", "", 0, -0.5, 4, 1, 0, 0, 0, true, false, 1)
+                setWorldGravity(0, 0)
+                "#,
+        )
+        .unwrap();
+
+    let mut bridge = runtime.render.lock().unwrap();
+    bridge.refresh_contacts();
+    bridge.assemble_box2d_islands();
+    let pair = bridge
+        .position_contacts
+        .keys()
+        .find(|key| key.0 == "mover" || key.1 == "mover")
+        .cloned()
+        .expect("mover/ground position constraint");
+    let cached = &bridge.position_contacts[&pair];
+    assert!(cached.first_inverse_mass > 0.0 || cached.second_inverse_mass > 0.0);
+
+    let before = bridge.scene["mover"].native_world_center();
+    bridge.scene.get_mut("mover").unwrap().inverse_mass = 0.0;
+    bridge.solve_island_contact_positions(std::slice::from_ref(&pair));
+    let after = bridge.scene["mover"].native_world_center();
+
+    assert_ne!(after.1.to_bits(), before.1.to_bits());
+}
+
+#[test]
+fn position_constraint_reconstructs_transforms_with_cached_local_centers() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .execute_source(
+            r#"
+                createCircle("a", "", 0, 0, 1, 1, 0, 0, true, false, 1)
+                createCircle("b", "", 1.5, 0, 1, 1, 0, 0, true, false, 1)
+                "#,
+        )
+        .unwrap();
+
+    let mut bridge = runtime.render.lock().unwrap();
+    let manifold = bridge.scene["a"]
+        .collision_fixture_manifold(&bridge.scene["b"], 0, 0)
+        .expect("circle contact");
+    let constraint =
+        PositionContactConstraint::from_manifold(&bridge.scene["a"], &bridge.scene["b"], manifold);
+    let before = constraint
+        .world_point(&bridge.scene["a"], &bridge.scene["b"], 0)
+        .unwrap();
+
+    let body = bridge.scene.get_mut("b").unwrap();
+    let center = body.native_world_center();
+    let angle = body.angle as f32;
+    body.fixture_mass_data.1 = (0.25, -0.125);
+    body.set_native_sweep_transform(center, angle);
+    let after = constraint
+        .world_point(&bridge.scene["a"], &bridge.scene["b"], 0)
+        .unwrap();
+
+    assert_eq!(after.normal.0.to_bits(), before.normal.0.to_bits());
+    assert_eq!(after.normal.1.to_bits(), before.normal.1.to_bits());
+    assert_eq!(after.point.0.to_bits(), before.point.0.to_bits());
+    assert_eq!(after.point.1.to_bits(), before.point.1.to_bits());
+    assert_eq!(after.separation.to_bits(), before.separation.to_bits());
+}
+
+#[test]
 fn contact_warm_start_resets_impulse_when_box2d_feature_changes() {
     let face = ContactPoint {
         penetration: 0.01,

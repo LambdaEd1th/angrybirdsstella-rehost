@@ -30,23 +30,23 @@ impl RenderBridge {
             minimum_separation = minimum_separation.min(point.separation);
             let first_is_toi = contact.dynamic_body == contact.key.0;
             let second_is_toi = contact.dynamic_body == contact.key.1;
-            let first_inverse_mass = if first_is_toi && first.dynamic {
-                first.inverse_mass
+            let first_inverse_mass = if first_is_toi {
+                constraint.first_inverse_mass
             } else {
                 0.0_f32
             };
-            let second_inverse_mass = if second_is_toi && second.dynamic {
-                second.inverse_mass
+            let second_inverse_mass = if second_is_toi {
+                constraint.second_inverse_mass
             } else {
                 0.0_f32
             };
             let first_inverse_inertia = if first_is_toi {
-                first.inverse_inertia
+                constraint.first_inverse_inertia
             } else {
                 0.0_f32
             };
             let second_inverse_inertia = if second_is_toi {
-                second.inverse_inertia
+                constraint.second_inverse_inertia
             } else {
                 0.0_f32
             };

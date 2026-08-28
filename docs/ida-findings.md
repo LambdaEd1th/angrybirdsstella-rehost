@@ -3569,6 +3569,27 @@ body transform and clear its live inverse mass after initialization, verify
 the cached constraint still removes velocity, and exercise the initialization
 time 1000:1 point reduction before warm start.
 
+The adjacent position paths have the same constructor boundary. IDA resolves
+ordinary `SolvePositionConstraints` to `sub_1008646A4` and the isolated TOI
+pass to `sub_1008649BC`; Hopper independently reports the same 88-byte stride
+for their `b2ContactPositionConstraint` array. The body indices occupy
+`+32/+36`, inverse masses `+40/+44`, local centres `+48..+60`, inverse
+inertias `+64/+68`, and point count `+84`. The ordinary path loads all six
+cached body coefficients at `0x100864734..0x1008647A8`. The TOI path reads the
+same fields at `0x100864A48..0x100864AE0`, replacing only the mass/inertia pair
+with zero when that body index is outside the selected TOI pair.
+
+Both functions keep only the compact position triples live. Before each
+contact point they reconstruct `b2Transform::p` from the live world centre and
+angle plus the cached local centre, call `b2PositionSolverManifold::Initialize`,
+and immediately write the Gauss-Seidel correction back to those triples. The
+Rust position constraint now freezes the local centres, inverse masses and
+inverse inertias alongside its local manifold witnesses, then follows this
+same reconstruction for ordinary and TOI passes. It no longer consults live
+body mass data or a transform origin rebuilt from a later local centre.
+Focused regressions clear the live inverse mass after constraint construction
+and prove that both position paths still apply their retained native cache.
+
 The original solver also has two physically separate impulse stores. IDA and
 Hopper show `WarmStart` reading the 152-byte solver constraint array, while the
 112-byte `StoreImpulses` leaf walks that array only after every velocity

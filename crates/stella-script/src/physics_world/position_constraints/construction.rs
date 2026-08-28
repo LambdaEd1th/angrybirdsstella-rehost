@@ -1,6 +1,6 @@
 //! Convert contact manifold witnesses into local position-constraint state.
 
-use super::model::PositionContactConstraint;
+use super::model::{PositionContactConstraint, PositionContactManifold};
 use crate::*;
 
 impl PositionContactConstraint {
@@ -9,18 +9,29 @@ impl PositionContactConstraint {
         second: &SceneObject,
         manifold: ContactManifold,
     ) -> Self {
+        let first_local_center = first.local_center();
+        let second_local_center = second.local_center();
+        let cached = |manifold| Self {
+            first_local_center: (first_local_center.0 as f32, first_local_center.1 as f32),
+            second_local_center: (second_local_center.0 as f32, second_local_center.1 as f32),
+            first_inverse_mass: first.inverse_mass_for_solver() as f32,
+            second_inverse_mass: second.inverse_mass_for_solver() as f32,
+            first_inverse_inertia: first.inverse_inertia() as f32,
+            second_inverse_inertia: second.inverse_inertia() as f32,
+            manifold,
+        };
         let world_normal = (manifold.normal_x, manifold.normal_y);
         let first_circle = first.collision_circle();
         let second_circle = second.collision_circle();
         if let (Some((first_center, first_radius)), Some((second_center, second_radius))) =
             (first_circle, second_circle)
         {
-            return Self::Circles {
+            return cached(PositionContactManifold::Circles {
                 local_first: first.native_inverse_transform_body_point(first_center),
                 local_second: second.native_inverse_transform_body_point(second_center),
                 first_radius,
                 second_radius,
-            };
+            });
         }
 
         let first_radius = first_circle
@@ -52,7 +63,7 @@ impl PositionContactConstraint {
                 clip_points[0].0 - world_normal.0 * primary_separation,
                 clip_points[0].1 - world_normal.1 * primary_separation,
             );
-            Self::FaceFirst {
+            cached(PositionContactManifold::FaceFirst {
                 local_normal: inverse_rotate_vector(world_normal, first.angle),
                 local_plane_point: first.native_inverse_transform_body_point(plane_point),
                 local_clip_points: clip_points
@@ -61,7 +72,7 @@ impl PositionContactConstraint {
                     .collect(),
                 first_radius,
                 second_radius,
-            }
+            })
         } else {
             let reference_normal = (-world_normal.0, -world_normal.1);
             let clip_points = if let Some((circle_center, _)) = first_circle {
@@ -83,7 +94,7 @@ impl PositionContactConstraint {
                 clip_points[0].0 - reference_normal.0 * primary_separation,
                 clip_points[0].1 - reference_normal.1 * primary_separation,
             );
-            Self::FaceSecond {
+            cached(PositionContactManifold::FaceSecond {
                 local_normal: inverse_rotate_vector(reference_normal, second.angle),
                 local_plane_point: second.native_inverse_transform_body_point(plane_point),
                 local_clip_points: clip_points
@@ -92,17 +103,17 @@ impl PositionContactConstraint {
                     .collect(),
                 first_radius,
                 second_radius,
-            }
+            })
         }
     }
 
     pub(crate) fn point_count(&self) -> usize {
-        match self {
-            Self::Circles { .. } => 1,
-            Self::FaceFirst {
+        match &self.manifold {
+            PositionContactManifold::Circles { .. } => 1,
+            PositionContactManifold::FaceFirst {
                 local_clip_points, ..
             }
-            | Self::FaceSecond {
+            | PositionContactManifold::FaceSecond {
                 local_clip_points, ..
             } => local_clip_points.len(),
         }
