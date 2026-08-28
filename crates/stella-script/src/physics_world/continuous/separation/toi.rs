@@ -1,6 +1,8 @@
 //! `b2TimeOfImpact` (`sub_100861B54`) conservative advancement.
 
-use super::super::{NativeDistanceProxy, NativeSweep, distance::native_core_distance};
+use super::super::{
+    NativeDistanceProxy, NativeSweep, distance::native_core_distance, simplex::NativeSimplexCache,
+};
 use super::function::NativeSeparationFunction;
 
 /// Twenty outer iterations, eight separation-axis pushes and alternating
@@ -23,13 +25,18 @@ pub(crate) fn native_time_of_impact(
     let lower_target = target - tolerance;
     let upper_target = target + tolerance;
     let mut alpha_1 = 0.0_f32;
+    // Purple clears b2SimplexCache::count once before entering the TOI outer
+    // loop. b2Distance then reads and rewrites the same metric/feature cache
+    // on every conservative-advancement iteration.
+    let mut cache = NativeSimplexCache::default();
 
     for _ in 0..MAX_ITERATIONS {
-        let (distance, cache) = native_core_distance(
+        let distance = native_core_distance(
             proxy_a,
             sweep_a.transform(alpha_1),
             proxy_b,
             sweep_b.transform(alpha_1),
+            &mut cache,
         );
         if distance <= 0.0_f32 {
             return Some(0.0_f32);

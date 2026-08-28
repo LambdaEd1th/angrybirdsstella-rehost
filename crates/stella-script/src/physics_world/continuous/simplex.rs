@@ -14,9 +14,25 @@ pub(super) struct NativeSimplexVertex {
 
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct NativeSimplexCache {
+    pub(super) metric: f32,
     pub(super) count: usize,
     pub(super) index_a: [usize; 3],
     pub(super) index_b: [usize; 3],
+}
+
+pub(super) fn native_simplex_metric(vertices: &[NativeSimplexVertex; 3], count: usize) -> f32 {
+    match count {
+        2 => {
+            let edge = native_toi_sub(vertices[0].difference, vertices[1].difference);
+            native_toi_dot(edge, edge).sqrt()
+        }
+        3 => {
+            let edge_12 = native_toi_sub(vertices[1].difference, vertices[0].difference);
+            let edge_13 = native_toi_sub(vertices[2].difference, vertices[0].difference);
+            native_toi_cross(edge_12, edge_13)
+        }
+        _ => 0.0_f32,
+    }
 }
 
 pub(super) fn native_simplex_solve_two(vertices: &mut [NativeSimplexVertex; 3]) -> usize {

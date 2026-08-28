@@ -3,8 +3,8 @@
 use super::{
     NativeDistanceProxy, NativeToiTransform, native_toi_dot, native_toi_sub,
     simplex::{
-        NativeSimplexCache, NativeSimplexVertex, native_simplex_search_direction,
-        native_simplex_solve_three, native_simplex_solve_two,
+        NativeSimplexCache, NativeSimplexVertex, native_simplex_metric,
+        native_simplex_search_direction, native_simplex_solve_three, native_simplex_solve_two,
     },
 };
 
@@ -16,21 +16,17 @@ pub(crate) fn native_core_distance(
     transform_a: NativeToiTransform,
     proxy_b: &NativeDistanceProxy,
     transform_b: NativeToiTransform,
-) -> (f32, NativeSimplexCache) {
+    cache: &mut NativeSimplexCache,
+) -> f32 {
     let mut vertices = [NativeSimplexVertex::default(); 3];
-    let mut count = 1;
-    let index_a = 0;
-    let index_b = 0;
-    let point_a = transform_a.point(proxy_a.vertices[index_a]);
-    let point_b = transform_b.point(proxy_b.vertices[index_b]);
-    vertices[0] = NativeSimplexVertex {
-        point_a,
-        point_b,
-        difference: native_toi_sub(point_b, point_a),
-        weight: 1.0_f32,
-        index_a,
-        index_b,
-    };
+    let mut count = read_simplex_cache(
+        *cache,
+        proxy_a,
+        transform_a,
+        proxy_b,
+        transform_b,
+        &mut vertices,
+    );
 
     for _ in 0..20 {
         let saved = vertices[..count]
@@ -122,13 +118,135 @@ pub(crate) fn native_core_distance(
         }
     };
     let delta = native_toi_sub(witness_b, witness_a);
-    let mut cache = NativeSimplexCache {
-        count,
-        ..NativeSimplexCache::default()
-    };
+    cache.metric = native_simplex_metric(&vertices, count);
+    cache.count = count;
     for (index, vertex) in vertices.iter().take(count).enumerate() {
         cache.index_a[index] = vertex.index_a;
         cache.index_b[index] = vertex.index_b;
     }
-    (native_toi_dot(delta, delta).sqrt(), cache)
+    native_toi_dot(delta, delta).sqrt()
+}
+
+fn read_simplex_cache(
+    cache: NativeSimplexCache,
+    proxy_a: &NativeDistanceProxy,
+    transform_a: NativeToiTransform,
+    proxy_b: &NativeDistanceProxy,
+    transform_b: NativeToiTransform,
+    vertices: &mut [NativeSimplexVertex; 3],
+) -> usize {
+    let mut count = cache.count;
+    for (index, vertex) in vertices.iter_mut().take(count).enumerate() {
+        let index_a = cache.index_a[index];
+        let index_b = cache.index_b[index];
+        let point_a = transform_a.point(proxy_a.vertices[index_a]);
+        let point_b = transform_b.point(proxy_b.vertices[index_b]);
+        *vertex = NativeSimplexVertex {
+            point_a,
+            point_b,
+            difference: native_toi_sub(point_b, point_a),
+            weight: 0.0_f32,
+            index_a,
+            index_b,
+        };
+    }
+
+    if count >= 2 {
+        let metric = native_simplex_metric(vertices, count);
+        if metric < 0.5_f32 * cache.metric
+            || 2.0_f32 * cache.metric < metric
+            || metric < f32::EPSILON
+        {
+            count = 0;
+        }
+    }
+
+    if count == 0 {
+        let point_a = transform_a.point(proxy_a.vertices[0]);
+        let point_b = transform_b.point(proxy_b.vertices[0]);
+        vertices[0] = NativeSimplexVertex {
+            point_a,
+            point_b,
+            difference: native_toi_sub(point_b, point_a),
+            weight: 1.0_f32,
+            index_a: 0,
+            index_b: 0,
+        };
+        count = 1;
+    }
+    count
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn line_proxy() -> NativeDistanceProxy {
+        NativeDistanceProxy {
+            vertices: vec![(-1.0, 0.0), (1.0, 0.0)],
+            radius: 0.0,
+        }
+    }
+
+    fn point_proxy() -> NativeDistanceProxy {
+        NativeDistanceProxy {
+            vertices: vec![(0.0, 0.0)],
+            radius: 0.0,
+        }
+    }
+
+    #[test]
+    fn read_cache_preserves_a_valid_two_feature_simplex() {
+        let proxy_a = line_proxy();
+        let proxy_b = point_proxy();
+        let cache = NativeSimplexCache {
+            metric: 2.0,
+            count: 2,
+            index_a: [0, 1, 0],
+            index_b: [0, 0, 0],
+        };
+        let mut vertices = [NativeSimplexVertex::default(); 3];
+        let count = read_simplex_cache(
+            cache,
+            &proxy_a,
+            NativeToiTransform::IDENTITY,
+            &proxy_b,
+            NativeToiTransform::IDENTITY,
+            &mut vertices,
+        );
+
+        assert_eq!(count, 2);
+        assert_eq!(
+            native_simplex_metric(&vertices, count).to_bits(),
+            2.0_f32.to_bits()
+        );
+        assert_eq!((vertices[0].index_a, vertices[1].index_a), (0, 1));
+        assert_eq!((vertices[0].weight, vertices[1].weight), (0.0, 0.0));
+    }
+
+    #[test]
+    fn read_cache_discards_a_metric_outside_native_half_to_double_window() {
+        let proxy_a = line_proxy();
+        let proxy_b = point_proxy();
+        let cache = NativeSimplexCache {
+            metric: 8.0,
+            count: 2,
+            index_a: [0, 1, 0],
+            index_b: [0, 0, 0],
+        };
+        let mut vertices = [NativeSimplexVertex::default(); 3];
+        let count = read_simplex_cache(
+            cache,
+            &proxy_a,
+            NativeToiTransform::IDENTITY,
+            &proxy_b,
+            NativeToiTransform::IDENTITY,
+            &mut vertices,
+        );
+
+        assert_eq!(count, 1);
+        assert_eq!(vertices[0].index_a, 0);
+        assert_eq!(vertices[0].index_b, 0);
+        assert_eq!(vertices[0].weight, 1.0);
+    }
 }

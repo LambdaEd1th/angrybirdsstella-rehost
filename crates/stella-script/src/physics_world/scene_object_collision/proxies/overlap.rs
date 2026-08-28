@@ -33,13 +33,14 @@ impl SceneObject {
             sine: second_sine,
             cosine: second_cosine,
         };
+        let mut cache = NativeSimplexCache::default();
         let core_distance = native_core_distance(
             &first_proxy,
             first_transform,
             &second_proxy,
             second_transform,
-        )
-        .0;
+            &mut cache,
+        );
         let combined_radius = first_proxy.radius + second_proxy.radius;
         let distance = if core_distance > combined_radius && core_distance > f32::EPSILON {
             core_distance - combined_radius

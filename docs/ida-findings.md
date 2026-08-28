@@ -16431,3 +16431,36 @@ that direct cached write instead of passing through the generic helper that
 re-read body mass state. A focused regression changes the live inverse mass
 after initialization and proves the current position iteration still uses the
 retained native cache.
+
+## Persistent GJK simplex cache across TOI advancement
+
+The initial GJK reconstruction returned feature indices to the separation
+function but restarted every subsequent distance query from feature zero.
+Purple retains the full `b2SimplexCache` across the conservative-advancement
+outer loop. IDA shows the cache at the stack address selected by
+`0x100861BF0`: only its 16-bit count at offset `+4` is cleared, once, at
+`0x100861CBC`. The loop call at `0x100861E44..0x100861E50` passes that same
+address to `sub_1008605D4`, and no instruction on the loop-back path clears it.
+Hopper independently exposes the one pre-loop zero store and repeated
+`b2Distance` call through the same local owner.
+
+`b2Simplex::ReadCache` at `0x100860C60` loads the 16-bit count from `+4`, A
+feature bytes from `+6..+8`, B feature bytes from `+9..+11`, and reconstructs
+each transformed support pair at `0x100860C78..0x100860CFC`. For a two- or
+three-vertex cache it compares the newly reconstructed simplex metric with
+the float at offset zero. The exact invalidation chain is visible at
+`0x100860D7C..0x100860DA0`: reject when the new metric is below half of the
+old metric, above twice the old metric, or below `FLT_EPSILON`. Rejection and
+an initially empty cache both enter `0x100860DB0..0x100860E28`, which rebuilds
+feature pair `(0, 0)`, stores weight one and sets count one.
+
+The distance tail writes the inverse layout. A two-vertex cache receives its
+edge length at `0x100860AE8..0x100860B08`; a three-vertex cache receives its
+signed cross-product metric at `0x100860AB4..0x100860B08`; other counts write
+zero. Count is stored at `+4`, then the feature bytes are copied at
+`0x100860B24..0x100860B44`. Rust now reads, validates and rewrites the same
+cache on every GJK call and keeps one cache alive for the complete native TOI
+invocation. Direct regressions cover a valid two-feature restoration with
+zeroed barycentric weights and the native half-to-double invalidation fallback;
+the existing continuous-world suite exercises the retained cache through real
+TOI contact advancement.
