@@ -2,6 +2,28 @@
 
 use crate::*;
 
+fn native_track_endpoint_impulse(edge: (f32, f32), fraction: f32, base: (f32, f32)) -> (f32, f32) {
+    // sub_10086DC30..60 first folds an out-of-range endpoint correction
+    // directly into the accumulated normal impulse with FMADD. FCSEL's
+    // unordered path reaches the below-start expression as well.
+    if fraction >= 0.0_f32 {
+        if fraction <= 1.0_f32 {
+            base
+        } else {
+            let excess = fraction + -1.0_f32;
+            (
+                (-edge.0).mul_add(excess, base.0),
+                (-edge.1).mul_add(excess, base.1),
+            )
+        }
+    } else {
+        (
+            (-edge.0).mul_add(fraction, base.0),
+            (-edge.1).mul_add(fraction, base.1),
+        )
+    }
+}
+
 impl RenderBridge {
     pub(crate) fn begin_island_track_step(&mut self, body_names: &[String]) {
         let track_names = self
@@ -91,23 +113,15 @@ impl RenderBridge {
             let edge_x = edge_end.0 - edge_start.0;
             let edge_y = edge_end.1 - edge_start.1;
             let length_squared = edge_x.mul_add(edge_x, edge_y * edge_y);
-            if length_squared == 0.0 {
-                continue;
-            }
             let fraction = (position_x - edge_start.0)
                 .mul_add(edge_x, (position_y - edge_start.1) * edge_y)
                 / length_squared;
-            let (endpoint_x, endpoint_y) = if fraction < 0.0 {
-                (-edge_x * fraction, -edge_y * fraction)
-            } else if fraction > 1.0 {
-                (edge_x * (1.0 - fraction), edge_y * (1.0 - fraction))
-            } else {
-                (0.0, 0.0)
-            };
+            let (linear_impulse_x, linear_impulse_y) =
+                native_track_endpoint_impulse((edge_x, edge_y), fraction, (base_x, base_y));
             let projected_x = edge_x.mul_add(fraction, edge_start.0);
             let projected_y = edge_y.mul_add(fraction, edge_start.1);
-            let correction_x = (projected_x - position_x).mul_add(0.1_f32, base_x + endpoint_x);
-            let correction_y = (projected_y - position_y).mul_add(0.1_f32, base_y + endpoint_y);
+            let correction_x = (projected_x - position_x).mul_add(0.1_f32, linear_impulse_x);
+            let correction_y = (projected_y - position_y).mul_add(0.1_f32, linear_impulse_y);
             velocity_x += correction_x;
             velocity_y += correction_y;
 
@@ -168,5 +182,30 @@ impl RenderBridge {
             object.velocity_y = f64::from(velocity_y);
             object.angular_velocity = f64::from(angular_velocity);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::native_track_endpoint_impulse;
+
+    #[test]
+    fn track_endpoint_impulse_folds_the_base_into_native_fmadd() {
+        let edge = f32::from_bits(0x3F43_B7B2);
+        let fraction = f32::from_bits(0x4072_3369);
+        let base = f32::from_bits(0x3EF8_65B4);
+        let native = native_track_endpoint_impulse((edge, 0.0), fraction, (base, 0.0)).0;
+        let separated = base + edge * (1.0_f32 - fraction);
+
+        assert_eq!(native.to_bits(), 0xBFD2_60A2);
+        assert_eq!(separated.to_bits(), 0xBFD2_60A3);
+    }
+
+    #[test]
+    fn unordered_track_fraction_follows_the_native_below_start_path() {
+        let impulse = native_track_endpoint_impulse((2.0, -3.0), f32::NAN, (1.0, 4.0));
+
+        assert!(impulse.0.is_nan());
+        assert!(impulse.1.is_nan());
     }
 }

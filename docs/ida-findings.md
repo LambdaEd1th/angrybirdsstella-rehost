@@ -16841,3 +16841,35 @@ ordinary island writeback reconstructs body transform.p.x at
 fused negative rotation. The shared sweep writer now follows that order;
 its bit fixture changes the former `0xBE7F8F18` to `0xBE7F8F1C` while retaining
 the independently recovered y path.
+
+## Native track endpoint fused impulse selection
+
+The custom track constraint's velocity member `sub_10086DB8C` does not build
+an endpoint vector and add it to the accumulated normal impulse afterwards.
+IDA shows the above-end branch at `0x10086DC3C..0x10086DC4C` rounding
+`fraction - 1` once and using two `FMADD` instructions to fold the signed edge
+and the accumulated impulse together. The below-start candidates repeat that
+shape at `0x10086DC50..0x10086DC60`. Hopper independently exposes the same
+`FCMP`/`FCSEL` sequence and fused operands.
+
+The Rust track solver now selects those already-combined candidates before
+the projected-position correction at `0x10086DC64..0x10086DC78`. It also
+retains the native unordered selection path and no longer invents a
+zero-length early return: Purple divides by the squared edge length and lets
+an unordered fraction flow through the `FCSEL` candidates. A finite bit
+regression distinguishes the former separately rounded endpoint value
+`0xBFD260A3` from the native fused word `0xBFD260A2`; a second regression pins
+the unordered path.
+
+The adjacent warm-start member `sub_10086DA58` was checked at the same time.
+Its unchanged-child gate, separate impulse scaling/additions and `0.9f`
+angular-velocity multiplication already match the host's fixed-step track
+state, so no speculative changes were made outside the proven endpoint path.
+
+The complete workspace passes 769 tests with the deliberate long-duration
+BirdRun audit ignored, plus formatting, diff whitespace validation, strict
+all-target/all-feature Clippy and the release build. A fresh 120-frame release
+wgpu upload/readback completes with 20 optional data probes, zero invoked
+fallbacks, zero remaining compatibility bindings and empty stderr. Its
+execution-evidence PNG SHA-256 is
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
