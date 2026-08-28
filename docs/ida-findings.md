@@ -16602,3 +16602,9 @@ stacks in `BirdRun_L09`: clearing an auxiliary contact's cache every TOI pass
 made the following discrete solve cold-start repeatedly and kept the authored
 wheel mounts in visible motion. The seeded ten-second settling regression now
 passes with existing contacts included in the TOI island.
+
+The island constructor call at `0x10086EAD0` passes 64 body slots and 32
+contact slots. Its edge loop compares the live counts with those capacities at
+`0x10086F0BC..0x10086F0D8` before examining the next contact. Auxiliary
+expansion now retains the reachable 32-contact stop instead of allowing an
+unbounded host vector to solve contacts Purple would leave for a later pass.

@@ -204,6 +204,13 @@ impl RenderBridge {
         alpha: f32,
         island_contacts: &[ContactKey],
     ) -> Option<(NativeToiContact, ContactEvent)> {
+        // sub_10086EA54 constructs its scratch island with 64 body slots and
+        // 32 contact slots, then stops the contact-edge walk as soon as either
+        // count reaches capacity. Every additional TOI body is introduced by
+        // a contact, so the contact bound is the reachable limiting case.
+        if island_contacts.len() >= 32 {
+            return None;
+        }
         let candidates = self
             .native_contact_world_order
             .iter()

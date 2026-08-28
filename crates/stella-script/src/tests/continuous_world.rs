@@ -567,6 +567,19 @@ fn toi_island_includes_an_existing_touching_auxiliary_contact_once() {
         bridge.contact_impulses[&horizontal].normal, 0.25,
         "SolveTOI must not overwrite the persistent warm-start manifold"
     );
+    let saturated_island = (0..32)
+        .map(|fixture| ("body".to_owned(), "horizontal".to_owned(), fixture, 0))
+        .collect::<Vec<_>>();
+    assert!(
+        bridge
+            .advance_next_toi_auxiliary_contact(
+                &pending[0].0.dynamic_body,
+                pending[0].0.alpha,
+                &saturated_island,
+            )
+            .is_none(),
+        "native 32-contact TOI island capacity must stop edge expansion"
+    );
 }
 
 #[test]
