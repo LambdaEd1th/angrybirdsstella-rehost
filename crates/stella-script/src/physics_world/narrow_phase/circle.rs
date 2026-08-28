@@ -1,7 +1,7 @@
 //! Circle-circle and polygon-circle narrow-phase members.
 
 use super::geometry::{normalized_axis_f32, polygon_signed_area_f32};
-use crate::{BOX2D_POLYGON_RADIUS, ContactManifold, ContactManifoldType};
+use crate::{BOX2D_POLYGON_RADIUS, ContactManifold, ContactPositionState, ContactPositionWitness};
 
 pub(crate) fn circle_circle_manifold(
     first_center: (f64, f64),
@@ -47,7 +47,6 @@ pub(crate) fn circle_circle_manifold(
         .0
         .mul_add(normal.0, surface_delta.1 * normal.1);
     Some(ContactManifold {
-        manifold_type: ContactManifoldType::Circles,
         normal_x: f64::from(normal.0),
         normal_y: f64::from(normal.1),
         penetration: f64::from(-separation),
@@ -55,6 +54,12 @@ pub(crate) fn circle_circle_manifold(
         point_y: f64::from((first_surface.1 + second_surface.1) * 0.5_f32),
         feature_id: 0,
         secondary: None,
+        position: ContactPositionState::World(ContactPositionWitness::Circles {
+            first_center,
+            second_center,
+            first_radius,
+            second_radius,
+        }),
     })
 }
 
@@ -107,6 +112,10 @@ pub(crate) fn circle_polygon_manifold(
         polygon[(face_index + 1) % polygon.len()].0 as f32,
         polygon[(face_index + 1) % polygon.len()].1 as f32,
     );
+    let face_center = (
+        (first_vertex.0 + second_vertex.0) * 0.5_f32,
+        (first_vertex.1 + second_vertex.1) * 0.5_f32,
+    );
     let edge = (
         second_vertex.0 - first_vertex.0,
         second_vertex.1 - first_vertex.1,
@@ -128,8 +137,8 @@ pub(crate) fn circle_polygon_manifold(
     // for an edge contact (large enough to destabilize closed joint loops).
     // The native epsilon branch classifies centers within the polygon as a
     // face contact before testing either vertex Voronoi region.
-    let (polygon_to_circle, separation) = if face_separation < f32::EPSILON {
-        (face_normal, face_separation)
+    let (polygon_to_circle, separation, plane_point) = if face_separation < f32::EPSILON {
+        (face_normal, face_separation, face_center)
     } else if first_region <= 0.0_f32 {
         let distance_squared = first_delta
             .0
@@ -145,7 +154,7 @@ pub(crate) fn circle_polygon_manifold(
             // manifold instead of falling back to the adjacent face normal.
             first_delta
         };
-        (normal, distance)
+        (normal, distance, first_vertex)
     } else if second_region <= 0.0_f32 {
         let distance_squared = second_delta
             .0
@@ -159,12 +168,8 @@ pub(crate) fn circle_polygon_manifold(
         } else {
             second_delta
         };
-        (normal, distance)
+        (normal, distance, second_vertex)
     } else {
-        let face_center = (
-            (first_vertex.0 + second_vertex.0) * 0.5_f32,
-            (first_vertex.1 + second_vertex.1) * 0.5_f32,
-        );
         let relative = (
             circle_center.0 - face_center.0,
             circle_center.1 - face_center.1,
@@ -175,7 +180,7 @@ pub(crate) fn circle_polygon_manifold(
         if separation > total_radius {
             return None;
         }
-        (face_normal, separation)
+        (face_normal, separation, face_center)
     };
 
     // Reconstruct b2WorldManifold's face-A points in native float32 order.
@@ -193,11 +198,6 @@ pub(crate) fn circle_polygon_manifold(
         polygon_to_circle
     };
     Some(ContactManifold {
-        manifold_type: if circle_is_first {
-            ContactManifoldType::FaceSecond
-        } else {
-            ContactManifoldType::FaceFirst
-        },
         normal_x: f64::from(normal.0),
         normal_y: f64::from(normal.1),
         penetration: f64::from(total_radius - separation),
@@ -206,5 +206,24 @@ pub(crate) fn circle_polygon_manifold(
         // Every branch of sub_10085E624 clears b2ManifoldPoint::id.key.
         feature_id: 0,
         secondary: None,
+        position: ContactPositionState::World(if circle_is_first {
+            ContactPositionWitness::FaceSecond {
+                normal: polygon_to_circle,
+                plane_point,
+                clip_points: [circle_center, (0.0, 0.0)],
+                point_count: 1,
+                first_radius: circle_radius,
+                second_radius: polygon_radius,
+            }
+        } else {
+            ContactPositionWitness::FaceFirst {
+                normal: polygon_to_circle,
+                plane_point,
+                clip_points: [circle_center, (0.0, 0.0)],
+                point_count: 1,
+                first_radius: polygon_radius,
+                second_radius: circle_radius,
+            }
+        }),
     })
 }

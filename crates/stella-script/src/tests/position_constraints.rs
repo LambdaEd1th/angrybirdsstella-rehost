@@ -87,7 +87,6 @@ fn velocity_constraint_drops_ill_conditioned_second_point_before_warm_start() {
         feature_id: contact_feature_id(0, 0, 1, 0),
     };
     let manifold = ContactManifold {
-        manifold_type: ContactManifoldType::FaceFirst,
         normal_x: 1.0,
         normal_y: 0.0,
         penetration: point.penetration,
@@ -97,6 +96,14 @@ fn velocity_constraint_drops_ill_conditioned_second_point_before_warm_start() {
         secondary: Some(ContactPoint {
             feature_id: contact_feature_id(0, 1, 1, 0),
             ..point
+        }),
+        position: ContactPositionState::World(ContactPositionWitness::FaceFirst {
+            normal: (1.0, 0.0),
+            plane_point: (0.0, 0.0),
+            clip_points: [(0.25, 0.0), (0.25, 0.0)],
+            point_count: 2,
+            first_radius: BOX2D_POLYGON_RADIUS as f32,
+            second_radius: BOX2D_POLYGON_RADIUS as f32,
         }),
     };
     assert_eq!(
@@ -170,6 +177,54 @@ fn scaled_fixture_witnesses_round_trip_through_the_unscaled_body_transform() {
     let point = constraint.world_point(first, second, 0).unwrap();
     assert!((point.separation + manifold.penetration as f32).abs() < 1.0e-5_f32);
     assert!((point.point.0 - second.x as f32).abs() < 1.0e-6_f32);
+}
+
+#[test]
+fn toi_contact_keeps_the_local_manifold_from_its_impact_transforms() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .execute_source(
+            r#"
+                createCircle("first", "", -20, 4, 1, 1, 0, 0, true, false, 1)
+                createCircle("second", "", 20, -3, 1, 1, 0, 0, true, false, 1)
+            "#,
+        )
+        .unwrap();
+    let bridge = runtime.render.lock().unwrap();
+    let first = &bridge.scene["first"];
+    let second = &bridge.scene["second"];
+    let manifold = first
+        .collision_fixture_manifold_at_transforms(
+            second,
+            0,
+            0,
+            NativeToiTransform {
+                position: (0.0, 0.0),
+                sine: 0.0,
+                cosine: 1.0,
+            },
+            NativeToiTransform {
+                position: (1.5, 0.0),
+                sine: 0.0,
+                cosine: 1.0,
+            },
+        )
+        .expect("impact-pose circle contact");
+    assert!(matches!(manifold.position, ContactPositionState::Local(_)));
+
+    let constraint = PositionContactConstraint::from_manifold(first, second, manifold);
+    let PositionContactManifold::Circles {
+        local_first,
+        local_second,
+        ..
+    } = constraint.manifold
+    else {
+        panic!("circle contact must retain a circles manifold");
+    };
+    assert_eq!(local_first.0.to_bits(), 0.0_f64.to_bits());
+    assert_eq!(local_first.1.to_bits(), 0.0_f64.to_bits());
+    assert_eq!(local_second.0.to_bits(), 0.0_f64.to_bits());
+    assert_eq!(local_second.1.to_bits(), 0.0_f64.to_bits());
 }
 
 #[test]

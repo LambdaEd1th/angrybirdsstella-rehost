@@ -2,8 +2,8 @@ use super::*;
 
 fn assert_same_manifold(actual: ContactManifold, expected: ContactManifold) {
     assert_eq!(
-        std::mem::discriminant(&actual.manifold_type),
-        std::mem::discriminant(&expected.manifold_type)
+        std::mem::discriminant(&actual.manifold_type()),
+        std::mem::discriminant(&expected.manifold_type())
     );
     assert_eq!(actual.normal_x.to_bits(), expected.normal_x.to_bits());
     assert_eq!(actual.normal_y.to_bits(), expected.normal_y.to_bits());

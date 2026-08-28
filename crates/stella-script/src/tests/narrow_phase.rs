@@ -45,7 +45,7 @@ fn polygon_reference_face_uses_native_relative_and_absolute_tolerance() {
     assert!(separation_b as f32 <= (separation_a as f32).mul_add(0.98_f32, 0.001_f32));
     let manifold = polygon_manifold(&first, &second).expect("shallow polygon contact");
     assert!(matches!(
-        manifold.manifold_type,
+        manifold.manifold_type(),
         ContactManifoldType::FaceFirst
     ));
 }
@@ -59,7 +59,7 @@ fn polygon_circle_uses_native_float_boundary_and_zero_feature_id() {
     let manifold = circle_polygon_manifold(center, f64::from(radius), &polygon, false)
         .expect("native <= radius boundary contact");
     assert!(matches!(
-        manifold.manifold_type,
+        manifold.manifold_type(),
         ContactManifoldType::FaceFirst
     ));
     assert_eq!(manifold.feature_id, 0);
@@ -109,6 +109,10 @@ fn edge_circle_uses_native_regions_features_and_inclusive_radius() {
         false,
     )
     .expect("native edge vertex boundary contact");
+    assert!(matches!(
+        vertex.manifold_type(),
+        ContactManifoldType::Circles
+    ));
     assert_eq!((vertex.normal_x, vertex.normal_y), (-1.0, 0.0));
     assert_eq!(vertex.penetration, 0.0);
     assert_eq!(vertex.feature_id, contact_feature_id(0, 0, 0, 0));
@@ -217,7 +221,7 @@ fn recovered_edge_polygon_manifold_clips_two_face_points() {
         .expect("box/edge manifold");
     let second = manifold.secondary.expect("second clipped edge point");
     assert!(matches!(
-        manifold.manifold_type,
+        manifold.manifold_type(),
         ContactManifoldType::FaceSecond
     ));
     assert!((manifold.normal_y - 1.0).abs() < 1e-9);
@@ -260,7 +264,7 @@ fn recovered_edge_polygon_manifold_clips_two_face_points() {
     let polygon_axis = polygon_segment_manifold(&polygon, ((0.502, 0.502), (0.504, 0.504)), true)
         .expect("polygon-primary corner contact");
     assert!(matches!(
-        polygon_axis.manifold_type,
+        polygon_axis.manifold_type(),
         ContactManifoldType::FaceFirst
     ));
     assert_eq!((polygon_axis.normal_x, polygon_axis.normal_y), (1.0, 0.0));

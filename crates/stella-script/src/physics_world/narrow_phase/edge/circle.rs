@@ -1,6 +1,9 @@
 //! b2CollideEdgeAndCircle (`sub_10085E8AC`).
 
-use crate::{BOX2D_POLYGON_RADIUS, ContactManifold, ContactManifoldType, contact_feature_id};
+use crate::{
+    BOX2D_POLYGON_RADIUS, ContactManifold, ContactPositionState, ContactPositionWitness,
+    contact_feature_id,
+};
 
 pub(crate) fn circle_segment_manifold(
     circle_center: (f64, f64),
@@ -122,6 +125,7 @@ pub(crate) fn circle_segment_manifold(
         (edge_surface.0 + circle_surface.0) * 0.5_f32,
         (edge_surface.1 + circle_surface.1) * 0.5_f32,
     );
+    let reference_normal = edge_to_circle;
     if circle_is_first {
         edge_to_circle = (-edge_to_circle.0, -edge_to_circle.1);
     }
@@ -130,12 +134,42 @@ pub(crate) fn circle_segment_manifold(
     } else {
         contact_feature_id(segment_index, 0, segment_type, 0)
     };
-    Some(ContactManifold {
-        manifold_type: if circle_is_first {
-            ContactManifoldType::FaceSecond
+    let position_witness = if segment_type == 0 {
+        if circle_is_first {
+            ContactPositionWitness::Circles {
+                first_center: circle_center,
+                second_center: closest,
+                first_radius: circle_radius,
+                second_radius: edge_radius,
+            }
         } else {
-            ContactManifoldType::FaceFirst
-        },
+            ContactPositionWitness::Circles {
+                first_center: closest,
+                second_center: circle_center,
+                first_radius: edge_radius,
+                second_radius: circle_radius,
+            }
+        }
+    } else if circle_is_first {
+        ContactPositionWitness::FaceSecond {
+            normal: reference_normal,
+            plane_point: start,
+            clip_points: [circle_center, (0.0, 0.0)],
+            point_count: 1,
+            first_radius: circle_radius,
+            second_radius: edge_radius,
+        }
+    } else {
+        ContactPositionWitness::FaceFirst {
+            normal: reference_normal,
+            plane_point: start,
+            clip_points: [circle_center, (0.0, 0.0)],
+            point_count: 1,
+            first_radius: edge_radius,
+            second_radius: circle_radius,
+        }
+    };
+    Some(ContactManifold {
         normal_x: f64::from(edge_to_circle.0),
         normal_y: f64::from(edge_to_circle.1),
         penetration: f64::from(radius_sum - separation),
@@ -143,5 +177,6 @@ pub(crate) fn circle_segment_manifold(
         point_y: f64::from(point.1),
         feature_id,
         secondary: None,
+        position: ContactPositionState::World(position_witness),
     })
 }

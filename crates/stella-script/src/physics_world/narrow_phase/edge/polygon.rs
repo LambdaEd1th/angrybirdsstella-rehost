@@ -6,8 +6,8 @@ use super::super::{
     polygon::{ClipVertex, clip_segment_to_line, polygon_incident_edge},
 };
 use crate::{
-    BOX2D_POLYGON_RADIUS, ContactManifold, ContactManifoldType, ContactPoint, contact_feature_id,
-    swap_contact_features,
+    BOX2D_POLYGON_RADIUS, ContactManifold, ContactManifoldType, ContactPoint, ContactPositionState,
+    ContactPositionWitness, contact_feature_id, swap_contact_features,
 };
 
 pub(crate) fn polygon_segment_manifold(
@@ -213,16 +213,23 @@ pub(crate) fn polygon_segment_manifold(
                 .0
                 .mul_add(point.0, reference_normal.1 * point.1)
                 - front_offset;
-            (separation <= total_radius).then_some(ContactPoint {
-                penetration: f64::from(total_radius - separation),
-                point_x: f64::from((-0.5_f32 * separation).mul_add(reference_normal.0, point.0)),
-                point_y: f64::from((-0.5_f32 * separation).mul_add(reference_normal.1, point.1)),
-                feature_id: if swap_features {
-                    swap_contact_features(vertex.feature_id)
-                } else {
-                    vertex.feature_id
+            (separation <= total_radius).then_some((
+                ContactPoint {
+                    penetration: f64::from(total_radius - separation),
+                    point_x: f64::from(
+                        (-0.5_f32 * separation).mul_add(reference_normal.0, point.0),
+                    ),
+                    point_y: f64::from(
+                        (-0.5_f32 * separation).mul_add(reference_normal.1, point.1),
+                    ),
+                    feature_id: if swap_features {
+                        swap_contact_features(vertex.feature_id)
+                    } else {
+                        vertex.feature_id
+                    },
                 },
-            })
+                point,
+            ))
         })
         .collect::<Vec<_>>();
     if points.is_empty() {
@@ -240,18 +247,44 @@ pub(crate) fn polygon_segment_manifold(
     } else {
         reference_normal
     };
-    let primary = points[0];
+    let clip_points = [
+        points[0].1,
+        points.get(1).map(|point| point.1).unwrap_or((0.0, 0.0)),
+    ];
+    let point_count = points.len() as u8;
+    let primary = points[0].0;
+    let secondary = points.get(1).map(|point| point.0);
+    let manifold_type = match (reference_is_polygon, polygon_is_first) {
+        (true, true) | (false, false) => ContactManifoldType::FaceFirst,
+        (true, false) | (false, true) => ContactManifoldType::FaceSecond,
+    };
+    let position_witness = if matches!(manifold_type, ContactManifoldType::FaceFirst) {
+        ContactPositionWitness::FaceFirst {
+            normal: reference_normal,
+            plane_point: reference_start,
+            clip_points,
+            point_count,
+            first_radius: BOX2D_POLYGON_RADIUS as f32,
+            second_radius: BOX2D_POLYGON_RADIUS as f32,
+        }
+    } else {
+        ContactPositionWitness::FaceSecond {
+            normal: reference_normal,
+            plane_point: reference_start,
+            clip_points,
+            point_count,
+            first_radius: BOX2D_POLYGON_RADIUS as f32,
+            second_radius: BOX2D_POLYGON_RADIUS as f32,
+        }
+    };
     Some(ContactManifold {
-        manifold_type: match (reference_is_polygon, polygon_is_first) {
-            (true, true) | (false, false) => ContactManifoldType::FaceFirst,
-            (true, false) | (false, true) => ContactManifoldType::FaceSecond,
-        },
         normal_x: f64::from(normal.0),
         normal_y: f64::from(normal.1),
         penetration: primary.penetration,
         point_x: primary.point_x,
         point_y: primary.point_y,
         feature_id: primary.feature_id,
-        secondary: points.get(1).copied(),
+        secondary,
+        position: ContactPositionState::World(position_witness),
     })
 }

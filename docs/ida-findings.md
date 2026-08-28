@@ -3590,6 +3590,20 @@ body mass data or a transform origin rebuilt from a later local centre.
 Focused regressions clear the live inverse mass after constraint construction
 and prove that both position paths still apply their retained native cache.
 
+The constructor itself is the branch target `sub_1008639A4` behind the
+four-byte `sub_100863B88` thunk. It allocates `88 * contactCount` and
+`152 * contactCount`, then copies the contact's already-local `b2Manifold`
+without consulting `b2WorldManifold`: local points at contact `+120/+140` go
+to position records `+0/+8`, local normal `+160` to `+16`, local reference
+point `+168` to `+24`, type `+176` to `+72`, and point count `+180` to `+84`.
+Shape radii come directly from each fixture shape's `+12`. The rehost now
+captures these local witnesses at narrow-phase time, including interpolated
+TOI transforms, instead of recovering them later from a world midpoint and
+penetration. This also follows `sub_10085E8AC`'s vertex regions: edge-circle
+endpoint contacts are type-0 circles with the edge vertex and circle centre as
+their two witnesses; only the edge-face region is type 1 (or type 2 after
+fixture-order reversal).
+
 The following arithmetic is shared byte-for-byte by those two leaves. At
 `0x1008647DC..0x100864810` (TOI `0x100864B18..0x100864B48`) each transformed
 local centre rounds its first multiply with `FMUL`, fuses the second term with

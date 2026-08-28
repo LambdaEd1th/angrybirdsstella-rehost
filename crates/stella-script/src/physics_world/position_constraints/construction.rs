@@ -1,4 +1,4 @@
-//! Convert contact manifold witnesses into local position-constraint state.
+//! Copy native local manifold witnesses into position-constraint state.
 
 use super::model::{PositionContactConstraint, PositionContactManifold};
 use crate::*;
@@ -11,99 +11,64 @@ impl PositionContactConstraint {
     ) -> Self {
         let first_local_center = first.local_center();
         let second_local_center = second.local_center();
-        let cached = |manifold| Self {
+        let local = manifold.native_local_position(
+            first.native_collision_transform(),
+            second.native_collision_transform(),
+        );
+        let points = || {
+            local.local_points[..usize::from(local.point_count)]
+                .iter()
+                .map(|&(x, y)| (f64::from(x), f64::from(y)))
+                .collect::<Vec<_>>()
+        };
+        let position_manifold = match local.manifold_type {
+            ContactManifoldType::Circles => PositionContactManifold::Circles {
+                local_first: (
+                    f64::from(local.local_point.0),
+                    f64::from(local.local_point.1),
+                ),
+                local_second: (
+                    f64::from(local.local_points[0].0),
+                    f64::from(local.local_points[0].1),
+                ),
+                first_radius: f64::from(local.first_radius),
+                second_radius: f64::from(local.second_radius),
+            },
+            ContactManifoldType::FaceFirst => PositionContactManifold::FaceFirst {
+                local_normal: (
+                    f64::from(local.local_normal.0),
+                    f64::from(local.local_normal.1),
+                ),
+                local_plane_point: (
+                    f64::from(local.local_point.0),
+                    f64::from(local.local_point.1),
+                ),
+                local_clip_points: points(),
+                first_radius: f64::from(local.first_radius),
+                second_radius: f64::from(local.second_radius),
+            },
+            ContactManifoldType::FaceSecond => PositionContactManifold::FaceSecond {
+                local_normal: (
+                    f64::from(local.local_normal.0),
+                    f64::from(local.local_normal.1),
+                ),
+                local_plane_point: (
+                    f64::from(local.local_point.0),
+                    f64::from(local.local_point.1),
+                ),
+                local_clip_points: points(),
+                first_radius: f64::from(local.first_radius),
+                second_radius: f64::from(local.second_radius),
+            },
+        };
+        Self {
             first_local_center: (first_local_center.0 as f32, first_local_center.1 as f32),
             second_local_center: (second_local_center.0 as f32, second_local_center.1 as f32),
             first_inverse_mass: first.inverse_mass_for_solver() as f32,
             second_inverse_mass: second.inverse_mass_for_solver() as f32,
             first_inverse_inertia: first.inverse_inertia() as f32,
             second_inverse_inertia: second.inverse_inertia() as f32,
-            manifold,
-        };
-        let world_normal = (manifold.normal_x, manifold.normal_y);
-        let first_circle = first.collision_circle();
-        let second_circle = second.collision_circle();
-        if let (Some((first_center, first_radius)), Some((second_center, second_radius))) =
-            (first_circle, second_circle)
-        {
-            return cached(PositionContactManifold::Circles {
-                local_first: first.native_inverse_transform_body_point(first_center),
-                local_second: second.native_inverse_transform_body_point(second_center),
-                first_radius,
-                second_radius,
-            });
-        }
-
-        let first_radius = first_circle
-            .map(|(_, radius)| radius)
-            .unwrap_or(BOX2D_POLYGON_RADIUS);
-        let second_radius = second_circle
-            .map(|(_, radius)| radius)
-            .unwrap_or(BOX2D_POLYGON_RADIUS);
-        let points = manifold.points();
-        let face_is_first = matches!(manifold.manifold_type, ContactManifoldType::FaceFirst);
-
-        if face_is_first {
-            let clip_points = if let Some((circle_center, _)) = second_circle {
-                vec![circle_center]
-            } else {
-                points
-                    .iter()
-                    .map(|point| {
-                        let geometric_separation = first_radius + second_radius - point.penetration;
-                        (
-                            point.point_x + world_normal.0 * geometric_separation * 0.5,
-                            point.point_y + world_normal.1 * geometric_separation * 0.5,
-                        )
-                    })
-                    .collect::<Vec<_>>()
-            };
-            let primary_separation = first_radius + second_radius - points[0].penetration;
-            let plane_point = (
-                clip_points[0].0 - world_normal.0 * primary_separation,
-                clip_points[0].1 - world_normal.1 * primary_separation,
-            );
-            cached(PositionContactManifold::FaceFirst {
-                local_normal: inverse_rotate_vector(world_normal, first.angle),
-                local_plane_point: first.native_inverse_transform_body_point(plane_point),
-                local_clip_points: clip_points
-                    .into_iter()
-                    .map(|point| second.native_inverse_transform_body_point(point))
-                    .collect(),
-                first_radius,
-                second_radius,
-            })
-        } else {
-            let reference_normal = (-world_normal.0, -world_normal.1);
-            let clip_points = if let Some((circle_center, _)) = first_circle {
-                vec![circle_center]
-            } else {
-                points
-                    .iter()
-                    .map(|point| {
-                        let geometric_separation = first_radius + second_radius - point.penetration;
-                        (
-                            point.point_x - world_normal.0 * geometric_separation * 0.5,
-                            point.point_y - world_normal.1 * geometric_separation * 0.5,
-                        )
-                    })
-                    .collect::<Vec<_>>()
-            };
-            let primary_separation = first_radius + second_radius - points[0].penetration;
-            let plane_point = (
-                clip_points[0].0 - reference_normal.0 * primary_separation,
-                clip_points[0].1 - reference_normal.1 * primary_separation,
-            );
-            cached(PositionContactManifold::FaceSecond {
-                local_normal: inverse_rotate_vector(reference_normal, second.angle),
-                local_plane_point: second.native_inverse_transform_body_point(plane_point),
-                local_clip_points: clip_points
-                    .into_iter()
-                    .map(|point| first.native_inverse_transform_body_point(point))
-                    .collect(),
-                first_radius,
-                second_radius,
-            })
+            manifold: position_manifold,
         }
     }
 

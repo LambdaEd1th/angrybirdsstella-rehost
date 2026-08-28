@@ -77,15 +77,6 @@ pub(crate) struct PrismaticGeometry {
     pub(crate) s2: f64,
 }
 
-pub(crate) fn inverse_rotate_vector(vector: (f64, f64), angle: f64) -> (f64, f64) {
-    let cosine = angle.cos();
-    let sine = angle.sin();
-    (
-        cosine * vector.0 + sine * vector.1,
-        -sine * vector.0 + cosine * vector.1,
-    )
-}
-
 pub(crate) fn prismatic_geometry<F: JointBodyView + ?Sized, S: JointBodyView + ?Sized>(
     joint: &PhysicsJoint,
     first: &F,

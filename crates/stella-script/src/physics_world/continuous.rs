@@ -130,6 +130,11 @@ impl NativeToiTransform {
             (-world.0).mul_add(self.sine, world.1 * self.cosine),
         )
     }
+
+    pub(crate) fn inverse_point(self, world: (f32, f32)) -> (f32, f32) {
+        let relative = (world.0 - self.position.0, world.1 - self.position.1);
+        self.inverse_rotate(relative)
+    }
 }
 
 #[derive(Debug, Clone)]

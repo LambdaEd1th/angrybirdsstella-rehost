@@ -38,7 +38,7 @@ impl SceneObject {
     ) -> Option<ContactManifold> {
         let first = self.collision_fixture_geometry(first_fixture, first_transform)?;
         let second = other.collision_fixture_geometry(second_fixture, second_transform)?;
-        match (first, second) {
+        let manifold = match (first, second) {
             (
                 CollisionFixtureGeometry::Circle {
                     center: first_center,
@@ -78,7 +78,8 @@ impl SceneObject {
                 CollisionFixtureGeometry::Polygon(polygon),
             ) => polygon_segment_manifold(&polygon, segment, false),
             (CollisionFixtureGeometry::Segment(_), CollisionFixtureGeometry::Segment(_)) => None,
-        }
+        };
+        manifold.map(|manifold| manifold.localize(first_transform, second_transform))
     }
 
     fn collision_fixture_geometry(
