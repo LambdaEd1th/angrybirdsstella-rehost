@@ -4,64 +4,121 @@ mod clipping;
 mod separation;
 
 use super::geometry::normalized_axis_f32;
+#[cfg(test)]
+use crate::NativePolygon;
 use crate::{
-    BOX2D_POLYGON_RADIUS, ContactManifold, ContactPoint, ContactPositionState,
-    ContactPositionWitness, contact_feature_id, swap_contact_features,
+    BOX2D_POLYGON_RADIUS, ContactLocalManifold, ContactManifold, ContactManifoldType, ContactPoint,
+    ContactPositionState, NativeToiTransform, contact_feature_id, swap_contact_features,
 };
 
 pub(super) use clipping::{ClipVertex, clip_segment_to_line};
 pub(super) use separation::polygon_incident_edge;
+#[cfg(test)]
 pub(crate) use separation::polygon_max_separation;
+use separation::{polygon_incident_edge_at_transforms, polygon_max_separation_at_transforms};
 
+#[cfg(test)]
 pub(crate) fn polygon_manifold(
     first: &[(f64, f64)],
     second: &[(f64, f64)],
+) -> Option<ContactManifold> {
+    let first = first
+        .iter()
+        .map(|&(x, y)| (x as f32, y as f32))
+        .collect::<NativePolygon<_>>();
+    let second = second
+        .iter()
+        .map(|&(x, y)| (x as f32, y as f32))
+        .collect::<NativePolygon<_>>();
+    polygon_manifold_at_transforms(
+        &first,
+        NativeToiTransform::IDENTITY,
+        &second,
+        NativeToiTransform::IDENTITY,
+    )
+}
+
+pub(crate) fn polygon_manifold_at_transforms(
+    first: &[(f32, f32)],
+    first_transform: NativeToiTransform,
+    second: &[(f32, f32)],
+    second_transform: NativeToiTransform,
 ) -> Option<ContactManifold> {
     if first.len() < 3 || second.len() < 3 {
         return None;
     }
     let total_radius = (2.0 * BOX2D_POLYGON_RADIUS) as f32;
-    let (first_separation, first_edge, first_normal) = polygon_max_separation(first, second)?;
-    if first_separation as f32 > total_radius {
+    let (first_separation, first_edge, first_normal) =
+        polygon_max_separation_at_transforms(first, first_transform, second, second_transform)?;
+    if first_separation > total_radius {
         return None;
     }
-    let (second_separation, second_edge, second_normal) = polygon_max_separation(second, first)?;
-    if second_separation as f32 > total_radius {
+    let (second_separation, second_edge, second_normal) =
+        polygon_max_separation_at_transforms(second, second_transform, first, first_transform)?;
+    if second_separation > total_radius {
         return None;
     }
 
     // sub_10085F648 loads Box2D's exact k_absoluteTol=0.001f and
     // k_relativeTol=0.98f constants from 0x100A0C7CC/0x100A0C7D0.
-    let (reference, incident, reference_edge, reference_normal, flip) =
-        if second_separation as f32 > (first_separation as f32).mul_add(0.98_f32, 0.001_f32) {
-            (second, first, second_edge, second_normal, true)
-        } else {
-            (first, second, first_edge, first_normal, false)
-        };
-    let reference_start = (
-        reference[reference_edge].0 as f32,
-        reference[reference_edge].1 as f32,
-    );
-    let reference_end = (
-        reference[(reference_edge + 1) % reference.len()].0 as f32,
-        reference[(reference_edge + 1) % reference.len()].1 as f32,
-    );
+    let (
+        reference,
+        reference_transform,
+        incident,
+        incident_transform,
+        reference_edge,
+        _separation_normal,
+        manifold_type,
+        flip,
+    ) = if second_separation > first_separation.mul_add(0.98_f32, 0.001_f32) {
+        (
+            second,
+            second_transform,
+            first,
+            first_transform,
+            second_edge,
+            second_normal,
+            ContactManifoldType::FaceSecond,
+            true,
+        )
+    } else {
+        (
+            first,
+            first_transform,
+            second,
+            second_transform,
+            first_edge,
+            first_normal,
+            ContactManifoldType::FaceFirst,
+            false,
+        )
+    };
+    let reference_start = reference[reference_edge];
+    let reference_end = reference[(reference_edge + 1) % reference.len()];
     let tangent = normalized_axis_f32((
         reference_end.0 - reference_start.0,
         reference_end.1 - reference_start.1,
     ))?;
-    let reference_normal = (reference_normal.0 as f32, reference_normal.1 as f32);
-    let (incident_index, incident_edge) = polygon_incident_edge(
+    // sub_10085F8DC..0x10085F920 derives the stored normal from the local
+    // reference edge, rather than rotating the world-space SAT normal back.
+    let local_normal = (tangent.1, -tangent.0);
+    let world_tangent = reference_transform.rotate(tangent);
+    let reference_normal = (world_tangent.1, -world_tangent.0);
+    let reference_world_start = reference_transform.point(reference_start);
+    let reference_world_end = reference_transform.point(reference_end);
+    let (incident_index, incident_edge) = polygon_incident_edge_at_transforms(
         incident,
-        (f64::from(reference_normal.0), f64::from(reference_normal.1)),
+        incident_transform,
+        local_normal,
+        reference_transform,
     )?;
     let incident_vertices = [
         ClipVertex {
-            point: incident_edge.0,
+            point: (f64::from(incident_edge.0.0), f64::from(incident_edge.0.1)),
             feature_id: contact_feature_id(reference_edge, incident_index, 1, 0),
         },
         ClipVertex {
-            point: incident_edge.1,
+            point: (f64::from(incident_edge.1.0), f64::from(incident_edge.1.1)),
             feature_id: contact_feature_id(
                 reference_edge,
                 (incident_index + 1) % incident.len(),
@@ -72,12 +129,12 @@ pub(crate) fn polygon_manifold(
     ];
     let mut clipped = clip_segment_to_line(
         incident_vertices,
-        (f64::from(-tangent.0), f64::from(-tangent.1)),
+        (f64::from(-world_tangent.0), f64::from(-world_tangent.1)),
         f64::from(
-            -(tangent
-                .0
-                .mul_add(reference_start.0, tangent.1 * reference_start.1))
-                + total_radius,
+            -(world_tangent.0.mul_add(
+                reference_world_start.0,
+                world_tangent.1 * reference_world_start.1,
+            )) + total_radius,
         ),
         reference_edge,
     );
@@ -86,12 +143,12 @@ pub(crate) fn polygon_manifold(
     }
     clipped = clip_segment_to_line(
         [clipped[0], clipped[1]],
-        (f64::from(tangent.0), f64::from(tangent.1)),
+        (f64::from(world_tangent.0), f64::from(world_tangent.1)),
         f64::from(
-            tangent
-                .0
-                .mul_add(reference_end.0, tangent.1 * reference_end.1)
-                + total_radius,
+            world_tangent.0.mul_add(
+                reference_world_end.0,
+                world_tangent.1 * reference_world_end.1,
+            ) + total_radius,
         ),
         (reference_edge + 1) % reference.len(),
     );
@@ -99,9 +156,10 @@ pub(crate) fn polygon_manifold(
         return None;
     }
 
-    let front_offset = reference_normal
-        .0
-        .mul_add(reference_start.0, reference_normal.1 * reference_start.1);
+    let front_offset = reference_normal.0.mul_add(
+        reference_world_start.0,
+        reference_normal.1 * reference_world_start.1,
+    );
     let mut points = clipped
         .into_iter()
         .filter_map(|vertex| {
@@ -125,13 +183,21 @@ pub(crate) fn polygon_manifold(
                         vertex.feature_id
                     },
                 },
-                point,
+                incident_transform.inverse_point(point),
             ))
         })
         .collect::<Vec<_>>();
     if points.is_empty() {
         return None;
     }
+    points.truncate(2);
+    let local_points = [
+        points[0].1,
+        points.get(1).map(|point| point.1).unwrap_or((0.0, 0.0)),
+    ];
+    let point_count = points.len() as u8;
+    let primary = points[0].0;
+    let secondary = points.get(1).map(|point| point.0);
     let normal = if flip {
         (
             f64::from(-reference_normal.0),
@@ -140,18 +206,6 @@ pub(crate) fn polygon_manifold(
     } else {
         (f64::from(reference_normal.0), f64::from(reference_normal.1))
     };
-    points.truncate(2);
-    let clip_points = [
-        points[0].1,
-        points.get(1).map(|point| point.1).unwrap_or((0.0, 0.0)),
-    ];
-    let point_count = points.len() as u8;
-    let primary = points[0].0;
-    let secondary = points.get(1).map(|point| point.0);
-    let plane_point = (
-        (reference_start.0 + reference_end.0) * 0.5_f32,
-        (reference_start.1 + reference_end.1) * 0.5_f32,
-    );
     Some(ContactManifold {
         normal_x: normal.0,
         normal_y: normal.1,
@@ -160,24 +214,17 @@ pub(crate) fn polygon_manifold(
         point_y: primary.point_y,
         feature_id: primary.feature_id,
         secondary,
-        position: ContactPositionState::World(if flip {
-            ContactPositionWitness::FaceSecond {
-                normal: reference_normal,
-                plane_point,
-                clip_points,
-                point_count,
-                first_radius: BOX2D_POLYGON_RADIUS as f32,
-                second_radius: BOX2D_POLYGON_RADIUS as f32,
-            }
-        } else {
-            ContactPositionWitness::FaceFirst {
-                normal: reference_normal,
-                plane_point,
-                clip_points,
-                point_count,
-                first_radius: BOX2D_POLYGON_RADIUS as f32,
-                second_radius: BOX2D_POLYGON_RADIUS as f32,
-            }
+        position: ContactPositionState::Local(ContactLocalManifold {
+            manifold_type,
+            local_normal,
+            local_point: (
+                (reference_start.0 + reference_end.0) * 0.5_f32,
+                (reference_start.1 + reference_end.1) * 0.5_f32,
+            ),
+            local_points,
+            point_count,
+            first_radius: BOX2D_POLYGON_RADIUS as f32,
+            second_radius: BOX2D_POLYGON_RADIUS as f32,
         }),
     })
 }

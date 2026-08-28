@@ -51,6 +51,62 @@ fn polygon_reference_face_uses_native_relative_and_absolute_tolerance() {
 }
 
 #[test]
+fn rotated_polygon_pair_keeps_native_reference_and_incident_local_points() {
+    let first = [
+        (-1.0_f32, -0.5_f32),
+        (1.0_f32, -0.5_f32),
+        (1.0_f32, 0.5_f32),
+        (-1.0_f32, 0.5_f32),
+    ];
+    let second = first;
+    let angle = 0.37_f32;
+    let (sine, cosine) = angle.sin_cos();
+    let first_transform = NativeToiTransform {
+        position: (12.25, -7.5),
+        sine,
+        cosine,
+    };
+    let second_transform = NativeToiTransform {
+        position: first_transform.point((0.0, 0.9)),
+        sine,
+        cosine,
+    };
+    let manifold =
+        polygon_manifold_at_transforms(&first, first_transform, &second, second_transform)
+            .expect("rotated polygon face contact");
+    let ContactPositionState::Local(local) = manifold.position else {
+        panic!("polygon collision must emit the native local manifold directly");
+    };
+    assert!(matches!(
+        local.manifold_type,
+        ContactManifoldType::FaceFirst
+    ));
+    assert_eq!(local.local_normal.0.to_bits(), 0.0_f32.to_bits());
+    assert_eq!(local.local_normal.1.to_bits(), 1.0_f32.to_bits());
+    assert_eq!(local.local_point.0.to_bits(), 0.0_f32.to_bits());
+    assert_eq!(local.local_point.1.to_bits(), 0.5_f32.to_bits());
+    assert_eq!(local.point_count, 2);
+    let expected_first = second_transform.inverse_point(second_transform.point(second[0]));
+    let expected_second = second_transform.inverse_point(second_transform.point(second[1]));
+    assert_eq!(
+        local.local_points[0].0.to_bits(),
+        expected_first.0.to_bits()
+    );
+    assert_eq!(
+        local.local_points[0].1.to_bits(),
+        expected_first.1.to_bits()
+    );
+    assert_eq!(
+        local.local_points[1].0.to_bits(),
+        expected_second.0.to_bits()
+    );
+    assert_eq!(
+        local.local_points[1].1.to_bits(),
+        expected_second.1.to_bits()
+    );
+}
+
+#[test]
 fn polygon_circle_uses_native_float_boundary_and_zero_feature_id() {
     let polygon = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)];
     let radius = 0.5_f32;

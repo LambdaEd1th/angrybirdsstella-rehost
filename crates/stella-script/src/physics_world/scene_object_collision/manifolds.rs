@@ -106,9 +106,9 @@ impl SceneObject {
                 CollisionFixtureGeometry::Circle { center, radius, .. },
             ) => circle_segment_manifold(center, radius, world, false),
             (
-                CollisionFixtureGeometry::Polygon { world: first, .. },
-                CollisionFixtureGeometry::Polygon { world: second, .. },
-            ) => polygon_manifold(&first, &second),
+                CollisionFixtureGeometry::Polygon { local: first, .. },
+                CollisionFixtureGeometry::Polygon { local: second, .. },
+            ) => polygon_manifold_at_transforms(&first, first_transform, &second, second_transform),
             (
                 CollisionFixtureGeometry::Polygon { world: polygon, .. },
                 CollisionFixtureGeometry::Segment { world: segment, .. },

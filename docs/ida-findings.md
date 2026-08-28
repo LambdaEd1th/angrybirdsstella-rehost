@@ -3617,6 +3617,22 @@ now passes scaled local shapes plus the two compact transforms into these two
 leaves; rotations, nonzero world translations and interpolated TOI poses no
 longer create local witnesses by round-tripping world coordinates.
 
+Polygon-polygon `sub_10085F648` follows the same rule. Its two calls to
+`sub_10085FB84` use each shape's local centroid at `+16`, local vertices at
+`+24`, local normals at `+88` and the two transforms to choose the reference
+face. After the native `0.98f * separationA + 0.001f` reference-face test, the
+selected local edge is normalized directly: `(dy, -dx)` is written to
+manifold `+40/+44`, and the local edge midpoint is written to `+48/+52`.
+Only the incident edge is transformed into world space for the two
+`sub_100860148` clipping calls. Accepted clip points are transformed back by
+the incident body's transform before being stored at manifold `+0/+4` and
+`+20/+24`; a flipped reference swaps the four feature bytes and sets type 2.
+Rust now enters this collider with the two scaled local polygons and compact
+transforms, mirrors the centroid-seeded directional separation search, and
+emits this local manifold directly. A rotated/transformed two-face regression
+checks the reference normal and midpoint bit-for-bit and checks the incident
+points against the native transform/inverse-transform round trip.
+
 The following arithmetic is shared byte-for-byte by those two leaves. At
 `0x1008647DC..0x100864810` (TOI `0x100864B18..0x100864B48`) each transformed
 local centre rounds its first multiply with `FMUL`, fuses the second term with

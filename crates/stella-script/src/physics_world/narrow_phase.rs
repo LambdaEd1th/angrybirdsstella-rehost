@@ -25,6 +25,8 @@ pub(crate) use geometry::{
     closest_point_on_segment, closest_segment_points, polygon_contains_point,
     polygon_segment_core_distance,
 };
+#[cfg(test)]
 pub(crate) use polygon::polygon_manifold;
+pub(crate) use polygon::polygon_manifold_at_transforms;
 #[cfg(test)]
 pub(crate) use polygon::polygon_max_separation;
