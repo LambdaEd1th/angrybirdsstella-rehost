@@ -1,8 +1,10 @@
 //! b2FindMaxSeparation and b2EdgeSeparation (`sub_10085FB84`/`sub_10085FD74`).
 
+#[cfg(test)]
+use super::super::geometry::polygon_signed_area_f32;
 use super::super::{
     NativePolygon,
-    geometry::{normalized_axis_f32, polygon_centroid_f32, polygon_signed_area_f32},
+    geometry::{normalized_axis_f32, polygon_centroid_f32},
 };
 use crate::NativeToiTransform;
 
@@ -227,6 +229,7 @@ fn edge_separation(
     normal.0.mul_add(delta.0, normal.1 * delta.1)
 }
 
+#[cfg(test)]
 fn polygon_normals(polygon: &[(f64, f64)]) -> Option<NativePolygon<(f32, f32)>> {
     let orientation = polygon_signed_area_f32(polygon);
     (0..polygon.len())
@@ -246,7 +249,9 @@ fn polygon_normals(polygon: &[(f64, f64)]) -> Option<NativePolygon<(f32, f32)>> 
         .collect()
 }
 
-pub(super) fn polygon_normals_f32(polygon: &[(f32, f32)]) -> Option<NativePolygon<(f32, f32)>> {
+pub(in crate::physics_world::narrow_phase) fn polygon_normals_f32(
+    polygon: &[(f32, f32)],
+) -> Option<NativePolygon<(f32, f32)>> {
     let orientation = super::super::geometry::polygon_signed_area_from_f32(polygon);
     (0..polygon.len())
         .map(|index| {
@@ -293,30 +298,4 @@ pub(super) fn polygon_incident_edge_at_transforms(
             polygon_transform.point(polygon[(best_index + 1) % polygon.len()]),
         ),
     ))
-}
-
-type CollisionPoint2 = (f64, f64);
-type IndexedCollisionEdge = (usize, (CollisionPoint2, CollisionPoint2));
-
-pub(in crate::physics_world::narrow_phase) fn polygon_incident_edge(
-    polygon: &[(f64, f64)],
-    reference_normal: (f64, f64),
-) -> Option<IndexedCollisionEdge> {
-    let normals = polygon_normals(polygon)?;
-    let reference_normal = (reference_normal.0 as f32, reference_normal.1 as f32);
-    let mut best = None::<(f32, usize)>;
-    for (index, normal) in normals.into_iter().enumerate() {
-        let alignment = normal
-            .0
-            .mul_add(reference_normal.0, normal.1 * reference_normal.1);
-        if best.is_none_or(|candidate| alignment < candidate.0) {
-            best = Some((alignment, index));
-        }
-    }
-    best.map(|(_, index)| {
-        (
-            index,
-            (polygon[index], polygon[(index + 1) % polygon.len()]),
-        )
-    })
 }

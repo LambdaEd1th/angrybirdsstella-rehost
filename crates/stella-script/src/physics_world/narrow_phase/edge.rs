@@ -4,4 +4,6 @@ mod circle;
 mod polygon;
 
 pub(crate) use circle::circle_segment_manifold;
+#[cfg(test)]
 pub(crate) use polygon::polygon_segment_manifold;
+pub(crate) use polygon::polygon_segment_manifold_at_transforms;

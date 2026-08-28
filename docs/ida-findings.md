@@ -3633,6 +3633,28 @@ emits this local manifold directly. A rotated/transformed two-face regression
 checks the reference normal and midpoint bit-for-bit and checks the incident
 points against the native transform/inverse-transform round trip.
 
+The edge-polygon member `sub_10085EADC` first constructs the polygon-to-edge
+transform at `0x10085EB14..0x10085EB58`: its rotation is
+`R_edge^T * R_polygon`, and its translation is the edge rotation applied to
+the two-origin delta. Polygon vertices and normals are then held in edge-local
+scratch arrays. Purple's Line creator reaches the no-adjacency path (both
+edge flags at `+48/+49` are clear), where the polygon centroid chooses the
+active side and both angular limits become the negation of that active edge
+normal. The polygon-axis loop uses two rounded vector products plus `FADDP`,
+rejects axes outside the exact two-degree value `0x3D0EFA36`, and retains the
+same `0.98f/0.001f` primary-axis hysteresis as polygon-polygon collision.
+
+If the edge is primary, the manifold stores its edge-local normal/reference
+vertex and transforms accepted clip points back through the relative transform
+to polygon-local space. If the polygon is primary, `0x10085F48C..0x10085F4A0`
+copies the original polygon normal and vertex arrays directly, while the
+incident edge points remain edge-local; feature bytes are swapped for the
+FaceB representation. Rust now preserves local segment endpoints in fixture
+dispatch, performs this relative-transform collider without first building a
+world polygon, and emits both FaceA and FaceB local witnesses directly.
+Rotated regressions cover an edge-primary two-point contact and a
+polygon-primary contact, including bit-exact local reference fields.
+
 The following arithmetic is shared byte-for-byte by those two leaves. At
 `0x1008647DC..0x100864810` (TOI `0x100864B18..0x100864B48`) each transformed
 local centre rounds its first multiply with `FMUL`, fuses the second term with

@@ -12,9 +12,9 @@ use crate::{
 };
 
 pub(super) use clipping::{ClipVertex, clip_segment_to_line};
-pub(super) use separation::polygon_incident_edge;
 #[cfg(test)]
 pub(crate) use separation::polygon_max_separation;
+pub(super) use separation::polygon_normals_f32;
 use separation::{polygon_incident_edge_at_transforms, polygon_max_separation_at_transforms};
 
 #[cfg(test)]

@@ -2,6 +2,7 @@
 
 use crate::cross_2d;
 
+#[cfg(test)]
 pub(crate) fn polygon_signed_area_f32(polygon: &[(f64, f64)]) -> f32 {
     polygon
         .iter()

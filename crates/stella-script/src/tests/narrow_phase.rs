@@ -557,3 +557,82 @@ fn native_shape_constructor_adapters_are_strict_and_narrow_to_float32() {
         (1.0, -1.0, f64::from(5.9999999_f32))
     );
 }
+
+#[test]
+fn rotated_edge_polygon_keeps_edge_reference_in_edge_local_space() {
+    let polygon = [
+        (-0.5_f32, -0.5_f32),
+        (0.5_f32, -0.5_f32),
+        (0.5_f32, 0.5_f32),
+        (-0.5_f32, 0.5_f32),
+    ];
+    let segment = ((-2.0_f32, 0.501_f32), (2.0_f32, 0.501_f32));
+    let angle = 0.37_f32;
+    let (sine, cosine) = angle.sin_cos();
+    let transform = NativeToiTransform {
+        position: (12.25, -7.5),
+        sine,
+        cosine,
+    };
+    let manifold =
+        polygon_segment_manifold_at_transforms(&polygon, transform, segment, transform, true)
+            .expect("rotated edge/polygon contact");
+    let ContactPositionState::Local(local) = manifold.position else {
+        panic!("edge/polygon collision must emit a native local manifold");
+    };
+    assert!(matches!(
+        local.manifold_type,
+        ContactManifoldType::FaceSecond
+    ));
+    assert_eq!(local.local_normal.0.to_bits(), 0.0_f32.to_bits());
+    assert_eq!(local.local_normal.1.to_bits(), (-1.0_f32).to_bits());
+    assert_eq!(local.local_point.0.to_bits(), segment.0.0.to_bits());
+    assert_eq!(local.local_point.1.to_bits(), segment.0.1.to_bits());
+    assert_eq!(local.point_count, 2);
+    assert_eq!(local.local_points[0].1.to_bits(), 0.5_f32.to_bits());
+    assert_eq!(local.local_points[1].1.to_bits(), 0.5_f32.to_bits());
+    let expected_world_normal = transform.rotate((0.0, 1.0));
+    assert_eq!(
+        (manifold.normal_x as f32).to_bits(),
+        expected_world_normal.0.to_bits()
+    );
+    assert_eq!(
+        (manifold.normal_y as f32).to_bits(),
+        expected_world_normal.1.to_bits()
+    );
+}
+
+#[test]
+fn rotated_edge_polygon_keeps_polygon_reference_in_polygon_local_space() {
+    let polygon = [
+        (-0.5_f32, -0.5_f32),
+        (0.5_f32, -0.5_f32),
+        (0.5_f32, 0.5_f32),
+        (-0.5_f32, 0.5_f32),
+    ];
+    let segment = ((-0.2_f32, 0.505_f32), (0.2_f32, 0.495_f32));
+    let angle = -0.29_f32;
+    let (sine, cosine) = angle.sin_cos();
+    let transform = NativeToiTransform {
+        position: (-8.75, 3.125),
+        sine,
+        cosine,
+    };
+    let manifold =
+        polygon_segment_manifold_at_transforms(&polygon, transform, segment, transform, true)
+            .expect("rotated polygon-reference contact");
+    let ContactPositionState::Local(local) = manifold.position else {
+        panic!("edge/polygon collision must emit a native local manifold");
+    };
+    assert!(matches!(
+        local.manifold_type,
+        ContactManifoldType::FaceFirst
+    ));
+    assert_eq!(local.local_normal.0.to_bits(), 0.0_f32.to_bits());
+    assert_eq!(local.local_normal.1.to_bits(), 1.0_f32.to_bits());
+    assert_eq!(local.local_point.0.to_bits(), 0.5_f32.to_bits());
+    assert_eq!(local.local_point.1.to_bits(), 0.5_f32.to_bits());
+    assert_eq!(local.point_count, 1);
+    assert_eq!(local.local_points[0].0.to_bits(), segment.1.0.to_bits());
+    assert_eq!(local.local_points[0].1.to_bits(), segment.1.1.to_bits());
+}

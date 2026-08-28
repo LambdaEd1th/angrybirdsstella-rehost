@@ -10,9 +10,9 @@ enum CollisionFixtureGeometry {
     },
     Polygon {
         local: NativePolygon<(f32, f32)>,
-        world: NativePolygon<(f64, f64)>,
     },
     Segment {
+        local: ((f32, f32), (f32, f32)),
         world: ((f64, f64), (f64, f64)),
     },
 }
@@ -73,7 +73,7 @@ impl SceneObject {
                     radius,
                     ..
                 },
-                CollisionFixtureGeometry::Polygon { local, .. },
+                CollisionFixtureGeometry::Polygon { local },
             ) => circle_polygon_manifold_at_transforms(
                 local_center,
                 radius as f32,
@@ -83,7 +83,7 @@ impl SceneObject {
                 true,
             ),
             (
-                CollisionFixtureGeometry::Polygon { local, .. },
+                CollisionFixtureGeometry::Polygon { local },
                 CollisionFixtureGeometry::Circle {
                     local_center,
                     radius,
@@ -106,17 +106,29 @@ impl SceneObject {
                 CollisionFixtureGeometry::Circle { center, radius, .. },
             ) => circle_segment_manifold(center, radius, world, false),
             (
-                CollisionFixtureGeometry::Polygon { local: first, .. },
-                CollisionFixtureGeometry::Polygon { local: second, .. },
+                CollisionFixtureGeometry::Polygon { local: first },
+                CollisionFixtureGeometry::Polygon { local: second },
             ) => polygon_manifold_at_transforms(&first, first_transform, &second, second_transform),
             (
-                CollisionFixtureGeometry::Polygon { world: polygon, .. },
-                CollisionFixtureGeometry::Segment { world: segment, .. },
-            ) => polygon_segment_manifold(&polygon, segment, true),
+                CollisionFixtureGeometry::Polygon { local: polygon },
+                CollisionFixtureGeometry::Segment { local: segment, .. },
+            ) => polygon_segment_manifold_at_transforms(
+                &polygon,
+                first_transform,
+                segment,
+                second_transform,
+                true,
+            ),
             (
-                CollisionFixtureGeometry::Segment { world: segment, .. },
-                CollisionFixtureGeometry::Polygon { world: polygon, .. },
-            ) => polygon_segment_manifold(&polygon, segment, false),
+                CollisionFixtureGeometry::Segment { local: segment, .. },
+                CollisionFixtureGeometry::Polygon { local: polygon },
+            ) => polygon_segment_manifold_at_transforms(
+                &polygon,
+                second_transform,
+                segment,
+                first_transform,
+                false,
+            ),
             (
                 CollisionFixtureGeometry::Segment { .. },
                 CollisionFixtureGeometry::Segment { .. },
@@ -156,15 +168,7 @@ impl SceneObject {
                     )
                 })
                 .collect::<NativePolygon<_>>();
-                let world = local
-                    .iter()
-                    .copied()
-                    .map(|point| {
-                        let point = transform.point(point);
-                        (f64::from(point.0), f64::from(point.1))
-                    })
-                    .collect::<NativePolygon<_>>();
-                Some(CollisionFixtureGeometry::Polygon { local, world })
+                Some(CollisionFixtureGeometry::Polygon { local })
             }
             CollisionShape::Box { .. } => None,
             CollisionShape::Polygon { vertices, fixtures } => {
@@ -184,15 +188,7 @@ impl SceneObject {
                             )
                         })
                         .collect::<NativePolygon<_>>();
-                    let world = local
-                        .iter()
-                        .copied()
-                        .map(|point| {
-                            let point = transform.point(point);
-                            (f64::from(point.0), f64::from(point.1))
-                        })
-                        .collect::<NativePolygon<_>>();
-                    CollisionFixtureGeometry::Polygon { local, world }
+                    CollisionFixtureGeometry::Polygon { local }
                 })
             }
             CollisionShape::Line { vertices } => {
@@ -209,6 +205,7 @@ impl SceneObject {
                 });
                 ((world[1].0 - world[0].0).hypot(world[1].1 - world[0].1) > f64::EPSILON).then_some(
                     CollisionFixtureGeometry::Segment {
+                        local: (local[0], local[1]),
                         world: (world[0], world[1]),
                     },
                 )
