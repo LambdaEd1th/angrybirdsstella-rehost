@@ -17171,3 +17171,40 @@ isolated-AppData 120-frame release-wgpu upload/render/readback reports 20
 optional probes, zero invoked fallbacks, zero remaining compatibility bindings
 and empty stderr. Its execution-evidence PNG SHA-256 remains
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## Native shape AABBs and mass-data rounding
+
+The next shape-vtable pass recovered `ComputeAABB` for circle
+`0x10085D708`, edge `0x10085D9A0`, polygon `0x10085DE98` and chain
+`0x10085D2D8`, then followed their results through `b2Fixture::Synchronize`
+at `0x10086CB74` and `b2DynamicTree::MoveProxy` at `0x1008615A0`. IDA and
+Hopper agree on an important chain-specific exception: unlike an independent
+`b2EdgeShape`, a `b2ChainShape` child takes only the transformed endpoint
+`FMIN`/`FMAX` and does not add the `0.002f` polygon radius. It also emits the
+child AABB unconditionally. The former host expanded every line child by the
+skin and discarded a degenerate child, which could both enlarge broad-phase
+candidate sets and desynchronize fixture indices from proxy slots. Line
+proxies now retain every child and use the unskinned native bound; the swept
+old/new union, displacement and fat-proxy extension remain identical to
+Purple's synchronization path.
+
+The adjacent `ComputeMass` virtuals are circle `0x10085D74C`, edge
+`0x10085DA10`, polygon `0x10085E10C` and chain `0x10085D35C`. Purple's
+polygon member first sums all float32 vertices and applies one reciprocal
+multiply, accumulates area with `FMADD(cross, 0.5, area)`, uses the exact
+`0x3E2AAAAB`/`0x3DAAAAAB` one-sixth and one-twelfth constants, and preserves
+the compiler's multiply/FMA grouping for both second moments. The host now
+matches that sequence instead of separately averaging each vertex and using
+an algebraically rearranged integral. `b2Body::ResetMassData` at
+`0x10086B1F4` likewise computes `1/mass` once for both center lanes and uses
+the recovered fused negative squared-center correction for inertia. A bitwise
+regression distinguishes the native result from the prior mathematically
+equivalent implementation on large authored coordinates.
+
+The complete workspace now passes 785 tests with the deliberate long-duration
+BirdRun audit ignored. Formatting, whitespace validation, strict all-target
+Clippy and the release workspace build are clean. A fresh isolated-AppData
+120-frame release-wgpu upload/render/readback reports 20 optional probes, zero
+invoked fallbacks, zero remaining compatibility bindings and empty stderr.
+`build/audit-native-aabb-mass-20260829.png` retains the expected SHA-256
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.

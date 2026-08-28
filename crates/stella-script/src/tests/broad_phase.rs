@@ -1,6 +1,32 @@
 use super::*;
 
 #[test]
+fn chain_proxy_aabb_matches_unskinned_native_child_bounds() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                clearVertices()
+                addVertex(-1, 2)
+                addVertex(3, -4)
+                createLineShape("chain", "", 5, 7, 1, 1, 0, 0, 0, true, false, 1)
+                "#,
+        )
+        .unwrap();
+
+    let bridge = runtime.render.lock().unwrap();
+    assert_eq!(
+        bridge.body_proxy_states["chain"].tight_aabbs,
+        [(4.0, 3.0, 8.0, 9.0)]
+    );
+    let proxy_id = bridge.scene["chain"].fixture_proxy_ids[0].unwrap();
+    assert_eq!(
+        bridge.dynamic_tree.proxy_aabb(proxy_id).unwrap(),
+        (3.9, 2.9, 8.1, 9.1)
+    );
+}
+
+#[test]
 fn dynamic_tree_proxy_ids_follow_native_leaf_allocation_and_reuse() {
     fn validate_tree(tree: &NativeDynamicTree, expected_leaves: usize) {
         fn validate_node(

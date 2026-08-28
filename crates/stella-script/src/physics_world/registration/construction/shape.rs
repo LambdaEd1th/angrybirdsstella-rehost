@@ -121,12 +121,14 @@ fn native_polygon_mass_f32(vertices: &[(f64, f64)], density: f32) -> f32 {
     if density == 0.0_f32 || vertices.len() < 3 {
         return 0.0;
     }
-    let inverse_count = 1.0_f32 / vertices.len() as f32;
     let mut reference = (0.0_f32, 0.0_f32);
     for &(x, y) in vertices {
-        reference.0 += inverse_count * x as f32;
-        reference.1 += inverse_count * y as f32;
+        reference.0 += x as f32;
+        reference.1 += y as f32;
     }
+    let inverse_count = 1.0_f32 / vertices.len() as f32;
+    reference.0 *= inverse_count;
+    reference.1 *= inverse_count;
     let mut area = 0.0_f32;
     for index in 0..vertices.len() {
         let first = (
@@ -139,7 +141,7 @@ fn native_polygon_mass_f32(vertices: &[(f64, f64)], density: f32) -> f32 {
             second_vertex.1 as f32 - reference.1,
         );
         let cross = (-first.1).mul_add(second.0, first.0 * second.1);
-        area += 0.5_f32 * cross;
+        area = cross.mul_add(0.5_f32, area);
     }
     density * area
 }

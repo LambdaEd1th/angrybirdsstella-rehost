@@ -24,56 +24,11 @@ impl SceneObject {
             inertia_about_origin += fixture_inertia;
         };
         let mut add_polygon = |vertices: &[(f64, f64)], density: f32| {
-            if density == 0.0_f32 || vertices.len() < 3 {
-                return;
+            if let Some((fixture_mass, center, inertia)) =
+                native_polygon_mass_data_f32(vertices, density)
+            {
+                add_mass_data(fixture_mass, center, inertia);
             }
-            let inverse_count = 1.0_f32 / vertices.len() as f32;
-            let mut reference = (0.0_f32, 0.0_f32);
-            for &(x, y) in vertices {
-                reference.0 += inverse_count * x as f32;
-                reference.1 += inverse_count * y as f32;
-            }
-
-            let mut area = 0.0_f32;
-            let mut center = (0.0_f32, 0.0_f32);
-            let mut inertia = 0.0_f32;
-            let inverse_three = 1.0_f32 / 3.0_f32;
-            for index in 0..vertices.len() {
-                let first = (
-                    vertices[index].0 as f32 - reference.0,
-                    vertices[index].1 as f32 - reference.1,
-                );
-                let second_vertex = vertices[(index + 1) % vertices.len()];
-                let second = (
-                    second_vertex.0 as f32 - reference.0,
-                    second_vertex.1 as f32 - reference.1,
-                );
-                let cross = (-first.1).mul_add(second.0, first.0 * second.1);
-                let triangle_area = 0.5_f32 * cross;
-                area += triangle_area;
-                let center_scale = triangle_area * inverse_three;
-                center.0 = center_scale.mul_add(first.0 + second.0, center.0);
-                center.1 = center_scale.mul_add(first.1 + second.1, center.1);
-
-                let first_x_sum = second.0.mul_add(first.0, first.0 * first.0);
-                let integral_x = second.0.mul_add(second.0, first_x_sum);
-                let first_y_sum = second.1.mul_add(first.1, first.1 * first.1);
-                let integral_y = second.1.mul_add(second.1, first_y_sum);
-                inertia =
-                    (0.25_f32 * inverse_three * cross).mul_add(integral_x + integral_y, inertia);
-            }
-            if area == 0.0_f32 {
-                return;
-            }
-            center.0 = center.0 / area + reference.0;
-            center.1 = center.1 / area + reference.1;
-            let fixture_mass = density * area;
-            inertia *= density;
-            let center_squared = center.0.mul_add(center.0, center.1 * center.1);
-            let offset = (center.0 - reference.0, center.1 - reference.1);
-            let offset_squared = offset.0.mul_add(offset.0, offset.1 * offset.1);
-            inertia = fixture_mass.mul_add(center_squared - offset_squared, inertia);
-            add_mass_data(fixture_mass, center, inertia);
         };
         match &self.collision_shape {
             CollisionShape::Circle { radius } => {
@@ -84,7 +39,7 @@ impl SceneObject {
                 add_mass_data(
                     fixture_mass,
                     (0.0, 0.0),
-                    fixture_mass * 0.5_f32 * radius_squared,
+                    fixture_mass * radius_squared.mul_add(0.5_f32, 0.0),
                 );
             }
             CollisionShape::Box { width, height } => {
@@ -120,9 +75,22 @@ impl SceneObject {
         if mass <= 0.0_f32 {
             return (mass, (0.0, 0.0), 0.0);
         }
-        let center = (weighted_center.0 / mass, weighted_center.1 / mass);
-        let center_squared = center.0.mul_add(center.0, center.1 * center.1);
-        let inertia = (inertia_about_origin - mass * center_squared).max(0.0_f32);
+        // ResetMassData (0x10086B2C4..0x10086B2DC) computes the reciprocal
+        // once and multiplies both weighted-center lanes by it.
+        let inverse_mass = 1.0_f32 / mass;
+        let center = (
+            weighted_center.0 * inverse_mass,
+            weighted_center.1 * inverse_mass,
+        );
+        let inertia = if inertia_about_origin > 0.0_f32 && !self.fixed_rotation {
+            // 0x10086B314..0x10086B31C is FMUL(y,y), FNMADD(x,x,y²),
+            // FMADD(-|c|²,mass,I). Keep both fused operations and the native
+            // pre-correction positivity test.
+            let negative_center_squared = (-center.0).mul_add(center.0, -(center.1 * center.1));
+            negative_center_squared.mul_add(mass, inertia_about_origin)
+        } else {
+            0.0_f32
+        };
         (mass, center, inertia)
     }
 
@@ -133,5 +101,90 @@ impl SceneObject {
             (f64::from(center.0), f64::from(center.1)),
             f64::from(inertia),
         )
+    }
+}
+
+fn native_polygon_mass_data_f32(
+    vertices: &[(f64, f64)],
+    density: f32,
+) -> Option<(f32, (f32, f32), f32)> {
+    if density == 0.0_f32 || vertices.len() < 3 {
+        return None;
+    }
+    // b2PolygonShape::ComputeMass (0x10085E10C) accumulates the vertex sum
+    // first with V1.2S FADD, then applies one reciprocal multiply. Averaging
+    // every vertex separately is equivalent in real arithmetic but not f32.
+    let mut reference = (0.0_f32, 0.0_f32);
+    for &(x, y) in vertices {
+        reference.0 += x as f32;
+        reference.1 += y as f32;
+    }
+    let inverse_count = 1.0_f32 / vertices.len() as f32;
+    reference.0 *= inverse_count;
+    reference.1 *= inverse_count;
+
+    let mut area = 0.0_f32;
+    let mut center = (0.0_f32, 0.0_f32);
+    let mut inertia = 0.0_f32;
+    let inverse_six = f32::from_bits(0x3E2A_AAAB);
+    let inverse_twelve = f32::from_bits(0x3DAA_AAAB);
+    for index in 0..vertices.len() {
+        let first = (
+            vertices[index].0 as f32 - reference.0,
+            vertices[index].1 as f32 - reference.1,
+        );
+        let second_vertex = vertices[(index + 1) % vertices.len()];
+        let second = (
+            second_vertex.0 as f32 - reference.0,
+            second_vertex.1 as f32 - reference.1,
+        );
+        let cross = (-first.1).mul_add(second.0, first.0 * second.1);
+        area = cross.mul_add(0.5_f32, area);
+        let center_scale = cross * inverse_six;
+        center.0 = center_scale.mul_add(first.0 + second.0, center.0);
+        center.1 = center_scale.mul_add(first.1 + second.1, center.1);
+
+        // The native compiler rounds a * (a + b) before fusing b*b, rather
+        // than rewriting that first term as an FMA.
+        let first_x_sum = first.0 * (first.0 + second.0);
+        let integral_x = second.0.mul_add(second.0, first_x_sum);
+        let first_y_sum = first.1 * (first.1 + second.1);
+        let integral_y = second.1.mul_add(second.1, first_y_sum);
+        inertia = (cross * inverse_twelve).mul_add(integral_x + integral_y, inertia);
+    }
+    if area == 0.0_f32 {
+        return None;
+    }
+    let inverse_area = 1.0_f32 / area;
+    let relative_center = (center.0 * inverse_area, center.1 * inverse_area);
+    center.0 = reference.0 + relative_center.0;
+    center.1 = reference.1 + relative_center.1;
+    let fixture_mass = density * area;
+    inertia *= density;
+    let center_squared = center.0.mul_add(center.0, center.1 * center.1);
+    let relative_center_squared = relative_center
+        .0
+        .mul_add(relative_center.0, relative_center.1 * relative_center.1);
+    inertia = fixture_mass.mul_add(center_squared - relative_center_squared, inertia);
+    Some((fixture_mass, center, inertia))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::native_polygon_mass_data_f32;
+
+    #[test]
+    fn polygon_mass_data_keeps_native_fadd_fmadd_rounding() {
+        let vertices = [
+            (-17_647.839_843_75, -25_858.328_125),
+            (20_172.408_203_125, 20_781.115_234_375),
+            (-24_089.597_656_25, 16_789.595_703_125),
+        ];
+        let (mass, center, inertia) = native_polygon_mass_data_f32(&vertices, 1.0).unwrap();
+
+        assert_eq!(mass.to_bits(), 0x4E64_182E);
+        assert_eq!(center.0.to_bits(), 0xC5E0_A2BE);
+        assert_eq!(center.1.to_bits(), 0x4574_020C);
+        assert_eq!(inertia.to_bits(), 0x5C68_7D9B);
     }
 }

@@ -69,8 +69,13 @@ impl SceneObject {
                 let segment = vertices.get(fixture..fixture.checked_add(2)?)?;
                 let start = self.transform_collision_point(segment[0]);
                 let end = self.transform_collision_point(segment[1]);
-                ((end.0 - start.0).hypot(end.1 - start.1) > f64::EPSILON)
-                    .then(|| native_fixture_aabb(&[start, end], BOX2D_POLYGON_RADIUS as f32))?
+                // Purple's b2ChainShape::ComputeAABB at 0x10085D2D8 is
+                // intentionally different from b2EdgeShape::ComputeAABB:
+                // it takes only the two transformed endpoint extrema and
+                // does not expand them by m_radius. It also emits an AABB for
+                // every child index without a degeneracy check, preserving
+                // the fixture/proxy array's one-to-one child numbering.
+                native_fixture_aabb(&[start, end], 0.0)
             }
         }
     }
@@ -149,5 +154,19 @@ mod tests {
             bounds.0.to_bits(),
             ((f64::from(x) - 0.002_f64) as f32).to_bits()
         );
+    }
+
+    #[test]
+    fn chain_child_bounds_do_not_include_polygon_skin() {
+        let bounds = native_fixture_aabb(&[(-1.25, 2.5), (3.75, -4.0)], 0.0).unwrap();
+
+        assert_eq!(bounds, (-1.25, -4.0, 3.75, 2.5));
+    }
+
+    #[test]
+    fn chain_child_bounds_retain_degenerate_fixture_slot() {
+        let bounds = native_fixture_aabb(&[(2.0, -3.0), (2.0, -3.0)], 0.0).unwrap();
+
+        assert_eq!(bounds, (2.0, -3.0, 2.0, -3.0));
     }
 }
