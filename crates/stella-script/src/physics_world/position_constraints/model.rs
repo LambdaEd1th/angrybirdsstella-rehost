@@ -25,12 +25,12 @@ impl PositionBodyState {
         let rotated_x = (-local_center.1).mul_add(sine, local_center.0 * cosine);
         let rotated_y = local_center.1.mul_add(cosine, local_center.0 * sine);
         let position = (self.center.0 - rotated_x, self.center.1 - rotated_y);
-        (
-            point
-                .0
-                .mul_add(cosine, (-point.1).mul_add(sine, position.0)),
-            point.0.mul_add(sine, point.1.mul_add(cosine, position.1)),
-        )
+        // PositionSolverManifold rotates the local witness first and performs
+        // a separate FADD with transform.p; translation is not nested in the
+        // rotation FMADD chain.
+        let rotated_x = point.0.mul_add(cosine, -(point.1 * sine));
+        let rotated_y = point.0.mul_add(sine, point.1 * cosine);
+        (position.0 + rotated_x, position.1 + rotated_y)
     }
 }
 
@@ -98,5 +98,16 @@ mod tests {
         );
         assert_eq!(fused_first_products.0.to_bits(), 0xBE7F_8F18);
         assert_eq!(fused_first_products.1.to_bits(), 0x3DA6_4060);
+
+        let point = (f32::from_bits(0x3F13_7A5C), f32::from_bits(0xBF2B_918E));
+        let transformed = body.transform_point(local_center, point);
+        let nested_translation = (
+            point.0.mul_add(cosine, (-point.1).mul_add(sine, native.0)),
+            point.0.mul_add(sine, point.1.mul_add(cosine, native.1)),
+        );
+        assert_eq!(transformed.0.to_bits(), 0x3ED7_7A1C);
+        assert_eq!(transformed.1.to_bits(), 0xBEFD_4114);
+        assert_eq!(nested_translation.0.to_bits(), 0x3ED7_7A1C);
+        assert_eq!(nested_translation.1.to_bits(), 0xBEFD_4113);
     }
 }

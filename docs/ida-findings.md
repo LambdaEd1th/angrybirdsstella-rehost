@@ -3609,6 +3609,23 @@ compact sweep impulse writer instead of pre-rounding translation/rotation
 deltas. Bit-level regressions distinguish the native local-centre transform
 and effective mass from their one-ULP host-reassociated alternatives.
 
+The called `b2PositionSolverManifold::Initialize` leaf at `0x100864CFC` is
+137 instructions. IDA and Hopper expose the same three type branches and the
+same field use: type 0 reads the circle witnesses at `+24` and `+0`; type 1
+uses local normal `+16`, plane point `+24` and the indexed clip witness at
+`+0/+8`; type 2 swaps the reference body and negates the final normal. All
+three subtract the two radii at `+76/+80` only after the normal dot product.
+
+The previous Rust transform nested translation inside `mul_add`, while the
+native leaf completes each rotated local witness and then performs a separate
+`FADD` with `transform.p` (`0x100864D34..D74`, `0x100864DE0..E18`, and
+`0x100864E64..EA0`). Circle distance also uses `FMUL(dy,dy)`,
+`FMADD(dx,dx,dy²)`, `FSQRT` at `0x100864EB0..EB8`, not the host `hypot`
+routine. The rehost now follows these exact boundaries, retains the raw axis
+below `FLT_EPSILON`, and preserves the native unordered comparison path.
+Three-branch bit fixtures plus a one-ULP `hypot` counterexample cover normal,
+point and separation reconstruction.
+
 The original solver also has two physically separate impulse stores. IDA and
 Hopper show `WarmStart` reading the 152-byte solver constraint array, while the
 112-byte `StoreImpulses` leaf walks that array only after every velocity
