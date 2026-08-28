@@ -1041,7 +1041,9 @@ fn physics_step_uses_recovered_box2d_motion_clamps_and_sleep_thresholds() {
         let native_angular_drag = (-native_step).mul_add(1.0_f32, 1.0_f32);
         let mut native_angular_velocity = 1_000.0_f32 * native_angular_drag;
         let native_rotation = native_step * native_angular_velocity;
-        let native_max_rotation = 15_708.0_f32 / 10_000.0_f32;
+        let native_max_rotation = NATIVE_MAX_ROTATION;
+        assert_eq!(native_max_rotation.to_bits(), 0x3FC9_0FDB);
+        assert_eq!(NATIVE_MAX_ROTATION_SQUARED.to_bits(), 0x401D_E9E7);
         native_angular_velocity *= native_max_rotation / native_rotation.abs();
         assert_eq!(body.x, 0.159_999_981_522_560_12);
         assert_eq!(body.angle, f64::from(native_step * native_angular_velocity));

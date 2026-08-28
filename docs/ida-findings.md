@@ -168,7 +168,8 @@ conversion through a 20:1 adapter.
 
 `sub_10005E898` calls `sub_10086F3FC` as `b2World::Step(dt, 10, 10)`.
 IDA and Hopper agree that the island solver at `sub_10086CE84` clamps each
-step's translation to `0.16` and rotation to `1.5708`, uses linear and angular
+step's translation to float32 `0.16` (`0x3E23D70A`) and rotation to float32
+pi/2 (`0x3FC90FDB`), uses linear and angular
 sleep tolerances squared of `0.0025` and `0.00121847`, and sleeps an island
 after `0.5` seconds below both thresholds. The rehost uses those exact values,
 the recovered rational damping form `clamp(1 - dt*damping, 0, 1)`, and the same
@@ -749,8 +750,8 @@ is the byte at `+0x13f` and every native constructor initializes it to true;
 model.
 The Rust island step now follows the recovered native phase order independently
 for every DFS island: velocity integration, warm-start, ten interleaved
-joint/contact velocity passes, transform integration with the
-`0.16`/`1.5708` clamps, then up to ten contact/joint position passes and
+joint/contact velocity passes, transform integration with the exact float32
+`0x3E23D70A`/`0x3FC90FDB` clamps, then up to ten contact/joint position passes and
 island-local sleep accounting. Its broad phase only visits pairs
 involving an awake moving body, which matches the relevant Box2D dynamic-tree
 behavior and avoids quadratic scans of settled level art.
@@ -16705,3 +16706,15 @@ retains native strict-minimum ordering and cached values, but completes before
 advancing or incrementing a contact whose minimum is above that exact bound.
 A focused cached-TOI regression uses the next float32 value and proves that
 the end-of-discrete-step pose and zero sub-step count are retained.
+
+The transform-integration clamps themselves are bit-exact constants rather
+than decimal tolerances. Ordinary `b2Island::Solve` loads four words from
+`0x100A0CAAC..0x100A0CAB8` at `0x10086D184..0x10086D1A0`; Hopper independently
+shows the strict squared comparisons at `0x10086D1E0` and `0x10086D204`.
+`b2Island::SolveTOI` loads the byte-identical quartet from
+`0x100A0CAC8..0x100A0CAD4`. They are translation squared/value
+`0x3CD1B717`/`0x3E23D70A` and rotation squared/value
+`0x401DE9E7`/`0x3FC90FDB`. The trajectory predictor already used these words,
+but the formal island path passed a `1.5708` decimal approximation; both paths
+now share the recovered constants, eliminating the small extreme-angular-
+velocity divergence.

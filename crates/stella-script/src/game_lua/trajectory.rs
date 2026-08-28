@@ -3,7 +3,9 @@
 use mlua::{Lua, Result as LuaResult, Value};
 
 use crate::{
-    NativeLuaObject, SceneObject, native_fcvtzs_f32, native_lua_object, native_lua51_number,
+    NATIVE_MAX_ROTATION, NATIVE_MAX_ROTATION_SQUARED, NATIVE_MAX_TRANSLATION,
+    NATIVE_MAX_TRANSLATION_SQUARED, NativeLuaObject, SceneObject, native_fcvtzs_f32,
+    native_lua_object, native_lua51_number,
 };
 
 /// One of the two native 0x38-byte flight-trail records beginning at
@@ -65,19 +67,15 @@ pub(crate) fn step_native_trajectory_body(
     let translation_x = velocity_x * step;
     let translation_y = velocity_y * step;
     let translation_squared = translation_x.mul_add(translation_x, translation_y * translation_y);
-    const MAX_TRANSLATION_SQUARED: f32 = f32::from_bits(0x3cd1_b717); // 0.0256f
-    const MAX_TRANSLATION: f32 = f32::from_bits(0x3e23_d70a); // 0.16f
-    if translation_squared > MAX_TRANSLATION_SQUARED {
-        let scale = MAX_TRANSLATION / translation_squared.sqrt();
+    if translation_squared > NATIVE_MAX_TRANSLATION_SQUARED {
+        let scale = NATIVE_MAX_TRANSLATION / translation_squared.sqrt();
         velocity_x *= scale;
         velocity_y *= scale;
     }
 
     let rotation = angular_velocity * step;
-    const MAX_ROTATION_SQUARED: f32 = f32::from_bits(0x401d_e9e7);
-    const MAX_ROTATION: f32 = f32::from_bits(0x3fc9_0fdb); // pi/2
-    if rotation * rotation > MAX_ROTATION_SQUARED {
-        let scale = MAX_ROTATION / rotation.abs();
+    if rotation * rotation > NATIVE_MAX_ROTATION_SQUARED {
+        let scale = NATIVE_MAX_ROTATION / rotation.abs();
         angular_velocity *= scale;
     }
 

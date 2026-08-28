@@ -55,6 +55,10 @@ pub(crate) use manifold::*;
 pub(crate) use narrow_phase::*;
 pub(crate) use polygon_decomposition::*;
 pub(crate) use position_constraints::*;
+pub(crate) use position_integration::{
+    NATIVE_MAX_ROTATION, NATIVE_MAX_ROTATION_SQUARED, NATIVE_MAX_TRANSLATION,
+    NATIVE_MAX_TRANSLATION_SQUARED,
+};
 pub(crate) use ray_cast::*;
 pub(crate) use registration::install_bindings;
 pub(crate) use scene_object::*;

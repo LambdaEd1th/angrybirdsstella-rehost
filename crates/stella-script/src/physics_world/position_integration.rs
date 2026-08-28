@@ -2,6 +2,16 @@
 
 use crate::*;
 
+// Purple embeds this float32 quartet twice: ordinary b2Island::Solve loads
+// 0x100A0CAAC..0x100A0CAB8, while b2Island::SolveTOI loads the identical
+// bytes at 0x100A0CAC8..0x100A0CAD4. Keep trajectory prediction and both
+// formal island paths on the recovered bit patterns instead of decimal
+// approximations of 0.16 and pi/2.
+pub(crate) const NATIVE_MAX_TRANSLATION_SQUARED: f32 = f32::from_bits(0x3CD1_B717);
+pub(crate) const NATIVE_MAX_TRANSLATION: f32 = f32::from_bits(0x3E23_D70A);
+pub(crate) const NATIVE_MAX_ROTATION_SQUARED: f32 = f32::from_bits(0x401D_E9E7);
+pub(crate) const NATIVE_MAX_ROTATION: f32 = f32::from_bits(0x3FC9_0FDB);
+
 impl RenderBridge {
     #[cfg(test)]
     pub(crate) fn integrate_positions(

@@ -126,8 +126,13 @@ fn continuous_step_stops_a_fast_circle_at_a_static_thin_edge() {
         .iter()
         .map(|(contact, _)| contact.clone())
         .collect::<Vec<_>>();
-    let (impulses, _, _) =
-        bridge.finish_continuous_tunneling(&contacts, 1.0 / 30.0, 10, 0.16, 15_708.0 / 10_000.0);
+    let (impulses, _, _) = bridge.finish_continuous_tunneling(
+        &contacts,
+        1.0 / 30.0,
+        10,
+        f64::from(NATIVE_MAX_TRANSLATION),
+        f64::from(NATIVE_MAX_ROTATION),
+    );
 
     assert!(impulses[&key] > 0.0);
     assert!(bridge.solver_contact_impulses[&key].normal > 0.0);
@@ -314,8 +319,13 @@ fn native_toi_advances_and_integrates_a_selected_kinematic_endpoint() {
         .iter()
         .map(|(contact, _)| contact.clone())
         .collect::<Vec<_>>();
-    let (_, sweep_starts, cache_invalidation_bodies) =
-        bridge.finish_continuous_tunneling(&contacts, 1.0 / 30.0, 10, 0.16, 15_708.0 / 10_000.0);
+    let (_, sweep_starts, cache_invalidation_bodies) = bridge.finish_continuous_tunneling(
+        &contacts,
+        1.0 / 30.0,
+        10,
+        f64::from(NATIVE_MAX_TRANSLATION),
+        f64::from(NATIVE_MAX_ROTATION),
+    );
 
     assert!(sweep_starts.contains_key("wall"));
     assert_eq!(cache_invalidation_bodies, ["body"]);
@@ -373,8 +383,13 @@ fn native_toi_accepts_a_bullet_dynamic_dynamic_pair() {
         .iter()
         .map(|(contact, _)| contact.clone())
         .collect::<Vec<_>>();
-    let (_, next_sweeps, cache_invalidation_bodies) =
-        bridge.finish_continuous_tunneling(&contacts, 1.0 / 30.0, 10, 0.16, 15_708.0 / 10_000.0);
+    let (_, next_sweeps, cache_invalidation_bodies) = bridge.finish_continuous_tunneling(
+        &contacts,
+        1.0 / 30.0,
+        10,
+        f64::from(NATIVE_MAX_TRANSLATION),
+        f64::from(NATIVE_MAX_ROTATION),
+    );
 
     assert!(next_sweeps.contains_key("bullet"));
     assert!(next_sweeps.contains_key("target"));
@@ -812,7 +827,13 @@ fn toi_island_adds_both_static_contacts_at_a_simultaneous_corner() {
         .iter()
         .map(|(contact, _)| contact.clone())
         .collect::<Vec<_>>();
-    bridge.finish_continuous_tunneling(&contacts, 1.0 / 30.0, 10, 0.16, 15_708.0 / 10_000.0);
+    bridge.finish_continuous_tunneling(
+        &contacts,
+        1.0 / 30.0,
+        10,
+        f64::from(NATIVE_MAX_TRANSLATION),
+        f64::from(NATIVE_MAX_ROTATION),
+    );
     assert!(bridge.scene["body"].velocity_x.abs() < 1e-6);
     assert!(bridge.scene["body"].velocity_y.abs() < 1e-6);
 }
@@ -915,7 +936,13 @@ fn toi_island_includes_an_existing_touching_auxiliary_contact_once() {
         .iter()
         .map(|(contact, _)| contact.clone())
         .collect::<Vec<_>>();
-    bridge.finish_continuous_tunneling(&contacts, 1.0 / 30.0, 10, 0.16, 15_708.0 / 10_000.0);
+    bridge.finish_continuous_tunneling(
+        &contacts,
+        1.0 / 30.0,
+        10,
+        f64::from(NATIVE_MAX_TRANSLATION),
+        f64::from(NATIVE_MAX_ROTATION),
+    );
     assert_eq!(
         bridge.contact_impulses[&horizontal].normal, 0.25,
         "SolveTOI must not overwrite the persistent warm-start manifold"

@@ -12,8 +12,8 @@ const PHYSICS_CAPTURE_THRESHOLD_F32: f32 = f32::from_bits(0x3D88_8889);
 const PHYSICS_STEP: f64 = PHYSICS_STEP_F32 as f64;
 const VELOCITY_ITERATIONS: usize = 10;
 const POSITION_ITERATIONS: usize = 10;
-const MAX_TRANSLATION: f64 = 0.16;
-const MAX_ROTATION: f64 = 15_708.0 / 10_000.0;
+const MAX_TRANSLATION: f64 = NATIVE_MAX_TRANSLATION as f64;
+const MAX_ROTATION: f64 = NATIVE_MAX_ROTATION as f64;
 
 impl StellaLua {
     /// Advance the native physics world using the fixed step recovered from
