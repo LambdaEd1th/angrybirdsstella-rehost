@@ -427,5 +427,9 @@ fn new_contact_gets_restitution_bias_before_first_warm_start() {
     let bridge = runtime.render.lock().unwrap();
     assert!(bridge.scene["mover"].velocity_x < -2.5);
     let pair = ("mover".to_owned(), "wall".to_owned(), 0, 0);
-    assert!(bridge.contact_velocity_bias[&pair][0] > 2.5);
+    assert!(bridge.active_contacts.contains_key(&pair));
+    // The discrete solver used the restitution bias to produce the reflected
+    // velocity above. SolveTOI then constructs a fresh no-warm-start solver;
+    // its transient bias cache is not the discrete solver's retained output.
+    assert_eq!(bridge.contact_velocity_bias[&pair][0], 0.0_f32);
 }

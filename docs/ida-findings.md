@@ -16546,3 +16546,22 @@ alpha plus string key. SolveTOI candidate scanning now consumes the recovered
 native contact order in reverse creation order and performs the same strict
 replacement during the scan. Regressions cover coincident edges with equal TOI
 and an endpoint whose conservative advancement result is exactly one.
+
+## Restored b2TimeOfImpact output states
+
+Purple's `b2TimeOfImpact` (`sub_100861B54`) writes the full `b2TOIOutput`
+state, not an optional fraction. It emits `overlapped` (`2`) with time zero at
+`0x1008620C4`, `touching` (`3`) at `0x1008620D4` and `0x100862048`,
+`separated` (`4`) with `tMax` at `0x100862030`, and `failed` (`1`) with the
+current lower time at `0x100862040` or after twenty outer iterations at
+`0x100862018`. Reaching the eight-push limit at `0x100861FB0` merely starts the
+next outer iteration with the same lower time; it is not itself a return.
+Hopper shows the same numeric state stores and loop edges.
+
+SolveTOI tests the returned state for exactly `3` at `0x10086EDA0`; every other
+state caches alpha one. The rehost now preserves this state contract instead
+of collapsing it to `Option<f32>` and approximating `overlapped` with a fixture
+manifold query. Consequently an already-touching but core-separated shallow
+contact can still enter the native TOI solve, while its existing touching bit
+prevents a duplicate BeginContact callback. A regression exercises that
+transition in addition to touching and separated direct-output checks.

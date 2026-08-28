@@ -290,5 +290,5 @@ mod separation;
 mod simplex;
 
 pub(crate) use distance::native_core_distance;
-pub(crate) use separation::native_time_of_impact;
+pub(crate) use separation::{NativeToiOutput, NativeToiState, native_time_of_impact};
 pub(crate) use simplex::NativeSimplexCache;

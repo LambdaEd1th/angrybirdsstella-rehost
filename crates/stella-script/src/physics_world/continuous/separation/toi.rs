@@ -7,12 +7,26 @@ use super::function::NativeSeparationFunction;
 
 /// Twenty outer iterations, eight separation-axis pushes and alternating
 /// bisection/secant roots capped at fifty evaluations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NativeToiState {
+    Failed,
+    Overlapped,
+    Touching,
+    Separated,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct NativeToiOutput {
+    pub(crate) state: NativeToiState,
+    pub(crate) alpha: f32,
+}
+
 pub(crate) fn native_time_of_impact(
     proxy_a: &NativeDistanceProxy,
     mut sweep_a: NativeSweep,
     proxy_b: &NativeDistanceProxy,
     mut sweep_b: NativeSweep,
-) -> Option<f32> {
+) -> NativeToiOutput {
     const LINEAR_SLOP: f32 = 0.001;
     const MAX_ITERATIONS: usize = 20;
     const MAX_PUSH_BACK_ITERATIONS: usize = 8;
@@ -39,26 +53,33 @@ pub(crate) fn native_time_of_impact(
             &mut cache,
         );
         if distance <= 0.0_f32 {
-            return Some(0.0_f32);
+            return NativeToiOutput {
+                state: NativeToiState::Overlapped,
+                alpha: 0.0_f32,
+            };
         }
         if distance < upper_target {
-            return Some(alpha_1);
+            return NativeToiOutput {
+                state: NativeToiState::Touching,
+                alpha: alpha_1,
+            };
         }
 
         let separation = NativeSeparationFunction::initialize(
             cache, proxy_a, sweep_a, proxy_b, sweep_b, alpha_1,
         );
         let mut alpha_2 = 1.0_f32;
-        let mut advance_outer = false;
         for _ in 0..MAX_PUSH_BACK_ITERATIONS {
             let (separation_2, index_a, index_b) =
                 separation.find_min_separation(proxy_a, sweep_a, proxy_b, sweep_b, alpha_2);
             if separation_2 > upper_target {
-                return None;
+                return NativeToiOutput {
+                    state: NativeToiState::Separated,
+                    alpha: 1.0_f32,
+                };
             }
             if separation_2 > lower_target {
                 alpha_1 = alpha_2;
-                advance_outer = true;
                 break;
             }
             let separation_1 = separation.evaluate(
@@ -70,10 +91,16 @@ pub(crate) fn native_time_of_impact(
                 alpha_1,
             );
             if separation_1 < lower_target {
-                return None;
+                return NativeToiOutput {
+                    state: NativeToiState::Failed,
+                    alpha: alpha_1,
+                };
             }
             if separation_1 <= upper_target {
-                return Some(alpha_1);
+                return NativeToiOutput {
+                    state: NativeToiState::Touching,
+                    alpha: alpha_1,
+                };
             }
 
             let mut root_lower = alpha_1;
@@ -109,9 +136,9 @@ pub(crate) fn native_time_of_impact(
                 }
             }
         }
-        if !advance_outer {
-            return None;
-        }
     }
-    None
+    NativeToiOutput {
+        state: NativeToiState::Failed,
+        alpha: alpha_1,
+    }
 }

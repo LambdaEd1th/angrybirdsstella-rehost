@@ -3,4 +3,4 @@
 mod function;
 mod toi;
 
-pub(crate) use toi::native_time_of_impact;
+pub(crate) use toi::{NativeToiOutput, NativeToiState, native_time_of_impact};

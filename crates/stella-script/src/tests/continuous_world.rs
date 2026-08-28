@@ -240,6 +240,53 @@ fn toi_exactly_at_the_step_end_stays_in_the_discrete_solver() {
 }
 
 #[test]
+fn shallow_existing_contact_still_enters_native_toi_without_a_second_begin() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                clearVertices()
+                addVertex(0, -1)
+                addVertex(0, 1)
+                createLineShape("wall", "", 0, 0, 0, 2, 0, 0, 0, true, false, 1)
+                createCircle("body", "", -0.0115, 0, 0.01, 1, 0, 0, true, false, 1)
+                "#,
+        )
+        .unwrap();
+
+    let mut bridge = runtime.render.lock().unwrap();
+    bridge.sync_native_broad_phase();
+    let key = ("body".to_owned(), "wall".to_owned(), 0, 0);
+    let initial = bridge.refresh_contacts();
+    assert!(initial.iter().any(|event| event.began));
+    assert!(bridge.active_contacts.contains_key(&key));
+    let sweep_starts = bridge
+        .scene
+        .iter()
+        .map(|(name, object)| (name.clone(), NativeSweepStart::capture(object)))
+        .collect();
+    {
+        let body = bridge.scene.get_mut("body").unwrap();
+        body.motion_started = true;
+        body.sleeping = false;
+        body.apply_native_position_delta(0.01_f32, 0.0, 0.0);
+    }
+    bridge.sync_native_broad_phase();
+
+    let pending = bridge
+        .advance_continuous_tunneling(
+            &sweep_starts,
+            &BTreeMap::new(),
+            &mut NativeToiStepState::default(),
+        )
+        .expect("shallow touching contact must still reach SolveTOI");
+    assert_eq!(pending[0].0.key, key);
+    assert!(!pending[0].1.began);
+    assert!(pending[0].0.alpha > 0.0_f32);
+    assert!(pending[0].0.alpha < 1.0_f32);
+}
+
+#[test]
 fn toi_position_constraint_keeps_constructor_mass_cache() {
     let runtime = unlocked_test_runtime();
     runtime
@@ -307,14 +354,22 @@ fn native_time_of_impact_uses_purple_target_for_point_separation() {
 
     // target=max(0.001, 0.03-3*0.001)=0.027, hence
     // alpha=(0.1-0.027)/0.2=0.365 before the two shape radii overlap.
-    let alpha = native_time_of_impact(&moving, moving_sweep, &fixed, fixed_sweep).unwrap();
-    assert!((alpha - 0.365_f32).abs() < 0.001_f32, "alpha={alpha}");
+    let output = native_time_of_impact(&moving, moving_sweep, &fixed, fixed_sweep);
+    assert_eq!(output.state, NativeToiState::Touching);
+    assert!(
+        (output.alpha - 0.365_f32).abs() < 0.001_f32,
+        "alpha={}",
+        output.alpha
+    );
 
     let moving_away = NativeSweep {
         center: (-0.2, 0.0),
         ..moving_sweep
     };
-    assert!(native_time_of_impact(&moving, moving_away, &fixed, fixed_sweep).is_none());
+    assert_eq!(
+        native_time_of_impact(&moving, moving_away, &fixed, fixed_sweep).state,
+        NativeToiState::Separated
+    );
 }
 
 #[test]

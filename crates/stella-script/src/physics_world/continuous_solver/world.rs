@@ -29,9 +29,6 @@ impl RenderBridge {
         let mut selected_world_alpha = 1.0_f32;
         let mut selected = None;
         for key in candidate_keys {
-            if self.active_contacts.contains_key(&key) {
-                continue;
-            }
             if toi_state.counts.get(&key).copied().unwrap_or(0) > 8 {
                 continue;
             }
@@ -70,36 +67,6 @@ impl RenderBridge {
                 .unwrap_or_else(|| NativeSweepStart::capture(second_end));
             let first_end_transform = first_end.native_collision_transform();
             let second_end_transform = second_end.native_collision_transform();
-            let start_touching = if dynamic_body == key.0 {
-                first_end
-                    .collision_fixture_manifold_at_transforms(
-                        second_end,
-                        key.2,
-                        key.3,
-                        first_end.native_collision_transform_at_sweep(
-                            first_start.center,
-                            first_start.angle,
-                        ),
-                        second_end_transform,
-                    )
-                    .is_some()
-            } else {
-                first_end
-                    .collision_fixture_manifold_at_transforms(
-                        second_end,
-                        key.2,
-                        key.3,
-                        first_end_transform,
-                        second_end.native_collision_transform_at_sweep(
-                            second_start.center,
-                            second_start.angle,
-                        ),
-                    )
-                    .is_some()
-            };
-            if start_touching {
-                continue;
-            }
 
             let dynamic_start = if dynamic_body == key.0 {
                 first_start
@@ -133,15 +100,16 @@ impl RenderBridge {
                     }
                     (world_alpha, (world_alpha - alpha_0) / (1.0_f32 - alpha_0))
                 } else {
-                    let Some(alpha) = native_time_of_impact(
+                    let NativeToiOutput { state, alpha } = native_time_of_impact(
                         &proxy_a,
                         NativeSweep::between(first_start, first_end),
                         &proxy_b,
                         NativeSweep::between(second_start, second_end),
-                    ) else {
+                    );
+                    if state != NativeToiState::Touching {
                         toi_state.cached_world_alphas.insert(key.clone(), 1.0_f32);
                         continue;
-                    };
+                    }
                     let world_alpha = (1.0_f32 - alpha_0).mul_add(alpha, alpha_0);
                     toi_state
                         .cached_world_alphas
@@ -171,8 +139,9 @@ impl RenderBridge {
             ) else {
                 continue;
             };
+            let began = !self.active_contacts.contains_key(&key);
             let event =
-                Self::native_contact_event(&key, first_end, second_end, manifold, false, true);
+                Self::native_contact_event(&key, first_end, second_end, manifold, false, began);
             let hit = (
                 world_alpha,
                 alpha,

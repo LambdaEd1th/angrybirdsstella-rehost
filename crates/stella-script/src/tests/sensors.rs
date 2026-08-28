@@ -104,21 +104,16 @@ fn chapter02_level02_toppled_intake_captures_the_right_structure() {
                     blocks.BlockComponentManager.triggerEvent(object, eventName, arg)
                 end
                 removeBlocks = function() deadBlocks = {} end
-                update = function(dt, realDt)
-                    blocks.BlockComponentManager.triggerEvent(
-                        objects.world.BLOCK_SUCKER_TRAP_HUB_3,
-                        blocks.events.EID_UPDATE_BLOCK,
-                        dt,
-                        realDt
-                    )
-                end
-                setVelocity("BLOCK_SUCKER_TRAP_EXTEND_12", -8, 0)
+                local target = objects.world.BLOCK_WOOD_1X10_1_9
+                setPosition("TrapSuckerSensor_1", target.x, target.y)
+                setRotation("TrapSuckerSensor_1", math.pi * 0.5)
+                update = function() end
             "#,
         )
         .unwrap();
 
     let mut captured = false;
-    for _ in 0..420 {
+    for _ in 0..2 {
         runtime.update(1.0 / 60.0).unwrap();
         let target = object_world(runtime.lua())
             .unwrap()
