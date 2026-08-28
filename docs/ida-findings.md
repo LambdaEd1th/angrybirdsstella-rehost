@@ -3633,6 +3633,22 @@ emits this local manifold directly. A rotated/transformed two-face regression
 checks the reference normal and midpoint bit-for-bit and checks the incident
 points against the native transform/inverse-transform round trip.
 
+`b2FindIncidentEdge` is inlined inside this collider at
+`0x10085F75C..0x10085F850`. The reference normal is rotated to world and then
+inverse-rotated into the incident polygon with the native `FMUL/F(N)MADD`
+pair. Each incident normal is tested with a rounded Y product followed by an
+X `FMADD`; the strict `LT` conditional select keeps the first edge on ties.
+The selected two local vertices are then rotated before their translations
+are added by separate `FADD`s at `0x10085F7F0..0x10085F840`.
+`sub_10085FB84` and its edge-separation leaf `sub_10085FD74` use that same
+rotate-then-translate ordering for transformed centroids, reference vertices
+and support vertices. Rust previously reused a transform helper whose inlined
+position/TOI contract fuses translation into an earlier FMA. The polygon
+narrow phase now owns the collider-specific ordering across incident-edge
+selection, max separation and reference endpoints. A bit-level regression
+distinguishes both output coordinates from the earlier fused grouping by one
+ULP.
+
 The edge-polygon member `sub_10085EADC` first constructs the polygon-to-edge
 transform at `0x10085EB14..0x10085EB58`: its rotation is
 `R_edge^T * R_polygon`, and its translation is the edge rotation applied to

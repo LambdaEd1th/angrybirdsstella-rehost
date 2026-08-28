@@ -15,7 +15,9 @@ pub(super) use clipping::{ClipVertex, clip_segment_to_line};
 #[cfg(test)]
 pub(crate) use separation::polygon_max_separation;
 pub(super) use separation::polygon_normals_f32;
-use separation::{polygon_incident_edge_at_transforms, polygon_max_separation_at_transforms};
+use separation::{
+    polygon_incident_edge_at_transforms, polygon_max_separation_at_transforms, polygon_world_point,
+};
 
 #[cfg(test)]
 pub(crate) fn polygon_manifold(
@@ -104,8 +106,8 @@ pub(crate) fn polygon_manifold_at_transforms(
     let local_normal = (tangent.1, -tangent.0);
     let world_tangent = reference_transform.rotate(tangent);
     let reference_normal = (world_tangent.1, -world_tangent.0);
-    let reference_world_start = reference_transform.point(reference_start);
-    let reference_world_end = reference_transform.point(reference_end);
+    let reference_world_start = polygon_world_point(reference_transform, reference_start);
+    let reference_world_end = polygon_world_point(reference_transform, reference_end);
     let (incident_index, incident_edge) = polygon_incident_edge_at_transforms(
         incident,
         incident_transform,

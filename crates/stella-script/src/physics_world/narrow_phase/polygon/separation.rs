@@ -104,8 +104,8 @@ pub(super) fn polygon_max_separation_at_transforms(
     let normals = polygon_normals_f32(reference)?;
     let reference_centroid = polygon_centroid_f32(reference)?;
     let incident_centroid = polygon_centroid_f32(incident)?;
-    let reference_world_centroid = reference_transform.point(reference_centroid);
-    let incident_world_centroid = incident_transform.point(incident_centroid);
+    let reference_world_centroid = polygon_world_point(reference_transform, reference_centroid);
+    let incident_world_centroid = polygon_world_point(incident_transform, incident_centroid);
     let centroid_delta = reference_transform.inverse_rotate((
         incident_world_centroid.0 - reference_world_centroid.0,
         incident_world_centroid.1 - reference_world_centroid.1,
@@ -198,8 +198,8 @@ fn polygon_edge_separation_at_transforms(
             support = point;
         }
     }
-    let reference_point = reference_transform.point(reference[edge]);
-    let incident_point = incident_transform.point(support);
+    let reference_point = polygon_world_point(reference_transform, reference[edge]);
+    let incident_point = polygon_world_point(incident_transform, support);
     world_normal.0.mul_add(
         incident_point.0 - reference_point.0,
         world_normal.1 * (incident_point.1 - reference_point.1),
@@ -270,6 +270,21 @@ pub(in crate::physics_world::narrow_phase) fn polygon_normals_f32(
 type NativePoint2 = (f32, f32);
 type NativeIndexedEdge = (usize, (NativePoint2, NativePoint2));
 
+pub(super) fn polygon_world_point(
+    transform: NativeToiTransform,
+    local: NativePoint2,
+) -> NativePoint2 {
+    // The polygon collision members inline b2Mul(transform, point): first
+    // finish the FMUL/F(N)MADD rotation, then add translation with two FADDs.
+    // NativeToiTransform::point intentionally represents a different inlined
+    // grouping in the position/TOI paths and fuses translation earlier.
+    let rotated = transform.rotate(local);
+    (
+        rotated.0 + transform.position.0,
+        rotated.1 + transform.position.1,
+    )
+}
+
 pub(super) fn polygon_incident_edge_at_transforms(
     polygon: &[(f32, f32)],
     polygon_transform: NativeToiTransform,
@@ -294,8 +309,28 @@ pub(super) fn polygon_incident_edge_at_transforms(
     Some((
         best_index,
         (
-            polygon_transform.point(polygon[best_index]),
-            polygon_transform.point(polygon[(best_index + 1) % polygon.len()]),
+            polygon_world_point(polygon_transform, polygon[best_index]),
+            polygon_world_point(polygon_transform, polygon[(best_index + 1) % polygon.len()]),
         ),
     ))
+}
+
+#[cfg(test)]
+mod incident_tests {
+    use super::*;
+
+    #[test]
+    fn polygon_world_point_adds_translation_after_native_rotation() {
+        let transform = NativeToiTransform {
+            position: (f32::from_bits(0x4028_c2d0), f32::from_bits(0xc06f_b7ef)),
+            sine: f32::from_bits(0x3f54_5d1c),
+            cosine: f32::from_bits(0x3f0e_f5d8),
+        };
+        let local = (f32::from_bits(0xc089_0dc8), f32::from_bits(0xc31f_1ccf));
+        let native = polygon_world_point(transform, local);
+        assert_eq!(native.0.to_bits(), 0x4304_3c7b);
+        assert_eq!(native.1.to_bits(), 0xc2c0_4e62);
+        assert_eq!(transform.point(local).0.to_bits(), 0x4304_3c7c);
+        assert_eq!(transform.point(local).1.to_bits(), 0xc2c0_4e63);
+    }
 }
