@@ -17208,3 +17208,42 @@ Clippy and the release workspace build are clean. A fresh isolated-AppData
 invoked fallbacks, zero remaining compatibility bindings and empty stderr.
 `build/audit-native-aabb-mass-20260829.png` retains the expected SHA-256
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## Native per-shape point tests and signed circle bounds
+
+The remaining shape-vtable point members are chain `0x10085D258`, circle
+`0x10085D5BC`, edge `0x10085D840` and polygon `0x10085DCE8`. IDA and Hopper
+agree that the chain and edge implementations are literal false leaves.
+Circle first transforms its local centre with the supplied `b2Transform`,
+subtracts it from the query point, performs vector `FMUL` followed by `FADDP`,
+and compares the result with `radius * radius`. Its final `FCMP`/`CSET LE`
+also returns true for an unordered comparison; a NaN query is consequently
+inside rather than rejected by an early host-side finite check.
+
+Polygon transforms the query into shape-local space and walks its retained
+vertex/normal arrays. Each plane distance is another separate vector
+multiply/add pair, and only an ordered value strictly greater than zero exits
+false. Boundary and NaN values continue, while a zero-count polygon returns
+true. Rust now dispatches these exact float32 members in native intrusive
+fixture-list order instead of projecting fixtures to world-space `f64` and
+running a tolerance-based ray crossing test. The new point-query module keeps
+this vtable path separate from general shape projection and shares the
+already recovered `b2PolygonShape::Set` normals with polygon ray casting.
+
+Rechecking circle `ComputeAABB` at `0x10085D708` also exposed a related signed
+input difference. Purple subtracts and adds `m_radius` directly; it does not
+take its absolute value. A negative radius installed by `native_resizeRadius`
+therefore creates an inverted tight and fat proxy AABB. Circle collision
+geometry now retains that signed radius for the same native failure surface,
+while mass and point tests naturally square it. Regressions cover the ARM NaN
+condition codes, strict sub-nanometre polygon exclusion, rotated polygon
+inverse transforms, chain false dispatch and an inverted negative-radius
+dynamic-tree leaf.
+
+The complete workspace now passes 789 tests with the deliberate long-duration
+BirdRun audit ignored. Formatting, whitespace validation, strict all-target/
+all-feature Clippy and the release workspace build are clean. A fresh isolated-
+AppData 120-frame release-wgpu upload/render/readback reports 20 optional data
+probes, zero invoked fallbacks, zero remaining compatibility bindings and
+empty stderr. `build/audit-native-test-point-20260829.png` retains the expected
+SHA-256 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.

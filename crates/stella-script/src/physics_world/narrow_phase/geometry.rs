@@ -1,5 +1,6 @@
 //! Shared float32 geometry helpers used by Purple's narrow phase.
 
+#[cfg(test)]
 use crate::cross_2d;
 
 #[cfg(test)]
@@ -25,6 +26,7 @@ pub(crate) fn polygon_signed_area_from_f32(polygon: &[(f32, f32)]) -> f32 {
         * 0.5_f32
 }
 
+#[cfg(test)]
 pub(crate) fn polygon_contains_point(polygon: &[(f64, f64)], point: (f64, f64)) -> bool {
     if polygon.len() < 3 {
         return false;
@@ -50,6 +52,7 @@ pub(crate) fn polygon_contains_point(polygon: &[(f64, f64)], point: (f64, f64)) 
     inside
 }
 
+#[cfg(test)]
 pub(crate) fn dot_2d(first: (f64, f64), second: (f64, f64)) -> f64 {
     first.0 * second.0 + first.1 * second.1
 }

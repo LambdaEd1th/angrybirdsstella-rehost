@@ -1,6 +1,49 @@
 use super::*;
 
 #[test]
+fn dirt_point_query_dispatches_native_shape_test_point_virtuals() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createCircle("circle", "", 0, 0, 1, 1, 0, 0, true, false, 1)
+                circle_extension = createNativeBlockExtension("dirt", "circle")
+                circle_inside = circle_extension.isJointAttached(1, 0)
+                circle_outside = circle_extension.isJointAttached(1.001, 0)
+                circle_nan = circle_extension.isJointAttached(0 / 0, 0)
+
+                createBox("box", "", 5, -2, 4, 2, 1, 0, 0, true, false, 1)
+                setAngle("box", math.pi / 2)
+                box_extension = createNativeBlockExtension("dirt", "box")
+                box_inside = box_extension.isJointAttached(0, 0)
+                box_boundary = box_extension.isJointAttached(-1, 2)
+                box_outside = box_extension.isJointAttached(-1.001, 2)
+                box_nan = box_extension.isJointAttached(0 / 0, 0)
+
+                clearVertices()
+                addVertex(-1, 0)
+                addVertex(1, 0)
+                createLineShape("line", "", 0, 0, 2, 0, 0, 0, 0, true, false, 1)
+                line_extension = createNativeBlockExtension("dirt", "line")
+                line_point = line_extension.isJointAttached(0, 0)
+                line_nan = line_extension.isJointAttached(0 / 0, 0)
+                "#,
+        )
+        .unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert!(environment.get::<bool>("circle_inside").unwrap());
+    assert!(!environment.get::<bool>("circle_outside").unwrap());
+    assert!(environment.get::<bool>("circle_nan").unwrap());
+    assert!(environment.get::<bool>("box_inside").unwrap());
+    assert!(environment.get::<bool>("box_boundary").unwrap());
+    assert!(!environment.get::<bool>("box_outside").unwrap());
+    assert!(environment.get::<bool>("box_nan").unwrap());
+    assert!(!environment.get::<bool>("line_point").unwrap());
+    assert!(!environment.get::<bool>("line_nan").unwrap());
+}
+
+#[test]
 fn dirt_draws_share_cached_native_meshes_until_the_next_cut() {
     let runtime = StellaLua::new("/tmp").unwrap();
     runtime

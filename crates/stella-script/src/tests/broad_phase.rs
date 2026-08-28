@@ -27,6 +27,30 @@ fn chain_proxy_aabb_matches_unskinned_native_child_bounds() {
 }
 
 #[test]
+fn negative_circle_radius_keeps_native_inverted_proxy_bounds() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createCircle("circle", "", 5, -3, 1, 1, 0, 0, true, false, 1)
+                native_resizeRadius("circle", -2, 1, 0, 0)
+                "#,
+        )
+        .unwrap();
+
+    let bridge = runtime.render.lock().unwrap();
+    assert_eq!(
+        bridge.body_proxy_states["circle"].tight_aabbs,
+        [(7.0, -1.0, 3.0, -5.0)]
+    );
+    let proxy_id = bridge.scene["circle"].fixture_proxy_ids[0].unwrap();
+    assert_eq!(
+        bridge.dynamic_tree.proxy_aabb(proxy_id).unwrap(),
+        (6.9, -1.1, 3.1, -4.9)
+    );
+}
+
+#[test]
 fn dynamic_tree_proxy_ids_follow_native_leaf_allocation_and_reuse() {
     fn validate_tree(tree: &NativeDynamicTree, expected_leaves: usize) {
         fn validate_node(

@@ -25,6 +25,7 @@ pub(crate) use edge::{
 };
 #[cfg(test)]
 pub(crate) use geometry::dot_2d;
+#[cfg(test)]
 pub(crate) use geometry::polygon_contains_point;
 #[cfg(test)]
 pub(crate) use polygon::polygon_manifold;

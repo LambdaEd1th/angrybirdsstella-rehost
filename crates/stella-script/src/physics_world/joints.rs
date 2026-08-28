@@ -8,8 +8,10 @@ mod model;
 pub(crate) use construction::{
     dispatch_custom_joint, insert_physics_joint, mirror_lua_joint_descriptor,
 };
+#[cfg(test)]
+pub(crate) use geometry::cross_2d;
 pub(crate) use geometry::{
-    PrismaticGeometry, cross_2d, joint_anchor_delta, joint_anchor_offsets, point_velocity,
+    PrismaticGeometry, joint_anchor_delta, joint_anchor_offsets, point_velocity,
     prismatic_geometry, trace_physics_body,
 };
 pub(crate) use matrix::{joint_mass_matrix, solve_symmetric_2x2, solve_symmetric_3x3};

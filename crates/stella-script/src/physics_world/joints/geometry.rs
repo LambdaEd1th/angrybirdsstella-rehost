@@ -4,6 +4,7 @@ use crate::{JointBodyView, RenderBridge};
 
 use super::model::PhysicsJoint;
 
+#[cfg(test)]
 pub(crate) fn cross_2d(first: (f64, f64), second: (f64, f64)) -> f64 {
     first.0 * second.1 - first.1 * second.0
 }

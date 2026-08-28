@@ -58,18 +58,6 @@ impl SceneObject {
             .collect()
     }
 
-    pub(crate) fn collision_contains_world_point(&self, point: (f64, f64)) -> bool {
-        if !point.0.is_finite() || !point.1.is_finite() {
-            return false;
-        }
-        if let Some((center, radius)) = self.collision_circle() {
-            return (point.0 - center.0).powi(2) + (point.1 - center.1).powi(2) <= radius * radius;
-        }
-        self.collision_polygons()
-            .iter()
-            .any(|polygon| polygon_contains_point(polygon, point))
-    }
-
     pub(crate) fn transform_collision_point(&self, point: (f64, f64)) -> (f64, f64) {
         self.transform_collision_point_at(self.native_collision_transform(), point)
     }
@@ -107,7 +95,7 @@ impl SceneObject {
         let CollisionShape::Circle { radius } = &self.collision_shape else {
             return None;
         };
-        let radius = (radius.abs() as f32)
+        let radius = (*radius as f32)
             * (self.physics_scale_x.abs() as f32).min(self.physics_scale_y.abs() as f32);
         Some((
             (
@@ -118,6 +106,7 @@ impl SceneObject {
         ))
     }
 
+    #[cfg(test)]
     pub(crate) fn collision_polygons(&self) -> Vec<Vec<(f64, f64)>> {
         let local_polygons = match &self.collision_shape {
             CollisionShape::Box { width, height } => vec![vec![

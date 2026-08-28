@@ -196,7 +196,7 @@ pub(crate) fn native_polygon_ray_cast(
     Some(input.hit(name, output))
 }
 
-fn native_polygon_normals(vertices: &[(f32, f32)]) -> Vec<(f32, f32)> {
+pub(crate) fn native_polygon_normals(vertices: &[(f32, f32)]) -> Vec<(f32, f32)> {
     vertices
         .iter()
         .copied()
