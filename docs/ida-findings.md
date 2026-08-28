@@ -15947,3 +15947,33 @@ now occurs in float32 before widening into retained state. A focused
 regression covers numeric names in fixed/scientific forms, hexadecimal and
 wrong-typed anchors, canonical publication, and a 16,777,217 boundary where
 the former host-double subtraction produced the wrong local anchor.
+
+## Joint reference-angle and prismatic-axis float precision
+
+The native Box2D definitions keep their derived geometry in float32. IDA
+recovers the weld initializer `sub_100869E9C` subtracting the two body angles
+at `0x100869EF8..0x100869EFC`, and the revolute initializer
+`sub_100868AA8` repeats that float subtraction at
+`0x100868B04..0x100868B08`. The prismatic initializer `sub_1008673AC`
+computes its reference angle the same way at
+`0x100867424..0x100867428`.
+
+The prismatic axis has a similarly exact boundary. Hopper shows
+`sub_1008673AC` loading the body-A cached sine/cosine and supplied world-axis
+components with `ldp s0,s1` and `ldp s2,s3`, then using one `fmul` plus one
+`fmadd` for local X and one `fmul` plus `fnmsub` for local Y at
+`0x100867400..0x100867418`. IDA independently expresses the resulting
+transpose rotation as `cos*x + sin*y` and `cos*y - sin*x`. The source fields
+are not coercive: `worldAxisX` is guarded by the numeric predicate/read pair
+at `0x100038C64..0x100038CEC`, and `worldAxisY` repeats it at
+`0x100039914..0x10003999C`; a missing or wrong-typed value therefore becomes
+zero.
+
+Rust now stores reference angles from a float32 subtraction, decodes both
+world-axis inputs through the strict numeric gate, and reproduces the native
+float32 multiply/add grouping for both the inverse transform at construction
+and the forward transform used by the prismatic solver. Live prismatic angle
+errors and motor-limit boundary checks also perform the three-operand
+subtraction in float32 before widening. Regression coverage uses values whose
+float and host-double results differ, checks the exact local/world axis bit
+patterns, and verifies that string and Boolean axis fields publish as zero.

@@ -102,7 +102,7 @@ pub(crate) fn prismatic_geometry<F: JointBodyView + ?Sized, S: JointBodyView + ?
 ) -> PrismaticGeometry {
     let (r_a, r_b) = joint_anchor_offsets(joint, first, second);
     let delta = joint_anchor_delta(first, second, r_a, r_b);
-    let axis = rotate_vector(joint.local_axis, first.angle());
+    let axis = native_rotate_vector(joint.local_axis, first.angle());
     let perpendicular = (-axis.1, axis.0);
     let delta_plus_r_a = (delta.0 + r_a.0, delta.1 + r_a.1);
     PrismaticGeometry {
@@ -114,6 +114,17 @@ pub(crate) fn prismatic_geometry<F: JointBodyView + ?Sized, S: JointBodyView + ?
         s1: cross_2d(delta_plus_r_a, perpendicular),
         s2: cross_2d(r_b, perpendicular),
     }
+}
+
+fn native_rotate_vector(vector: (f64, f64), angle: f64) -> (f64, f64) {
+    let vector = (vector.0 as f32, vector.1 as f32);
+    let (sine, cosine) = (angle as f32).sin_cos();
+    let sine_y = sine * vector.1;
+    let sine_x = sine * vector.0;
+    (
+        f64::from(cosine.mul_add(vector.0, -sine_y)),
+        f64::from(cosine.mul_add(vector.1, sine_x)),
+    )
 }
 
 pub(crate) fn point_velocity(

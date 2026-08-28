@@ -42,6 +42,71 @@ fn recovered_type_four_is_prismatic_and_fieldless_type_five_is_metadata_only() {
 }
 
 #[test]
+fn prismatic_creation_uses_native_float_reference_angle_and_axis_rotation() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createBox("rail", "", 0, 0, 1, 1, 0, 0, 0, false, false, 1)
+                createBox("slider", "", 2, 0, 1, 1, 1, 0, 0, false, false, 1)
+                setRotation("rail", 0.1)
+                setRotation("slider", 6.0)
+                createJoint({
+                    name = "precise", end1 = "rail", end2 = "slider", type = 4,
+                    coordType = 2, x1 = 0, y1 = 0, x2 = 0, y2 = 0,
+                    worldAxisX = 1.00000006, worldAxisY = 0.20000002,
+                    limit = false, motor = false
+                })
+                createJoint({
+                    name = "wrong_types", end1 = "rail", end2 = "slider", type = 4,
+                    coordType = 2, x1 = 0, y1 = 0, x2 = 0, y2 = 0,
+                    worldAxisX = "1", worldAxisY = true,
+                    limit = false, motor = false
+                })
+                "#,
+        )
+        .unwrap();
+
+    let bridge = runtime.render.lock().unwrap();
+    let joint = &bridge.joints["precise"];
+    let first_angle = 0.1_f32;
+    let second_angle = 6.0_f32;
+    let axis_x = 1.000_000_06_f64 as f32;
+    let axis_y = 0.200_000_02_f64 as f32;
+    let (sine, cosine) = first_angle.sin_cos();
+    let expected_local_axis = (
+        f64::from(cosine.mul_add(axis_x, sine * axis_y)),
+        f64::from(cosine.mul_add(axis_y, -(sine * axis_x))),
+    );
+    assert_eq!(joint.local_axis, expected_local_axis);
+    assert_eq!(joint.rest_angle, f64::from(second_angle - first_angle));
+    assert_ne!(
+        joint.rest_angle,
+        f64::from(second_angle) - f64::from(first_angle)
+    );
+    assert_eq!(bridge.joints["wrong_types"].local_axis, (0.0, 0.0));
+
+    let geometry = prismatic_geometry(joint, &bridge.scene["rail"], &bridge.scene["slider"]);
+    let local_axis = (expected_local_axis.0 as f32, expected_local_axis.1 as f32);
+    let expected_world_axis = (
+        f64::from(cosine.mul_add(local_axis.0, -(sine * local_axis.1))),
+        f64::from(cosine.mul_add(local_axis.1, sine * local_axis.0)),
+    );
+    assert_eq!(geometry.axis, expected_world_axis);
+    drop(bridge);
+
+    let descriptors = game_environment(runtime.lua())
+        .unwrap()
+        .get::<mlua::Table>("objects")
+        .unwrap()
+        .get::<mlua::Table>("joints")
+        .unwrap();
+    let wrong_types = descriptors.get::<mlua::Table>("wrong_types").unwrap();
+    assert_eq!(wrong_types.get::<f64>("worldAxisX").unwrap(), 0.0);
+    assert_eq!(wrong_types.get::<f64>("worldAxisY").unwrap(), 0.0);
+}
+
+#[test]
 fn recovered_prismatic_solver_removes_perpendicular_and_angular_motion() {
     let runtime = StellaLua::new("/tmp").unwrap();
     runtime

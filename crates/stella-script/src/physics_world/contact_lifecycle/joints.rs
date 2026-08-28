@@ -145,7 +145,7 @@ impl RenderBridge {
         }
         let first = self.scene.get(&joint.first)?;
         let second = self.scene.get(&joint.second)?;
-        let angle = second.angle - first.angle - joint.rest_angle;
+        let angle = f64::from(second.angle as f32 - first.angle as f32 - joint.rest_angle as f32);
         let speed = joint.motor_speed.unwrap_or(0.0);
         let reached = (speed > 0.0 && angle >= joint.upper_limit)
             || (speed < 0.0 && angle <= joint.lower_limit);

@@ -7,7 +7,6 @@ use crate::{
     runtime_error,
 };
 
-use super::super::super::geometry::inverse_rotate_vector;
 use super::model::JointGeometry;
 
 pub(super) fn decode_joint_geometry(
@@ -151,13 +150,11 @@ pub(super) fn decode_joint_geometry(
         f64::from(native_anchor_length)
     };
     let local_axis = if matches!(joint_type, 4 | 5) && is_physical {
-        inverse_rotate_vector(
-            (
-                table.get::<f64>("worldAxisX").unwrap_or(0.0),
-                table.get::<f64>("worldAxisY").unwrap_or(0.0),
-            ),
-            first.angle,
-        )
+        let world_axis = (
+            native_optional_number(table, "worldAxisX")?.unwrap_or(0.0),
+            native_optional_number(table, "worldAxisY")?.unwrap_or(0.0),
+        );
+        native_inverse_rotate_vector(world_axis, first.angle as f32)
     } else {
         (0.0, 0.0)
     };
@@ -172,10 +169,20 @@ pub(super) fn decode_joint_geometry(
         first_anchor,
         second_anchor,
         local_axis,
-        rest_angle: second.angle - first.angle,
+        rest_angle: f64::from(second.angle as f32 - first.angle as f32),
         rest_length,
         one_way_destroy,
     }))
+}
+
+fn native_inverse_rotate_vector(vector: (f32, f32), angle: f32) -> (f64, f64) {
+    let (sine, cosine) = angle.sin_cos();
+    let sine_y = sine * vector.1;
+    let sine_x = sine * vector.0;
+    (
+        f64::from(cosine.mul_add(vector.0, sine_y)),
+        f64::from(cosine.mul_add(vector.1, -sine_x)),
+    )
 }
 
 fn exact_native_joint_class(value: f32) -> i32 {

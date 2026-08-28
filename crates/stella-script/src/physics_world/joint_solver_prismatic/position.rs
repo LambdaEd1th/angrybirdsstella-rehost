@@ -41,7 +41,8 @@ impl RenderBridge {
             + inertia_b * geometry.a2 * geometry.a2;
         let perpendicular_error = geometry.delta.0 * geometry.perpendicular.0
             + geometry.delta.1 * geometry.perpendicular.1;
-        let raw_angular_error = second.angle() - first.angle() - joint.rest_angle;
+        let raw_angular_error =
+            f64::from(second.angle() as f32 - first.angle() as f32 - joint.rest_angle as f32);
         let angular_error = raw_angular_error;
         let translation = geometry.delta.0 * geometry.axis.0 + geometry.delta.1 * geometry.axis.1;
         // Position constraints recompute limit activity from live translation.
