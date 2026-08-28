@@ -76,11 +76,7 @@ impl NativeSweep {
     }
 
     pub(crate) fn transform(self, alpha: f32) -> NativeToiTransform {
-        let angle = (self.angle - self.angle_0).mul_add(alpha, self.angle_0);
-        let center = (
-            (self.center.0 - self.center_0.0).mul_add(alpha, self.center_0.0),
-            (self.center.1 - self.center_0.1).mul_add(alpha, self.center_0.1),
-        );
+        let (center, angle) = self.pose(alpha);
         let (sine, cosine) = angle.sin_cos();
         let rotated_center = (
             self.local_center
@@ -95,6 +91,19 @@ impl NativeSweep {
             sine,
             cosine,
         }
+    }
+
+    pub(crate) fn pose(self, alpha: f32) -> ((f32, f32), f32) {
+        // b2Sweep::GetTransform first rounds alpha * end, then fuses
+        // (1 - alpha) * start into that value. This is observably different
+        // from start + alpha * (end - start).
+        let one_minus_alpha = 1.0_f32 - alpha;
+        let center = (
+            one_minus_alpha.mul_add(self.center_0.0, alpha * self.center.0),
+            one_minus_alpha.mul_add(self.center_0.1, alpha * self.center.1),
+        );
+        let angle = one_minus_alpha.mul_add(self.angle_0, alpha * self.angle);
+        (center, angle)
     }
 }
 
@@ -143,7 +152,28 @@ impl NativeToiTransform {
 
 #[cfg(test)]
 mod transform_tests {
-    use super::NativeToiTransform;
+    use super::{NativeSweep, NativeToiTransform};
+
+    #[test]
+    fn sweep_pose_weights_end_before_fusing_start() {
+        let alpha = f32::from_bits(0x3e75_dd92);
+        let start = f32::from_bits(0xc427_cc7d);
+        let end = f32::from_bits(0xc348_4daa);
+        let sweep = NativeSweep {
+            local_center: (0.0, 0.0),
+            center_0: (start, start),
+            center: (end, end),
+            angle_0: start,
+            angle: end,
+        };
+        let (center, angle) = sweep.pose(alpha);
+        assert_eq!(center.0.to_bits(), 0xc40b_887d);
+        assert_eq!(center.1.to_bits(), 0xc40b_887d);
+        assert_eq!(angle.to_bits(), 0xc40b_887d);
+
+        let difference_form = (end - start).mul_add(alpha, start);
+        assert_eq!(difference_form.to_bits(), 0xc40b_887c);
+    }
 
     #[test]
     fn point_adds_translation_after_native_rotation() {

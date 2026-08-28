@@ -16464,3 +16464,27 @@ invocation. Direct regressions cover a valid two-feature restoration with
 zeroed barycentric weights and the native half-to-double invalidation fallback;
 the existing continuous-world suite exercises the retained cache through real
 TOI contact advancement.
+
+## Native b2Sweep weighted interpolation grouping
+
+The sweep transform initially used the algebraically equivalent host form
+`start + alpha * (end - start)`. Purple's inlined `b2Sweep::GetTransform`
+retains a different float32 instruction boundary. In
+`b2SeparationFunction::Initialize`, `0x100862150..0x100862164` computes
+`oneMinusAlpha = 1 - alpha`, rounds the packed `alpha * endCenter` with
+`FMUL`, and then uses `FMLA` to add `oneMinusAlpha * startCenter`. The angle
+repeats the scalar form at `0x100862168..0x100862170`: round `alpha * endAngle`
+first, then `FMADD` the weighted start angle. Both body sweeps follow the same
+sequence through `0x1008621A0..0x1008621BC`.
+
+The independent evaluation member reproduces the contract at
+`0x1008628C8..0x1008628F0` and `0x10086291C..0x10086293C`; Hopper exposes the
+same packed multiply/accumulate and scalar multiply/FMA pairs in Initialize.
+Only after interpolation does Purple call `sincosf` and subtract the rotated
+local center from the interpolated center. Rust now has one shared sweep-pose
+member that evaluates `(1-alpha) * start + alpha * end` in that recovered
+order before constructing every GJK/separation transform. A bit-level
+regression uses an in-range alpha for which the former difference form is one
+ULP away. This finding applies to `GetTransform`; native `b2Sweep::Advance`
+remains a separately audited state-update boundary rather than being inferred
+from the interpolation member.
