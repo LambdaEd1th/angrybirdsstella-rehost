@@ -16507,3 +16507,24 @@ Rust now uses the recovered bit patterns, explicit multiply/floor and one
 shared correction per sweep. A regression fixes an input around 986.46 radians
 where division chooses the next turn and produces a small negative remainder,
 while Purple's reciprocal multiply preserves a remainder just below `2*pi`.
+
+## Exact b2Sweep advance interpolation
+
+Purple inlines `b2Sweep::Advance` repeatedly inside `b2World::SolveTOI`
+(`sub_10086EA54`). For the selected body's advance at
+`0x10086EEB8..0x10086EEFC`, it computes
+`beta = (alpha - alpha0) / (1 - alpha0)`, then loads `c0` and `c`. The endpoint
+products `beta * c.x/y` are rounded first with two `FMUL` instructions at
+`0x10086EED4..0x10086EED8`; only then do the two `FMADD` instructions at
+`0x10086EEDC..0x10086EEE0` add `(1 - beta) * c0.x/y`. Angle advancement uses
+the same separate end product and fused start product at
+`0x10086EEF0..0x10086EEF4`. Hopper independently reports the identical
+instruction stream, including the candidate-alignment copy at
+`0x10086EC84..0x10086ECC4` and auxiliary-body copy at
+`0x10086F144..0x10086F184`.
+
+The rehost previously used the algebraically equivalent delta expression
+`start + beta * (end - start)` when committing the selected TOI pose. It now
+routes that commit through the recovered weighted-endpoint operation shared
+with `b2Sweep::GetTransform`. A bit regression uses values for which the old
+delta form differs from Purple by one ULP.

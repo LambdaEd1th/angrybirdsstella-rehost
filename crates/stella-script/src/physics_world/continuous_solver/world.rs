@@ -139,11 +139,9 @@ impl RenderBridge {
                         .insert(key.clone(), world_alpha);
                     (world_alpha, alpha)
                 };
-            let impact_center = (
-                center_delta.0.mul_add(alpha, start_center.0),
-                center_delta.1.mul_add(alpha, start_center.1),
-            );
-            let impact_angle = angle_delta.mul_add(alpha, dynamic_start.angle);
+            let impact_pose = NativeSweep::between(dynamic_start, dynamic_end).advance_pose(alpha);
+            let impact_center = impact_pose.center;
+            let impact_angle = impact_pose.angle;
             let (first_transform, second_transform) = if dynamic_body == key.0 {
                 (
                     first_end.native_collision_transform_at_sweep(impact_center, impact_angle),

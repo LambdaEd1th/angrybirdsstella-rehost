@@ -107,6 +107,13 @@ impl NativeSweep {
         let angle = one_minus_alpha.mul_add(self.angle_0, alpha * self.angle);
         (center, angle)
     }
+
+    pub(crate) fn advance_pose(self, alpha: f32) -> NativeSweepStart {
+        // b2Sweep::Advance uses the same weighted-endpoint sequence as
+        // GetTransform before committing the result to c0/a0.
+        let (center, angle) = self.pose(alpha);
+        NativeSweepStart { center, angle }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -175,6 +182,25 @@ mod transform_tests {
 
         let difference_form = (end - start).mul_add(alpha, start);
         assert_eq!(difference_form.to_bits(), 0xc40b_887c);
+    }
+
+    #[test]
+    fn sweep_advance_commits_the_native_weighted_pose() {
+        let alpha = f32::from_bits(0x3e75_dd92);
+        let start = f32::from_bits(0xc427_cc7d);
+        let end = f32::from_bits(0xc348_4daa);
+        let advanced = NativeSweep {
+            local_center: (0.0, 0.0),
+            center_0: (start, start),
+            center: (end, end),
+            angle_0: start,
+            angle: end,
+        }
+        .advance_pose(alpha);
+
+        assert_eq!(advanced.center.0.to_bits(), 0xc40b_887d);
+        assert_eq!(advanced.center.1.to_bits(), 0xc40b_887d);
+        assert_eq!(advanced.angle.to_bits(), 0xc40b_887d);
     }
 
     #[test]
