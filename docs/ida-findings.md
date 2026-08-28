@@ -15998,6 +15998,13 @@ cross products and the packed 3-by-3 effective mass at
 impulses and applies them to the float velocity arrays at
 `0x100867790..0x100867884`.
 
+The same initializer also defines the constraint-cache lifetime. IDA maps
+inverse masses/inertias to joint offsets `+228..+240`, the world axis and
+perpendicular to `+244..+256`, the four lever arms to `+260..+272`, the
+symmetric 3-by-3 matrix to `+276..+308`, and motor mass to `+312`.
+`sub_1008678E0` subsequently reads all geometry and effective masses from
+those joint fields; it does not revisit the owning bodies for these values.
+
 The velocity solve forms its motor relative speed at
 `0x100867950..0x100867978`, then performs the accumulated motor update as one
 `FMADD` before the raw `FMIN`/`FMAX` clamp at
@@ -16015,15 +16022,22 @@ Position solving likewise rebuilds float geometry at
 the position arrays at `0x100867FA4..0x100868058`. The success thresholds are
 the exact bit patterns `0x3A83126F` (linear slop) at `0x100A0C9D0` and
 `0x3D0EFA36` (angular slop) at `0x100A0C9E0`.
+IDA's loads from `+0x104..+0x110`, independently mirrored by Hopper's
+`r20[0x41]` family, show the important mixed boundary: live geometry supplies
+the position error and final angular write lever arms, while the rebuilt
+matrix still uses the initialization-cached masses, inertias and lever arms.
+The resulting matrix is written back to the joint's `+276..+308` cache.
 
 Rust now narrows the complete prismatic geometry and solver boundary to
-float32, follows the recovered fused multiply-add grouping for effective
-masses, dot/cross products, warm starts, motor/limit accumulation and body
-writes, and widens only retained public state. The former unused host-double
+float32, persists the recovered geometry, mass, matrix and motor caches,
+follows the fused multiply-add grouping for effective masses, dot/cross
+products, warm starts, motor/limit accumulation and direct body writes, and
+widens only retained public state. The former unused host-double
 position-delta path was removed. Regressions cover exact axis/reference
-construction, constraint removal, live limit reclassification, the native
-negative-force motor clamp, and the shipped Chapter 02 level 56 vehicle's
-initial roll, sleep and long idle stability.
+construction, cache precision and lifetime after live transform/mass edits,
+constraint removal, live limit reclassification, the native negative-force
+motor clamp, and the shipped Chapter 02 level 56 vehicle's initial roll,
+sleep and long idle stability.
 
 ## Complete distance-joint solver cache and float pipeline
 

@@ -127,6 +127,30 @@ fn recovered_prismatic_solver_removes_perpendicular_and_angular_motion() {
 
     let mut bridge = runtime.render.lock().unwrap();
     bridge.begin_joint_step(1.0 / 30.0);
+    let joint = &bridge.joints["slide"];
+    for value in [
+        joint.prismatic_axis.0,
+        joint.prismatic_axis.1,
+        joint.prismatic_perpendicular.0,
+        joint.prismatic_perpendicular.1,
+        joint.prismatic_s1,
+        joint.prismatic_s2,
+        joint.prismatic_a1,
+        joint.prismatic_a2,
+        joint.prismatic_inverse_mass_first,
+        joint.prismatic_inverse_mass_second,
+        joint.prismatic_inverse_inertia_first,
+        joint.prismatic_inverse_inertia_second,
+        joint.prismatic_mass_matrix.0,
+        joint.prismatic_mass_matrix.1,
+        joint.prismatic_mass_matrix.2,
+        joint.prismatic_mass_matrix.3,
+        joint.prismatic_mass_matrix.4,
+        joint.prismatic_mass_matrix.5,
+        joint.prismatic_motor_mass,
+    ] {
+        assert_eq!(value, f64::from(value as f32));
+    }
     for _ in 0..10 {
         bridge.solve_joints(1.0 / 30.0, true, false);
     }
@@ -134,6 +158,75 @@ fn recovered_prismatic_solver_removes_perpendicular_and_angular_motion() {
     assert!(slider.velocity_x > 2.9);
     assert!(slider.velocity_y.abs() < 1e-9);
     assert!(slider.angular_velocity.abs() < 1e-9);
+}
+
+#[test]
+fn prismatic_solver_uses_the_initialization_geometry_and_mass_caches() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createBox("rail", "", 0, 0, 1, 1, 0, 0, 0, false, false, 1)
+                createBox("slider", "", 2, 0, 1, 1, 1, 0, 0, false, false, 1)
+                createJoint({
+                    name = "slide", end1 = "rail", end2 = "slider", type = 4,
+                    coordType = 2, x1 = 0, y1 = 0, x2 = 0, y2 = 0,
+                    worldAxisX = 1, worldAxisY = 0, limit = false, motor = false
+                })
+            "#,
+        )
+        .unwrap();
+
+    let mut bridge = runtime.render.lock().unwrap();
+    let first = bridge.scene["rail"].clone();
+    let second = bridge.scene["slider"].clone();
+    let mut joint = bridge.joints["slide"].clone();
+    joint.linear_impulse_x = 1.0;
+    bridge.scene.get_mut("slider").unwrap().inverse_mass = 0.0;
+
+    // Init consumes the island records captured before the live-body edit and
+    // warm-starts through the mass copied into the joint solver record.
+    bridge.initialize_prismatic_velocity_constraints(&mut joint, &first, &second, 1.0 / 60.0);
+    let cached_mass = joint.prismatic_inverse_mass_second;
+    let cached_axis = joint.prismatic_axis;
+    let cached_matrix = joint.prismatic_mass_matrix;
+    assert!(cached_mass > 0.0);
+    assert!(bridge.scene["slider"].velocity_y > 0.0);
+
+    // Velocity iterations retain the initialized axis even if the owning
+    // body transform changes during the same island step.
+    {
+        let rail = bridge.scene.get_mut("rail").unwrap();
+        rail.set_native_sweep_transform(
+            (rail.sweep_center_x, rail.sweep_center_y),
+            std::f32::consts::FRAC_PI_2,
+        );
+    }
+    bridge.scene.get_mut("slider").unwrap().velocity_y = 3.0;
+    let first = bridge.scene["rail"].clone();
+    let second = bridge.scene["slider"].clone();
+    bridge.solve_prismatic_joint_velocity(&mut joint, &first, &second, 1.0 / 60.0);
+    assert!(bridge.scene["slider"].velocity_y < 1.0e-6);
+
+    // Position iterations rebuild the live error, but use the same frozen
+    // masses and lever arms for the matrix and body write coefficients.
+    {
+        let rail = bridge.scene.get_mut("rail").unwrap();
+        rail.set_native_sweep_transform((rail.sweep_center_x, rail.sweep_center_y), 0.0);
+        let slider = bridge.scene.get_mut("slider").unwrap();
+        slider.set_native_sweep_transform(
+            (slider.sweep_center_x, slider.sweep_center_y + 1.0),
+            slider.angle as f32,
+        );
+    }
+    let displaced_y = bridge.scene["slider"].sweep_center_y;
+    let first = bridge.scene["rail"].clone();
+    let second = bridge.scene["slider"].clone();
+    bridge.solve_prismatic_joint_position(&mut joint, &first, &second);
+    assert!(bridge.scene["slider"].sweep_center_y < displaced_y);
+    assert_eq!(joint.prismatic_inverse_mass_second, cached_mass);
+    assert_eq!(joint.prismatic_axis, cached_axis);
+    assert_eq!(joint.prismatic_mass_matrix, cached_matrix);
 }
 
 #[test]
@@ -194,7 +287,7 @@ fn prismatic_position_solver_rechecks_live_limit_translation() {
     bridge.begin_joint_step(1.0 / 30.0);
     assert_ne!(bridge.joints["slide"].limit_state, JointLimitState::AtUpper);
     bridge.scene.get_mut("slider").unwrap().x = 10.0;
-    let joint = bridge.joints["slide"].clone();
+    let mut joint = bridge.joints["slide"].clone();
     let first = bridge.scene["rail"].clone();
     let second = bridge.scene["slider"].clone();
     let geometry = prismatic_geometry(&joint, &first, &second);
@@ -207,6 +300,6 @@ fn prismatic_position_solver_rechecks_live_limit_translation() {
         geometry.axis,
         geometry.delta
     );
-    assert!(!bridge.solve_prismatic_joint_position(&joint, &first, &second));
+    assert!(!bridge.solve_prismatic_joint_position(&mut joint, &first, &second));
     assert!(bridge.scene["slider"].x < 10.0);
 }

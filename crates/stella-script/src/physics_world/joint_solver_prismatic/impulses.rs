@@ -3,14 +3,9 @@
 use crate::*;
 
 impl RenderBridge {
-    pub(crate) fn apply_prismatic_velocity_impulse<
-        F: JointBodyView + ?Sized,
-        S: JointBodyView + ?Sized,
-    >(
+    pub(crate) fn apply_prismatic_velocity_impulse(
         &mut self,
         joint: &PhysicsJoint,
-        first: &F,
-        second: &S,
         geometry: PrismaticGeometry,
         impulse: (f32, f32, f32),
     ) {
@@ -42,10 +37,10 @@ impl RenderBridge {
             axial_impulse,
             s2.mul_add(perpendicular_impulse, angular_impulse),
         );
-        let mass_a = first.inverse_mass_for_solver() as f32;
-        let mass_b = second.inverse_mass_for_solver() as f32;
-        let inertia_a = first.inverse_inertia() as f32;
-        let inertia_b = second.inverse_inertia() as f32;
+        let mass_a = joint.prismatic_inverse_mass_first as f32;
+        let mass_b = joint.prismatic_inverse_mass_second as f32;
+        let inertia_a = joint.prismatic_inverse_inertia_first as f32;
+        let inertia_b = joint.prismatic_inverse_inertia_second as f32;
         if let Some(object) = self.scene.get_mut(&joint.first) {
             object.velocity_x = f64::from((-mass_a).mul_add(impulse.0, object.velocity_x as f32));
             object.velocity_y = f64::from((-mass_a).mul_add(impulse.1, object.velocity_y as f32));
@@ -60,14 +55,9 @@ impl RenderBridge {
         }
     }
 
-    pub(crate) fn apply_prismatic_position_impulse<
-        F: JointBodyView + ?Sized,
-        S: JointBodyView + ?Sized,
-    >(
+    pub(crate) fn apply_prismatic_position_impulse(
         &mut self,
         joint: &PhysicsJoint,
-        first: &F,
-        second: &S,
         geometry: PrismaticGeometry,
         impulse: (f32, f32, f32),
     ) {
@@ -99,10 +89,10 @@ impl RenderBridge {
             axial_impulse,
             s2.mul_add(perpendicular_impulse, angular_impulse),
         );
-        let mass_a = first.inverse_mass_for_solver() as f32;
-        let mass_b = second.inverse_mass_for_solver() as f32;
-        let inertia_a = first.inverse_inertia() as f32;
-        let inertia_b = second.inverse_inertia() as f32;
+        let mass_a = joint.prismatic_inverse_mass_first as f32;
+        let mass_b = joint.prismatic_inverse_mass_second as f32;
+        let inertia_a = joint.prismatic_inverse_inertia_first as f32;
+        let inertia_b = joint.prismatic_inverse_inertia_second as f32;
         if let Some(object) = self.scene.get_mut(&joint.first) {
             object.apply_native_position_impulse(-mass_a, impulse, -inertia_a, angular_a);
         }

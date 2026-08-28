@@ -52,6 +52,20 @@ pub(crate) struct PhysicsJoint {
     pub(crate) weld_inverse_inertia_second: f64,
     /// Symmetric 3x3 matrix in `(k11, k12, k13, k22, k23, k33)` order.
     pub(crate) weld_mass_matrix: (f64, f64, f64, f64, f64, f64),
+    /// Float solver cache populated by b2PrismaticJoint::InitVelocityConstraints.
+    pub(crate) prismatic_axis: (f64, f64),
+    pub(crate) prismatic_perpendicular: (f64, f64),
+    pub(crate) prismatic_s1: f64,
+    pub(crate) prismatic_s2: f64,
+    pub(crate) prismatic_a1: f64,
+    pub(crate) prismatic_a2: f64,
+    pub(crate) prismatic_inverse_mass_first: f64,
+    pub(crate) prismatic_inverse_mass_second: f64,
+    pub(crate) prismatic_inverse_inertia_first: f64,
+    pub(crate) prismatic_inverse_inertia_second: f64,
+    /// Symmetric 3x3 matrix in `(k11, k12, k13, k22, k23, k33)` order.
+    pub(crate) prismatic_mass_matrix: (f64, f64, f64, f64, f64, f64),
+    pub(crate) prismatic_motor_mass: f64,
     pub(crate) revolute_radius_first: (f64, f64),
     pub(crate) revolute_radius_second: (f64, f64),
     pub(crate) revolute_inverse_mass_first: f64,

@@ -1,6 +1,6 @@
 //! `b2PrismaticJoint::SolveVelocityConstraints` at `0x1008678E0`.
 
-use super::{native_solve_2x2, native_solve_3x3};
+use super::{cached_prismatic_geometry, native_solve_2x2, native_solve_3x3};
 use crate::*;
 
 impl RenderBridge {
@@ -14,11 +14,11 @@ impl RenderBridge {
         second: &S,
         step: f64,
     ) {
-        let geometry = prismatic_geometry(joint, first, second);
-        let mass_a = first.inverse_mass_for_solver() as f32;
-        let mass_b = second.inverse_mass_for_solver() as f32;
-        let inertia_a = first.inverse_inertia() as f32;
-        let inertia_b = second.inverse_inertia() as f32;
+        let geometry = cached_prismatic_geometry(joint);
+        let mass_a = joint.prismatic_inverse_mass_first as f32;
+        let mass_b = joint.prismatic_inverse_mass_second as f32;
+        let inertia_a = joint.prismatic_inverse_inertia_first as f32;
+        let inertia_b = joint.prismatic_inverse_inertia_second as f32;
         let axis = (geometry.axis.0 as f32, geometry.axis.1 as f32);
         let perpendicular = (
             geometry.perpendicular.0 as f32,
@@ -30,13 +30,15 @@ impl RenderBridge {
             geometry.a1 as f32,
             geometry.a2 as f32,
         );
-        let mass_sum = mass_a + mass_b;
-        let k11 = s2.mul_add(inertia_b * s2, s1.mul_add(inertia_a * s1, mass_sum));
-        let k12 = (inertia_a * s1) + (inertia_b * s2);
-        let k13 = (inertia_a * s1).mul_add(a1, (inertia_b * s2) * a2);
-        let k22 = inertia_a + inertia_b;
-        let k23 = (inertia_a * a1) + (inertia_b * a2);
-        let k33 = a2.mul_add(inertia_b * a2, a1.mul_add(inertia_a * a1, mass_sum));
+        let matrix = joint.prismatic_mass_matrix;
+        let (k11, k12, k13, k22, k23, k33) = (
+            matrix.0 as f32,
+            matrix.1 as f32,
+            matrix.2 as f32,
+            matrix.3 as f32,
+            matrix.4 as f32,
+            matrix.5 as f32,
+        );
 
         let first_velocity = first.velocity();
         let second_velocity = second.velocity();
@@ -56,7 +58,7 @@ impl RenderBridge {
                     velocity_delta.0.mul_add(axis.0, velocity_delta.1 * axis.1),
                 ),
             );
-            let motor_mass = if k33 > 0.0 { k33.recip() } else { k33 };
+            let motor_mass = joint.prismatic_motor_mass as f32;
             let requested_speed = joint.motor_speed.unwrap_or(0.0) as f32 - relative_speed;
             let maximum_impulse = step as f32 * joint.max_torque as f32;
             new_motor_impulse = motor_mass
@@ -132,8 +134,6 @@ impl RenderBridge {
         joint.motor_impulse = f64::from(new_motor_impulse);
         self.apply_prismatic_velocity_impulse(
             joint,
-            first,
-            second,
             geometry,
             (
                 perpendicular_delta,

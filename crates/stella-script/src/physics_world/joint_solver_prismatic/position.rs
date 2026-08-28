@@ -1,6 +1,8 @@
 //! `b2PrismaticJoint::SolvePositionConstraints` at `0x100867C68`.
 
-use super::{native_solve_2x2, native_solve_3x3};
+use super::{
+    cached_prismatic_geometry, native_prismatic_mass_matrix, native_solve_2x2, native_solve_3x3,
+};
 use crate::*;
 
 impl RenderBridge {
@@ -9,7 +11,7 @@ impl RenderBridge {
         S: JointBodyView + ?Sized,
     >(
         &mut self,
-        joint: &PhysicsJoint,
+        joint: &mut PhysicsJoint,
         first: &F,
         second: &S,
     ) -> bool {
@@ -19,28 +21,26 @@ impl RenderBridge {
         const ANGULAR_SLOP: f32 = f32::from_bits(0x3d0e_fa36);
 
         let geometry = prismatic_geometry(joint, first, second);
-        let mass_a = first.inverse_mass_for_solver() as f32;
-        let mass_b = second.inverse_mass_for_solver() as f32;
-        let inertia_a = first.inverse_inertia() as f32;
-        let inertia_b = second.inverse_inertia() as f32;
-        let (s1, s2, a1, a2) = (
-            geometry.s1 as f32,
-            geometry.s2 as f32,
-            geometry.a1 as f32,
-            geometry.a2 as f32,
+        let mass_a = joint.prismatic_inverse_mass_first as f32;
+        let mass_b = joint.prismatic_inverse_mass_second as f32;
+        let inertia_a = joint.prismatic_inverse_inertia_first as f32;
+        let inertia_b = joint.prismatic_inverse_inertia_second as f32;
+        let (matrix, _) = native_prismatic_mass_matrix(
+            mass_a,
+            mass_b,
+            inertia_a,
+            inertia_b,
+            cached_prismatic_geometry(joint),
         );
-        let mass_sum = mass_a + mass_b;
-        let k11 = s2.mul_add(inertia_b * s2, s1.mul_add(inertia_a * s1, mass_sum));
-        let k12 = (inertia_a * s1) + (inertia_b * s2);
-        let k13 = (inertia_a * s1).mul_add(a1, (inertia_b * s2) * a2);
-        let mut k22 = inertia_a + inertia_b;
-        if k22 == 0.0 {
-            // The native matrix writes one into its angular diagonal when
-            // both bodies have fixed rotation so the solve remains defined.
-            k22 = 1.0;
-        }
-        let k23 = (inertia_a * a1) + (inertia_b * a2);
-        let k33 = a2.mul_add(inertia_b * a2, a1.mul_add(inertia_a * a1, mass_sum));
+        joint.prismatic_mass_matrix = matrix;
+        let (k11, k12, k13, k22, k23, k33) = (
+            matrix.0 as f32,
+            matrix.1 as f32,
+            matrix.2 as f32,
+            matrix.3 as f32,
+            matrix.4 as f32,
+            matrix.5 as f32,
+        );
         let delta = (geometry.delta.0 as f32, geometry.delta.1 as f32);
         let perpendicular = (
             geometry.perpendicular.0 as f32,
@@ -91,8 +91,6 @@ impl RenderBridge {
         };
         self.apply_prismatic_position_impulse(
             joint,
-            first,
-            second,
             geometry,
             (perpendicular_impulse, axial_impulse, angular_impulse),
         );
