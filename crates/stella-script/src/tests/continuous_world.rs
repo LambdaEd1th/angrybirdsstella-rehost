@@ -442,9 +442,14 @@ fn toi_island_adds_both_static_contacts_at_a_simultaneous_corner() {
         .advance_continuous_tunneling(&sweep_starts, &BTreeMap::new(), &mut toi_state)
         .unwrap();
     let selected = pending[0].0.clone();
-    while let Some(auxiliary) =
-        bridge.advance_next_toi_auxiliary_contact(&selected.dynamic_body, selected.alpha)
-    {
+    while let Some(auxiliary) = bridge.advance_next_toi_auxiliary_contact(
+        &selected.dynamic_body,
+        selected.alpha,
+        &pending
+            .iter()
+            .map(|(contact, _)| contact.key.clone())
+            .collect::<Vec<_>>(),
+    ) {
         pending.push(auxiliary);
     }
     assert_eq!(pending.len(), 2);
@@ -461,6 +466,107 @@ fn toi_island_adds_both_static_contacts_at_a_simultaneous_corner() {
     bridge.finish_continuous_tunneling(&contacts, 1.0 / 30.0, 10, 0.16, 15_708.0 / 10_000.0);
     assert!(bridge.scene["body"].velocity_x.abs() < 1e-6);
     assert!(bridge.scene["body"].velocity_y.abs() < 1e-6);
+}
+
+#[test]
+fn toi_island_includes_an_existing_touching_auxiliary_contact_once() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                clearVertices()
+                addVertex(0.05, -1)
+                addVertex(0.05, 1)
+                createLineShape("vertical", "", 0, 0, 0, 2, 0, 0, 0, true, false, 1)
+                clearVertices()
+                addVertex(-1, 0)
+                addVertex(1, 0)
+                createLineShape("horizontal", "", 0, 0, 2, 0, 0, 0, 0, true, false, 1)
+                createCircle("body", "", 0, 0.0115, 0.01, 1, 0, 0, true, false, 1)
+                "#,
+        )
+        .unwrap();
+
+    let mut bridge = runtime.render.lock().unwrap();
+    bridge.sync_native_broad_phase();
+    let horizontal = ("body".to_owned(), "horizontal".to_owned(), 0, 0);
+    assert!(
+        bridge
+            .refresh_contacts()
+            .iter()
+            .any(|event| { event.began && event.first == "body" && event.second == "horizontal" })
+    );
+    let horizontal_feature = bridge.contact_manifolds[&horizontal].feature_id;
+    bridge.contact_impulses.insert(
+        horizontal.clone(),
+        CachedContactImpulse {
+            normal: 0.25,
+            primary_feature_id: horizontal_feature,
+            point_count: 1,
+            ..CachedContactImpulse::default()
+        },
+    );
+    let sweep_starts = bridge
+        .scene
+        .iter()
+        .map(|(name, object)| (name.clone(), NativeSweepStart::capture(object)))
+        .collect();
+    {
+        let body = bridge.scene.get_mut("body").unwrap();
+        body.motion_started = true;
+        body.sleeping = false;
+        body.apply_native_position_delta(0.08_f32, 0.0, 0.0);
+    }
+    bridge.sync_native_broad_phase();
+    let mut pending = bridge
+        .advance_continuous_tunneling(
+            &sweep_starts,
+            &BTreeMap::new(),
+            &mut NativeToiStepState::default(),
+        )
+        .expect("vertical edge must select a TOI contact");
+    assert!(
+        pending[0].0.key.0 == "vertical" || pending[0].0.key.1 == "vertical",
+        "selected={:?}",
+        pending[0].0.key
+    );
+    let island_keys = pending
+        .iter()
+        .map(|(contact, _)| contact.key.clone())
+        .collect::<Vec<_>>();
+    let auxiliary = bridge
+        .advance_next_toi_auxiliary_contact(
+            &pending[0].0.dynamic_body,
+            pending[0].0.alpha,
+            &island_keys,
+        )
+        .expect("existing horizontal contact must join the TOI island");
+    assert_eq!(auxiliary.0.key, horizontal);
+    assert!(!auxiliary.1.began);
+    pending.push(auxiliary);
+    let island_keys = pending
+        .iter()
+        .map(|(contact, _)| contact.key.clone())
+        .collect::<Vec<_>>();
+    assert!(
+        bridge
+            .advance_next_toi_auxiliary_contact(
+                &pending[0].0.dynamic_body,
+                pending[0].0.alpha,
+                &island_keys,
+            )
+            .is_none(),
+        "native island flag must prevent a second insertion"
+    );
+    let contacts = pending
+        .iter()
+        .map(|(contact, _)| contact.clone())
+        .collect::<Vec<_>>();
+    bridge.finish_continuous_tunneling(&contacts, 1.0 / 30.0, 10, 0.16, 15_708.0 / 10_000.0);
+    assert_eq!(
+        bridge.contact_impulses[&horizontal].normal, 0.25,
+        "SolveTOI must not overwrite the persistent warm-start manifold"
+    );
 }
 
 #[test]

@@ -42,11 +42,19 @@ impl StellaLua {
                     dispatch_and_remove_lua_joint(&self.lua, name)?;
                 }
                 dispatch_native_contact_callbacks(&self.lua, &self.render, contact_callbacks)?;
+                let island_contacts = pending
+                    .iter()
+                    .map(|(contact, _)| contact.key.clone())
+                    .collect::<Vec<_>>();
                 let auxiliary = self
                     .render
                     .lock()
                     .expect("render bridge lock poisoned")
-                    .advance_next_toi_auxiliary_contact(&selected.dynamic_body, selected.alpha);
+                    .advance_next_toi_auxiliary_contact(
+                        &selected.dynamic_body,
+                        selected.alpha,
+                        &island_contacts,
+                    );
                 if let Some(auxiliary) = auxiliary {
                     pending.push(auxiliary);
                 }

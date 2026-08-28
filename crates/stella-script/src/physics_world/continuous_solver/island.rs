@@ -40,7 +40,6 @@ impl RenderBridge {
                 }
                 PositionContactConstraint::from_manifold(first, second, contact.manifold)
             };
-            self.contact_impulses.remove(&contact.key);
             self.solver_contact_impulses.remove(&contact.key);
             self.contact_velocity_bias.remove(&contact.key);
             constraints.push((contact, constraint));
@@ -59,7 +58,19 @@ impl RenderBridge {
         }
         let velocity_constraints = constraints
             .iter()
-            .map(|(contact, _)| (contact.key.clone(), contact.manifold))
+            .filter_map(|(contact, _)| {
+                let (first, second) = self
+                    .scene
+                    .get(&contact.key.0)
+                    .zip(self.scene.get(&contact.key.1))?;
+                Some((
+                    contact.key.clone(),
+                    contact.manifold.at_native_transforms(
+                        first.native_collision_transform(),
+                        second.native_collision_transform(),
+                    ),
+                ))
+            })
             .collect::<Vec<_>>();
         self.begin_toi_contact_step(&velocity_constraints);
         let velocity_contact_keys = velocity_constraints

@@ -16565,3 +16565,40 @@ manifold query. Consequently an already-touching but core-separated shallow
 contact can still enter the native TOI solve, while its existing touching bit
 prevents a duplicate BeginContact callback. A regression exercises that
 transition in addition to touching and separated direct-output checks.
+
+## Existing touching contacts in TOI island expansion
+
+After selecting the minimum contact, Purple expands the reduced island through
+the selected body's intrusive contact-edge list in `sub_10086EA54`. At
+`0x10086F0DC..0x10086F0E4` it skips only contacts already carrying the island
+bit. It updates every otherwise eligible solid contact with `sub_10086373C` at
+`0x10086F1D0`, then requires both enabled and touching bits at
+`0x10086F1D8..0x10086F1E0` before setting the island bit. There is no test of
+the contact's old touching bit. Hopper independently shows the same flag
+sequence.
+
+The rehost formerly used `active_contacts` as its deduplication set, which
+silently removed all pre-existing touching contacts from a TOI island. The
+callback-driven expansion now receives the keys already inserted in the
+current island, skips only those keys, and derives BeginContact from the prior
+touching state. A regression selects a new vertical-edge TOI while retaining a
+shallow horizontal contact, verifies that the existing contact joins exactly
+once, and verifies that it does not emit a second begin event.
+
+The surrounding native path also exposes two state-retention requirements.
+Candidate filtering at `0x10086EE1C..0x10086EE48` requires at least one awake
+non-static endpoint; inactive sleeping stacks must not be selected and woken
+by the TOI pass. After the twenty TOI position iterations, native
+`b2ContactSolver::InitializeVelocityConstraints` rebuilds its world manifold
+from the corrected body transforms. The rehost now performs the same local-
+manifold projection instead of retaining pre-correction world lever arms.
+
+Finally, `Contact::Update` preserves matched manifold impulses for an already
+touching contact, while `b2Island::SolveTOI` disables warm starting only for
+its temporary solver and does not publish those temporary impulses through
+`StoreImpulses`. Existing persistent impulse records are therefore retained;
+only a new BeginContact clears one. This matters for the multi-platform wheel
+stacks in `BirdRun_L09`: clearing an auxiliary contact's cache every TOI pass
+made the following discrete solve cold-start repeatedly and kept the authored
+wheel mounts in visible motion. The seeded ten-second settling regression now
+passes with existing contacts included in the TOI island.

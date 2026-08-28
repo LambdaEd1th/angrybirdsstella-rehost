@@ -44,6 +44,13 @@ impl RenderBridge {
             {
                 continue;
             }
+            let first_awake =
+                first_end.moves_during_step() && first_end.motion_started && !first_end.sleeping;
+            let second_awake =
+                second_end.moves_during_step() && second_end.motion_started && !second_end.sleeping;
+            if !first_awake && !second_awake {
+                continue;
+            }
             let dynamic_body = match (
                 first_end.dynamic_body,
                 second_end.dynamic_body,
@@ -168,10 +175,14 @@ impl RenderBridge {
         }
         self.active_contacts.insert(key.clone(), false);
         self.contact_manifolds.insert(key.clone(), manifold);
-        self.contact_impulses.remove(&key);
+        if event.began {
+            self.contact_impulses.remove(&key);
+        }
         self.solver_contact_impulses.remove(&key);
         self.contact_velocity_bias.remove(&key);
-        self.wake_contact_bodies(&key);
+        if event.began {
+            self.wake_contact_bodies(&key);
+        }
         Some(vec![(
             NativeToiContact {
                 key,
@@ -191,6 +202,7 @@ impl RenderBridge {
         &mut self,
         dynamic_body: &str,
         alpha: f32,
+        island_contacts: &[ContactKey],
     ) -> Option<(NativeToiContact, ContactEvent)> {
         let candidates = self
             .native_contact_world_order
@@ -199,7 +211,7 @@ impl RenderBridge {
             .map(|(_, key)| key)
             .filter(|candidate| {
                 self.broad_phase_contacts.contains(*candidate)
-                    && !self.active_contacts.contains_key(*candidate)
+                    && !island_contacts.contains(*candidate)
                     && (candidate.0 == dynamic_body || candidate.1 == dynamic_body)
             })
             .cloned()
@@ -232,23 +244,28 @@ impl RenderBridge {
                 else {
                     continue;
                 };
+                let began = !self.active_contacts.contains_key(&extra_key);
                 let extra_event = Self::native_contact_event(
                     &extra_key,
                     extra_first,
                     extra_second,
                     extra_manifold,
                     false,
-                    true,
+                    began,
                 );
                 (extra_manifold, extra_event)
             };
             self.active_contacts.insert(extra_key.clone(), false);
             self.contact_manifolds
                 .insert(extra_key.clone(), extra_manifold);
-            self.contact_impulses.remove(&extra_key);
+            if extra_event.began {
+                self.contact_impulses.remove(&extra_key);
+            }
             self.solver_contact_impulses.remove(&extra_key);
             self.contact_velocity_bias.remove(&extra_key);
-            self.wake_contact_bodies(&extra_key);
+            if extra_event.began {
+                self.wake_contact_bodies(&extra_key);
+            }
             return Some((
                 NativeToiContact {
                     key: extra_key,

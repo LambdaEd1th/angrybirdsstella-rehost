@@ -1,5 +1,6 @@
 //! Contact manifold records and velocity-point conditioning.
 
+use crate::NativeToiTransform;
 #[cfg(test)]
 use crate::{ContactBodyState, SceneObject};
 
@@ -43,6 +44,136 @@ impl ContactManifold {
 
     pub(crate) fn native_local_position(self) -> ContactLocalManifold {
         self.position
+    }
+
+    /// Rebuild `b2WorldManifold` from the persistent local manifold after a
+    /// TOI position solve has changed one or both body transforms. Box2D does
+    /// this inside `InitializeVelocityConstraints`; carrying the pre-solve
+    /// world points forward changes the angular lever arms and injects energy
+    /// into multi-contact TOI islands.
+    pub(crate) fn at_native_transforms(
+        self,
+        first: NativeToiTransform,
+        second: NativeToiTransform,
+    ) -> Self {
+        let local = self.position;
+        let point_count = usize::from(local.point_count).min(2);
+        let mut refreshed = [(0.0_f32, 0.0_f32, 0.0_f32); 2];
+        let normal = match local.manifold_type {
+            ContactManifoldType::Circles => {
+                let point_a = first.point(local.local_point);
+                let point_b = second.point(local.local_points[0]);
+                let delta = (point_b.0 - point_a.0, point_b.1 - point_a.1);
+                let distance_squared = delta.0.mul_add(delta.0, delta.1 * delta.1);
+                let normal = if distance_squared > f32::EPSILON * f32::EPSILON {
+                    let inverse_distance = distance_squared.sqrt().recip();
+                    (delta.0 * inverse_distance, delta.1 * inverse_distance)
+                } else {
+                    (1.0_f32, 0.0_f32)
+                };
+                let surface_a = (
+                    local.first_radius.mul_add(normal.0, point_a.0),
+                    local.first_radius.mul_add(normal.1, point_a.1),
+                );
+                let surface_b = (
+                    (-local.second_radius).mul_add(normal.0, point_b.0),
+                    (-local.second_radius).mul_add(normal.1, point_b.1),
+                );
+                let separation = (surface_b.0 - surface_a.0)
+                    .mul_add(normal.0, (surface_b.1 - surface_a.1) * normal.1);
+                refreshed[0] = (
+                    -separation,
+                    (surface_a.0 + surface_b.0) * 0.5_f32,
+                    (surface_a.1 + surface_b.1) * 0.5_f32,
+                );
+                normal
+            }
+            ContactManifoldType::FaceFirst => {
+                let normal = first.rotate(local.local_normal);
+                let plane_point = first.point(local.local_point);
+                for (output, &local_point) in refreshed
+                    .iter_mut()
+                    .zip(local.local_points.iter())
+                    .take(point_count)
+                {
+                    let clip_point = second.point(local_point);
+                    let plane_distance = (clip_point.0 - plane_point.0)
+                        .mul_add(normal.0, (clip_point.1 - plane_point.1) * normal.1);
+                    let surface_a = (
+                        (local.first_radius - plane_distance).mul_add(normal.0, clip_point.0),
+                        (local.first_radius - plane_distance).mul_add(normal.1, clip_point.1),
+                    );
+                    let surface_b = (
+                        (-local.second_radius).mul_add(normal.0, clip_point.0),
+                        (-local.second_radius).mul_add(normal.1, clip_point.1),
+                    );
+                    let separation = (surface_b.0 - surface_a.0)
+                        .mul_add(normal.0, (surface_b.1 - surface_a.1) * normal.1);
+                    *output = (
+                        -separation,
+                        (surface_a.0 + surface_b.0) * 0.5_f32,
+                        (surface_a.1 + surface_b.1) * 0.5_f32,
+                    );
+                }
+                normal
+            }
+            ContactManifoldType::FaceSecond => {
+                let reference_normal = second.rotate(local.local_normal);
+                let plane_point = second.point(local.local_point);
+                for (output, &local_point) in refreshed
+                    .iter_mut()
+                    .zip(local.local_points.iter())
+                    .take(point_count)
+                {
+                    let clip_point = first.point(local_point);
+                    let plane_distance = (clip_point.0 - plane_point.0).mul_add(
+                        reference_normal.0,
+                        (clip_point.1 - plane_point.1) * reference_normal.1,
+                    );
+                    let surface_b = (
+                        (local.second_radius - plane_distance)
+                            .mul_add(reference_normal.0, clip_point.0),
+                        (local.second_radius - plane_distance)
+                            .mul_add(reference_normal.1, clip_point.1),
+                    );
+                    let surface_a = (
+                        (-local.first_radius).mul_add(reference_normal.0, clip_point.0),
+                        (-local.first_radius).mul_add(reference_normal.1, clip_point.1),
+                    );
+                    let separation = (surface_a.0 - surface_b.0).mul_add(
+                        reference_normal.0,
+                        (surface_a.1 - surface_b.1) * reference_normal.1,
+                    );
+                    *output = (
+                        -separation,
+                        (surface_a.0 + surface_b.0) * 0.5_f32,
+                        (surface_a.1 + surface_b.1) * 0.5_f32,
+                    );
+                }
+                (-reference_normal.0, -reference_normal.1)
+            }
+        };
+        let feature_ids = [
+            self.feature_id,
+            self.secondary.map(|point| point.feature_id).unwrap_or(0),
+        ];
+        let point = |index: usize| ContactPoint {
+            penetration: f64::from(refreshed[index].0),
+            point_x: f64::from(refreshed[index].1),
+            point_y: f64::from(refreshed[index].2),
+            feature_id: feature_ids[index],
+        };
+        let primary = point(0);
+        Self {
+            normal_x: f64::from(normal.0),
+            normal_y: f64::from(normal.1),
+            penetration: primary.penetration,
+            point_x: primary.point_x,
+            point_y: primary.point_y,
+            feature_id: primary.feature_id,
+            secondary: (point_count > 1).then(|| point(1)),
+            position: local,
+        }
     }
 }
 
@@ -131,4 +262,54 @@ pub(crate) struct ContactPoint {
     pub(crate) point_x: f64,
     pub(crate) point_y: f64,
     pub(crate) feature_id: u32,
+}
+
+#[cfg(test)]
+mod world_manifold_tests {
+    use super::*;
+    use crate::circle_circle_manifold_at_transforms;
+
+    #[test]
+    fn toi_refresh_reprojects_local_circle_witnesses_at_corrected_transforms() {
+        let first = NativeToiTransform::IDENTITY;
+        let second_before = NativeToiTransform {
+            position: (1.5, 0.25),
+            sine: 0.0,
+            cosine: 1.0,
+        };
+        let second_after = NativeToiTransform {
+            position: (1.65, 0.15),
+            sine: 0.0,
+            cosine: 1.0,
+        };
+        let manifold = circle_circle_manifold_at_transforms(
+            (0.0, 0.0),
+            1.0,
+            first,
+            (0.0, 0.0),
+            1.0,
+            second_before,
+        )
+        .unwrap();
+        let refreshed = manifold.at_native_transforms(first, second_after);
+        let direct = circle_circle_manifold_at_transforms(
+            (0.0, 0.0),
+            1.0,
+            first,
+            (0.0, 0.0),
+            1.0,
+            second_after,
+        )
+        .unwrap();
+
+        assert_eq!(refreshed.normal_x.to_bits(), direct.normal_x.to_bits());
+        assert_eq!(refreshed.normal_y.to_bits(), direct.normal_y.to_bits());
+        assert_eq!(refreshed.point_x.to_bits(), direct.point_x.to_bits());
+        assert_eq!(refreshed.point_y.to_bits(), direct.point_y.to_bits());
+        assert_eq!(
+            refreshed.penetration.to_bits(),
+            direct.penetration.to_bits()
+        );
+        assert_eq!(refreshed.feature_id, manifold.feature_id);
+    }
 }
