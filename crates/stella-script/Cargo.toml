@@ -2,7 +2,7 @@
 name = "stella-script"
 version.workspace = true
 edition.workspace = true
-license = "(AGPL-3.0-or-later) AND BSL-1.0"
+license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
