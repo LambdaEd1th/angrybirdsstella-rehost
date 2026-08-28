@@ -4,6 +4,8 @@ use std::collections::{BTreeMap, HashMap};
 
 use crate::{ContactKey, SceneObject};
 
+use super::native_contact_velocity_write;
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ContactBodyState {
     pub(crate) inverse_mass: f32,
@@ -153,11 +155,12 @@ impl NativeContactVelocityCache {
             .copied()
     }
 
-    pub(crate) fn apply_impulse(
+    pub(crate) fn apply_native_contact_impulse(
         &mut self,
         names: (&str, &str),
-        first_delta: (f32, f32, f32),
-        second_delta: (f32, f32, f32),
+        first_coefficients: (f32, f32, f32),
+        second_coefficients: (f32, f32, f32),
+        impulse: (f32, f32),
     ) -> bool {
         let Some(first_index) = self.indices.get(names.0).copied() else {
             return false;
@@ -165,45 +168,62 @@ impl NativeContactVelocityCache {
         let Some(second_index) = self.indices.get(names.1).copied() else {
             return false;
         };
-        let first = &mut self.velocities[first_index];
-        first.0 += first_delta.0;
-        first.1 += first_delta.1;
-        first.2 += first_delta.2;
-        let second = &mut self.velocities[second_index];
-        second.0 += second_delta.0;
-        second.1 += second_delta.1;
-        second.2 += second_delta.2;
-        true
+        self.apply_native_contact_impulse_at(
+            (first_index, second_index),
+            first_coefficients,
+            second_coefficients,
+            impulse,
+        )
     }
 
-    pub(crate) fn apply_impulse_at(
+    pub(crate) fn apply_native_contact_impulse_at(
         &mut self,
         indices: (usize, usize),
-        first_delta: (f32, f32, f32),
-        second_delta: (f32, f32, f32),
+        first_coefficients: (f32, f32, f32),
+        second_coefficients: (f32, f32, f32),
+        impulse: (f32, f32),
     ) -> bool {
         let (first_index, second_index) = indices;
         if first_index == second_index {
             let Some(velocity) = self.velocities.get_mut(first_index) else {
                 return false;
             };
-            velocity.0 += first_delta.0 + second_delta.0;
-            velocity.1 += first_delta.1 + second_delta.1;
-            velocity.2 += first_delta.2 + second_delta.2;
+            native_contact_velocity_write(
+                velocity,
+                first_coefficients.0,
+                first_coefficients.1,
+                impulse,
+                first_coefficients.2,
+            );
+            native_contact_velocity_write(
+                velocity,
+                second_coefficients.0,
+                second_coefficients.1,
+                impulse,
+                second_coefficients.2,
+            );
             return true;
         }
-        let Ok([first, second]) = self
+        let Ok([first_velocity, second_velocity]) = self
             .velocities
             .get_disjoint_mut([first_index, second_index])
         else {
             return false;
         };
-        first.0 += first_delta.0;
-        first.1 += first_delta.1;
-        first.2 += first_delta.2;
-        second.0 += second_delta.0;
-        second.1 += second_delta.1;
-        second.2 += second_delta.2;
+        native_contact_velocity_write(
+            first_velocity,
+            first_coefficients.0,
+            first_coefficients.1,
+            impulse,
+            first_coefficients.2,
+        );
+        native_contact_velocity_write(
+            second_velocity,
+            second_coefficients.0,
+            second_coefficients.1,
+            impulse,
+            second_coefficients.2,
+        );
         true
     }
 

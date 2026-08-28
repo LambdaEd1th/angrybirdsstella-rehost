@@ -512,8 +512,8 @@ fn recovered_edge_fixtures_are_independent_two_sided_capsules() {
     assert_eq!(bridge.scene["ground"].collision_segments().len(), 2);
     let events = bridge.solve_contacts();
     assert!(events.iter().filter(|event| event.impulse > 0.0).count() >= 2);
-    assert!(bridge.scene["above"].velocity_y.abs() < 1e-9);
-    assert!(bridge.scene["below"].velocity_y.abs() < 1e-9);
+    assert!(bridge.scene["above"].velocity_y.abs() < f64::from(f32::EPSILON));
+    assert!(bridge.scene["below"].velocity_y.abs() < f64::from(f32::EPSILON));
 }
 
 #[test]

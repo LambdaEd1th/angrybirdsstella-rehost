@@ -2,6 +2,8 @@
 
 use crate::*;
 
+use super::native_contact_cross;
+
 impl RenderBridge {
     /// Seed every currently touching, non-sensor fixture pair before
     /// InitializeVelocityConstraints. New Box2D contacts have zero cached
@@ -119,12 +121,8 @@ impl RenderBridge {
                     point.point_x as f32 - second.center.0,
                     point.point_y as f32 - second.center.1,
                 );
-                let first_normal_lever = first_radius
-                    .0
-                    .mul_add(normal.1, -(first_radius.1 * normal.0));
-                let second_normal_lever = second_radius
-                    .0
-                    .mul_add(normal.1, -(second_radius.1 * normal.0));
+                let first_normal_lever = native_contact_cross(first_radius, normal);
+                let second_normal_lever = native_contact_cross(second_radius, normal);
                 let normal_inverse_mass = first
                     .inverse_inertia
                     .mul_add(first_normal_lever * first_normal_lever, inverse_mass_sum);
@@ -137,12 +135,8 @@ impl RenderBridge {
                 } else {
                     0.0
                 };
-                let first_tangent_lever = first_radius
-                    .0
-                    .mul_add(tangent.1, -(first_radius.1 * tangent.0));
-                let second_tangent_lever = second_radius
-                    .0
-                    .mul_add(tangent.1, -(second_radius.1 * tangent.0));
+                let first_tangent_lever = native_contact_cross(first_radius, tangent);
+                let second_tangent_lever = native_contact_cross(second_radius, tangent);
                 let tangent_inverse_mass = first
                     .inverse_inertia
                     .mul_add(first_tangent_lever * first_tangent_lever, inverse_mass_sum);
@@ -192,14 +186,8 @@ impl RenderBridge {
             if points.len() == 2 {
                 let normal_levers = native_points.map(|point| {
                     (
-                        point
-                            .first_radius
-                            .0
-                            .mul_add(normal.1, -(point.first_radius.1 * normal.0)),
-                        point
-                            .second_radius
-                            .0
-                            .mul_add(normal.1, -(point.second_radius.1 * normal.0)),
+                        native_contact_cross(point.first_radius, normal),
+                        native_contact_cross(point.second_radius, normal),
                     )
                 });
                 let first_weighted_1 = first.inverse_inertia * normal_levers[0].0;

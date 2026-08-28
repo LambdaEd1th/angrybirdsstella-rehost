@@ -65,7 +65,13 @@ fn fixture_pair_constraints_use_sequential_live_body_velocities() {
         .map(|(_, impulse)| impulse.normal)
         .collect::<Vec<_>>();
     assert_eq!(impulses.len(), 2);
-    assert_eq!(impulses.iter().filter(|impulse| **impulse > 0.0).count(), 1);
+    assert_eq!(
+        impulses
+            .iter()
+            .filter(|impulse| **impulse > f64::from(f32::EPSILON))
+            .count(),
+        1
+    );
 }
 
 #[test]
@@ -101,7 +107,7 @@ fn velocity_iterations_reuse_one_frozen_contact_manager_manifold() {
     bridge.scene.get_mut("mover").unwrap().inverse_mass = 0.0;
     let impulses = bridge.solve_contact_velocity_constraints_once();
     assert!(impulses[&pair] > 0.0);
-    assert!(bridge.scene["mover"].velocity_x.abs() < 1e-9);
+    assert!(bridge.scene["mover"].velocity_x.abs() < f64::from(f32::EPSILON));
     assert_eq!(
         bridge.contact_velocity_constraints[&pair].normal,
         constraint.normal

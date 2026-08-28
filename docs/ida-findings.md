@@ -16767,3 +16767,36 @@ while only the last frame's command buffer is retained for structural checks.
 Extended 600-frame per-level draw coverage and 7,200-frame update-only idle
 coverage complete without a Lua error, unresolved sprite or compatibility
 fallback.
+
+## Native contact-velocity cross products and fused body writes
+
+A second pass over `b2ContactSolver::InitializeVelocityConstraints`
+(`sub_100863BC4`), `WarmStart` (`sub_100863FAC`) and
+`SolveVelocityConstraints` (`sub_1008640D0`) found three remaining float32
+grouping differences. IDA shows every radius/impulse cross product as a
+rounded `FMUL` of `radius.x * impulse.y` followed by `FNMSUB` of
+`radius.y * impulse.x`; examples include initialization at
+`0x100863DD8..0x100863DE4`, warm start at
+`0x100864034..0x10086403C`, and the tangent solve at
+`0x1008641D8..0x1008641E0`. Hopper independently exposes the same instruction
+sequences. The former host instead pre-rounded the second product and fused
+the first, which differs by one ULP for finite inputs.
+
+The native solver also applies each linear and angular impulse directly to
+the old compact body velocity with `FMADD`. It does not first round
+`coefficient * impulse` into a delta and then add that delta. The single-point
+path is visible at `0x1008641C0..0x1008641F8`, while every complementarity
+branch of the two-point block solver repeats the fused writes. Finally, its
+both-active branch computes both per-point impulses for the angular crosses,
+but adds the two scalar normal-impulse deltas before multiplying their sum by
+the normal for the shared linear write at `0x100864398..0x1008643B0`.
+
+Rust now shares the recovered cross kernel between constraint initialization,
+warm start, tangent solving, scalar-normal solving and two-point solving. The
+compact velocity cache accepts raw signed coefficients and impulses so all
+three body components retain the native fused write, and the direct scene
+fallback uses the same helper. Zero impulse deltas still pass through those
+writes, matching the branch-free native member. Bit regressions distinguish
+the old and native cross results (`0xC5818591` versus `0xC5818592`), separated
+and fused velocity writes (`0xC34BAD3E` versus `0xC34BAD3F`), and per-point
+versus pre-added block linear impulses (`0x4520F0BF` versus `0x4520F0C0`).

@@ -404,7 +404,7 @@ fn contact_restitution_uses_recovered_one_unit_velocity_threshold() {
     assert!(events.iter().any(|event| event.impulse > 0.0));
     // sub_100863BC4 only installs restitution bias below -1.0. A slow
     // contact therefore stops instead of bouncing back at restitution 1.
-    assert!(bridge.scene["mover"].velocity_x.abs() < 1e-9);
+    assert!(bridge.scene["mover"].velocity_x.abs() < f64::from(f32::EPSILON));
 }
 
 #[test]

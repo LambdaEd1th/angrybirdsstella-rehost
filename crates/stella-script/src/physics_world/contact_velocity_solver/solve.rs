@@ -45,13 +45,11 @@ impl RenderBridge {
                 .clamp(-friction_limit, friction_limit);
             let delta = new_tangent - old_tangent;
             cached.set_point(index, f64::from(old_normal), f64::from(new_tangent));
-            if delta != 0.0_f32 {
-                self.apply_contact_velocity_impulse(
-                    bodies,
-                    point,
-                    (delta * tangent.0, delta * tangent.1),
-                );
-            }
+            self.apply_contact_velocity_impulse(
+                bodies,
+                point,
+                (delta * tangent.0, delta * tangent.1),
+            );
         }
 
         if constraint.point_count == 2 {
@@ -109,13 +107,11 @@ impl RenderBridge {
                 .max(0.0_f32);
             let delta = new_normal - old_normal;
             cached.set_point(0, f64::from(new_normal), tangent_impulse);
-            if delta != 0.0_f32 {
-                self.apply_contact_velocity_impulse(
-                    bodies,
-                    point,
-                    (delta * normal.0, delta * normal.1),
-                );
-            }
+            self.apply_contact_velocity_impulse(
+                bodies,
+                point,
+                (delta * normal.0, delta * normal.1),
+            );
         }
 
         self.solver_contact_impulses.insert(pair.clone(), cached);
