@@ -56,35 +56,42 @@ impl RenderBridge {
                     first_radius_x.mul_add(normal_y, -(first_radius_y * normal_x));
                 let second_normal_lever =
                     second_radius_x.mul_add(normal_y, -(second_radius_y * normal_x));
-                let effective_inverse_mass = (first_inverse_inertia * first_normal_lever)
-                    .mul_add(first_normal_lever, first_inverse_mass + second_inverse_mass)
-                    + second_inverse_inertia * second_normal_lever * second_normal_lever;
-                if effective_inverse_mass <= 0.0_f32 {
-                    continue;
-                }
+                let effective_inverse_mass = native_position_effective_inverse_mass(
+                    first_inverse_mass,
+                    second_inverse_mass,
+                    first_inverse_inertia,
+                    second_inverse_inertia,
+                    first_normal_lever,
+                    second_normal_lever,
+                );
 
                 // sub_1008646A4 exposes Purple's exact Box2D position
                 // constants: 0.001 slop, 0.2 Baumgarte and 0.2 maximum
                 // correction. It applies them independently to both points.
-                let positional_error =
-                    (0.2_f32 * (separation + 0.001_f32)).clamp(-0.2_f32, 0.0_f32);
-                let correction = -positional_error / effective_inverse_mass;
+                let correction =
+                    native_position_correction(separation, 0.2_f32, effective_inverse_mass);
                 let impulse_x = correction * normal_x;
                 let impulse_y = correction * normal_y;
                 if let Some(object) = self.scene.get_mut(&first_name) {
-                    object.apply_native_position_delta(
-                        -first_inverse_mass * impulse_x,
-                        -first_inverse_mass * impulse_y,
-                        -first_inverse_inertia
-                            * first_radius_x.mul_add(impulse_y, -(first_radius_y * impulse_x)),
+                    object.apply_native_position_impulse(
+                        first_inverse_mass,
+                        (-impulse_x, -impulse_y),
+                        first_inverse_inertia,
+                        -native_position_cross(
+                            (first_radius_x, first_radius_y),
+                            (impulse_x, impulse_y),
+                        ),
                     );
                 }
                 if let Some(object) = self.scene.get_mut(&second_name) {
-                    object.apply_native_position_delta(
-                        second_inverse_mass * impulse_x,
-                        second_inverse_mass * impulse_y,
-                        second_inverse_inertia
-                            * second_radius_x.mul_add(impulse_y, -(second_radius_y * impulse_x)),
+                    object.apply_native_position_impulse(
+                        second_inverse_mass,
+                        (impulse_x, impulse_y),
+                        second_inverse_inertia,
+                        native_position_cross(
+                            (second_radius_x, second_radius_y),
+                            (impulse_x, impulse_y),
+                        ),
                     );
                 }
             }

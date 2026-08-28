@@ -3590,6 +3590,25 @@ body mass data or a transform origin rebuilt from a later local centre.
 Focused regressions clear the live inverse mass after constraint construction
 and prove that both position paths still apply their retained native cache.
 
+The following arithmetic is shared byte-for-byte by those two leaves. At
+`0x1008647DC..0x100864810` (TOI `0x100864B18..0x100864B48`) each transformed
+local centre rounds its first multiply with `FMUL`, fuses the second term with
+`FNMSUB`/`FMADD`, and only then combines the result with the live world centre.
+For every contact point, `0x100864868..0x100864888` rounds both lever squares
+before two consecutive inertia `FMADD`s; the TOI copy is
+`0x100864B9C..0x100864BBC`. Multiplying inertia by the unsquared lever first is
+not algebraically interchangeable in float32.
+
+The writeback tail also stays fused. It first multiplies the scalar impulse
+into both normal components, updates each world-centre coordinate with
+`FMADD`, forms each angular cross product as one rounded multiply followed by
+`FNMSUB`, and fuses inverse inertia directly into the old angle
+(`0x1008648C8..0x100864904`, TOI `0x100864C04..0x100864C40`). The shared Rust
+kernel now preserves those operation boundaries in both passes and uses the
+compact sweep impulse writer instead of pre-rounding translation/rotation
+deltas. Bit-level regressions distinguish the native local-centre transform
+and effective mass from their one-ULP host-reassociated alternatives.
+
 The original solver also has two physically separate impulse stores. IDA and
 Hopper show `WarmStart` reading the 152-byte solver constraint array, while the
 112-byte `StoreImpulses` leaf walks that array only after every velocity
