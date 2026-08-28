@@ -77,11 +77,15 @@ impl MixerState {
                 continue;
             }
             let source = bytes
-                .chunks_exact(2)
-                .map(|bytes| i16::from_le_bytes([bytes[0], bytes[1]]));
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|bytes| i16::from_le_bytes(*bytes));
             match (output_channels, playback.clip.channels) {
                 (2, 1) => {
-                    for (output, sample) in accumulator.chunks_exact_mut(2).zip(source) {
+                    for (output, sample) in
+                        accumulator.as_chunks_mut::<2>().0.iter_mut().zip(source)
+                    {
                         let scaled = scale(sample.into(), gain, 12);
                         output[0] = output[0].wrapping_add(scaled);
                         output[1] = output[1].wrapping_add(scaled);
@@ -89,7 +93,10 @@ impl MixerState {
                 }
                 (1, 2) => {
                     let samples = source.collect::<Vec<_>>();
-                    for (output, input) in accumulator.iter_mut().zip(samples.chunks_exact(2)) {
+                    for (output, input) in accumulator
+                        .iter_mut()
+                        .zip(samples.as_chunks::<2>().0.iter())
+                    {
                         let left = scale(input[0].into(), gain, 13);
                         let right = scale(input[1].into(), gain, 13);
                         *output = output.wrapping_add(left).wrapping_add(right);
@@ -133,14 +140,21 @@ impl MixerState {
                 // These two conversion branches intentionally preserve the
                 // target's missing unsigned-PCM centering subtraction.
                 (2, 1) => {
-                    for (output, sample) in accumulator.chunks_exact_mut(2).zip(bytes.iter()) {
+                    for (output, sample) in accumulator
+                        .as_chunks_mut::<2>()
+                        .0
+                        .iter_mut()
+                        .zip(bytes.iter())
+                    {
                         let scaled = scale(i32::from(*sample), gain, 8);
                         output[0] = output[0].wrapping_add(scaled);
                         output[1] = output[1].wrapping_add(scaled);
                     }
                 }
                 (1, 2) => {
-                    for (output, input) in accumulator.iter_mut().zip(bytes.chunks_exact(2)) {
+                    for (output, input) in
+                        accumulator.iter_mut().zip(bytes.as_chunks::<2>().0.iter())
+                    {
                         let left = scale(i32::from(input[0]), gain, 9);
                         let right = scale(i32::from(input[1]), gain, 9);
                         *output = output.wrapping_add(left).wrapping_add(right);

@@ -17,9 +17,9 @@ pub(crate) fn sha1_upper_hex(input: &[u8]) -> String {
         0xC3D2_E1F0,
     ];
     let mut words = [0_u32; 80];
-    for chunk in padded.chunks_exact(64) {
-        for (index, bytes) in chunk.chunks_exact(4).enumerate() {
-            words[index] = u32::from_be_bytes(bytes.try_into().expect("four-byte SHA-1 word"));
+    for chunk in padded.as_chunks::<64>().0 {
+        for (index, bytes) in chunk.as_chunks::<4>().0.iter().enumerate() {
+            words[index] = u32::from_be_bytes(*bytes);
         }
         for index in 16..80 {
             words[index] =

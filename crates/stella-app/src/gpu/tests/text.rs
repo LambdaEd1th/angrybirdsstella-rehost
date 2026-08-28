@@ -265,7 +265,9 @@ fn system_text_builds_premultiplied_label_and_uses_native_stroke_anchor_geometry
     assert_eq!(anchored.uniforms.len(), 2);
     let minimum_y = anchored
         .vertices
-        .chunks_exact(6)
+        .as_chunks::<6>()
+        .0
+        .iter()
         .map(|vertices| {
             vertices
                 .iter()

@@ -53,9 +53,11 @@ pub(super) fn draw_rect(command: &RectRenderCommand, target: &mut [u32]) {
                         };
                         point_in_triangle(point, triangle[0], triangle[1], triangle[2])
                     }),
-                    ColorMeshTopology::TriangleList => vertices.chunks_exact(3).any(|triangle| {
-                        point_in_triangle(point, triangle[0], triangle[1], triangle[2])
-                    }),
+                    ColorMeshTopology::TriangleList => {
+                        vertices.as_chunks::<3>().0.iter().any(|triangle| {
+                            point_in_triangle(point, triangle[0], triangle[1], triangle[2])
+                        })
+                    }
                 };
                 if covered {
                     let index = (y * GAME_WIDTH + x) as usize;

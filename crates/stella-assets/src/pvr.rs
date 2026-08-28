@@ -90,8 +90,8 @@ pub fn decode_rgba8(bytes: &[u8]) -> Result<DecodedPvr, AssetError> {
 
     match header.pixel_format() {
         OGL_RGBA_4444 if header.bits_per_pixel == 16 => {
-            for pixel in data.chunks_exact(2) {
-                let value = u16::from_le_bytes(pixel.try_into().unwrap()) as u32;
+            for pixel in data.as_chunks::<2>().0 {
+                let value = u16::from_le_bytes(*pixel) as u32;
                 rgba8.extend_from_slice(&[
                     channel(value, header.red_mask),
                     channel(value, header.green_mask),
@@ -101,8 +101,8 @@ pub fn decode_rgba8(bytes: &[u8]) -> Result<DecodedPvr, AssetError> {
             }
         }
         OGL_RGBA_8888 if header.bits_per_pixel == 32 => {
-            for pixel in data.chunks_exact(4) {
-                let value = u32::from_le_bytes(pixel.try_into().unwrap());
+            for pixel in data.as_chunks::<4>().0 {
+                let value = u32::from_le_bytes(*pixel);
                 rgba8.extend_from_slice(&[
                     channel(value, header.red_mask),
                     channel(value, header.green_mask),

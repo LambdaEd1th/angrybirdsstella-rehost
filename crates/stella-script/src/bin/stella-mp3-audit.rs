@@ -79,8 +79,10 @@ fn main() {
             continue;
         };
         let corrections = actual
-            .chunks_exact(2)
-            .zip(target.stdout.chunks_exact(2))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .zip(target.stdout.as_chunks::<2>().0.iter())
             .enumerate()
             .filter_map(|(index, (actual, expected))| {
                 (actual != expected).then_some((
@@ -202,8 +204,10 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 
 fn count_differences(actual: &[u8], expected: &[u8]) -> usize {
     actual
-        .chunks_exact(2)
-        .zip(expected.chunks_exact(2))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .zip(expected.as_chunks::<2>().0.iter())
         .filter(|(actual, expected)| actual != expected)
         .count()
 }

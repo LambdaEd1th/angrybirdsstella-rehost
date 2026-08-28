@@ -219,7 +219,10 @@ pub(super) fn decode_system_bgra32(width: u16, height: u16, data: &[u8]) -> Resu
         return Err(anyhow!("truncated embedded BGRA system glyph"));
     }
     let mut image = RgbaImage::new(u32::from(width), u32::from(height));
-    for (pixel, source) in image.pixels_mut().zip(data[..required].chunks_exact(4)) {
+    for (pixel, source) in image
+        .pixels_mut()
+        .zip(data[..required].as_chunks::<4>().0.iter())
+    {
         let alpha = source[3];
         let unpremultiply = |channel: u8| {
             if alpha == 0 {

@@ -81,7 +81,12 @@ fn wide_headless_readback_removes_wgpu_row_padding() {
         rgba.len(),
         (resolution.width * resolution.height * 4) as usize
     );
-    assert!(rgba.chunks_exact(4).all(|pixel| pixel == [17, 34, 51, 255]));
+    assert!(
+        rgba.as_chunks::<4>()
+            .0
+            .iter()
+            .all(|pixel| pixel == &[17, 34, 51, 255])
+    );
 }
 
 #[test]
@@ -440,9 +445,11 @@ fn shipped_challenge_level_end_background_occludes_the_complete_gpu_framebuffer(
         .render_to_rgba(&assets, &frame, [255, 0, 255])
         .unwrap();
     let uncovered = rgba
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .enumerate()
-        .filter(|(_, pixel)| *pixel == [255, 0, 255, 255])
+        .filter(|(_, pixel)| **pixel == [255, 0, 255, 255])
         .map(|(index, _)| (index as u32 % GAME_WIDTH, index as u32 / GAME_WIDTH))
         .collect::<Vec<_>>();
 

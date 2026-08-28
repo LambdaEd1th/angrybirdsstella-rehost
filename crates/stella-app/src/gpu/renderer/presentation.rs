@@ -226,7 +226,7 @@ impl GpuRenderer {
         // The EAGL drawable is presented as an opaque screen even though
         // glBlendFunc also evolves its unused alpha channel. PNG consumers do
         // use alpha, so normalize it to the visible framebuffer contract.
-        for pixel in rgba.chunks_exact_mut(4) {
+        for pixel in rgba.as_chunks_mut::<4>().0 {
             pixel[3] = 255;
         }
         Ok(rgba)
