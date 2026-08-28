@@ -11,10 +11,7 @@ impl PositionContactConstraint {
     ) -> Self {
         let first_local_center = first.local_center();
         let second_local_center = second.local_center();
-        let local = manifold.native_local_position(
-            first.native_collision_transform(),
-            second.native_collision_transform(),
-        );
+        let local = manifold.native_local_position();
         let points = || {
             local.local_points[..usize::from(local.point_count)]
                 .iter()

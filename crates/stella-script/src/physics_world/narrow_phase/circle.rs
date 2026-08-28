@@ -5,7 +5,7 @@ use super::geometry::{normalized_axis_f32, polygon_signed_area_from_f32};
 use crate::NativePolygon;
 use crate::{
     BOX2D_POLYGON_RADIUS, ContactLocalManifold, ContactManifold, ContactManifoldType,
-    ContactPositionState, NativeToiTransform,
+    NativeToiTransform,
 };
 
 #[cfg(test)]
@@ -76,7 +76,7 @@ pub(crate) fn circle_circle_manifold_at_transforms(
         point_y: f64::from((first_surface.1 + second_surface.1) * 0.5_f32),
         feature_id: 0,
         secondary: None,
-        position: ContactPositionState::Local(ContactLocalManifold {
+        position: ContactLocalManifold {
             manifold_type: ContactManifoldType::Circles,
             local_normal: (0.0, 0.0),
             local_point: first_local_center,
@@ -84,7 +84,7 @@ pub(crate) fn circle_circle_manifold_at_transforms(
             point_count: 1,
             first_radius,
             second_radius,
-        }),
+        },
     })
 }
 
@@ -258,7 +258,7 @@ pub(crate) fn circle_polygon_manifold_at_transforms(
         // Every branch of sub_10085E624 clears b2ManifoldPoint::id.key.
         feature_id: 0,
         secondary: None,
-        position: ContactPositionState::Local(if circle_is_first {
+        position: if circle_is_first {
             ContactLocalManifold {
                 manifold_type: ContactManifoldType::FaceSecond,
                 local_normal: polygon_to_circle,
@@ -278,6 +278,6 @@ pub(crate) fn circle_polygon_manifold_at_transforms(
                 first_radius: polygon_radius,
                 second_radius: circle_radius,
             }
-        }),
+        },
     })
 }

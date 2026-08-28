@@ -74,9 +74,7 @@ fn rotated_polygon_pair_keeps_native_reference_and_incident_local_points() {
     let manifold =
         polygon_manifold_at_transforms(&first, first_transform, &second, second_transform)
             .expect("rotated polygon face contact");
-    let ContactPositionState::Local(local) = manifold.position else {
-        panic!("polygon collision must emit the native local manifold directly");
-    };
+    let local = manifold.position;
     assert!(matches!(
         local.manifold_type,
         ContactManifoldType::FaceFirst
@@ -155,9 +153,7 @@ fn rotated_polygon_circle_keeps_shape_local_normal_and_reference_point() {
         false,
     )
     .expect("rotated polygon face contact");
-    let ContactPositionState::Local(local) = manifold.position else {
-        panic!("fixture dispatch must retain the native local manifold");
-    };
+    let local = manifold.position;
     let expected_plane_x = (polygon[2].0 + polygon[3].0) * 0.5;
     let expected_plane_y = (polygon[2].1 + polygon[3].1) * 0.5;
     assert!(matches!(
@@ -223,6 +219,99 @@ fn edge_circle_uses_native_regions_features_and_inclusive_radius() {
             .expect("circle-first edge contact");
     assert_eq!((reversed.normal_x, reversed.normal_y), (0.0, -1.0));
     assert_eq!(reversed.feature_id, contact_feature_id(0, 0, 0, 1));
+}
+
+#[test]
+fn rotated_edge_circle_face_keeps_native_shape_local_witnesses() {
+    let segment = ((-1.0_f32, 0.0_f32), (1.0_f32, 0.0_f32));
+    let radius = 0.5_f32;
+    let combined = radius + BOX2D_POLYGON_RADIUS as f32;
+    let angle = 0.37_f32;
+    let (sine, cosine) = angle.sin_cos();
+    let segment_transform = NativeToiTransform {
+        position: (12.25, -7.5),
+        sine,
+        cosine,
+    };
+    let circle_local_center = (0.25_f32, -0.125_f32);
+    let desired_center = segment_transform.point((0.0, combined - 0.001));
+    let rotated_center = segment_transform.rotate(circle_local_center);
+    let circle_transform = NativeToiTransform {
+        position: (
+            desired_center.0 - rotated_center.0,
+            desired_center.1 - rotated_center.1,
+        ),
+        sine,
+        cosine,
+    };
+    let manifold = circle_segment_manifold_at_transforms(
+        circle_local_center,
+        radius,
+        circle_transform,
+        segment,
+        segment_transform,
+        false,
+    )
+    .expect("rotated edge face contact");
+    let local = manifold.position;
+    assert!(matches!(
+        local.manifold_type,
+        ContactManifoldType::FaceFirst
+    ));
+    assert_eq!(local.local_normal.0.to_bits(), (-0.0_f32).to_bits());
+    assert_eq!(local.local_normal.1.to_bits(), 1.0_f32.to_bits());
+    assert_eq!(local.local_point, segment.0);
+    assert_eq!(local.local_points[0], circle_local_center);
+    let expected_normal = segment_transform.rotate((-0.0, 1.0));
+    assert_eq!(manifold.normal_x, f64::from(expected_normal.0));
+    assert_eq!(manifold.normal_y, f64::from(expected_normal.1));
+}
+
+#[test]
+fn rotated_circle_edge_endpoint_keeps_native_shape_local_witnesses() {
+    let segment = ((-1.0_f32, 0.0_f32), (1.0_f32, 0.0_f32));
+    let radius = 0.5_f32;
+    let combined = radius + BOX2D_POLYGON_RADIUS as f32;
+    let angle = -0.61_f32;
+    let (sine, cosine) = angle.sin_cos();
+    let segment_transform = NativeToiTransform {
+        position: (-4.5, 9.75),
+        sine,
+        cosine,
+    };
+    let circle_local_center = (-0.375_f32, 0.125_f32);
+    let desired_center = segment_transform.point((-1.0 - combined + 0.001, 0.0));
+    let rotated_center = segment_transform.rotate(circle_local_center);
+    let circle_transform = NativeToiTransform {
+        position: (
+            desired_center.0 - rotated_center.0,
+            desired_center.1 - rotated_center.1,
+        ),
+        sine,
+        cosine,
+    };
+    let manifold = circle_segment_manifold_at_transforms(
+        circle_local_center,
+        radius,
+        circle_transform,
+        segment,
+        segment_transform,
+        true,
+    )
+    .expect("rotated circle/edge endpoint contact");
+    let local = manifold.position;
+    assert!(matches!(local.manifold_type, ContactManifoldType::Circles));
+    assert_eq!(local.local_point, circle_local_center);
+    assert_eq!(local.local_points[0], segment.0);
+    assert_eq!(local.first_radius.to_bits(), radius.to_bits());
+    assert_eq!(
+        local.second_radius.to_bits(),
+        (BOX2D_POLYGON_RADIUS as f32).to_bits()
+    );
+    let expected_normal = segment_transform.rotate((1.0, 0.0));
+    assert_eq!(manifold.normal_x, f64::from(expected_normal.0));
+    assert_eq!(manifold.normal_y, f64::from(expected_normal.1));
+    assert_eq!(manifold.feature_id, contact_feature_id(0, 0, 0, 0));
 }
 
 #[test]
@@ -577,9 +666,7 @@ fn rotated_edge_polygon_keeps_edge_reference_in_edge_local_space() {
     let manifold =
         polygon_segment_manifold_at_transforms(&polygon, transform, segment, transform, true)
             .expect("rotated edge/polygon contact");
-    let ContactPositionState::Local(local) = manifold.position else {
-        panic!("edge/polygon collision must emit a native local manifold");
-    };
+    let local = manifold.position;
     assert!(matches!(
         local.manifold_type,
         ContactManifoldType::FaceSecond
@@ -621,9 +708,7 @@ fn rotated_edge_polygon_keeps_polygon_reference_in_polygon_local_space() {
     let manifold =
         polygon_segment_manifold_at_transforms(&polygon, transform, segment, transform, true)
             .expect("rotated polygon-reference contact");
-    let ContactPositionState::Local(local) = manifold.position else {
-        panic!("edge/polygon collision must emit a native local manifold");
-    };
+    let local = manifold.position;
     assert!(matches!(
         local.manifold_type,
         ContactManifoldType::FaceFirst

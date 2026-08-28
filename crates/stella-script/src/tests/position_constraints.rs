@@ -97,14 +97,15 @@ fn velocity_constraint_drops_ill_conditioned_second_point_before_warm_start() {
             feature_id: contact_feature_id(0, 1, 1, 0),
             ..point
         }),
-        position: ContactPositionState::World(ContactPositionWitness::FaceFirst {
-            normal: (1.0, 0.0),
-            plane_point: (0.0, 0.0),
-            clip_points: [(0.25, 0.0), (0.25, 0.0)],
+        position: ContactLocalManifold {
+            manifold_type: ContactManifoldType::FaceFirst,
+            local_normal: (1.0, 0.0),
+            local_point: (0.0, 0.0),
+            local_points: [(0.25, 0.0), (0.25, 0.0)],
             point_count: 2,
             first_radius: BOX2D_POLYGON_RADIUS as f32,
             second_radius: BOX2D_POLYGON_RADIUS as f32,
-        }),
+        },
     };
     assert_eq!(
         velocity_contact_points(&bridge.scene["a"], &bridge.scene["b"], manifold).len(),
@@ -210,8 +211,6 @@ fn toi_contact_keeps_the_local_manifold_from_its_impact_transforms() {
             },
         )
         .expect("impact-pose circle contact");
-    assert!(matches!(manifold.position, ContactPositionState::Local(_)));
-
     let constraint = PositionContactConstraint::from_manifold(first, second, manifold);
     let PositionContactManifold::Circles {
         local_first,

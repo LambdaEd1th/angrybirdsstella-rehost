@@ -3655,6 +3655,23 @@ world polygon, and emits both FaceA and FaceB local witnesses directly.
 Rotated regressions cover an edge-primary two-point contact and a
 polygon-primary contact, including bit-exact local reference fields.
 
+Edge-circle `sub_10085E8AC` is local by construction too. It transforms the
+circle shape centre to world at `0x10085E8B0..0x10085E8D4`, immediately
+applies the inverse edge transform at `0x10085E8D8..0x10085E8F4`, and performs
+all three Voronoi-region tests in edge space. The two endpoint branches emit a
+type-0 manifold, copying the selected edge vertex into `localPoint` and the
+circle shape's original local `+16` centre into its single point. The face
+branch emits type 1, copying the normalized edge-local normal and first edge
+vertex while retaining that same original circle-local centre. World
+coordinates are used only to derive the velocity-solver normal and midpoint.
+Rust now passes both fixture transforms and both shape-local records into this
+leaf, emits the three local forms directly, and preserves the signed-zero edge
+normal visible for a horizontal segment. Rotated face and circle-first
+endpoint regressions verify local centres, endpoint/reference fields, radii,
+feature bytes and transformed normals. With every reachable narrow-phase leaf
+now returning native local data, the former world-witness compatibility enum
+and its second localization pass have been removed.
+
 The following arithmetic is shared byte-for-byte by those two leaves. At
 `0x1008647DC..0x100864810` (TOI `0x100864B18..0x100864B48`) each transformed
 local centre rounds its first multiply with `FMUL`, fuses the second term with

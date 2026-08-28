@@ -7,7 +7,7 @@ use super::super::{
 };
 use crate::{
     BOX2D_POLYGON_RADIUS, ContactLocalManifold, ContactManifold, ContactManifoldType, ContactPoint,
-    ContactPositionState, NativeToiTransform, contact_feature_id, swap_contact_features,
+    NativeToiTransform, contact_feature_id, swap_contact_features,
 };
 
 #[cfg(test)]
@@ -323,7 +323,7 @@ pub(crate) fn polygon_segment_manifold_at_transforms(
         point_y: primary.point_y,
         feature_id: primary.feature_id,
         secondary,
-        position: ContactPositionState::Local(ContactLocalManifold {
+        position: ContactLocalManifold {
             manifold_type,
             local_normal,
             local_point,
@@ -331,7 +331,7 @@ pub(crate) fn polygon_segment_manifold_at_transforms(
             point_count,
             first_radius: BOX2D_POLYGON_RADIUS as f32,
             second_radius: BOX2D_POLYGON_RADIUS as f32,
-        }),
+        },
     })
 }
 

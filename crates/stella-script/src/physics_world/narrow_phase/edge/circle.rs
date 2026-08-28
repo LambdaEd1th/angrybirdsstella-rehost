@@ -1,22 +1,47 @@
 //! b2CollideEdgeAndCircle (`sub_10085E8AC`).
 
 use crate::{
-    BOX2D_POLYGON_RADIUS, ContactManifold, ContactPositionState, ContactPositionWitness,
-    contact_feature_id,
+    BOX2D_POLYGON_RADIUS, ContactLocalManifold, ContactManifold, ContactManifoldType,
+    NativeToiTransform, contact_feature_id,
 };
 
+#[cfg(test)]
 pub(crate) fn circle_segment_manifold(
     circle_center: (f64, f64),
     circle_radius: f64,
     segment: ((f64, f64), (f64, f64)),
     circle_is_first: bool,
 ) -> Option<ContactManifold> {
-    let circle_center = (circle_center.0 as f32, circle_center.1 as f32);
-    let circle_radius = circle_radius as f32;
+    circle_segment_manifold_at_transforms(
+        (circle_center.0 as f32, circle_center.1 as f32),
+        circle_radius as f32,
+        NativeToiTransform::IDENTITY,
+        (
+            (segment.0.0 as f32, segment.0.1 as f32),
+            (segment.1.0 as f32, segment.1.1 as f32),
+        ),
+        NativeToiTransform::IDENTITY,
+        circle_is_first,
+    )
+}
+
+pub(crate) fn circle_segment_manifold_at_transforms(
+    circle_local_center: (f32, f32),
+    circle_radius: f32,
+    circle_transform: NativeToiTransform,
+    segment_local: ((f32, f32), (f32, f32)),
+    segment_transform: NativeToiTransform,
+    circle_is_first: bool,
+) -> Option<ContactManifold> {
+    // sub_10085E8B0..0x10085E8F4 transforms the circle shape's local centre
+    // into world space and then through the inverse edge transform. All three
+    // region tests that follow are edge-local.
+    let circle_center =
+        segment_transform.inverse_point(circle_transform.point(circle_local_center));
     let edge_radius = BOX2D_POLYGON_RADIUS as f32;
     let radius_sum = circle_radius + edge_radius;
-    let start = (segment.0.0 as f32, segment.0.1 as f32);
-    let end = (segment.1.0 as f32, segment.1.1 as f32);
+    let start = segment_local.0;
+    let end = segment_local.1;
     let edge = (end.0 - start.0, end.1 - start.1);
     let from_start = (circle_center.0 - start.0, circle_center.1 - start.1);
     let from_end = (end.0 - circle_center.0, end.1 - circle_center.1);
@@ -121,49 +146,59 @@ pub(crate) fn circle_segment_manifold(
         (-circle_radius).mul_add(edge_to_circle.0, circle_center.0),
         (-circle_radius).mul_add(edge_to_circle.1, circle_center.1),
     );
-    let point = (
+    let point_edge = (
         (edge_surface.0 + circle_surface.0) * 0.5_f32,
         (edge_surface.1 + circle_surface.1) * 0.5_f32,
     );
+    let point = segment_transform.point(point_edge);
     let reference_normal = edge_to_circle;
     if circle_is_first {
         edge_to_circle = (-edge_to_circle.0, -edge_to_circle.1);
     }
+    edge_to_circle = segment_transform.rotate(edge_to_circle);
     let feature_id = if circle_is_first {
         contact_feature_id(0, segment_index, 0, segment_type)
     } else {
         contact_feature_id(segment_index, 0, segment_type, 0)
     };
-    let position_witness = if segment_type == 0 {
+    let position = if segment_type == 0 {
         if circle_is_first {
-            ContactPositionWitness::Circles {
-                first_center: circle_center,
-                second_center: closest,
+            ContactLocalManifold {
+                manifold_type: ContactManifoldType::Circles,
+                local_normal: (0.0, 0.0),
+                local_point: circle_local_center,
+                local_points: [closest, (0.0, 0.0)],
+                point_count: 1,
                 first_radius: circle_radius,
                 second_radius: edge_radius,
             }
         } else {
-            ContactPositionWitness::Circles {
-                first_center: closest,
-                second_center: circle_center,
+            ContactLocalManifold {
+                manifold_type: ContactManifoldType::Circles,
+                local_normal: (0.0, 0.0),
+                local_point: closest,
+                local_points: [circle_local_center, (0.0, 0.0)],
+                point_count: 1,
                 first_radius: edge_radius,
                 second_radius: circle_radius,
             }
         }
     } else if circle_is_first {
-        ContactPositionWitness::FaceSecond {
-            normal: reference_normal,
-            plane_point: start,
-            clip_points: [circle_center, (0.0, 0.0)],
+        ContactLocalManifold {
+            manifold_type: ContactManifoldType::FaceSecond,
+            local_normal: reference_normal,
+            local_point: start,
+            local_points: [circle_local_center, (0.0, 0.0)],
             point_count: 1,
             first_radius: circle_radius,
             second_radius: edge_radius,
         }
     } else {
-        ContactPositionWitness::FaceFirst {
-            normal: reference_normal,
-            plane_point: start,
-            clip_points: [circle_center, (0.0, 0.0)],
+        ContactLocalManifold {
+            manifold_type: ContactManifoldType::FaceFirst,
+            local_normal: reference_normal,
+            local_point: start,
+            local_points: [circle_local_center, (0.0, 0.0)],
             point_count: 1,
             first_radius: edge_radius,
             second_radius: circle_radius,
@@ -177,6 +212,6 @@ pub(crate) fn circle_segment_manifold(
         point_y: f64::from(point.1),
         feature_id,
         secondary: None,
-        position: ContactPositionState::World(position_witness),
+        position,
     })
 }

@@ -1,7 +1,5 @@
 //! Contact manifold records and velocity-point conditioning.
 
-use crate::NativeToiTransform;
-
 #[cfg(test)]
 use crate::{ContactBodyState, SceneObject};
 
@@ -21,16 +19,13 @@ pub(crate) struct ContactManifold {
     pub(crate) point_y: f64,
     pub(crate) feature_id: u32,
     pub(crate) secondary: Option<ContactPoint>,
-    pub(crate) position: ContactPositionState,
+    pub(crate) position: ContactLocalManifold,
 }
 
 impl ContactManifold {
     #[cfg(test)]
     pub(crate) fn manifold_type(self) -> ContactManifoldType {
-        match self.position {
-            ContactPositionState::World(witness) => witness.manifold_type(),
-            ContactPositionState::Local(local) => local.manifold_type,
-        }
+        self.position.manifold_type
     }
 
     pub(crate) fn points(self) -> Vec<ContactPoint> {
@@ -46,129 +41,8 @@ impl ContactManifold {
         points
     }
 
-    pub(crate) fn localize(
-        mut self,
-        first_transform: NativeToiTransform,
-        second_transform: NativeToiTransform,
-    ) -> Self {
-        self.position = ContactPositionState::Local(match self.position {
-            ContactPositionState::World(witness) => {
-                witness.localize(first_transform, second_transform)
-            }
-            ContactPositionState::Local(local) => local,
-        });
-        self
-    }
-
-    pub(crate) fn native_local_position(
-        self,
-        first_transform: NativeToiTransform,
-        second_transform: NativeToiTransform,
-    ) -> ContactLocalManifold {
-        match self.position {
-            ContactPositionState::World(witness) => {
-                witness.localize(first_transform, second_transform)
-            }
-            ContactPositionState::Local(local) => local,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(crate) enum ContactPositionState {
-    World(ContactPositionWitness),
-    Local(ContactLocalManifold),
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(crate) enum ContactPositionWitness {
-    Circles {
-        first_center: (f32, f32),
-        second_center: (f32, f32),
-        first_radius: f32,
-        second_radius: f32,
-    },
-    FaceFirst {
-        normal: (f32, f32),
-        plane_point: (f32, f32),
-        clip_points: [(f32, f32); 2],
-        point_count: u8,
-        first_radius: f32,
-        second_radius: f32,
-    },
-    FaceSecond {
-        normal: (f32, f32),
-        plane_point: (f32, f32),
-        clip_points: [(f32, f32); 2],
-        point_count: u8,
-        first_radius: f32,
-        second_radius: f32,
-    },
-}
-
-impl ContactPositionWitness {
-    #[cfg(test)]
-    fn manifold_type(self) -> ContactManifoldType {
-        match self {
-            Self::Circles { .. } => ContactManifoldType::Circles,
-            Self::FaceFirst { .. } => ContactManifoldType::FaceFirst,
-            Self::FaceSecond { .. } => ContactManifoldType::FaceSecond,
-        }
-    }
-
-    fn localize(
-        self,
-        first_transform: NativeToiTransform,
-        second_transform: NativeToiTransform,
-    ) -> ContactLocalManifold {
-        match self {
-            Self::Circles {
-                first_center,
-                second_center,
-                first_radius,
-                second_radius,
-            } => ContactLocalManifold {
-                manifold_type: ContactManifoldType::Circles,
-                local_normal: (0.0, 0.0),
-                local_point: first_transform.inverse_point(first_center),
-                local_points: [second_transform.inverse_point(second_center), (0.0, 0.0)],
-                point_count: 1,
-                first_radius,
-                second_radius,
-            },
-            Self::FaceFirst {
-                normal,
-                plane_point,
-                clip_points,
-                point_count,
-                first_radius,
-                second_radius,
-            } => ContactLocalManifold {
-                manifold_type: ContactManifoldType::FaceFirst,
-                local_normal: first_transform.inverse_rotate(normal),
-                local_point: first_transform.inverse_point(plane_point),
-                local_points: clip_points.map(|point| second_transform.inverse_point(point)),
-                point_count,
-                first_radius,
-                second_radius,
-            },
-            Self::FaceSecond {
-                normal,
-                plane_point,
-                clip_points,
-                point_count,
-                first_radius,
-                second_radius,
-            } => ContactLocalManifold {
-                manifold_type: ContactManifoldType::FaceSecond,
-                local_normal: second_transform.inverse_rotate(normal),
-                local_point: second_transform.inverse_point(plane_point),
-                local_points: clip_points.map(|point| first_transform.inverse_point(point)),
-                point_count,
-                first_radius,
-                second_radius,
-            },
-        }
+    pub(crate) fn native_local_position(self) -> ContactLocalManifold {
+        self.position
     }
 }
 

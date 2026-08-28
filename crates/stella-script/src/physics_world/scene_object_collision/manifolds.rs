@@ -5,7 +5,6 @@ use crate::*;
 enum CollisionFixtureGeometry {
     Circle {
         local_center: (f32, f32),
-        center: (f64, f64),
         radius: f64,
     },
     Polygon {
@@ -13,7 +12,6 @@ enum CollisionFixtureGeometry {
     },
     Segment {
         local: ((f32, f32), (f32, f32)),
-        world: ((f64, f64), (f64, f64)),
     },
 }
 
@@ -47,7 +45,7 @@ impl SceneObject {
     ) -> Option<ContactManifold> {
         let first = self.collision_fixture_geometry(first_fixture, first_transform)?;
         let second = other.collision_fixture_geometry(second_fixture, second_transform)?;
-        let manifold = match (first, second) {
+        match (first, second) {
             (
                 CollisionFixtureGeometry::Circle {
                     local_center: first_local_center,
@@ -98,13 +96,33 @@ impl SceneObject {
                 false,
             ),
             (
-                CollisionFixtureGeometry::Circle { center, radius, .. },
-                CollisionFixtureGeometry::Segment { world, .. },
-            ) => circle_segment_manifold(center, radius, world, true),
+                CollisionFixtureGeometry::Circle {
+                    local_center,
+                    radius,
+                },
+                CollisionFixtureGeometry::Segment { local: segment, .. },
+            ) => circle_segment_manifold_at_transforms(
+                local_center,
+                radius as f32,
+                first_transform,
+                segment,
+                second_transform,
+                true,
+            ),
             (
-                CollisionFixtureGeometry::Segment { world, .. },
-                CollisionFixtureGeometry::Circle { center, radius, .. },
-            ) => circle_segment_manifold(center, radius, world, false),
+                CollisionFixtureGeometry::Segment { local: segment, .. },
+                CollisionFixtureGeometry::Circle {
+                    local_center,
+                    radius,
+                },
+            ) => circle_segment_manifold_at_transforms(
+                local_center,
+                radius as f32,
+                second_transform,
+                segment,
+                first_transform,
+                false,
+            ),
             (
                 CollisionFixtureGeometry::Polygon { local: first },
                 CollisionFixtureGeometry::Polygon { local: second },
@@ -133,8 +151,7 @@ impl SceneObject {
                 CollisionFixtureGeometry::Segment { .. },
                 CollisionFixtureGeometry::Segment { .. },
             ) => None,
-        };
-        manifold.map(|manifold| manifold.localize(first_transform, second_transform))
+        }
     }
 
     fn collision_fixture_geometry(
@@ -145,10 +162,9 @@ impl SceneObject {
         match &self.collision_shape {
             CollisionShape::None => None,
             CollisionShape::Circle { .. } if fixture == 0 => {
-                let (center, radius) = self.collision_circle_at(transform)?;
+                let (_, radius) = self.collision_circle_at(transform)?;
                 Some(CollisionFixtureGeometry::Circle {
                     local_center: (0.0, 0.0),
-                    center,
                     radius,
                 })
             }
@@ -199,16 +215,11 @@ impl SceneObject {
                         y as f32 * self.physics_scale_y as f32,
                     )
                 });
-                let world = local.map(|point| {
-                    let point = transform.point(point);
-                    (f64::from(point.0), f64::from(point.1))
-                });
-                ((world[1].0 - world[0].0).hypot(world[1].1 - world[0].1) > f64::EPSILON).then_some(
-                    CollisionFixtureGeometry::Segment {
+                (f64::from(local[1].0 - local[0].0).hypot(f64::from(local[1].1 - local[0].1))
+                    > f64::EPSILON)
+                    .then_some(CollisionFixtureGeometry::Segment {
                         local: (local[0], local[1]),
-                        world: (world[0], world[1]),
-                    },
-                )
+                    })
             }
         }
     }
