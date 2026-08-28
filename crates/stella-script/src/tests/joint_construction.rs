@@ -1601,6 +1601,14 @@ fn soft_distance_joint_keeps_native_float_solver_cache_and_accumulator() {
         joint.distance_effective_mass,
         f64::from(joint.distance_effective_mass as f32)
     );
+    for value in [
+        joint.distance_inverse_mass_first,
+        joint.distance_inverse_mass_second,
+        joint.distance_inverse_inertia_first,
+        joint.distance_inverse_inertia_second,
+    ] {
+        assert_eq!(value, f64::from(value as f32));
+    }
     assert_eq!(joint.distance_gamma, f64::from(joint.distance_gamma as f32));
     assert_eq!(joint.distance_bias, f64::from(joint.distance_bias as f32));
     bridge.solve_distance_joint_velocity(&mut joint, &first, &second, 1.0 / 59.94);
@@ -1609,4 +1617,56 @@ fn soft_distance_joint_keeps_native_float_solver_cache_and_accumulator() {
         f64::from(joint.distance_impulse as f32)
     );
     assert_ne!(joint.distance_impulse, 0.123456789);
+}
+
+#[test]
+fn distance_solver_uses_the_initialization_mass_cache_for_every_write() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createBox("anchor", "", 0, 0, 1, 1, 0, 0, 0, false, false, 1)
+                createBox("payload", "", 2, 0, 1, 1, 1, 0, 0, false, false, 1)
+                createJoint({
+                    name = "distance", end1 = "anchor", end2 = "payload", type = 1,
+                    coordType = 2, x1 = 0, y1 = 0, x2 = 0, y2 = 0,
+                    frequency = 0, dampingRatio = 0
+                })
+            "#,
+        )
+        .unwrap();
+
+    let mut bridge = runtime.render.lock().unwrap();
+    let first = bridge.scene["anchor"].clone();
+    let second = bridge.scene["payload"].clone();
+    let mut joint = bridge.joints["distance"].clone();
+    joint.distance_impulse = 1.0;
+    bridge.scene.get_mut("payload").unwrap().inverse_mass = 0.0;
+
+    // Init receives the already built island body record and must warm-start
+    // with its cached mass even though the owning body has since changed.
+    bridge.initialize_distance_velocity_constraints(&mut joint, &first, &second, 1.0 / 60.0);
+    let cached_mass = joint.distance_inverse_mass_second;
+    assert!(cached_mass > 0.0);
+    assert!(bridge.scene["payload"].velocity_x > 0.0);
+
+    bridge.scene.get_mut("payload").unwrap().velocity_x = 3.0;
+    let first = bridge.scene["anchor"].clone();
+    let second = bridge.scene["payload"].clone();
+    bridge.solve_distance_joint_velocity(&mut joint, &first, &second, 1.0 / 60.0);
+    assert!(bridge.scene["payload"].velocity_x < 3.0);
+
+    {
+        let payload = bridge.scene.get_mut("payload").unwrap();
+        payload.set_native_sweep_transform(
+            (payload.sweep_center_x + 1.0, payload.sweep_center_y),
+            payload.angle as f32,
+        );
+    }
+    let displaced_x = bridge.scene["payload"].sweep_center_x;
+    let first = bridge.scene["anchor"].clone();
+    let second = bridge.scene["payload"].clone();
+    bridge.solve_distance_joint_position(&joint, &first, &second);
+    assert!(bridge.scene["payload"].sweep_center_x < displaced_x);
+    assert_eq!(joint.distance_inverse_mass_second, cached_mass);
 }

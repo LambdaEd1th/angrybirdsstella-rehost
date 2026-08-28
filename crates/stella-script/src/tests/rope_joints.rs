@@ -98,3 +98,51 @@ fn rope_joint_predicts_a_slack_constraint_and_accumulates_only_tension() {
     assert_eq!(impulse, f64::from(impulse as f32));
     assert!((bridge.scene["payload"].velocity_x - 15.0).abs() < 1.0e-5);
 }
+
+#[test]
+fn rope_solver_uses_the_initialization_mass_cache_for_every_write() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createBox("anchor", "", 0, 0, 1, 1, 0, 0, 0, false, false, 1)
+                createBox("payload", "", 5, 0, 1, 1, 1, 0, 0, false, false, 1)
+                createJoint({
+                    name = "rope", end1 = "anchor", end2 = "payload", type = 6,
+                    coordType = 2, x1 = 0, y1 = 0, x2 = 0, y2 = 0, maxLength = 4
+                })
+            "#,
+        )
+        .unwrap();
+
+    let mut bridge = runtime.render.lock().unwrap();
+    let first = bridge.scene["anchor"].clone();
+    let second = bridge.scene["payload"].clone();
+    let mut joint = bridge.joints["rope"].clone();
+    joint.distance_impulse = -1.0;
+    bridge.scene.get_mut("payload").unwrap().inverse_mass = 0.0;
+    bridge.initialize_rope_velocity_constraints(&mut joint, &first, &second, 1.0 / 60.0);
+    let cached_mass = joint.distance_inverse_mass_second;
+    assert!(cached_mass > 0.0);
+    assert!(bridge.scene["payload"].velocity_x < 0.0);
+
+    bridge.scene.get_mut("payload").unwrap().velocity_x = 3.0;
+    let first = bridge.scene["anchor"].clone();
+    let second = bridge.scene["payload"].clone();
+    bridge.solve_rope_joint_velocity(&mut joint, &first, &second, 1.0 / 60.0);
+    assert!(bridge.scene["payload"].velocity_x < 3.0);
+
+    {
+        let payload = bridge.scene.get_mut("payload").unwrap();
+        payload.set_native_sweep_transform(
+            (payload.sweep_center_x + 1.0, payload.sweep_center_y),
+            payload.angle as f32,
+        );
+    }
+    let displaced_x = bridge.scene["payload"].sweep_center_x;
+    let first = bridge.scene["anchor"].clone();
+    let second = bridge.scene["payload"].clone();
+    bridge.solve_rope_joint_position(&joint, &first, &second);
+    assert!(bridge.scene["payload"].sweep_center_x < displaced_x);
+    assert_eq!(joint.distance_inverse_mass_second, cached_mass);
+}

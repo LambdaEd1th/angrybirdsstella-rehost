@@ -16052,6 +16052,13 @@ formed at `0x1008655FC..0x100865624`, bias and gamma are added at
 `0x100865630..0x100865638`, and the accumulated impulse is updated in float at
 `0x10086563C..0x100865648` before fused body writes.
 
+IDA's initializer and Hopper's independent pseudocode also expose the frozen
+body coefficients: inverse masses occupy `+216/+220` and inverse inertias
+`+224/+228`. Warm starting, velocity solving and position solving all load
+these four joint fields directly. Rust now stores the same values and writes
+the body arrays without passing through a host helper that could re-read live
+body mass data between island initialization and an iteration.
+
 For hard constraints, position solving recomputes only the live radii,
 distance vector and normalized axis, while deliberately reusing the scalar
 mass cached during initialization. `sub_1008656D4` preserves a sub-FLT_EPSILON
@@ -16060,7 +16067,9 @@ constraint only below `0.001f`. Rust now mirrors that cache lifetime, float32
 instruction grouping, exact-zero divisions, short-axis rules, soft bias/gamma
 chain, accumulated impulse and fused position/velocity writes. Regressions
 cover the zero-axis warm start and a nontrivial soft spring whose entire cache
-and impulse remain exact widened float values.
+and impulse remain exact widened float values. A lifecycle regression mutates
+the live body mass after the island record is captured and verifies cached
+warm-start, velocity and position writes independently.
 
 ## Complete rope-joint cache, prediction and unilateral impulse
 
@@ -16078,6 +16087,12 @@ effective mass and accumulated impulse and skips the velocity writes. The
 ordinary branch normalizes once, builds the scalar mass in float/FMA order and
 warm-starts from the cached values at `0x1008699CC..0x100869B04`.
 
+Before geometry is built, both disassemblers show inverse masses copied into
+`+204/+208` and inverse inertias into `+212/+216`. The later warm-start,
+velocity and position blocks load only those cached coefficients. Rust now
+does the same direct cached body writes; a live SceneObject mass change cannot
+leak into the current native island step.
+
 Velocity solving never rebuilds geometry. It computes the cached-axis point
 velocity dot at `0x100869B5C..0x100869B8C`. While the rope is still slack,
 `0x100869B90..0x100869B9C` adds `lengthError * inv_dt`, anticipating a body
@@ -16092,7 +16107,8 @@ Rust now mirrors this cache lifetime and complete float32 pipeline, including
 the predictive slack term, exact-zero reciprocal, unilateral accumulator and
 fused body writes. Regressions cover the native short-axis cache reset and a
 slack four-unit rope that reduces a twenty-unit outward velocity to fifteen in
-one 30 Hz step before it can overextend.
+one 30 Hz step before it can overextend, plus frozen-cache warm-start,
+velocity and position writes after a live mass mutation.
 
 ## Complete weld-joint cache and 3-by-3 solver pipeline
 

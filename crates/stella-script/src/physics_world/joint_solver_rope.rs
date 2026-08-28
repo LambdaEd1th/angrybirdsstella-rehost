@@ -40,22 +40,20 @@ fn native_rope_cross(radius: (f32, f32), axis: (f32, f32)) -> f32 {
     (-radius.1).mul_add(axis.0, radius.0 * axis.1)
 }
 
-fn native_rope_effective_mass<F: JointBodyView + ?Sized, S: JointBodyView + ?Sized>(
-    first: &F,
-    second: &S,
+fn native_rope_effective_mass(
+    mass_first: f32,
+    mass_second: f32,
+    inertia_first: f32,
+    inertia_second: f32,
     radius_first: (f32, f32),
     radius_second: (f32, f32),
     axis: (f32, f32),
 ) -> f32 {
     let cross_first = native_rope_cross(radius_first, axis);
     let cross_second = native_rope_cross(radius_second, axis);
-    let mut inverse_mass = (cross_first * cross_first).mul_add(
-        first.inverse_inertia() as f32,
-        first.inverse_mass_for_solver() as f32,
-    );
-    inverse_mass += second.inverse_mass_for_solver() as f32;
-    inverse_mass =
-        (cross_second * cross_second).mul_add(second.inverse_inertia() as f32, inverse_mass);
+    let mut inverse_mass = (cross_first * cross_first).mul_add(inertia_first, mass_first);
+    inverse_mass += mass_second;
+    inverse_mass = (cross_second * cross_second).mul_add(inertia_second, inverse_mass);
     if inverse_mass == 0.0 {
         0.0
     } else {
@@ -79,6 +77,14 @@ impl RenderBridge {
             return;
         }
         let geometry = native_rope_geometry(joint, first, second);
+        let mass_first = first.inverse_mass_for_solver() as f32;
+        let mass_second = second.inverse_mass_for_solver() as f32;
+        let inertia_first = first.inverse_inertia() as f32;
+        let inertia_second = second.inverse_inertia() as f32;
+        joint.distance_inverse_mass_first = f64::from(mass_first);
+        joint.distance_inverse_mass_second = f64::from(mass_second);
+        joint.distance_inverse_inertia_first = f64::from(inertia_first);
+        joint.distance_inverse_inertia_second = f64::from(inertia_second);
         joint.distance_current_length = f64::from(geometry.length);
         joint.limit_state = if geometry.length - joint.rest_length as f32 > 0.0 {
             JointLimitState::AtUpper
@@ -102,8 +108,10 @@ impl RenderBridge {
 
         let axis = native_rope_axis(geometry.delta, geometry.length);
         let effective_mass = native_rope_effective_mass(
-            first,
-            second,
+            mass_first,
+            mass_second,
+            inertia_first,
+            inertia_second,
             geometry.radius_first,
             geometry.radius_second,
             axis,
@@ -112,13 +120,11 @@ impl RenderBridge {
         joint.distance_effective_mass = f64::from(effective_mass);
 
         let impulse = joint.distance_impulse as f32;
-        self.apply_joint_velocity_impulse(
+        self.apply_cached_distance_velocity_impulse(
             joint,
-            first,
-            second,
-            f64::from(axis.0 * impulse),
-            f64::from(axis.1 * impulse),
-            0.0,
+            geometry.radius_first,
+            geometry.radius_second,
+            (axis.0 * impulse, axis.1 * impulse),
         );
     }
 
@@ -164,13 +170,11 @@ impl RenderBridge {
         let new_impulse = candidate.min(0.0);
         joint.distance_impulse = f64::from(new_impulse);
         let impulse_delta = new_impulse - old_impulse;
-        self.apply_joint_velocity_impulse(
+        self.apply_cached_distance_velocity_impulse(
             joint,
-            first,
-            second,
-            f64::from(axis.0 * impulse_delta),
-            f64::from(axis.1 * impulse_delta),
-            0.0,
+            radius_first,
+            radius_second,
+            (axis.0 * impulse_delta, axis.1 * impulse_delta),
         );
     }
 
@@ -195,13 +199,11 @@ impl RenderBridge {
         let raw_error = normalized_length - joint.rest_length as f32;
         let correction = raw_error.clamp(0.0, 0.2_f32);
         let impulse = -(joint.distance_effective_mass as f32 * correction);
-        self.apply_joint_position_impulse(
+        self.apply_cached_distance_position_impulse(
             joint,
-            first,
-            second,
-            f64::from(axis.0 * impulse),
-            f64::from(axis.1 * impulse),
-            0.0,
+            geometry.radius_first,
+            geometry.radius_second,
+            (axis.0 * impulse, axis.1 * impulse),
         );
         raw_error < NATIVE_LINEAR_SLOP
     }

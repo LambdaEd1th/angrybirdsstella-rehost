@@ -36,83 +36,53 @@ impl RenderBridge {
         joint.distance_impulse = f64::from(joint.distance_impulse as f32 * step_ratio);
     }
 
-    pub(crate) fn apply_joint_velocity_impulse<
-        F: JointBodyView + ?Sized,
-        S: JointBodyView + ?Sized,
-    >(
+    pub(crate) fn apply_cached_distance_velocity_impulse(
         &mut self,
         joint: &PhysicsJoint,
-        first: &F,
-        second: &S,
-        impulse_x: f64,
-        impulse_y: f64,
-        angular_impulse: f64,
+        radius_first: (f32, f32),
+        radius_second: (f32, f32),
+        impulse: (f32, f32),
     ) {
-        let (r_a, r_b) = joint_anchor_offsets(joint, first, second);
-        let mass_a = first.inverse_mass_for_solver() as f32;
-        let mass_b = second.inverse_mass_for_solver() as f32;
-        let inertia_a = first.inverse_inertia() as f32;
-        let inertia_b = second.inverse_inertia() as f32;
-        let r_a = (r_a.0 as f32, r_a.1 as f32);
-        let r_b = (r_b.0 as f32, r_b.1 as f32);
-        let impulse = (impulse_x as f32, impulse_y as f32);
-        let angular_impulse = angular_impulse as f32;
+        let mass_first = joint.distance_inverse_mass_first as f32;
+        let mass_second = joint.distance_inverse_mass_second as f32;
+        let inertia_first = joint.distance_inverse_inertia_first as f32;
+        let inertia_second = joint.distance_inverse_inertia_second as f32;
         if let Some(object) = self.scene.get_mut(&joint.first) {
-            object.velocity_x = f64::from((-mass_a).mul_add(impulse.0, object.velocity_x as f32));
-            object.velocity_y = f64::from((-mass_a).mul_add(impulse.1, object.velocity_y as f32));
-            let cross = (-r_a.1).mul_add(impulse.0, r_a.0 * impulse.1);
-            object.angular_velocity = f64::from(
-                (-inertia_a).mul_add(cross + angular_impulse, object.angular_velocity as f32),
-            );
+            object.velocity_x =
+                f64::from((-mass_first).mul_add(impulse.0, object.velocity_x as f32));
+            object.velocity_y =
+                f64::from((-mass_first).mul_add(impulse.1, object.velocity_y as f32));
+            let cross = (-radius_first.1).mul_add(impulse.0, radius_first.0 * impulse.1);
+            object.angular_velocity =
+                f64::from((-inertia_first).mul_add(cross, object.angular_velocity as f32));
         }
         if let Some(object) = self.scene.get_mut(&joint.second) {
-            object.velocity_x = f64::from(mass_b.mul_add(impulse.0, object.velocity_x as f32));
-            object.velocity_y = f64::from(mass_b.mul_add(impulse.1, object.velocity_y as f32));
-            let cross = (-r_b.1).mul_add(impulse.0, r_b.0 * impulse.1);
-            object.angular_velocity = f64::from(
-                inertia_b.mul_add(cross + angular_impulse, object.angular_velocity as f32),
-            );
+            object.velocity_x = f64::from(mass_second.mul_add(impulse.0, object.velocity_x as f32));
+            object.velocity_y = f64::from(mass_second.mul_add(impulse.1, object.velocity_y as f32));
+            let cross = (-radius_second.1).mul_add(impulse.0, radius_second.0 * impulse.1);
+            object.angular_velocity =
+                f64::from(inertia_second.mul_add(cross, object.angular_velocity as f32));
         }
     }
 
-    pub(crate) fn apply_joint_position_impulse<
-        F: JointBodyView + ?Sized,
-        S: JointBodyView + ?Sized,
-    >(
+    pub(crate) fn apply_cached_distance_position_impulse(
         &mut self,
         joint: &PhysicsJoint,
-        first: &F,
-        second: &S,
-        impulse_x: f64,
-        impulse_y: f64,
-        angular_impulse: f64,
+        radius_first: (f32, f32),
+        radius_second: (f32, f32),
+        impulse: (f32, f32),
     ) {
-        let (r_a, r_b) = joint_anchor_offsets(joint, first, second);
-        let mass_a = first.inverse_mass_for_solver() as f32;
-        let mass_b = second.inverse_mass_for_solver() as f32;
-        let inertia_a = first.inverse_inertia() as f32;
-        let inertia_b = second.inverse_inertia() as f32;
-        let r_a = (r_a.0 as f32, r_a.1 as f32);
-        let r_b = (r_b.0 as f32, r_b.1 as f32);
-        let impulse = (impulse_x as f32, impulse_y as f32);
-        let angular_impulse = angular_impulse as f32;
+        let mass_first = joint.distance_inverse_mass_first as f32;
+        let mass_second = joint.distance_inverse_mass_second as f32;
+        let inertia_first = joint.distance_inverse_inertia_first as f32;
+        let inertia_second = joint.distance_inverse_inertia_second as f32;
         if let Some(object) = self.scene.get_mut(&joint.first) {
-            let cross = (-r_a.1).mul_add(impulse.0, r_a.0 * impulse.1);
-            object.apply_native_position_impulse(
-                -mass_a,
-                impulse,
-                -inertia_a,
-                cross + angular_impulse,
-            );
+            let cross = (-radius_first.1).mul_add(impulse.0, radius_first.0 * impulse.1);
+            object.apply_native_position_impulse(-mass_first, impulse, -inertia_first, cross);
         }
         if let Some(object) = self.scene.get_mut(&joint.second) {
-            let cross = (-r_b.1).mul_add(impulse.0, r_b.0 * impulse.1);
-            object.apply_native_position_impulse(
-                mass_b,
-                impulse,
-                inertia_b,
-                cross + angular_impulse,
-            );
+            let cross = (-radius_second.1).mul_add(impulse.0, radius_second.0 * impulse.1);
+            object.apply_native_position_impulse(mass_second, impulse, inertia_second, cross);
         }
     }
 }
