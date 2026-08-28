@@ -246,15 +246,62 @@ fn bird_run_level09_chainsaw_vehicle_is_an_authored_unpowered_dynamic_cart() {
 struct BirdRunIdleSnapshot {
     blocks: std::collections::BTreeMap<String, (f64, f64, f64, bool)>,
     joints: std::collections::BTreeSet<String>,
+    mobile_bodies: std::collections::BTreeSet<String>,
     score: i64,
 }
 
-fn bird_run_idle_snapshot(runtime: &StellaLua) -> BirdRunIdleSnapshot {
+fn bird_run_idle_snapshot(
+    runtime: &StellaLua,
+    known_mobile_bodies: Option<&std::collections::BTreeSet<String>>,
+) -> BirdRunIdleSnapshot {
     let bridge = runtime.render.lock().unwrap();
+    // BirdRun deliberately contains unpowered mobile contraptions. They are
+    // allowed to roll, collide and break after the stationary buildings have
+    // gone to sleep, so exclude every dynamic physical-joint/contact component
+    // rooted at an authored chainsaw or cart wheel from this static audit.
+    let mut mobile_bodies = known_mobile_bodies.cloned().unwrap_or_else(|| {
+        bridge
+            .scene
+            .keys()
+            .filter(|name| name.contains("CHAINSAW") || name.contains("BLOCK_WOOD_ROUND_4X4"))
+            .cloned()
+            .collect()
+    });
+    if known_mobile_bodies.is_none() {
+        loop {
+            let mut changed = false;
+            for joint in bridge.joints.values().filter(|joint| joint.is_physical) {
+                if mobile_bodies.contains(&joint.first) || mobile_bodies.contains(&joint.second) {
+                    changed |= mobile_bodies.insert(joint.first.clone());
+                    changed |= mobile_bodies.insert(joint.second.clone());
+                }
+            }
+            for contact in bridge.active_contacts.keys() {
+                let both_dynamic = bridge
+                    .scene
+                    .get(&contact.0)
+                    .zip(bridge.scene.get(&contact.1))
+                    .is_some_and(|(first, second)| first.dynamic_body && second.dynamic_body);
+                if both_dynamic
+                    && (mobile_bodies.contains(&contact.0) || mobile_bodies.contains(&contact.1))
+                {
+                    changed |= mobile_bodies.insert(contact.0.clone());
+                    changed |= mobile_bodies.insert(contact.1.clone());
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+    }
     let blocks = bridge
         .scene
         .iter()
-        .filter(|(name, object)| name.starts_with("BLOCK_") && object.dynamic_body)
+        .filter(|(name, object)| {
+            name.starts_with("BLOCK_")
+                && object.dynamic_body
+                && !mobile_bodies.contains(name.as_str())
+        })
         .map(|(name, object)| {
             (
                 name.clone(),
@@ -262,11 +309,19 @@ fn bird_run_idle_snapshot(runtime: &StellaLua) -> BirdRunIdleSnapshot {
             )
         })
         .collect();
-    let joints = bridge.joints.keys().cloned().collect();
+    let joints = bridge
+        .joints
+        .iter()
+        .filter(|(_, joint)| {
+            !mobile_bodies.contains(&joint.first) && !mobile_bodies.contains(&joint.second)
+        })
+        .map(|(name, _)| name.clone())
+        .collect();
     drop(bridge);
     BirdRunIdleSnapshot {
         blocks,
         joints,
+        mobile_bodies,
         score: game_environment(runtime.lua())
             .unwrap()
             .get("score")
@@ -354,11 +409,11 @@ fn bird_run_level09_repeated_one_to_two_minute_idle_audit() {
         for _ in 0..300 {
             runtime.step_physics(1.0 / 30.0).unwrap();
         }
-        let settled = bird_run_idle_snapshot(&runtime);
+        let settled = bird_run_idle_snapshot(&runtime, None);
         for _ in 300..(duration_seconds * 30) {
             runtime.step_physics(1.0 / 30.0).unwrap();
         }
-        let current = bird_run_idle_snapshot(&runtime);
+        let current = bird_run_idle_snapshot(&runtime, Some(&settled.mobile_bodies));
         assert_bird_run_remains_settled(trial as usize, duration_seconds, &settled, &current);
     }
 }

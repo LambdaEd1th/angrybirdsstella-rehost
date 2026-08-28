@@ -150,6 +150,242 @@ fn continuous_step_stops_a_fast_circle_at_a_static_thin_edge() {
 }
 
 #[test]
+fn native_toi_advances_and_integrates_a_selected_kinematic_endpoint() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                clearVertices()
+                addVertex(0, -1)
+                addVertex(0, 1)
+                createLineShape("wall", "", 0, 0, 0, 2, 0, 0, 0, true, false, 1)
+                setObjectParameter("wall", 37, 1)
+                createCircle("body", "", -0.08, 0, 0.01, 1, 0, 0, true, false, 1)
+                setWorldGravity(0, 0)
+                setVelocity("wall", 0.03, 0)
+                "#,
+        )
+        .unwrap();
+
+    let mut bridge = runtime.render.lock().unwrap();
+    assert!(bridge.scene["wall"].kinematic_body);
+    let sweep_starts = bridge
+        .scene
+        .iter()
+        .map(|(name, object)| (name.clone(), NativeSweepStart::capture(object)))
+        .collect();
+    {
+        let body = bridge.scene.get_mut("body").unwrap();
+        body.velocity_x = f64::from(4.8_f32);
+        body.motion_started = true;
+        body.sleeping = false;
+        body.apply_native_position_delta(0.16_f32, 0.0, 0.0);
+    }
+    bridge.sync_native_broad_phase();
+    assert!(
+        bridge
+            .broad_phase_contacts
+            .iter()
+            .any(|key| key.0 == "body" && key.1 == "wall"),
+        "contacts={:?} body_proxy={:?} wall_proxy={:?}",
+        bridge.broad_phase_contacts,
+        bridge.body_proxy_states["body"],
+        bridge.body_proxy_states["wall"]
+    );
+
+    let pending = bridge
+        .advance_continuous_tunneling(
+            &sweep_starts,
+            &BTreeMap::new(),
+            &mut NativeToiStepState::default(),
+        )
+        .expect("dynamic/kinematic pair must enter Purple's TOI candidate path");
+    assert_eq!(
+        pending[0].0.toi_bodies,
+        ("body".to_owned(), "wall".to_owned())
+    );
+    let wall_at_impact = bridge.scene["wall"].x;
+    let wall_proxy_at_impact = bridge.body_proxy_states["wall"].tight_aabbs[0];
+    let contacts = pending
+        .iter()
+        .map(|(contact, _)| contact.clone())
+        .collect::<Vec<_>>();
+    let (_, sweep_starts) =
+        bridge.finish_continuous_tunneling(&contacts, 1.0 / 30.0, 10, 0.16, 15_708.0 / 10_000.0);
+
+    assert!(sweep_starts.contains_key("wall"));
+    assert!(bridge.scene["wall"].x > wall_at_impact);
+    assert_eq!(
+        bridge.body_proxy_states["wall"].tight_aabbs[0], wall_proxy_at_impact,
+        "Purple's post-TOI proxy loop synchronizes only dynamic bodies"
+    );
+}
+
+#[test]
+fn native_toi_accepts_a_bullet_dynamic_dynamic_pair() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createCircle("bullet", "", -0.08, 0, 0.01, 1, 0, 0, true, false, 1)
+                createCircle("target", "", 0, 0, 0.01, 1, 0, 0, true, false, 1)
+                setWorldGravity(0, 0)
+                "#,
+        )
+        .unwrap();
+
+    let mut bridge = runtime.render.lock().unwrap();
+    bridge.scene.get_mut("bullet").unwrap().bullet = true;
+    let sweep_starts = bridge
+        .scene
+        .iter()
+        .map(|(name, object)| (name.clone(), NativeSweepStart::capture(object)))
+        .collect();
+    {
+        let bullet = bridge.scene.get_mut("bullet").unwrap();
+        bullet.velocity_x = f64::from(4.8_f32);
+        bullet.motion_started = true;
+        bullet.sleeping = false;
+        bullet.apply_native_position_delta(0.16_f32, 0.0, 0.0);
+    }
+    bridge.sync_native_broad_phase();
+
+    let pending = bridge
+        .advance_continuous_tunneling(
+            &sweep_starts,
+            &BTreeMap::new(),
+            &mut NativeToiStepState::default(),
+        )
+        .expect("a bullet is eligible for Purple's dynamic/dynamic TOI path");
+    assert_eq!(pending.len(), 1);
+    assert_eq!(
+        pending[0].0.toi_bodies,
+        ("bullet".to_owned(), "target".to_owned())
+    );
+    assert!(bridge.scene["target"].motion_started);
+    let contacts = pending
+        .iter()
+        .map(|(contact, _)| contact.clone())
+        .collect::<Vec<_>>();
+    let (_, next_sweeps) =
+        bridge.finish_continuous_tunneling(&contacts, 1.0 / 30.0, 10, 0.16, 15_708.0 / 10_000.0);
+
+    assert!(next_sweeps.contains_key("bullet"));
+    assert!(next_sweeps.contains_key("target"));
+    assert!(bridge.scene["target"].velocity_x > 0.0);
+}
+
+#[test]
+fn toi_auxiliary_walk_advances_a_new_kinematic_body_to_the_island_alpha() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                clearVertices()
+                addVertex(0, -1)
+                addVertex(0, 1)
+                createLineShape("static", "", 0.05, 0, 0, 2, 0, 0, 0, true, false, 1)
+                createLineShape("moving", "", 0.05, 0, 0, 2, 0, 0, 0, true, false, 1)
+                setObjectParameter("moving", 37, 1)
+                createCircle("body", "", 0, 0, 0.01, 1, 0, 0, true, false, 1)
+                "#,
+        )
+        .unwrap();
+
+    let mut bridge = runtime.render.lock().unwrap();
+    let sweep_starts = bridge
+        .scene
+        .iter()
+        .map(|(name, object)| (name.clone(), NativeSweepStart::capture(object)))
+        .collect();
+    bridge
+        .scene
+        .get_mut("body")
+        .unwrap()
+        .apply_native_position_delta(0.04_f32, 0.0, 0.0);
+    bridge
+        .scene
+        .get_mut("moving")
+        .unwrap()
+        .apply_native_position_delta(-0.05_f32, 0.0, 0.0);
+    bridge.sync_native_broad_phase();
+    let selected_key = ("body".to_owned(), "static".to_owned(), 0, 0);
+    let auxiliary = bridge
+        .advance_next_toi_auxiliary_contact(
+            ("body", "static"),
+            0.25_f32,
+            &[selected_key],
+            &sweep_starts,
+            &BTreeMap::new(),
+        )
+        .expect("the kinematic contact must be evaluated at the island alpha");
+
+    assert_eq!(
+        auxiliary.0.key,
+        ("body".to_owned(), "moving".to_owned(), 0, 0)
+    );
+    assert!((bridge.scene["moving"].x - 0.0375).abs() < 1e-6);
+    assert!(bridge.scene["moving"].motion_started);
+}
+
+#[test]
+fn toi_auxiliary_walk_restores_a_rejected_kinematic_body_sweep() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                clearVertices()
+                addVertex(0, -1)
+                addVertex(0, 1)
+                createLineShape("static", "", 0.05, 0, 0, 2, 0, 0, 0, true, false, 1)
+                clearVertices()
+                addVertex(-1, 0)
+                addVertex(1, 0)
+                createLineShape("moving", "", 0, 0.05, 2, 0, 0, 0, 0, true, false, 1)
+                setObjectParameter("moving", 37, 1)
+                createCircle("body", "", 0, 0, 0.01, 1, 0, 0, true, false, 1)
+                "#,
+        )
+        .unwrap();
+
+    let mut bridge = runtime.render.lock().unwrap();
+    let sweep_starts = bridge
+        .scene
+        .iter()
+        .map(|(name, object)| (name.clone(), NativeSweepStart::capture(object)))
+        .collect();
+    bridge
+        .scene
+        .get_mut("body")
+        .unwrap()
+        .apply_native_position_delta(0.04_f32, 0.0, 0.0);
+    bridge
+        .scene
+        .get_mut("moving")
+        .unwrap()
+        .apply_native_position_delta(0.0, -0.1_f32, 0.0);
+    bridge.sync_native_broad_phase();
+    let rejected_end = NativeSweepStart::capture(&bridge.scene["moving"]);
+    let selected_key = ("body".to_owned(), "static".to_owned(), 0, 0);
+    assert!(
+        bridge
+            .advance_next_toi_auxiliary_contact(
+                ("body", "static"),
+                0.25_f32,
+                &[selected_key],
+                &sweep_starts,
+                &BTreeMap::new(),
+            )
+            .is_none()
+    );
+
+    assert_eq!(
+        NativeSweepStart::capture(&bridge.scene["moving"]).center,
+        rejected_end.center
+    );
+}
+
+#[test]
 fn equal_toi_candidates_retain_the_native_contact_list_head() {
     let runtime = unlocked_test_runtime();
     runtime
@@ -314,7 +550,7 @@ fn toi_position_constraint_keeps_constructor_mass_cache() {
     assert!(constraint.first_inverse_mass > 0.0);
     let contact = NativeToiContact {
         key,
-        dynamic_body: "body".to_owned(),
+        toi_bodies: ("body".to_owned(), "wall".to_owned()),
         alpha: 0.5,
         manifold,
     };
@@ -443,12 +679,14 @@ fn toi_island_adds_both_static_contacts_at_a_simultaneous_corner() {
         .unwrap();
     let selected = pending[0].0.clone();
     while let Some(auxiliary) = bridge.advance_next_toi_auxiliary_contact(
-        &selected.dynamic_body,
+        (&selected.toi_bodies.0, &selected.toi_bodies.1),
         selected.alpha,
         &pending
             .iter()
             .map(|(contact, _)| contact.key.clone())
             .collect::<Vec<_>>(),
+        &sweep_starts,
+        &BTreeMap::new(),
     ) {
         pending.push(auxiliary);
     }
@@ -536,9 +774,11 @@ fn toi_island_includes_an_existing_touching_auxiliary_contact_once() {
         .collect::<Vec<_>>();
     let auxiliary = bridge
         .advance_next_toi_auxiliary_contact(
-            &pending[0].0.dynamic_body,
+            (&pending[0].0.toi_bodies.0, &pending[0].0.toi_bodies.1),
             pending[0].0.alpha,
             &island_keys,
+            &sweep_starts,
+            &BTreeMap::new(),
         )
         .expect("existing horizontal contact must join the TOI island");
     assert_eq!(auxiliary.0.key, horizontal);
@@ -551,9 +791,11 @@ fn toi_island_includes_an_existing_touching_auxiliary_contact_once() {
     assert!(
         bridge
             .advance_next_toi_auxiliary_contact(
-                &pending[0].0.dynamic_body,
+                (&pending[0].0.toi_bodies.0, &pending[0].0.toi_bodies.1),
                 pending[0].0.alpha,
                 &island_keys,
+                &sweep_starts,
+                &BTreeMap::new(),
             )
             .is_none(),
         "native island flag must prevent a second insertion"
@@ -573,9 +815,11 @@ fn toi_island_includes_an_existing_touching_auxiliary_contact_once() {
     assert!(
         bridge
             .advance_next_toi_auxiliary_contact(
-                &pending[0].0.dynamic_body,
+                (&pending[0].0.toi_bodies.0, &pending[0].0.toi_bodies.1),
                 pending[0].0.alpha,
                 &saturated_island,
+                &sweep_starts,
+                &BTreeMap::new(),
             )
             .is_none(),
         "native 32-contact TOI island capacity must stop edge expansion"

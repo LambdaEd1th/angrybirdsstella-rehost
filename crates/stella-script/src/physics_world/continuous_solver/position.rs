@@ -28,8 +28,10 @@ impl RenderBridge {
                 continue;
             };
             minimum_separation = minimum_separation.min(point.separation);
-            let first_is_toi = contact.dynamic_body == contact.key.0;
-            let second_is_toi = contact.dynamic_body == contact.key.1;
+            let first_is_toi =
+                contact.toi_bodies.0 == contact.key.0 || contact.toi_bodies.1 == contact.key.0;
+            let second_is_toi =
+                contact.toi_bodies.0 == contact.key.1 || contact.toi_bodies.1 == contact.key.1;
             let first_inverse_mass = if first_is_toi {
                 constraint.first_inverse_mass
             } else {

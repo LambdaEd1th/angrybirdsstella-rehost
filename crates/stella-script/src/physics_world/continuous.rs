@@ -255,7 +255,7 @@ mod transform_tests {
 #[derive(Debug, Clone)]
 pub(crate) struct NativeToiContact {
     pub(crate) key: ContactKey,
-    pub(crate) dynamic_body: String,
+    pub(crate) toi_bodies: (String, String),
     pub(crate) alpha: f32,
     pub(crate) manifold: ContactManifold,
 }

@@ -51,37 +51,33 @@ impl StellaLua {
                     .lock()
                     .expect("render bridge lock poisoned")
                     .advance_next_toi_auxiliary_contact(
-                        &selected.dynamic_body,
+                        (&selected.toi_bodies.0, &selected.toi_bodies.1),
                         selected.alpha,
                         &island_contacts,
+                        toi_sweep_starts,
+                        &toi_sweep_alphas,
                     );
                 if let Some(auxiliary) = auxiliary {
                     pending.push(auxiliary);
                 }
                 callback_index += 1;
             }
-            let alpha_0 = toi_sweep_alphas
-                .get(&selected.dynamic_body)
-                .copied()
-                .unwrap_or(0.0_f32);
-            let body_step = PHYSICS_STEP * f64::from(1.0_f32 - alpha_0);
             let contacts = pending
                 .iter()
                 .map(|(contact, _)| contact.clone())
                 .collect::<Vec<_>>();
-            let (impulses, next_sweep_start) = {
+            let (impulses, next_sweep_starts) = {
                 let mut bridge = self.render.lock().expect("render bridge lock poisoned");
-                let (impulses, sweep_starts) = bridge.finish_continuous_tunneling(
+                bridge.finish_continuous_tunneling(
                     &contacts,
-                    body_step,
+                    PHYSICS_STEP,
                     VELOCITY_ITERATIONS,
                     MAX_TRANSLATION,
                     MAX_ROTATION,
-                );
-                (impulses, sweep_starts.get(&selected.dynamic_body).copied())
+                )
             };
-            if let Some(next_sweep_start) = next_sweep_start {
-                toi_sweep_starts.insert(selected.dynamic_body.clone(), next_sweep_start);
+            for (body, next_sweep_start) in &next_sweep_starts {
+                toi_sweep_starts.insert(body.clone(), *next_sweep_start);
             }
             for (contact, mut event) in pending.drain(..) {
                 if let Some(impulse) = impulses.get(&contact.key) {
@@ -89,11 +85,10 @@ impl StellaLua {
                 }
                 contact_events.push(event);
             }
-            toi_sweep_alphas.insert(
-                selected.dynamic_body.clone(),
-                (1.0_f32 - alpha_0).mul_add(selected.alpha, alpha_0),
-            );
-            toi_state.invalidate_body(&selected.dynamic_body);
+            for body in next_sweep_starts.keys() {
+                toi_sweep_alphas.insert(body.clone(), selected.alpha);
+                toi_state.invalidate_body(body);
+            }
         }
         Ok(())
     }

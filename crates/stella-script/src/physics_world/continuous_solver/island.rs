@@ -94,15 +94,17 @@ impl RenderBridge {
         // occurrence here; a sorted set would erase that native order.
         let mut seen_bodies = BTreeSet::new();
         let mut bodies = Vec::new();
-        for (contact, _) in &constraints {
-            if seen_bodies.insert(contact.dynamic_body.clone())
-                && let Some(object) = self.scene.get(&contact.dynamic_body)
+        for name in contacts
+            .iter()
+            .flat_map(|contact| [&contact.key.0, &contact.key.1])
+        {
+            if seen_bodies.insert(name.clone())
+                && let Some(object) = self.scene.get(name)
             {
-                sweep_starts.insert(
-                    contact.dynamic_body.clone(),
-                    NativeSweepStart::capture(object),
-                );
-                bodies.push(contact.dynamic_body.clone());
+                if object.moves_during_step() {
+                    sweep_starts.insert(name.clone(), NativeSweepStart::capture(object));
+                }
+                bodies.push(name.clone());
             }
         }
         if let Some((first_contact, _)) = constraints.first() {
@@ -118,7 +120,16 @@ impl RenderBridge {
                 }
             }
         }
-        self.sync_native_broad_phase_bodies(bodies.iter().map(String::as_str));
+        let dynamic_bodies = bodies
+            .iter()
+            .filter(|name| {
+                self.scene
+                    .get(*name)
+                    .is_some_and(|object| object.dynamic_body)
+            })
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        self.sync_native_broad_phase_bodies(dynamic_bodies);
         (impulses, sweep_starts)
     }
 }

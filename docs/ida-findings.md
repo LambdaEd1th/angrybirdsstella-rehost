@@ -11072,12 +11072,18 @@ moving objects. Thus delayed collapse is not an unconditional idle defect.
 
 A later fixed-step audit repeats the exact saved variant layout six times:
 three independent runs idle for 60 simulated seconds and three for 120. The
-first ten seconds are treated as the normal settling window. Every run retains
-all 90 ordinary dynamic building blocks and all 33 level joints, removes or
-adds no blocks, breaks no joints, leaves those buildings asleep and keeps score
-at zero. The largest post-window position and angle changes are respectively
-`0.004058409` physics units and `0.019947529` radians, identically reproduced
-in all six runs and below the structural-drift audit threshold.
+first ten seconds are treated as the normal settling window. The monitor set is
+then frozen so an authored mobile payload cannot disappear from one snapshot's
+classification and reappear in another. Components rooted at a chainsaw or
+`BLOCK_WOOD_ROUND_4X4` cart wheel are classified as mobile by traversing
+physical joints and current dynamic/dynamic contacts; static terrain is never
+crossed. Every run retains the resulting 47 stationary dynamic building blocks
+and 17 stationary joints, removes or adds none, breaks no monitored joint,
+leaves every monitored body asleep and keeps score at zero. Both the maximum
+post-window position change and maximum angle change are exactly zero in all
+six runs. The mobile contraptions and their loose loads are reported by their
+dedicated topology test instead of being mislabeled as delayed building
+collapse.
 
 Full 60 Hz host update/draw comparison adds an important distinction. Depending
 on the run's authored actor state, the lower chainsaw vehicle can remain posed
@@ -16608,3 +16614,42 @@ contact slots. Its edge loop compares the live counts with those capacities at
 `0x10086F0BC..0x10086F0D8` before examining the next contact. Auxiliary
 expansion now retains the reachable 32-contact stop instead of allowing an
 unbounded host vector to solve contacts Purple would leave for a later pass.
+
+## Two-body TOI sweeps and dynamic island expansion
+
+A wider audit of `sub_10086EA54` shows that the selected TOI contact is not a
+one-dynamic-body special case. Candidate filtering at
+`0x10086EE4C..0x10086EE64` implements Box2D's continuous-contact rule: a
+dynamic/dynamic pair is skipped only when neither endpoint carries the bullet
+bit, while a dynamic/static or dynamic/kinematic pair remains eligible. After
+selection, Purple saves both complete sweeps at
+`0x10086EE88..0x10086EEB4`, advances body A at
+`0x10086EEB8..0x10086EF44`, and independently advances body B at
+`0x10086EF48..0x10086EFD4`. Both bodies are then inserted as the first two
+island entries at `0x10086F038..0x10086F08C`. The TOI position solver receives
+both original island indices at `0x10086F2E0..0x10086F2F0`, so a bullet hit
+against another dynamic body must correct both endpoints rather than treating
+the second as fixed.
+
+The auxiliary walk is likewise body-driven rather than being restricted to
+the initially selected dynamic object. The island loop examines every body
+entry in insertion order and traverses contact edges only for type `2`
+(dynamic) bodies at `0x10086F09C..0x10086F0B8`. For another dynamic endpoint,
+`0x10086F0EC..0x10086F104` admits the edge when either the current island body
+or the other body is a bullet. A newly reached non-island body has its complete
+sweep saved, advances to the selected world alpha through
+`0x10086F120..0x10086F1C4`, and is restored from that saved sweep at
+`0x10086F248..0x10086F294` if `Contact::Update` rejects the contact. An
+accepted new body is woken and appended at `0x10086F200..0x10086F240`, which
+allows a newly added dynamic bullet body to contribute its own edges later in
+the same walk.
+
+Rust now retains the two original TOI endpoints, advances both selected
+sweeps, reconstructs native island body order after each Lua callback, and
+advances or rolls back newly reached moving endpoints at the same world alpha.
+The reduced solve integrates every moving island body. Its proxy-sync tail
+still follows `0x10086F308..0x10086F354` and synchronizes only type `2`
+dynamic bodies; kinematic objects keep their native post-TOI proxy behavior.
+Focused regressions cover a selected dynamic/kinematic pair, a bullet
+dynamic/dynamic collision, accepted kinematic auxiliary advancement and exact
+rollback of a rejected kinematic auxiliary sweep.

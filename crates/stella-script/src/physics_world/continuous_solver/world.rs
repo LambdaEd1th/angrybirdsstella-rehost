@@ -8,10 +8,11 @@ impl RenderBridge {
     /// reaches this path from b2World::SolveTOI (`sub_10086EA54`) after the
     /// ordinary island solve has synchronized its swept broad-phase proxies.
     ///
-    /// Purple's body constructors set `bullet = false` and expose no setter,
-    /// so the shipped candidate rule reaches only non-bullet dynamic/static
-    /// pairs. Candidate impact fractions come from the float32
-    /// GJK/separation-function port of `sub_100861B54`.
+    /// Candidate impact fractions come from the float32 GJK/separation-
+    /// function port of `sub_100861B54`. Purple accepts a pair when at least
+    /// one endpoint is dynamic and either endpoint is a bullet or non-dynamic;
+    /// this covers ordinary dynamic/static and dynamic/kinematic contacts as
+    /// well as bullet dynamic/dynamic contacts.
     pub(crate) fn advance_continuous_tunneling(
         &mut self,
         sweep_starts: &BTreeMap<String, NativeSweepStart>,
@@ -51,19 +52,16 @@ impl RenderBridge {
             if !first_awake && !second_awake {
                 continue;
             }
-            let dynamic_body = match (
-                first_end.dynamic_body,
-                second_end.dynamic_body,
-                first_end.moves_during_step(),
-                second_end.moves_during_step(),
-            ) {
-                (true, false, true, false) => key.0.clone(),
-                (false, true, false, true) => key.1.clone(),
-                _ => continue,
-            };
-            // Only the moving endpoint has a distinct start transform. Purple
-            // passes the existing fixture pointers plus a compact b2Transform
-            // here; no RenderObjectData/body clone is constructed.
+            if !first_end.dynamic_body && !second_end.dynamic_body {
+                continue;
+            }
+            if first_end.dynamic_body
+                && second_end.dynamic_body
+                && !first_end.bullet
+                && !second_end.bullet
+            {
+                continue;
+            }
             let first_start = sweep_starts
                 .get(&key.0)
                 .copied()
@@ -72,24 +70,37 @@ impl RenderBridge {
                 .get(&key.1)
                 .copied()
                 .unwrap_or_else(|| NativeSweepStart::capture(second_end));
-            let first_end_transform = first_end.native_collision_transform();
-            let second_end_transform = second_end.native_collision_transform();
-
-            let dynamic_start = if dynamic_body == key.0 {
+            let first_alpha_0 = sweep_alphas.get(&key.0).copied().unwrap_or(0.0_f32);
+            let second_alpha_0 = sweep_alphas.get(&key.1).copied().unwrap_or(0.0_f32);
+            let alpha_0 = first_alpha_0.max(second_alpha_0);
+            if alpha_0 >= 1.0_f32 {
+                continue;
+            }
+            let first_start = if first_alpha_0 < alpha_0 {
+                let advance = (alpha_0 - first_alpha_0) / (1.0_f32 - first_alpha_0);
+                NativeSweep::between(first_start, first_end).advance_pose(advance)
+            } else {
                 first_start
+            };
+            let second_start = if second_alpha_0 < alpha_0 {
+                let advance = (alpha_0 - second_alpha_0) / (1.0_f32 - second_alpha_0);
+                NativeSweep::between(second_start, second_end).advance_pose(advance)
             } else {
                 second_start
             };
-            let dynamic_end = if dynamic_body == key.0 {
-                first_end
-            } else {
-                second_end
-            };
-            let start_center = dynamic_start.center;
-            let end_center = dynamic_end.native_world_center();
-            let center_delta = (end_center.0 - start_center.0, end_center.1 - start_center.1);
-            let angle_delta = dynamic_end.angle as f32 - dynamic_start.angle;
-            if center_delta.0 == 0.0_f32 && center_delta.1 == 0.0_f32 && angle_delta == 0.0_f32 {
+            let first_delta = (
+                first_end.native_world_center().0 - first_start.center.0,
+                first_end.native_world_center().1 - first_start.center.1,
+                first_end.angle as f32 - first_start.angle,
+            );
+            let second_delta = (
+                second_end.native_world_center().0 - second_start.center.0,
+                second_end.native_world_center().1 - second_start.center.1,
+                second_end.angle as f32 - second_start.angle,
+            );
+            if first_delta == (0.0_f32, 0.0_f32, 0.0_f32)
+                && second_delta == (0.0_f32, 0.0_f32, 0.0_f32)
+            {
                 continue;
             }
 
@@ -99,7 +110,6 @@ impl RenderBridge {
             let Some(proxy_b) = second_end.native_distance_proxy(key.3) else {
                 continue;
             };
-            let alpha_0 = sweep_alphas.get(&dynamic_body).copied().unwrap_or(0.0_f32);
             let (world_alpha, alpha) =
                 if let Some(world_alpha) = toi_state.cached_world_alphas.get(&key).copied() {
                     if world_alpha >= 1.0_f32 || alpha_0 >= 1.0_f32 {
@@ -123,20 +133,12 @@ impl RenderBridge {
                         .insert(key.clone(), world_alpha);
                     (world_alpha, alpha)
                 };
-            let impact_pose = NativeSweep::between(dynamic_start, dynamic_end).advance_pose(alpha);
-            let impact_center = impact_pose.center;
-            let impact_angle = impact_pose.angle;
-            let (first_transform, second_transform) = if dynamic_body == key.0 {
-                (
-                    first_end.native_collision_transform_at_sweep(impact_center, impact_angle),
-                    second_end_transform,
-                )
-            } else {
-                (
-                    first_end_transform,
-                    second_end.native_collision_transform_at_sweep(impact_center, impact_angle),
-                )
-            };
+            let first_impact = NativeSweep::between(first_start, first_end).advance_pose(alpha);
+            let second_impact = NativeSweep::between(second_start, second_end).advance_pose(alpha);
+            let first_transform = first_end
+                .native_collision_transform_at_sweep(first_impact.center, first_impact.angle);
+            let second_transform = second_end
+                .native_collision_transform_at_sweep(second_impact.center, second_impact.angle);
             let Some(manifold) = first_end.collision_fixture_manifold_at_transforms(
                 second_end,
                 key.2,
@@ -151,11 +153,9 @@ impl RenderBridge {
                 Self::native_contact_event(&key, first_end, second_end, manifold, false, began);
             let hit = (
                 world_alpha,
-                alpha,
                 key,
-                dynamic_body,
-                impact_center,
-                impact_angle,
+                first_impact,
+                second_impact,
                 manifold,
                 event,
             );
@@ -167,11 +167,15 @@ impl RenderBridge {
                 selected = Some(hit);
             }
         }
-        let (_, alpha, key, dynamic_body, impact_center, impact_angle, manifold, event) = selected?;
+        let (world_alpha, key, first_impact, second_impact, manifold, event) = selected?;
         *toi_state.counts.entry(key.clone()).or_insert(0) += 1;
-        if let Some(object) = self.scene.get_mut(&dynamic_body) {
-            object.set_native_sweep_transform(impact_center, impact_angle);
-            object.wake();
+        for (name, impact) in [(&key.0, first_impact), (&key.1, second_impact)] {
+            if let Some(object) = self.scene.get_mut(name) {
+                object.set_native_sweep_transform(impact.center, impact.angle);
+                if object.moves_during_step() {
+                    object.wake();
+                }
+            }
         }
         self.active_contacts.insert(key.clone(), false);
         self.contact_manifolds.insert(key.clone(), manifold);
@@ -185,9 +189,9 @@ impl RenderBridge {
         }
         Some(vec![(
             NativeToiContact {
+                toi_bodies: (key.0.clone(), key.1.clone()),
                 key,
-                dynamic_body,
-                alpha,
+                alpha: world_alpha,
                 manifold,
             },
             event,
@@ -200,9 +204,11 @@ impl RenderBridge {
     /// the remainder of the same TOI island expansion.
     pub(crate) fn advance_next_toi_auxiliary_contact(
         &mut self,
-        dynamic_body: &str,
+        pending_toi_bodies: (&str, &str),
         alpha: f32,
         island_contacts: &[ContactKey],
+        sweep_starts: &BTreeMap<String, NativeSweepStart>,
+        sweep_alphas: &BTreeMap<String, f32>,
     ) -> Option<(NativeToiContact, ContactEvent)> {
         // sub_10086EA54 constructs its scratch island with 64 body slots and
         // 32 contact slots, then stops the contact-edge walk as soon as either
@@ -211,56 +217,122 @@ impl RenderBridge {
         if island_contacts.len() >= 32 {
             return None;
         }
-        let candidates = self
-            .native_contact_world_order
+        // b2Island stores the two selected contact endpoints first, followed
+        // by every newly reached endpoint. Rebuild that insertion order from
+        // the pending contact array so callbacks may resume the native body /
+        // contact-edge walk without retaining pointers across the Lua call.
+        let mut island_body_set = BTreeSet::new();
+        let mut island_bodies = Vec::new();
+        for body in [pending_toi_bodies.0, pending_toi_bodies.1]
+            .into_iter()
+            .chain(
+                island_contacts
+                    .iter()
+                    .flat_map(|contact| [contact.0.as_str(), contact.1.as_str()]),
+            )
+        {
+            if island_body_set.insert(body.to_owned()) {
+                island_bodies.push(body.to_owned());
+            }
+        }
+        let candidates = island_bodies
             .iter()
-            .rev()
-            .map(|(_, key)| key)
-            .filter(|candidate| {
-                self.broad_phase_contacts.contains(*candidate)
-                    && !island_contacts.contains(*candidate)
-                    && (candidate.0 == dynamic_body || candidate.1 == dynamic_body)
+            .filter(|body| {
+                self.scene
+                    .get(*body)
+                    .is_some_and(|object| object.dynamic_body)
             })
-            .cloned()
+            .flat_map(|root| {
+                self.native_contact_world_order
+                    .iter()
+                    .rev()
+                    .map(|(_, key)| key)
+                    .filter(|candidate| {
+                        self.broad_phase_contacts.contains(*candidate)
+                            && !island_contacts.contains(*candidate)
+                            && (candidate.0 == *root || candidate.1 == *root)
+                    })
+                    .cloned()
+                    .map(|key| (root.clone(), key))
+            })
             .collect::<Vec<_>>();
-        for extra_key in candidates {
-            let (extra_manifold, extra_event) = {
+        for (root, extra_key) in candidates {
+            let Some(root_object) = self.scene.get(&root) else {
+                continue;
+            };
+            let other_name = if extra_key.0 == root {
+                extra_key.1.clone()
+            } else {
+                extra_key.0.clone()
+            };
+            let Some(other_object) = self.scene.get(&other_name) else {
+                continue;
+            };
+            if other_object.dynamic_body && !root_object.bullet && !other_object.bullet {
+                continue;
+            }
+            let other_in_island = island_body_set.contains(&other_name);
+            let restore_pose = (!other_in_island && other_object.moves_during_step())
+                .then(|| NativeSweepStart::capture(other_object));
+            let impact_pose = restore_pose.map(|restore| {
+                let start = sweep_starts.get(&other_name).copied().unwrap_or(restore);
+                let old_alpha = sweep_alphas.get(&other_name).copied().unwrap_or(0.0_f32);
+                if old_alpha < alpha {
+                    let advance = (alpha - old_alpha) / (1.0_f32 - old_alpha);
+                    NativeSweep::between(start, other_object).advance_pose(advance)
+                } else {
+                    restore
+                }
+            });
+            if let Some(impact) = impact_pose
+                && let Some(other) = self.scene.get_mut(&other_name)
+            {
+                other.set_native_sweep_transform(impact.center, impact.angle);
+            }
+            let contact = {
                 let Some((extra_first, extra_second)) = self
                     .scene
                     .get(&extra_key.0)
                     .zip(self.scene.get(&extra_key.1))
                 else {
+                    if let Some(restore) = restore_pose
+                        && let Some(other) = self.scene.get_mut(&other_name)
+                    {
+                        other.set_native_sweep_transform(restore.center, restore.angle);
+                    }
                     continue;
                 };
-                let other_is_static = if extra_key.0 == dynamic_body {
-                    !extra_second.moves_during_step()
-                } else {
-                    !extra_first.moves_during_step()
-                };
-                if !other_is_static
-                    || extra_first.sensor
+                if extra_first.sensor
                     || extra_second.sensor
                     || !extra_first.active
                     || !extra_second.active
                     || !Self::native_objects_should_collide(extra_first, extra_second)
                 {
-                    continue;
+                    None
+                } else {
+                    extra_first
+                        .collision_fixture_manifold(extra_second, extra_key.2, extra_key.3)
+                        .map(|extra_manifold| {
+                            let began = !self.active_contacts.contains_key(&extra_key);
+                            let extra_event = Self::native_contact_event(
+                                &extra_key,
+                                extra_first,
+                                extra_second,
+                                extra_manifold,
+                                false,
+                                began,
+                            );
+                            (extra_manifold, extra_event)
+                        })
                 }
-                let Some(extra_manifold) =
-                    extra_first.collision_fixture_manifold(extra_second, extra_key.2, extra_key.3)
-                else {
-                    continue;
-                };
-                let began = !self.active_contacts.contains_key(&extra_key);
-                let extra_event = Self::native_contact_event(
-                    &extra_key,
-                    extra_first,
-                    extra_second,
-                    extra_manifold,
-                    false,
-                    began,
-                );
-                (extra_manifold, extra_event)
+            };
+            let Some((extra_manifold, extra_event)) = contact else {
+                if let Some(restore) = restore_pose
+                    && let Some(other) = self.scene.get_mut(&other_name)
+                {
+                    other.set_native_sweep_transform(restore.center, restore.angle);
+                }
+                continue;
             };
             self.active_contacts.insert(extra_key.clone(), false);
             self.contact_manifolds
@@ -273,10 +345,19 @@ impl RenderBridge {
             if extra_event.began {
                 self.wake_contact_bodies(&extra_key);
             }
+            if !other_in_island
+                && let Some(other) = self.scene.get_mut(&other_name)
+                && other.moves_during_step()
+            {
+                other.wake();
+            }
             return Some((
                 NativeToiContact {
+                    toi_bodies: (
+                        pending_toi_bodies.0.to_owned(),
+                        pending_toi_bodies.1.to_owned(),
+                    ),
                     key: extra_key,
-                    dynamic_body: dynamic_body.to_owned(),
                     alpha,
                     manifold: extra_manifold,
                 },
