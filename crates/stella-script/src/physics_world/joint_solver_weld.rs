@@ -7,20 +7,58 @@ type NativeWeldMatrix = (f64, f64, f64, f64, f64, f64);
 const NATIVE_LINEAR_SLOP: f32 = f32::from_bits(0x3A83_126F);
 const NATIVE_ANGULAR_SLOP: f32 = f32::from_bits(0x3D0E_FA36);
 
-fn native_weld_matrix<F: JointBodyView + ?Sized, S: JointBodyView + ?Sized>(
-    first: &F,
-    second: &S,
+fn native_weld_matrix(
+    mass_first: f32,
+    mass_second: f32,
+    inertia_first: f32,
+    inertia_second: f32,
     radius_first: (f32, f32),
     radius_second: (f32, f32),
 ) -> NativeWeldMatrix {
     joint_mass_matrix(
-        first.inverse_mass_for_solver(),
-        second.inverse_mass_for_solver(),
-        first.inverse_inertia(),
-        second.inverse_inertia(),
+        f64::from(mass_first),
+        f64::from(mass_second),
+        f64::from(inertia_first),
+        f64::from(inertia_second),
         (f64::from(radius_first.0), f64::from(radius_first.1)),
         (f64::from(radius_second.0), f64::from(radius_second.1)),
     )
+}
+
+fn apply_cached_weld_velocity_impulse(
+    bridge: &mut RenderBridge,
+    joint: &PhysicsJoint,
+    impulse: (f32, f32),
+    angular_impulse: f32,
+) {
+    let mass_first = joint.weld_inverse_mass_first as f32;
+    let mass_second = joint.weld_inverse_mass_second as f32;
+    let inertia_first = joint.weld_inverse_inertia_first as f32;
+    let inertia_second = joint.weld_inverse_inertia_second as f32;
+    let radius_first = (
+        joint.weld_radius_first.0 as f32,
+        joint.weld_radius_first.1 as f32,
+    );
+    let radius_second = (
+        joint.weld_radius_second.0 as f32,
+        joint.weld_radius_second.1 as f32,
+    );
+    if let Some(object) = bridge.scene.get_mut(&joint.first) {
+        object.velocity_x = f64::from((-mass_first).mul_add(impulse.0, object.velocity_x as f32));
+        object.velocity_y = f64::from((-mass_first).mul_add(impulse.1, object.velocity_y as f32));
+        let cross = (-radius_first.1).mul_add(impulse.0, radius_first.0 * impulse.1);
+        object.angular_velocity = f64::from(
+            (-inertia_first).mul_add(cross + angular_impulse, object.angular_velocity as f32),
+        );
+    }
+    if let Some(object) = bridge.scene.get_mut(&joint.second) {
+        object.velocity_x = f64::from(mass_second.mul_add(impulse.0, object.velocity_x as f32));
+        object.velocity_y = f64::from(mass_second.mul_add(impulse.1, object.velocity_y as f32));
+        let cross = (-radius_second.1).mul_add(impulse.0, radius_second.0 * impulse.1);
+        object.angular_velocity = f64::from(
+            inertia_second.mul_add(cross + angular_impulse, object.angular_velocity as f32),
+        );
+    }
 }
 
 fn native_weld_velocity_error<F: JointBodyView + ?Sized, S: JointBodyView + ?Sized>(
@@ -69,16 +107,29 @@ impl RenderBridge {
         let (radius_first, radius_second) = joint_anchor_offsets(joint, first, second);
         let radius_first = (radius_first.0 as f32, radius_first.1 as f32);
         let radius_second = (radius_second.0 as f32, radius_second.1 as f32);
+        let mass_first = first.inverse_mass_for_solver() as f32;
+        let mass_second = second.inverse_mass_for_solver() as f32;
+        let inertia_first = first.inverse_inertia() as f32;
+        let inertia_second = second.inverse_inertia() as f32;
         joint.weld_radius_first = (f64::from(radius_first.0), f64::from(radius_first.1));
         joint.weld_radius_second = (f64::from(radius_second.0), f64::from(radius_second.1));
-        joint.weld_mass_matrix = native_weld_matrix(first, second, radius_first, radius_second);
-        self.apply_joint_velocity_impulse(
+        joint.weld_inverse_mass_first = f64::from(mass_first);
+        joint.weld_inverse_mass_second = f64::from(mass_second);
+        joint.weld_inverse_inertia_first = f64::from(inertia_first);
+        joint.weld_inverse_inertia_second = f64::from(inertia_second);
+        joint.weld_mass_matrix = native_weld_matrix(
+            mass_first,
+            mass_second,
+            inertia_first,
+            inertia_second,
+            radius_first,
+            radius_second,
+        );
+        apply_cached_weld_velocity_impulse(
+            self,
             joint,
-            first,
-            second,
-            joint.linear_impulse_x,
-            joint.linear_impulse_y,
-            joint.angular_impulse,
+            (joint.linear_impulse_x as f32, joint.linear_impulse_y as f32),
+            joint.angular_impulse as f32,
         );
     }
 
@@ -106,14 +157,7 @@ impl RenderBridge {
         joint.linear_impulse_x = f64::from(joint.linear_impulse_x as f32 - solved.0);
         joint.linear_impulse_y = f64::from(joint.linear_impulse_y as f32 - solved.1);
         joint.angular_impulse = f64::from(joint.angular_impulse as f32 - solved.2);
-        self.apply_joint_velocity_impulse(
-            joint,
-            first,
-            second,
-            f64::from(-solved.0),
-            f64::from(-solved.1),
-            f64::from(-solved.2),
-        );
+        apply_cached_weld_velocity_impulse(self, joint, (-solved.0, -solved.1), -solved.2);
     }
 
     pub(crate) fn solve_weld_joint_position<
@@ -128,7 +172,18 @@ impl RenderBridge {
         let (radius_first, radius_second) = joint_anchor_offsets(joint, first, second);
         let radius_first = (radius_first.0 as f32, radius_first.1 as f32);
         let radius_second = (radius_second.0 as f32, radius_second.1 as f32);
-        let matrix = native_weld_matrix(first, second, radius_first, radius_second);
+        let mass_first = joint.weld_inverse_mass_first as f32;
+        let mass_second = joint.weld_inverse_mass_second as f32;
+        let inertia_first = joint.weld_inverse_inertia_first as f32;
+        let inertia_second = joint.weld_inverse_inertia_second as f32;
+        let matrix = native_weld_matrix(
+            mass_first,
+            mass_second,
+            inertia_first,
+            inertia_second,
+            radius_first,
+            radius_second,
+        );
         let delta = joint_anchor_delta(
             first,
             second,
@@ -147,14 +202,27 @@ impl RenderBridge {
             ),
         )
         .unwrap_or((0.0, 0.0, 0.0));
-        self.apply_joint_position_impulse(
-            joint,
-            first,
-            second,
-            f64::from(-(solved.0 as f32)),
-            f64::from(-(solved.1 as f32)),
-            f64::from(-(solved.2 as f32)),
-        );
+        let solved = (solved.0 as f32, solved.1 as f32, solved.2 as f32);
+        let cross_first = (-radius_first.1).mul_add(solved.0, radius_first.0 * solved.1);
+        let cross_second = radius_second
+            .1
+            .mul_add(solved.0, -radius_second.0 * solved.1);
+        if let Some(object) = self.scene.get_mut(&joint.first) {
+            object.apply_native_position_impulse(
+                mass_first,
+                (solved.0, solved.1),
+                inertia_first,
+                solved.2 + cross_first,
+            );
+        }
+        if let Some(object) = self.scene.get_mut(&joint.second) {
+            object.apply_native_position_impulse(
+                -mass_second,
+                (solved.0, solved.1),
+                inertia_second,
+                cross_second - solved.2,
+            );
+        }
         linear_error <= NATIVE_LINEAR_SLOP && angle_error.abs() <= NATIVE_ANGULAR_SLOP
     }
 }
