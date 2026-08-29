@@ -2,6 +2,7 @@
 
 use std::{
     fs,
+    io::Write,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -104,7 +105,16 @@ pub(crate) fn install_data_imports(
             // over the requested path.  Keep that commit protocol here so a
             // partially-written copy never replaces an existing AppData file.
             let temporary = PathBuf::from(format!("{}.tmp", destination.display()));
-            fs::write(&temporary, bytes).map_err(runtime_error)?;
+            let mut output = fs::OpenOptions::new()
+                .create(true)
+                .truncate(true)
+                .write(true)
+                .open(&temporary)
+                .map_err(runtime_error)?;
+            output.write_all(&bytes).map_err(runtime_error)?;
+            output.flush().map_err(runtime_error)?;
+            output.sync_all().map_err(runtime_error)?;
+            drop(output);
             replace_app_data_file(&temporary, &destination).map_err(runtime_error)?;
             Ok(())
         })?,
