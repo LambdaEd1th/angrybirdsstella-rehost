@@ -6503,6 +6503,51 @@ compatibility bindings. It emitted
 `build/audit-system-font-smoke-20260820.png`, SHA-256
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
 
+## SetType awake-state preservation
+
+IDA's complete `b2Body::SetType` (`sub_10086B0CC`) shows the wake branch at
+`0x10086B1A8..0x10086B1B8`: the native method sets the awake bit and clears
+`m_sleepTime` only when the body was previously asleep. An already-awake body
+keeps its accumulated sleep timer while the type changes; the method then
+clears force/torque and refilters every fixture. Hopper agrees with the same
+conditional branch and field offsets.
+
+The Rust `set_native_body_type` adapter now calls `wake()` only for a sleeping
+body and still marks the body as participating in the next island. A regression
+keeps a non-zero timer across dynamic-to-kinematic conversion, then verifies
+that a genuinely sleeping body is awakened with a zero timer on the next type
+change. This closes a subtle source of premature sleep-state divergence in
+settled structures.
+
+## SetTransform fixture synchronization displacement
+
+The complete `b2Body::SetTransform` path at `sub_10086B794` passes the body's
+current `b2Transform` pointer in both fixture-synchronization argument slots
+(`0x10086B858` and `0x10086B85C`). Unlike the post-island
+`b2World::Solve`/`SynchronizeFixtures` path, this supplies no previous
+transform: `b2Fixture::Synchronize` computes a current-only swept AABB and a
+zero displacement before `MoveProxy`. Native SetTransform still queues a
+proxy whose old fat box no longer contains the current AABB, but it does not
+add the usual two-times-displacement extension.
+
+The Rust broad-phase bridge now keeps that distinction explicit. Direct
+`setPosition`/`setRotation` calls use current-only AABBs with `(0, 0)`
+displacement, while the solver's island-tail synchronization retains the
+previous-sweep AABB and translation extension. A focused regression pins the
+direct-transform fat box to exactly the native 0.1 skin around the current
+tight bounds; this prevents camera/teleport operations from creating overly
+wide contact candidates.
+
+The complete workspace now passes 847 tests with only the deliberate
+long-duration BirdRun audit ignored. Formatting, whitespace validation, strict
+all-target/all-feature Clippy and the release workspace build are clean. A
+fresh isolated-AppData 120-frame release-wgpu run reports 20 optional probes,
+zero invoked fallbacks, zero remaining compatibility bindings and empty
+stderr. Its visually checked
+`build/audit-settransform-20260829.png` capture is 1024x768 RGBA with
+SHA-256
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
 ## multiplyVelocity float32 strict wake semantics
 
 The small GameLua adapter `sub_100041A44` was rechecked in IDA and Hopper.

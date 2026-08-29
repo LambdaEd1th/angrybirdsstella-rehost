@@ -457,6 +457,35 @@ fn body_transform_synchronizes_only_its_own_fixture_proxies() {
 }
 
 #[test]
+fn direct_set_transform_does_not_extend_proxy_by_previous_displacement() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createBox("body", "", 0, 0, 1, 1, 1, 0, 0, true, false, 1)
+                "#,
+        )
+        .unwrap();
+
+    runtime
+        .execute_source(r#"setPosition("body", 10, 0)"#)
+        .unwrap();
+    let bridge = runtime.render.lock().unwrap();
+
+    let state = &bridge.body_proxy_states["body"];
+    let proxy_id = bridge.scene["body"].fixture_proxy_ids[0].unwrap();
+    let current = state.tight_aabbs[0];
+    let expected_fat = (
+        current.0 - 0.1_f32,
+        current.1 - 0.1_f32,
+        current.2 + 0.1_f32,
+        current.3 + 0.1_f32,
+    );
+    assert_eq!(state.fat_aabbs[0], expected_fat);
+    assert_eq!(bridge.dynamic_tree.proxy_aabb(proxy_id), Some(expected_fat));
+}
+
+#[test]
 fn discrete_solve_synchronizes_only_non_static_bodies_visited_by_an_island() {
     let runtime = unlocked_test_runtime();
     runtime

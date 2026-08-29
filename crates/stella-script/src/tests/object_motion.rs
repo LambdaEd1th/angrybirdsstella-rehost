@@ -186,6 +186,54 @@ fn static_to_dynamic_body_type_change_requeues_fixture_proxies() {
 }
 
 #[test]
+fn body_type_change_only_resets_sleep_time_when_native_body_was_asleep() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createBox("body", "", 0, 0, 2, 2, 1, 0, 0, true, false, 1)
+                "#,
+        )
+        .unwrap();
+
+    {
+        let mut bridge = runtime.render.lock().unwrap();
+        let body = bridge.scene.get_mut("body").unwrap();
+        // Box2D's awake flag and sleepTime are independent fields. Preserve
+        // an awake body's accumulated timer across SetType.
+        body.sleeping = false;
+        body.sleep_time = 0.375;
+    }
+    runtime
+        .execute_source(r#"setObjectParameter("body", 39, 1)"#)
+        .unwrap();
+    {
+        let bridge = runtime.render.lock().unwrap();
+        let body = &bridge.scene["body"];
+        assert!(body.kinematic_body);
+        assert!(!body.sleeping);
+        assert_eq!(body.sleep_time, 0.375);
+    }
+
+    {
+        let mut bridge = runtime.render.lock().unwrap();
+        let body = bridge.scene.get_mut("body").unwrap();
+        body.sleeping = true;
+        body.sleep_time = 0.625;
+    }
+    runtime
+        .execute_source(r#"setObjectParameter("body", 39, 2)"#)
+        .unwrap();
+    {
+        let bridge = runtime.render.lock().unwrap();
+        let body = &bridge.scene["body"];
+        assert!(body.dynamic_body);
+        assert!(!body.sleeping);
+        assert_eq!(body.sleep_time, 0.0);
+    }
+}
+
+#[test]
 fn sensor_parameter_wakes_contact_neighbor_and_only_reactivates_body() {
     let runtime = unlocked_test_runtime();
     runtime

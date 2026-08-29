@@ -6,7 +6,11 @@ impl RenderBridge {
     /// b2Body::SetTransform synchronizes only the fixtures attached to that
     /// body before draining the shared broad-phase move buffer.
     pub(crate) fn sync_native_body_broad_phase(&mut self, name: &str) {
-        self.synchronize_native_body_proxies(name);
+        // SetTransform passes the same current transform as both arguments to
+        // b2Fixture::Synchronize (0x10086B858..0x10086B85C). Its swept AABB
+        // and displacement are therefore current-only and zero-distance;
+        // the solver's previous-sweep expansion belongs only to Solve's tail.
+        self.synchronize_native_body_proxies(name, false);
         self.find_new_broad_phase_contacts();
     }
 
@@ -23,7 +27,7 @@ impl RenderBridge {
         names: impl IntoIterator<Item = &'a str>,
     ) {
         for name in names {
-            self.synchronize_native_body_proxies(name);
+            self.synchronize_native_body_proxies(name, true);
         }
         self.find_new_broad_phase_contacts();
     }
@@ -42,7 +46,7 @@ impl RenderBridge {
         self.sync_native_broad_phase_bodies(names.iter().map(String::as_str));
     }
 
-    fn synchronize_native_body_proxies(&mut self, name: &str) {
+    fn synchronize_native_body_proxies(&mut self, name: &str, use_previous_sweep: bool) {
         let RenderBridge {
             scene,
             body_proxy_states,
@@ -58,10 +62,14 @@ impl RenderBridge {
             return;
         };
         let old_position = state.position;
-        let displacement = (
-            current_position.0 - old_position.0,
-            current_position.1 - old_position.1,
-        );
+        let displacement = if use_previous_sweep {
+            (
+                current_position.0 - old_position.0,
+                current_position.1 - old_position.1,
+            )
+        } else {
+            (0.0, 0.0)
+        };
         for (fixture, proxy_id) in object.fixture_proxy_ids.iter().copied().enumerate() {
             let Some(proxy_id) = proxy_id else {
                 continue;
@@ -70,12 +78,16 @@ impl RenderBridge {
                 continue;
             };
             let old = state.tight_aabbs.get(fixture).copied().unwrap_or(current);
-            let swept = (
-                old.0.min(current.0),
-                old.1.min(current.1),
-                old.2.max(current.2),
-                old.3.max(current.3),
-            );
+            let swept = if use_previous_sweep {
+                (
+                    old.0.min(current.0),
+                    old.1.min(current.1),
+                    old.2.max(current.2),
+                    old.3.max(current.3),
+                )
+            } else {
+                current
+            };
             if dynamic_tree.move_proxy(proxy_id, swept, displacement) {
                 let next = dynamic_tree
                     .proxy_aabb(proxy_id)

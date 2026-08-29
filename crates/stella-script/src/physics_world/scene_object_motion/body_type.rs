@@ -50,8 +50,14 @@ impl SceneObject {
         self.force_x = 0.0;
         self.force_y = 0.0;
         self.torque = 0.0;
+        // b2Body::SetType calls SetAwake(true), whose native implementation
+        // only clears sleepTime when the body was actually asleep. An awake
+        // body can retain a non-zero accumulated sleep timer across a type
+        // transition; do not collapse that timer merely because SetType ran.
+        if self.sleeping {
+            self.wake();
+        }
         self.motion_started = true;
-        self.wake();
         true
     }
 }
