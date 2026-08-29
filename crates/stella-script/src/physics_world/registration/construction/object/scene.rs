@@ -60,6 +60,8 @@ pub(super) fn insert(
         display_interpolation_velocities: [DisplayInterpolationVelocity::ZERO; 2],
         sweep_center_x: request.x as f32,
         sweep_center_y: request.y as f32,
+        native_local_center_x: 0.0,
+        native_local_center_y: 0.0,
         collision_shape,
         native_shape_width,
         native_shape_height,

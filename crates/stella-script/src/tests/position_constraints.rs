@@ -331,6 +331,8 @@ fn position_constraint_reconstructs_transforms_with_cached_local_centers() {
     let center = body.native_world_center();
     let angle = body.angle as f32;
     body.fixture_mass_data.1 = (0.25, -0.125);
+    body.native_local_center_x = 0.25;
+    body.native_local_center_y = -0.125;
     body.set_native_sweep_transform(center, angle);
     let after = constraint
         .world_point(&bridge.scene["a"], &bridge.scene["b"], 0)

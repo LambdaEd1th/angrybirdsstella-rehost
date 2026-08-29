@@ -25,6 +25,16 @@ impl SceneObject {
         } else {
             0.0
         };
+        if self.dynamic_body {
+            let center = self.fixture_mass_data.1;
+            self.native_local_center_x = center.0;
+            self.native_local_center_y = center.1;
+        } else {
+            // 0x10086B210 zeroes localCenter before the type test. Types zero
+            // and one return at 0x10086B238 without traversing fixture mass.
+            self.native_local_center_x = 0.0;
+            self.native_local_center_y = 0.0;
+        }
         // ResetMassData writes the new local centre, transforms it into
         // b2Sweep::c/c0, and only then applies the COM velocity shift.
         self.sync_native_sweep_from_transform();

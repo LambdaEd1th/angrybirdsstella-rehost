@@ -15,7 +15,10 @@ fn native_transform_position_from_sweep(
 
 impl SceneObject {
     pub(crate) fn local_center(&self) -> (f64, f64) {
-        self.native_fixture_mass_data().1
+        (
+            f64::from(self.native_local_center_x),
+            f64::from(self.native_local_center_y),
+        )
     }
 
     pub(crate) fn world_center(&self) -> (f64, f64) {

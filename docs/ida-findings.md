@@ -18805,3 +18805,52 @@ BirdRun audit ignored. Formatting, whitespace validation, strict
 all-target/all-feature Clippy and the release workspace build are clean. The
 same fresh isolated-AppData 120-frame release-wgpu audit remains free of
 invoked fallbacks, compatibility bindings and stderr output.
+
+## ResetMassData non-dynamic centre ownership
+
+The complete 113-instruction `b2Body::ResetMassData` at `sub_10086B1F4`
+exposes a body/fixture ownership split that the earlier aggregate cache had
+hidden. Native code clears `b2Sweep::localCenter` at `0x10086B210` and all four
+body mass/inverse-mass/inertia fields at `0x10086B214` before reading the body
+type. Types zero and one branch through `0x10086B224`: they copy
+`b2Transform::p` into both sweep centres, copy the current sweep angle into its
+previous-angle slot, and return at `0x10086B238`. They never traverse the
+fixture list and never execute the dynamic COM velocity correction at
+`0x10086B37C..0x10086B3A0`. Only type two enters the fixture aggregation path
+at `0x10086B23C`.
+
+This matters for off-centre polygons. Their fixtures still have meaningful
+mass centres, but a static or kinematic `b2Body` has a zero local centre and a
+sweep centre equal to the transform origin. The rehost now stores those two
+concepts independently: the fixture aggregate remains available for the next
+dynamic ResetMassData, while the authoritative body-local centre is zeroed on
+the non-dynamic path and restored from the aggregate only on the dynamic path.
+Consequently fixed-rotation and type transitions no longer reconstruct an
+off-centre kinematic body around a fictitious COM or adjust its velocity.
+
+The neighbouring flag members were audited at the same time. The
+`setFixedRotationForBody` wrapper stores flag bit four and unconditionally
+calls ResetMassData at `0x100041308`, even when the requested flag is already
+present. `b2Fixture::SetSensor` at `sub_10086CD38` returns without waking when
+the sensor byte is unchanged; on a real change it wakes a sleeping owner and
+then stores the byte, with no world-lock check. `setSleeping` at
+`sub_10004DAD4` likewise matches the current implementation: sleeping always
+clears the awake bit, sleep timer, linear/angular velocity, force and torque,
+whereas waking is a no-op when already awake.
+
+A focused off-centre triangle regression pins the kinematic zero body centre,
+origin sweep centre, zero body mass/inertia and unchanged velocity across an
+unconditional fixed-rotation reset, then switches the same body back to
+dynamic and proves that the fixture centre is restored without moving the
+transform origin. Ten decisive sites are commented in both IDA and Hopper,
+and the IDB is saved.
+
+The complete workspace passes 840 tests with only the deliberate long-duration
+BirdRun audit ignored. Formatting, whitespace validation, strict
+all-target/all-feature Clippy and the release workspace build are clean. A
+fresh isolated-AppData 120-frame release-wgpu upload/render/readback reports 20
+optional probes, zero invoked fallbacks and zero remaining compatibility
+bindings, with empty stderr. Its visually checked
+`build/audit-native-reset-mass-nondynamic-20260829.png` output is a 1024x768
+RGBA PNG with SHA-256
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.

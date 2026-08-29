@@ -825,6 +825,56 @@ fn mass_reset_preserves_box2d_origin_and_shifts_center_velocity() {
 }
 
 #[test]
+fn reset_mass_data_separates_non_dynamic_body_center_from_fixture_mass_center() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                clearVertices()
+                addVertex(0, 0)
+                addVertex(2, 0)
+                addVertex(0, 2)
+                createPolygon("triangle", "", 10, 20, 2, 2, 1, 0, 0, true, false, 1)
+                setObjectParameter("triangle", 39, 1)
+                setVelocity("triangle", 3, 4)
+                setAngularVelocity("triangle", 2)
+                setFixedRotation("triangle", true)
+                "#,
+        )
+        .unwrap();
+
+    {
+        let bridge = runtime.render.lock().unwrap();
+        let triangle = &bridge.scene["triangle"];
+        let fixture_center = triangle.native_fixture_mass_data().1;
+        assert_ne!(fixture_center, (0.0, 0.0));
+        assert_eq!(triangle.local_center(), (0.0, 0.0));
+        assert_eq!(triangle.native_world_center(), (10.0, 20.0));
+        assert_eq!(triangle.native_body_mass(), 0.0);
+        assert_eq!(triangle.inverse_inertia(), 0.0);
+        // The non-dynamic ResetMassData branch returns before the COM
+        // velocity correction at 0x10086B37C..0x10086B3A0.
+        assert_eq!((triangle.velocity_x, triangle.velocity_y), (3.0, 4.0));
+        assert_eq!(triangle.angular_velocity, 2.0);
+    }
+
+    runtime
+        .execute_source(r#"setObjectParameter("triangle", 39, 2)"#)
+        .unwrap();
+    let bridge = runtime.render.lock().unwrap();
+    let triangle = &bridge.scene["triangle"];
+    assert_eq!(
+        triangle.local_center(),
+        triangle.native_fixture_mass_data().1
+    );
+    assert_ne!(triangle.local_center(), (0.0, 0.0));
+    assert!(triangle.native_body_mass() > 0.0);
+    // SetType/ResetMassData retain the transform origin while restoring the
+    // dynamic centre of mass.
+    assert_eq!((triangle.x, triangle.y), (10.0, 20.0));
+}
+
+#[test]
 fn native_density_changes_only_head_fixture_before_resetting_compound_mass() {
     let runtime = unlocked_test_runtime();
     runtime

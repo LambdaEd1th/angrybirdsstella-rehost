@@ -98,6 +98,11 @@ pub(crate) struct SceneObject {
     // Purple keeps the b2Sweep centre separately from b2Transform::p.
     pub(crate) sweep_center_x: f32,
     pub(crate) sweep_center_y: f32,
+    /// `b2Sweep::localCenter` is body state, not the fixture aggregate's
+    /// centre. ResetMassData forces this pair to zero for static/kinematic
+    /// bodies without changing the fixtures' own mass data.
+    pub(crate) native_local_center_x: f32,
+    pub(crate) native_local_center_y: f32,
     pub(crate) collision_shape: CollisionShape,
     pub(crate) native_shape_width: f64,
     pub(crate) native_shape_height: f64,

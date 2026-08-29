@@ -11,9 +11,6 @@ impl SceneObject {
     /// Fixture vectors retain creation order, so the intrusive native list is
     /// visited in reverse.
     pub(crate) fn compute_native_fixture_mass_data_f32(&self) -> (f32, (f32, f32), f32) {
-        if !self.dynamic_body {
-            return (0.0, (0.0, 0.0), 0.0);
-        }
         let mut mass = 0.0_f32;
         let mut weighted_center = (0.0_f32, 0.0_f32);
         let mut inertia_about_origin = 0.0_f32;
@@ -94,6 +91,7 @@ impl SceneObject {
         (mass, center, inertia)
     }
 
+    #[cfg(test)]
     pub(crate) fn native_fixture_mass_data(&self) -> (f64, (f64, f64), f64) {
         let (mass, center, inertia) = self.native_fixture_mass_data_f32();
         (
