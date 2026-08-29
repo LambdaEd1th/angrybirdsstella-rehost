@@ -18366,7 +18366,7 @@ bindings, with empty stderr. The visually checked
 PNG with SHA-256
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
 
-## DestroyJoint preserves already-awake sleep time
+## DestroyJoint world-lock split and awake-time preservation
 
 The complete 86-instruction `b2World::DestroyJoint` at `0x10086E27C` was
 checked in IDA and Hopper. It first rejects the operation while the world lock
@@ -18383,6 +18383,17 @@ false does `0x10086E3A4..0x10086E3CC` walk the second body's contact-edge list
 and set the deferred filter flag on contacts leading back to the first body.
 This matches the host's existing topology/refilter boundary.
 
+The GameLua wrapper at `sub_10003E668` has a separate lifetime boundary.
+For a physical record it removes the Lua `objects.joints` entry at
+`0x10003E7AC..0x10003E7DC`, calls `b2World::DestroyJoint` at `0x10003E7F0`,
+then unconditionally erases the 48-byte `jointData` vector record at
+`0x10003E848`. Consequently, a call made from BeginContact while the world is
+locked leaves the Box2D joint and both body edges alive, but the joint is no
+longer visible to GameLua lookup or per-frame endpoint export. A later
+explicit call by name cannot rediscover it. The alternate metadata-only
+vector at `+0x3D8` takes the erase path without ever calling b2World, so its
+type-five records remain removable while the world is locked.
+
 Host joint destruction previously called the raw `wake()` helper on both
 endpoints and therefore cleared an already-awake body's partial sleep timer.
 It now wakes only endpoints that are actually sleeping. The established
@@ -18394,12 +18405,30 @@ collision again. The lock gate, both awake sites and the
 `collideConnected=false` refilter gate are commented in IDA and Hopper and the
 IDB is saved.
 
-The complete workspace passes 829 tests with only the deliberate long-
+The host now also separates GameLua record ownership from native Box2D
+ownership. A locked explicit physical destroy moves the name into an orphan
+set while retaining the live constraint in the solver and body-edge indices.
+Attached-joint callbacks, motor members, limit helpers, collision-break scans
+and endpoint export all follow the logical vector and therefore exclude that
+orphan. Native DestroyBody traversal still follows the body-edge index and
+eventually releases it, also clearing any pending or orphan ownership marker.
+An unlocked metadata-only destroy bypasses the Box2D lock exactly as the
+alternate native vector does.
+
+A focused regression locks the world, removes both a physical revolute joint
+and a metadata destruction link, and proves that only the physical native
+constraint survives; it is logically invisible, a repeated explicit lookup
+is a no-op, and later body destruction owns the final cleanup. The two shipped
+Chapter02_L02 intake regressions additionally cover the real BeginContact
+sequence that removes pig accessory joints: both complete without stale Lua
+callback or endpoint-export errors.
+
+The complete workspace passes 830 tests with only the deliberate long-
 duration BirdRun audit ignored. Formatting, whitespace validation, strict
 all-target/all-feature Clippy and the release workspace build are clean. A
 fresh isolated-AppData 120-frame release-wgpu upload/render/readback reports
 20 optional probes, zero invoked fallbacks and zero remaining compatibility
 bindings, with empty stderr. The visually checked
-`build/audit-native-destroy-joint-wake-20260829.png` is a 1024x768 RGBA PNG
+`build/audit-native-destroy-joint-lock-20260829.png` is a 1024x768 RGBA PNG
 with SHA-256
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.

@@ -7,11 +7,15 @@ impl RenderBridge {
             .any(|pending| pending == name)
     }
 
+    pub(crate) fn joint_game_lua_record_removed(&self, name: &str) -> bool {
+        self.joint_pending_native_destruction(name) || self.orphaned_native_joints.contains(name)
+    }
+
     pub(crate) fn attached_joint_names(&self, object: &str) -> Vec<String> {
         self.joints
             .values()
             .filter(|joint| {
-                !self.joint_pending_native_destruction(&joint.name)
+                !self.joint_game_lua_record_removed(&joint.name)
                     && (joint.first == object || joint.second == object)
             })
             .map(|joint| joint.name.clone())
@@ -55,15 +59,22 @@ impl RenderBridge {
     /// surviving contacts between a formerly non-colliding pair. Metadata
     /// destruction links never enter the Box2D path.
     pub(crate) fn destroy_native_joint(&mut self, name: &str) -> Option<PhysicsJoint> {
+        // Metadata-only type-five records never enter b2World and therefore
+        // remain destructible while the physics world is locked.
+        if self.physics_world_locked && self.joints.get(name).is_some_and(|joint| joint.is_physical)
+        {
+            return None;
+        }
         // `sub_100062474` is the b2DestructionListener cleanup path. If an
         // explicitly destroyed body/joint reaches Box2D before GameLua's
         // frame-tail drain, erase the stale queued jointData copy as well.
-        self.pending_native_joint_destructions
-            .retain(|pending| pending != name);
         self.destroy_native_joint_now(name)
     }
 
     fn destroy_native_joint_now(&mut self, name: &str) -> Option<PhysicsJoint> {
+        self.pending_native_joint_destructions
+            .retain(|pending| pending != name);
+        self.orphaned_native_joints.remove(name);
         let joint = self.joints.remove(name)?;
         self.remove_native_joint_order(joint.physics_creation_order);
         if joint.is_physical {
@@ -81,6 +92,22 @@ impl RenderBridge {
             }
         }
         Some(joint)
+    }
+
+    /// Mirror GameLua's explicit `sub_10003E668` wrapper. Its jointData erase
+    /// is unconditional after the b2World call, so a locked physical world
+    /// leaves a native orphan that is no longer visible to GameLua lookups or
+    /// endpoint export. Metadata-only records are erased immediately.
+    pub(crate) fn destroy_game_lua_joint(&mut self, name: &str) -> Option<PhysicsJoint> {
+        if self.joint_game_lua_record_removed(name) {
+            return None;
+        }
+        if self.physics_world_locked && self.joints.get(name).is_some_and(|joint| joint.is_physical)
+        {
+            self.orphaned_native_joints.insert(name.to_owned());
+            return None;
+        }
+        self.destroy_native_joint(name)
     }
 
     /// Drain GameLua's pending `jointData` vector in reverse insertion order.
@@ -140,7 +167,7 @@ impl RenderBridge {
     }
 
     pub(crate) fn handle_joint_limit_boundary(&mut self, name: &str, stop: bool) -> Option<f64> {
-        if self.joint_pending_native_destruction(name) {
+        if self.joint_game_lua_record_removed(name) {
             return None;
         }
         let joint = self.joints.get(name)?.clone();
@@ -181,7 +208,7 @@ impl RenderBridge {
             .joints
             .values()
             .filter(|joint| {
-                !self.joint_pending_native_destruction(&joint.name)
+                !self.joint_game_lua_record_removed(&joint.name)
                     && joint.breakable
                     && collision_force > joint.break_force
                     && (joint.first == object || joint.second == object)

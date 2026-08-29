@@ -18,9 +18,7 @@ impl RenderBridge {
         let mut joints = self
             .joints
             .values()
-            .filter(|joint| {
-                joint.is_physical && !self.joint_pending_native_destruction(&joint.name)
-            })
+            .filter(|joint| joint.is_physical && !self.joint_game_lua_record_removed(&joint.name))
             .collect::<Vec<_>>();
         joints.sort_by_key(|joint| joint.physics_creation_order);
 

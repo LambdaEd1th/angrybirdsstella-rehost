@@ -104,9 +104,7 @@ pub(super) fn install_destruction(
             // A collision-broken record has already left GameLua+0x3C0 and
             // therefore cannot be found by this explicit name lookup. Its
             // queued native joint remains owned by the frame-tail drain.
-            if !bridge.joint_pending_native_destruction(&name) {
-                bridge.destroy_native_joint(&name);
-            }
+            bridge.destroy_game_lua_joint(&name);
             Ok(())
         })?,
     )?;

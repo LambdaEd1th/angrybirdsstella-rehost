@@ -13,9 +13,9 @@ pub(crate) fn install(
             let name = native_required_string(&args, 0, "setRevoluteJointSpeed")?;
             let speed = native_required_number(&args, 1, "setRevoluteJointSpeed")? as f32;
             let mut bridge = render.lock().expect("render bridge lock poisoned");
-            let pending_destruction = bridge.joint_pending_native_destruction(&name);
+            let logical_record_removed = bridge.joint_game_lua_record_removed(&name);
             let endpoints =
-                if !pending_destruction && let Some(joint) = bridge.joints.get_mut(&name) {
+                if !logical_record_removed && let Some(joint) = bridge.joints.get_mut(&name) {
                     // sub_1008696B4 stores float32 and wakes both endpoints even
                     // when the motor speed already has the requested value.
                     joint.motor_speed = Some(f64::from(speed));

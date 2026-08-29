@@ -184,6 +184,11 @@ pub(crate) struct RenderBridge {
     /// and particle integration. Names are appended in predicate order and
     /// destroyed from the back, matching the native reverse walk.
     pub(crate) pending_native_joint_destructions: Vec<String>,
+    /// Physical joints whose GameLua `jointData` record was explicitly
+    /// erased while `b2World::DestroyJoint` rejected the native teardown due
+    /// to `e_locked`. The Box2D joint and both body edges remain live until a
+    /// later native owner (normally DestroyBody) releases them.
+    pub(crate) orphaned_native_joints: BTreeSet<String>,
     /// RenderObjectData `+0x146/+0xD8`: type-five destruction links mark a
     /// target and count down before queuing it in Lua `deadBlocks`. They do
     /// not remove the native object directly.
@@ -411,6 +416,7 @@ impl Default for RenderBridge {
             joints: BTreeMap::new(),
             native_joint_world_order: BTreeMap::new(),
             pending_native_joint_destructions: Vec::new(),
+            orphaned_native_joints: BTreeSet::new(),
             pending_object_destructions: BTreeMap::new(),
             tracks: BTreeMap::new(),
             particle_system: NativeParticles::default(),

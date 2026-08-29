@@ -28,6 +28,9 @@ pub(super) fn install(
             };
 
             let mut bridge = render.lock().expect("render bridge lock poisoned");
+            if bridge.joint_game_lua_record_removed(&name) {
+                return Ok(());
+            }
             let Some(mut joint) = bridge.joints.get(&name).cloned() else {
                 return Ok(());
             };

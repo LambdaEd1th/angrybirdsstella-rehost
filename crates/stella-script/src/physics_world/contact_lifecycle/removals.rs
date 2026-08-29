@@ -27,6 +27,7 @@ impl RenderBridge {
         self.joints.clear();
         self.native_joint_world_order.clear();
         self.pending_native_joint_destructions.clear();
+        self.orphaned_native_joints.clear();
         self.tracks.clear();
         self.object_world_identity = None;
     }

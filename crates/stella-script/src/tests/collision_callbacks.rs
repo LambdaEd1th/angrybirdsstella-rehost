@@ -427,6 +427,84 @@ fn contact_listener_body_type_mutation_obeys_native_world_lock() {
 }
 
 #[test]
+fn joint_destruction_obeys_native_world_lock() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createBox("anchor", "", -2, 0, 1, 1, 0, 0, 0, true, false, 1)
+                createCircle("body", "", 0, 0, 0.5, 1, 0, 0, true, false, 1)
+                objects.joints = {}
+                createJoint({
+                    name = "locked_joint", end1 = "anchor", end2 = "body",
+                    type = 3, x1 = -2, y1 = 0, x2 = 0, y2 = 0,
+                    collideConnected = true
+                })
+                createJoint({
+                    name = "metadata_joint", end1 = "anchor", end2 = "body",
+                    type = 5, x1 = 0, y1 = 0, x2 = 0, y2 = 0,
+                    destroyTimer = 0
+                })
+            "#,
+        )
+        .unwrap();
+
+    runtime.render.lock().unwrap().physics_world_locked = true;
+    runtime
+        .execute_source(
+            r#"
+                destroyJoint("locked_joint")
+                destroyJoint("metadata_joint")
+            "#,
+        )
+        .unwrap();
+    let mut bridge = runtime.render.lock().unwrap();
+    // The generated destroyJoint adapter removes GameLua's descriptor before
+    // calling b2World::DestroyJoint. The latter sees e_locked and leaves the
+    // native joint and both body edges untouched.
+    assert!(bridge.joints.contains_key("locked_joint"));
+    assert!(bridge.orphaned_native_joints.contains("locked_joint"));
+    assert!(bridge.attached_joint_names("body").is_empty());
+    assert!(bridge.native_joint_endpoint_exports().is_empty());
+    // The alternate metadata vector does not call b2World and therefore
+    // remains removable even when that world is locked.
+    assert!(!bridge.joints.contains_key("metadata_joint"));
+    assert!(bridge.physics_world_locked);
+    bridge.physics_world_locked = false;
+    drop(bridge);
+    // The first call erased GameLua's jointData record. A later explicit
+    // name lookup cannot rediscover or destroy the orphaned b2Joint.
+    runtime
+        .execute_source(
+            r#"
+                destroyJoint("locked_joint")
+                setJointParameters({
+                    name = "locked_joint", motor = true, motorSpeed = 12
+                })
+            "#,
+        )
+        .unwrap();
+    let bridge = runtime.render.lock().unwrap();
+    assert!(bridge.joints.contains_key("locked_joint"));
+    assert!(!bridge.joints["locked_joint"].motor_enabled);
+    assert_eq!(bridge.joints["locked_joint"].motor_speed, None);
+    drop(bridge);
+    let joints = native_lua_object(runtime.lua(), NativeLuaObject::Objects)
+        .unwrap()
+        .unwrap()
+        .get::<mlua::Table>("joints")
+        .unwrap();
+    assert!(matches!(
+        joints.raw_get::<Value>("locked_joint").unwrap(),
+        Value::Nil
+    ));
+    runtime.execute_source(r#"removeObject("anchor")"#).unwrap();
+    let bridge = runtime.render.lock().unwrap();
+    assert!(!bridge.joints.contains_key("locked_joint"));
+    assert!(bridge.orphaned_native_joints.is_empty());
+}
+
+#[test]
 fn contact_listener_mutation_reaches_later_contact_update_in_same_collide_walk() {
     let runtime = unlocked_test_runtime();
     runtime
