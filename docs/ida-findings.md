@@ -17975,3 +17975,50 @@ bindings, with empty stderr.
 `build/audit-native-circle-world-20260829.png` is a 1024x768 RGBA PNG with
 SHA-256
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## Native contact-update impulse publication
+
+All 152 instructions of `b2Contact::Update` at `0x10086373C` were checked in
+IDA and Hopper. The first four vector loads at `0x100863760..0x10086377C`
+snapshot the complete old 64-byte manifold. A solid contact then evaluates its
+new local manifold, and `0x100863820..0x100863874` processes every new point in
+array order: it first clears the point's normal and tangent impulses, linearly
+scans the saved old points by exact 32-bit `b2ContactID`, and copies the first
+matching impulse pair. Thus the updated manifold owns the feature-aligned
+cache before any listener callback or island construction occurs.
+
+The former host kept the last solved impulse record unchanged through contact
+refresh and performed feature alignment only while constructing the later
+velocity constraint. This usually gave the same solve, but it retained a
+stale feature across intervening updates that did not enter an island. If the
+contact changed away from a feature and returned before the next solve, the
+old impulse could incorrectly reappear. Contact refresh now replaces its
+cache immediately with the ID-aligned new record; solver construction retains
+its existing second alignment only to reflect a possible two-point condition-
+number reduction.
+
+The sensor branch has a related lifetime rule. At `0x1008637C8` Purple sets
+the manifold point count to zero. A later sensor-to-solid transition while the
+fixtures remain overlapping therefore has an old count of zero and cannot
+inherit any former solid impulse. The Rust sensor refresh now removes that
+logical cache together with the solid manifold. Focused regressions cover
+both immediate feature mismatch clearing before solver initialization and
+solid-to-sensor cache retirement.
+
+The callback tail was also resolved rather than inferred. BeginContact runs
+at `0x100863914`, EndContact at `0x100863940`, and touching non-sensors invoke
+PreSolve last at `0x100863968` with the saved old manifold. Purple's concrete
+PreSolve and PostSolve vtable entries are `nullsub_20` at `0x100062510` and
+`nullsub_18` at `0x100062508`; both are a single `RET`, so the rehost does not
+need an additional observable Lua callback. The update, matching, sensor and
+listener sites are commented in both disassemblers and the IDB is saved.
+
+The complete workspace passes 820 tests with only the deliberate long-
+duration BirdRun audit ignored. Formatting, whitespace validation, strict
+all-target/all-feature Clippy and the release workspace build are clean. A
+fresh isolated-AppData 120-frame release-wgpu upload/render/readback reports
+20 optional probes, zero invoked fallbacks and zero remaining compatibility
+bindings, with empty stderr. The visually checked
+`build/audit-native-contact-update-20260829.png` is a 1024x768 RGBA PNG with
+SHA-256
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.

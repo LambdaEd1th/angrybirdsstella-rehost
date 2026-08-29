@@ -161,6 +161,72 @@ fn contact_impulses_publish_only_after_native_store_impulses_member() {
 }
 
 #[test]
+fn contact_update_aligns_cached_impulses_before_solver_initialization() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .execute_source(
+            r#"
+                createCircle("mover", "", 0, 0, 1, 1, 0, 0, true, false, 1)
+                createCircle("wall", "", 1.5, 0, 1, 0, 0, 0, true, false, 1)
+                setWorldGravity(0, 0)
+                setVelocity("mover", 0.1, 0)
+                "#,
+        )
+        .unwrap();
+
+    let mut bridge = runtime.render.lock().unwrap();
+    bridge.refresh_contacts();
+    let pair = ("mover".to_owned(), "wall".to_owned(), 0, 0);
+    let feature_id = bridge.contact_manifolds[&pair].feature_id;
+    bridge.contact_impulses.insert(
+        pair.clone(),
+        CachedContactImpulse {
+            normal: 4.0,
+            tangent: -0.5,
+            primary_feature_id: feature_id.wrapping_add(1),
+            point_count: 1,
+            ..CachedContactImpulse::default()
+        },
+    );
+
+    bridge.scene.get_mut("mover").unwrap().wake();
+    bridge.refresh_contacts();
+
+    let aligned = bridge.contact_impulses[&pair];
+    assert_eq!(aligned.primary_feature_id, feature_id);
+    assert_eq!(aligned.point(0), (0.0, 0.0));
+    assert!(bridge.solver_contact_impulses.is_empty());
+}
+
+#[test]
+fn sensor_contact_update_discards_former_solid_impulses() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .execute_source(
+            r#"
+                createCircle("mover", "", 0, 0, 1, 1, 0, 0, true, false, 1)
+                createCircle("wall", "", 1.5, 0, 1, 0, 0, 0, true, false, 1)
+                setWorldGravity(0, 0)
+                setVelocity("mover", 1, 0)
+                "#,
+        )
+        .unwrap();
+
+    let mut bridge = runtime.render.lock().unwrap();
+    bridge.solve_contacts();
+    let pair = ("mover".to_owned(), "wall".to_owned(), 0, 0);
+    assert!(bridge.contact_impulses[&pair].normal > 0.0);
+
+    bridge.scene.get_mut("wall").unwrap().sensor = true;
+    bridge.scene.get_mut("mover").unwrap().wake();
+    bridge.refresh_contacts();
+
+    assert_eq!(bridge.active_contacts.get(&pair), Some(&true));
+    assert!(!bridge.contact_manifolds.contains_key(&pair));
+    assert!(!bridge.contact_impulses.contains_key(&pair));
+}
+
+#[test]
 fn sleeping_box2d_contact_freezes_until_body_wakes_after_separation() {
     let runtime = StellaLua::new("/tmp").unwrap();
     runtime

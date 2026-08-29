@@ -154,7 +154,27 @@ impl RenderBridge {
                 self.active_contacts.insert(contact_key.clone(), sensor);
                 if sensor {
                     self.contact_manifolds.remove(contact_key);
+                    // The sensor branch at 0x1008637C8 sets the native
+                    // manifold point count to zero. If this fixture later
+                    // becomes solid while it is still overlapping, the old
+                    // count is therefore zero and none of its former impulses
+                    // can match the new points.
+                    self.contact_impulses.remove(contact_key);
                 } else {
+                    // b2Contact::Update zeroes each newly evaluated point,
+                    // then scans the saved old manifold by b2ContactID and
+                    // copies matching impulses (0x100863820..0x100863874).
+                    // Publish that new manifold cache now, before BeginContact
+                    // and Purple's no-op PreSolve callback, rather than
+                    // deferring feature alignment until solver construction.
+                    let aligned_impulses = self
+                        .contact_impulses
+                        .get(contact_key)
+                        .copied()
+                        .unwrap_or_default()
+                        .aligned_to(&manifold.points());
+                    self.contact_impulses
+                        .insert(contact_key.clone(), aligned_impulses);
                     self.contact_manifolds.insert(contact_key.clone(), manifold);
                 }
                 if began {
