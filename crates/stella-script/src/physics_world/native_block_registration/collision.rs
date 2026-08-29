@@ -38,7 +38,7 @@ pub(super) fn install(
             let mut bridge = render.lock().expect("render bridge lock poisoned");
             // The native member resolves the live RenderObject before writing
             // into sub_10005E860's delayed-velocity map.
-            if bridge.scene.contains_key(&collider) {
+            if bridge.game_lua_object_exists(&collider) {
                 bridge
                     .collision_velocities
                     .insert(collider, (after_velocity_x, after_velocity_y));

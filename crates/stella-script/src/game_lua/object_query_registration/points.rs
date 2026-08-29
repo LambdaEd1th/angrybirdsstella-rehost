@@ -57,7 +57,7 @@ pub(super) fn install(
 
 fn body_transform(render: &Arc<Mutex<RenderBridge>>, name: &str) -> Option<(f32, f32, f32)> {
     let bridge = render.lock().expect("render bridge lock poisoned");
-    bridge.scene.get(name).and_then(|object| {
+    bridge.game_lua_object(name).and_then(|object| {
         object
             .has_physics_body()
             .then_some((object.x as f32, object.y as f32, object.angle as f32))

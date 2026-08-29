@@ -20,8 +20,7 @@ pub(crate) fn install(
             {
                 let mut bridge = position_bridge.lock().expect("render bridge lock poisoned");
                 let object = bridge
-                    .scene
-                    .get_mut(&name)
+                    .game_lua_object_mut(&name)
                     .ok_or_else(|| runtime_error(format!("Missing object: {name}")))?;
                 object.x = x;
                 object.y = y;
@@ -63,8 +62,7 @@ pub(crate) fn install(
                 {
                     let mut bridge = angle_bridge.lock().expect("render bridge lock poisoned");
                     let object = bridge
-                        .scene
-                        .get_mut(&name)
+                        .game_lua_object_mut(&name)
                         .ok_or_else(|| runtime_error(format!("Missing object: {name}")))?;
                     object.angle = angle;
                     object.sync_native_sweep_from_transform();

@@ -19,8 +19,7 @@ pub(super) fn install(
             let exits = {
                 let mut bridge = active_bridge.lock().expect("render bridge lock poisoned");
                 let Some(was_active) = bridge
-                    .scene
-                    .get(&name)
+                    .game_lua_object(&name)
                     .filter(|object| object.has_physics_body())
                     .map(|object| object.active)
                 else {
@@ -55,8 +54,7 @@ pub(super) fn install(
                     .lock()
                     .expect("render bridge lock poisoned");
                 let object = bridge
-                    .scene
-                    .get(&name)
+                    .game_lua_object(&name)
                     .ok_or_else(|| runtime_error(format!("Missing object: {name}")))?;
                 if !object.has_physics_body() {
                     return Ok(());
@@ -76,7 +74,7 @@ pub(super) fn install(
                 .lock()
                 .expect("render bridge lock poisoned");
             bridge.set_object_active_state(&name, true);
-            if let Some(object) = bridge.scene.get_mut(&name) {
+            if let Some(object) = bridge.game_lua_object_mut(&name) {
                 object.collision_enabled = enabled;
             } else {
                 return Ok(());

@@ -18484,3 +18484,42 @@ bindings, with empty stderr. The visually checked
 `build/audit-native-destroy-body-lock-20260829.png` is a 1024x768 RGBA PNG
 with SHA-256
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## Logical RenderObject lookup after locked DestroyBody
+
+The complete throwing `getRenderObject` member at `sub_10005DAF8` was checked
+in IDA and Hopper to establish what later public APIs can observe. It derives
+the red-black tree header from `GameLua+0x2E8`, loads the root from `+0x2F0`,
+and compares the requested COW string against node keys. A successful search
+returns only the `RenderObjectData*` stored at node `+0x28` at
+`0x10005DBE8`. A missing node enters the `"Missing object: %s"` exception path
+at `0x10005DC0C`. The function never searches b2World's body list and never
+uses b2Body user data as a fallback.
+
+This makes the outer erase at `0x100042E78` authoritative for every later
+throwing object member even when locked DestroyBody left a body alive.
+Nullable/manual members follow their existing missing-name defaults for the
+same reason. The host now exposes `game_lua_object` lookup helpers distinct
+from its native `scene` body store. Position, pose, scale, material, visual,
+fixture, body-state, object-parameter, track, dirt and object-query bindings
+use the logical helper. Box2D island/contact/joint/proxy solving and native
+world queries continue to use the backing store so the orphan remains a real
+physics participant.
+
+The locked-contact regression now also calls throwing `setPosition`,
+`isVisible` and `setObjectParameter`, nullable `setVelocity` and
+`native_setTimeSinceCollision`, plus velocity, sleeping and fixture-vertex
+queries after removeObject returned. It proves the exception/empty-result
+contract and confirms none of those APIs changes the retained body's native
+pose, velocity or collision timer. The logical tree root, success return and
+missing-object branch are commented in IDA and Hopper and the IDB is saved.
+
+The complete workspace remains at 831 passing tests with only the deliberate
+long-duration BirdRun audit ignored. Formatting, whitespace validation,
+strict all-target/all-feature Clippy and the release workspace build are
+clean. A fresh isolated-AppData 120-frame release-wgpu upload/render/readback
+reports 20 optional probes, zero invoked fallbacks and zero remaining
+compatibility bindings, with empty stderr. The visually checked
+`build/audit-native-logical-object-lookup-20260829.png` is a 1024x768 RGBA PNG
+with SHA-256
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.

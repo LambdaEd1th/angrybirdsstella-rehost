@@ -15,7 +15,7 @@ pub(super) fn install(
             let bridge = angular_velocity_bridge
                 .lock()
                 .expect("render bridge lock poisoned");
-            Ok(bridge.scene.get(&name).map_or(0.0, |object| {
+            Ok(bridge.game_lua_object(&name).map_or(0.0, |object| {
                 if object.has_physics_body() {
                     f64::from(object.angular_velocity as f32)
                 } else {
@@ -31,7 +31,7 @@ pub(super) fn install(
         lua.create_function(move |_, args: MultiValue| {
             let name = native_required_string(&args, 0, "getVelocity")?;
             let bridge = velocity_bridge.lock().expect("render bridge lock poisoned");
-            Ok(bridge.scene.get(&name).map_or(0.0, |object| {
+            Ok(bridge.game_lua_object(&name).map_or(0.0, |object| {
                 if !object.has_physics_body() {
                     return 0.0;
                 }
@@ -55,7 +55,7 @@ pub(super) fn install(
             let bridge = linear_velocity_bridge
                 .lock()
                 .expect("render bridge lock poisoned");
-            Ok(bridge.scene.get(&name).map_or((0.0, 0.0), |object| {
+            Ok(bridge.game_lua_object(&name).map_or((0.0, 0.0), |object| {
                 if object.has_physics_body() {
                     (
                         f64::from(object.velocity_x as f32),
@@ -76,8 +76,7 @@ pub(super) fn install(
             let bridge = sleeping_bridge.lock().expect("render bridge lock poisoned");
             // sub_10004DB60 returns true for null body; otherwise !awake.
             Ok(bridge
-                .scene
-                .get(&name)
+                .game_lua_object(&name)
                 .is_none_or(|object| !object.has_physics_body() || object.sleeping))
         })?,
     )?;

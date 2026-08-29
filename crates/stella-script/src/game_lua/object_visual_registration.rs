@@ -44,8 +44,7 @@ pub(crate) fn install(
             }
             let mut bridge = sprite_bridge.lock().expect("render bridge lock poisoned");
             let (z_bucket, old_sheet_id) = bridge
-                .scene
-                .get(name.as_ref())
+                .game_lua_object(name.as_ref())
                 .map(|object| {
                     (
                         native_fcvtzs_f32(object.z_order as f32),
@@ -65,8 +64,7 @@ pub(crate) fn install(
                 Arc::clone(&name),
             );
             let object = bridge
-                .scene
-                .get_mut(name.as_ref())
+                .game_lua_object_mut(name.as_ref())
                 .ok_or_else(|| runtime_error(format!("Missing object: {name}")))?;
             object.sprite = sprite;
             object.sprite_bound = true;
@@ -86,8 +84,7 @@ pub(crate) fn install(
             let alpha = f64::from(native_required_number(&args, 1, "setObjectAlpha")? as f32);
             let mut bridge = alpha_bridge.lock().expect("render bridge lock poisoned");
             let object = bridge
-                .scene
-                .get_mut(&name)
+                .game_lua_object_mut(&name)
                 .ok_or_else(|| runtime_error(format!("Missing object: {name}")))?;
             object.alpha = alpha;
             Ok(())
@@ -110,8 +107,7 @@ pub(crate) fn install(
             {
                 let mut bridge = z_order_bridge.lock().expect("render bridge lock poisoned");
                 let (old_z_bucket, sheet) = bridge
-                    .scene
-                    .get(name.as_ref())
+                    .game_lua_object(name.as_ref())
                     .map(|object| {
                         (
                             native_fcvtzs_f32(object.z_order as f32),
@@ -127,8 +123,7 @@ pub(crate) fn install(
                     Arc::clone(&name),
                 );
                 let object = bridge
-                    .scene
-                    .get_mut(name.as_ref())
+                    .game_lua_object_mut(name.as_ref())
                     .ok_or_else(|| runtime_error(format!("Missing object: {name}")))?;
                 object.z_order = z_order;
             }
@@ -152,8 +147,7 @@ pub(crate) fn install(
                 .lock()
                 .expect("render bridge lock poisoned");
             let object = bridge
-                .scene
-                .get_mut(&name)
+                .game_lua_object_mut(&name)
                 .ok_or_else(|| runtime_error(format!("Missing object: {name}")))?;
             object.visible = visible;
             Ok(())
@@ -170,8 +164,7 @@ pub(crate) fn install(
             visible_query_bridge
                 .lock()
                 .expect("render bridge lock poisoned")
-                .scene
-                .get(&name)
+                .game_lua_object(&name)
                 .map(|object| object.visible)
                 .ok_or_else(|| runtime_error(format!("Missing object: {name}")))
         })?,

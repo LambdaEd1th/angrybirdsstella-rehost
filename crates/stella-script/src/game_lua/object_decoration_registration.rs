@@ -61,7 +61,7 @@ pub(super) fn install_decoration(
             let scale = table_required_number(&objects, "scale", "setDecorationObjects")? as f32;
 
             let mut bridge = render.lock().expect("render bridge lock poisoned");
-            let Some(object) = bridge.scene.get_mut(&name) else {
+            let Some(object) = bridge.game_lua_object_mut(&name) else {
                 return Err(runtime_error(format!("Missing object: {name}")));
             };
             object.decoration = Some(Arc::new(ObjectDecoration {
@@ -98,7 +98,7 @@ pub(super) fn install_pivot(
             entry.set("pivotOffsetY", f64::from(offset_y))?;
 
             let mut bridge = render.lock().expect("render bridge lock poisoned");
-            let Some(object) = bridge.scene.get_mut(&name) else {
+            let Some(object) = bridge.game_lua_object_mut(&name) else {
                 return Err(runtime_error(format!("Missing object: {name}")));
             };
             object.pivot_offset_x = f64::from(offset_x);

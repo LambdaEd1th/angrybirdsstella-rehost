@@ -19,8 +19,7 @@ pub(super) fn install(
                 }
                 let mut bridge = boolean_bridge.lock().expect("render bridge lock poisoned");
                 if let Some(object) = bridge
-                    .scene
-                    .get_mut(&name)
+                    .game_lua_object_mut(&name)
                     .filter(|object| object.has_physics_body())
                 {
                     match function_name {

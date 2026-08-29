@@ -15,8 +15,7 @@ pub(super) fn install(
             let name = native_required_string(&args, 0, "getScale")?;
             let bridge = scale_bridge.lock().expect("render bridge lock poisoned");
             let object = bridge
-                .scene
-                .get(&name)
+                .game_lua_object(&name)
                 .ok_or_else(|| runtime_error(format!("Missing object: {name}")))?;
             Ok((
                 f64::from(object.scale_x as f32),
@@ -35,8 +34,7 @@ pub(super) fn install(
             flip_bridge
                 .lock()
                 .expect("render bridge lock poisoned")
-                .scene
-                .get(&name)
+                .game_lua_object(&name)
                 .map(|object| object.horizontal_flip)
                 .ok_or_else(|| runtime_error(format!("Missing object: {name}")))
         })?,
@@ -52,8 +50,7 @@ pub(super) fn install(
                 angle_bridge
                     .lock()
                     .expect("render bridge lock poisoned")
-                    .scene
-                    .get(&name)
+                    .game_lua_object(&name)
                     .map(|object| f64::from(object.angle as f32))
                     .ok_or_else(|| runtime_error(format!("Missing object: {name}")))
             })?,

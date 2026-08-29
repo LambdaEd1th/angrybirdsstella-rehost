@@ -16,8 +16,7 @@ pub(super) fn install_collision_time(
             if let Some(object) = render
                 .lock()
                 .expect("render bridge lock poisoned")
-                .scene
-                .get_mut(&name)
+                .game_lua_object_mut(&name)
             {
                 // sub_10005959C writes only RenderObjectData+0x128. The Lua
                 // world record remains untouched until normal game logic or
@@ -50,8 +49,7 @@ pub(super) fn install_revert_gravity(
             if let Some(object) = render
                 .lock()
                 .expect("render bridge lock poisoned")
-                .scene
-                .get_mut(&name)
+                .game_lua_object_mut(&name)
             {
                 // sub_10005962C owns +0x12F independently of the plain
                 // setRevertGravity byte at +0x12E and creates no Lua fields.
@@ -84,8 +82,7 @@ pub(super) fn install_sensor_range(
                 );
             let mut bridge = render.lock().expect("render bridge lock poisoned");
             let object = bridge
-                .scene
-                .get_mut(&name)
+                .game_lua_object_mut(&name)
                 .ok_or_else(|| runtime_error(format!("Missing object: {name}")))?;
             // sub_100031388 writes the generated adapter's float32 values at
             // RenderObjectData+0x10C/+0x110.
@@ -119,8 +116,7 @@ pub(super) fn install_sprite_rotation(
             if let Some(object) = render
                 .lock()
                 .expect("render bridge lock poisoned")
-                .scene
-                .get_mut(&name)
+                .game_lua_object_mut(&name)
             {
                 object.sprite_rotation = normalized;
             }
@@ -146,8 +142,7 @@ pub(super) fn install_velocity_multiplier(
             if let Some(object) = render
                 .lock()
                 .expect("render bridge lock poisoned")
-                .scene
-                .get_mut(&name)
+                .game_lua_object_mut(&name)
                 && (object.dynamic_body || object.kinematic_body)
             {
                 let multiplier = multiplier as f32;

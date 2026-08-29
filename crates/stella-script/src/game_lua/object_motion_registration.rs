@@ -19,8 +19,7 @@ pub(crate) fn install(
             if let Some(object) = velocity_bridge
                 .lock()
                 .expect("render bridge lock poisoned")
-                .scene
-                .get_mut(&name)
+                .game_lua_object_mut(&name)
             {
                 // sub_100040FA4 ignores static bodies and changes only the
                 // native b2Body float fields. Lua velocity/sleeping values
@@ -58,8 +57,7 @@ pub(crate) fn install(
             if let Some(object) = angular_velocity_bridge
                 .lock()
                 .expect("render bridge lock poisoned")
-                .scene
-                .get_mut(&name)
+                .game_lua_object_mut(&name)
                 && (object.dynamic_body || object.kinematic_body)
             {
                 object.angular_velocity = angular_velocity;
@@ -88,7 +86,7 @@ pub(crate) fn install(
                     );
                 }
                 let mut bridge = force_bridge.lock().expect("render bridge lock poisoned");
-                if let Some(object) = bridge.scene.get_mut(&name) {
+                if let Some(object) = bridge.game_lua_object_mut(&name) {
                     if !object.dynamic_body {
                         return Ok(());
                     }

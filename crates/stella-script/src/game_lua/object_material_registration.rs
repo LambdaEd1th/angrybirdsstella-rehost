@@ -26,8 +26,7 @@ pub(crate) fn install(
             };
             let mut bridge = material_bridge.lock().expect("render bridge lock poisoned");
             let object = bridge
-                .scene
-                .get_mut(&name)
+                .game_lua_object_mut(&name)
                 .ok_or_else(|| runtime_error(format!("Missing object: {name}")))?;
             // This enum at RenderObjectData+0x18 is distinct from the Lua
             // string read by the game-side collision-material filter.
@@ -49,8 +48,7 @@ pub(crate) fn install(
                 .map_or(MaskedTextureBinding::Missing, MaskedTextureBinding::Source);
             let mut bridge = texture_bridge.lock().expect("render bridge lock poisoned");
             let object = bridge
-                .scene
-                .get_mut(&name)
+                .game_lua_object_mut(&name)
                 .ok_or_else(|| runtime_error(format!("Missing object: {name}")))?;
             // sub_10004CC74 writes the resource name at +0x70, resolves the
             // texture pointer into +0x80, and performs no Lua reflection.
@@ -73,8 +71,7 @@ pub(crate) fn install(
                 .lock()
                 .expect("render bridge lock poisoned");
             let object = bridge
-                .scene
-                .get_mut(&name)
+                .game_lua_object_mut(&name)
                 .ok_or_else(|| runtime_error(format!("Missing object: {name}")))?;
             // sub_10004CE38 stores the generated adapter's float32 scalar at
             // RenderObjectData+0xC4 and performs no Lua-world reflection.
@@ -100,8 +97,7 @@ pub(crate) fn install(
                 .lock()
                 .expect("render bridge lock poisoned");
             let object = bridge
-                .scene
-                .get_mut(&name)
+                .game_lua_object_mut(&name)
                 .ok_or_else(|| runtime_error(format!("Missing object: {name}")))?;
             // sub_100059554 writes only RenderObjectData+0x150.
             object.water_density = density;
@@ -117,8 +113,7 @@ pub(crate) fn install(
             let is_water = native_required_boolean(&args, 1, "native_setIsWater")?;
             let mut bridge = is_water_bridge.lock().expect("render bridge lock poisoned");
             let object = bridge
-                .scene
-                .get_mut(&name)
+                .game_lua_object_mut(&name)
                 .ok_or_else(|| runtime_error(format!("Missing object: {name}")))?;
             // sub_100059530 stores this byte at RenderObjectData+0x14B and
             // does not mirror it into objects.world.

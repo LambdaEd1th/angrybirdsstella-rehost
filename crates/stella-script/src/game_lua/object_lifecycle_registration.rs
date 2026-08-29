@@ -48,7 +48,7 @@ pub(super) fn install_flash(
                     eprintln!("native {function_name}({name:?})");
                 }
                 let mut bridge = flash_bridge.lock().expect("render bridge lock poisoned");
-                let Some(object) = bridge.scene.get_mut(&name) else {
+                let Some(object) = bridge.game_lua_object_mut(&name) else {
                     return Err(runtime_error(format!("Missing object: {name}")));
                 };
                 object.flash_animation = enabled;

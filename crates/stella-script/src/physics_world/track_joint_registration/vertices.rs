@@ -13,7 +13,7 @@ pub(super) fn install(
             let name = native_required_string(&args, 0, "getObjectVertices")?;
             let result = lua.create_table()?;
             let bridge = render.lock().expect("render bridge lock poisoned");
-            let Some(object) = bridge.scene.get(&name) else {
+            let Some(object) = bridge.game_lua_object(&name) else {
                 return Ok(result);
             };
             let fixtures = match &object.collision_shape {

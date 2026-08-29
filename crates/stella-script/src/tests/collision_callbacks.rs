@@ -566,6 +566,67 @@ fn contact_listener_body_destruction_obeys_native_world_lock() {
     }));
     assert!(!bridge.scene_range_names().iter().any(|name| name == "body"));
     assert!(!bridge.physics_world_locked);
+    let native_position = (bridge.scene["body"].x, bridge.scene["body"].y);
+    let native_velocity = (
+        bridge.scene["body"].velocity_x,
+        bridge.scene["body"].velocity_y,
+    );
+    let native_collision_time = bridge.scene["body"].time_since_collision;
+    drop(bridge);
+
+    // Every generated/manual RenderObject lookup uses the erased GameLua
+    // tree. Throwing members report a missing object; nullable members and
+    // queries return their native empty defaults without mutating the body
+    // payload that remains in b2World.
+    runtime
+        .execute_source(
+            r#"
+                removed_position_ok = pcall(setPosition, "body", 99, 98)
+                removed_visible_ok = pcall(isVisible, "body")
+                removed_parameter_ok = pcall(setObjectParameter, "body", 5, 7)
+                setVelocity("body", 97, 96)
+                native_setTimeSinceCollision("body", 95)
+                removed_velocity = getVelocity("body")
+                removed_sleeping = isSleeping("body")
+                removed_vertices = #getObjectVertices("body")
+            "#,
+        )
+        .unwrap();
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert!(!environment.get::<bool>("removed_position_ok").unwrap());
+    assert!(!environment.get::<bool>("removed_visible_ok").unwrap());
+    assert!(!environment.get::<bool>("removed_parameter_ok").unwrap());
+    assert_eq!(environment.get::<f64>("removed_velocity").unwrap(), 0.0);
+    assert!(environment.get::<bool>("removed_sleeping").unwrap());
+    assert_eq!(environment.get::<i64>("removed_vertices").unwrap(), 0);
+    let bridge = runtime.render.lock().unwrap();
+    assert_eq!(
+        (bridge.scene["body"].x, bridge.scene["body"].y),
+        native_position
+    );
+    assert_eq!(
+        (
+            bridge.scene["body"].velocity_x,
+            bridge.scene["body"].velocity_y
+        ),
+        native_velocity
+    );
+    assert_eq!(
+        bridge.scene["body"].time_since_collision,
+        native_collision_time
+    );
+    drop(bridge);
+
+    // A following fixed step still visits the orphan through b2World's body,
+    // contact and joint lists even though the GameLua tree no longer exposes
+    // it to frame export or public name-based members.
+    runtime.update(1.0 / 30.0).unwrap();
+    let bridge = runtime.render.lock().unwrap();
+    assert!(bridge.scene.contains_key("body"));
+    assert!(bridge.joints.contains_key("body_joint"));
+    assert!(bridge.active_contacts.keys().any(|key| {
+        (key.0 == "sensor" && key.1 == "body") || (key.0 == "body" && key.1 == "sensor")
+    }));
     drop(bridge);
 
     // The RenderObjectData body pointer was cleared by the first call, so a

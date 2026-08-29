@@ -49,8 +49,7 @@ pub(super) fn rebuild(
 fn save_fixture_list(render: &Arc<Mutex<RenderBridge>>, name: &str) -> LuaResult<SavedStorage> {
     let bridge = render.lock().expect("render bridge lock poisoned");
     let object = bridge
-        .scene
-        .get(name)
+        .game_lua_object(name)
         .ok_or_else(|| runtime_error(format!("Missing object: {name}")))?;
     match &object.collision_shape {
         CollisionShape::Box { width, height } => Ok(SavedStorage::Box {
@@ -87,7 +86,7 @@ fn create_box(
 ) {
     let old_center = {
         let mut bridge = render.lock().expect("render bridge lock poisoned");
-        bridge.scene.get_mut(name).map(|object| {
+        bridge.game_lua_object_mut(name).map(|object| {
             let old_center = object.world_center();
             object.collision_shape = CollisionShape::Box { width, height };
             object.physics_scale_x = f64::from((object.physics_scale_x as f32) * ratios.0);
@@ -112,8 +111,7 @@ fn create_polygon(
     if let Some(object) = render
         .lock()
         .expect("render bridge lock poisoned")
-        .scene
-        .get_mut(name)
+        .game_lua_object_mut(name)
     {
         object.physics_scale_x = f64::from((object.physics_scale_x as f32) * ratios.0);
         object.physics_scale_y = f64::from((object.physics_scale_y as f32) * ratios.1);
@@ -127,7 +125,7 @@ fn create_polygon(
     for vertices in fixture_list_order {
         let next = {
             let mut bridge = render.lock().expect("render bridge lock poisoned");
-            bridge.scene.get_mut(name).map(|object| {
+            bridge.game_lua_object_mut(name).map(|object| {
                 let old_center = object.world_center();
                 let fixture = object.append_dirt_fixture(
                     vertices,
@@ -147,8 +145,7 @@ fn create_polygon(
     if let Some(object) = render
         .lock()
         .expect("render bridge lock poisoned")
-        .scene
-        .get_mut(name)
+        .game_lua_object_mut(name)
         && let CollisionShape::Polygon { vertices, .. } = &mut object.collision_shape
     {
         *vertices = source_vertices;

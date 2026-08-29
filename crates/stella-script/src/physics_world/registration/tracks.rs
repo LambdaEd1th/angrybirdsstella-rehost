@@ -57,7 +57,7 @@ pub(super) fn install(
                 let object = native_lua51_string(&value).unwrap_or_default();
                 {
                     let bridge = track_bridge.lock().expect("render bridge lock poisoned");
-                    if !bridge.scene.contains_key(&object) {
+                    if !bridge.game_lua_object_exists(&object) {
                         return Err(runtime_error(format!("Missing object: {object}")));
                     }
                 }
@@ -70,7 +70,7 @@ pub(super) fn install(
                 let rotate_block = native_lua51_truthy(&descriptor.get::<Value>("rotateBlock")?);
 
                 let mut bridge = track_bridge.lock().expect("render bridge lock poisoned");
-                if !bridge.scene.contains_key(&object) {
+                if !bridge.game_lua_object_exists(&object) {
                     return Err(runtime_error(format!("Missing object: {object}")));
                 }
                 bridge.tracks.insert(

@@ -28,7 +28,7 @@ pub(super) fn install(
             if parameter == 22 {
                 let exits = {
                     let mut bridge = render.lock().expect("render bridge lock poisoned");
-                    let Some(object) = bridge.scene.get_mut(&name) else {
+                    let Some(object) = bridge.game_lua_object_mut(&name) else {
                         return Err(runtime_error(format!("Missing object: {name}")));
                     };
                     if !object.has_physics_body() {
@@ -53,7 +53,7 @@ pub(super) fn install(
 
             let mut bridge = render.lock().expect("render bridge lock poisoned");
             let physics_world_locked = bridge.physics_world_locked;
-            let Some(object) = bridge.scene.get_mut(&name) else {
+            let Some(object) = bridge.game_lua_object_mut(&name) else {
                 return Err(runtime_error(format!("Missing object: {name}")));
             };
             let mut body_type_changed = false;

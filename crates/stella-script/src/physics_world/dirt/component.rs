@@ -101,7 +101,7 @@ pub(crate) fn ensure_dirt_component(
         (resolve(&background), resolve(&foreground))
     };
     let mut bridge = render.lock().expect("render bridge lock poisoned");
-    let Some(object) = bridge.scene.get_mut(object_name) else {
+    let Some(object) = bridge.game_lua_object_mut(object_name) else {
         return Ok(false);
     };
     if object.dirt.is_none()

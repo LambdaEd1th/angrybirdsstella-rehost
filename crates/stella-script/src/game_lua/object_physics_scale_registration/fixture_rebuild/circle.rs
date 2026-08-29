@@ -18,8 +18,7 @@ pub(super) fn rebuild(
     if let Some(object) = render
         .lock()
         .expect("render bridge lock poisoned")
-        .scene
-        .get_mut(name)
+        .game_lua_object_mut(name)
     {
         object.native_shape_radius = f64::from(fixture_scale * radius as f32);
     }
@@ -27,7 +26,7 @@ pub(super) fn rebuild(
 
     let old_center = {
         let mut bridge = render.lock().expect("render bridge lock poisoned");
-        bridge.scene.get_mut(name).map(|object| {
+        bridge.game_lua_object_mut(name).map(|object| {
             let old_center = object.world_center();
             object.collision_shape = CollisionShape::Circle { radius };
             object.physics_scale_x = f64::from(fixture_scale);

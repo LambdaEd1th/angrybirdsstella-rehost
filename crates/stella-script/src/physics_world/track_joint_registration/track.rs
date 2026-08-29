@@ -15,7 +15,7 @@ pub(super) fn install(
             let mut bridge = destroy_track_bridge
                 .lock()
                 .expect("render bridge lock poisoned");
-            if !bridge.scene.contains_key(&name) {
+            if !bridge.game_lua_object_exists(&name) {
                 return Err(runtime_error(format!("Missing object: {name}")));
             }
             // b2Body::DestroyTrack reaches sub_10086E3E0 only after the
@@ -28,7 +28,7 @@ pub(super) fn install(
                 // The native destroy member clears the body's track pointer,
                 // wakes it and resets b2Body::m_sleepTime even when it was
                 // already awake.
-                if let Some(object) = bridge.scene.get_mut(&name) {
+                if let Some(object) = bridge.game_lua_object_mut(&name) {
                     object.wake();
                 }
             }
@@ -43,13 +43,13 @@ pub(super) fn install(
             let bridge = track_angle_bridge
                 .lock()
                 .expect("render bridge lock poisoned");
-            if !bridge.scene.contains_key(&name) {
+            if !bridge.game_lua_object_exists(&name) {
                 return Err(runtime_error(format!("Missing object: {name}")));
             }
             let Some(track) = bridge.tracks.get(&name) else {
                 return Ok(0.0);
             };
-            let Some(object) = bridge.scene.get(&track.object) else {
+            let Some(object) = bridge.game_lua_object(&track.object) else {
                 return Ok(0.0);
             };
             Ok(track.native_current_angle((object.x, object.y)))
@@ -76,7 +76,7 @@ pub(super) fn install(
                 let bridge = track_overlap_bridge
                     .lock()
                     .expect("render bridge lock poisoned");
-                let Some(object) = bridge.scene.get(&name) else {
+                let Some(object) = bridge.game_lua_object(&name) else {
                     // sub_10003D208 uses the same throwing sub_10005DAF8 lookup
                     // as createTrack/getCurrentTrackAngle before it inspects the
                     // temporary chain points.
@@ -105,7 +105,7 @@ pub(super) fn install(
             let bridge = track_overlap_bridge
                 .lock()
                 .expect("render bridge lock poisoned");
-            let Some(object) = bridge.scene.get(&name) else {
+            let Some(object) = bridge.game_lua_object(&name) else {
                 return Err(runtime_error(format!("Missing object: {name}")));
             };
             Ok(points

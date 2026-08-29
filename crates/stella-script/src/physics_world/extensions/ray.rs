@@ -21,8 +21,7 @@ pub(super) fn install(
             ];
             let mut bridge = make_ray_bridge.lock().expect("render bridge lock poisoned");
             let object = bridge
-                .scene
-                .get_mut(&name)
+                .game_lua_object_mut(&name)
                 .ok_or_else(|| runtime_error(format!("Missing object: {name}")))?;
             // sub_10004CE5C copies RenderObjectData+0x168 and the position at
             // +0xA4/+0xA8 before `_M_insert_unique`. The retained drawable is

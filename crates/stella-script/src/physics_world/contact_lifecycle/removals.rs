@@ -59,6 +59,27 @@ impl RenderBridge {
         self.orphaned_native_bodies.contains(name)
     }
 
+    /// Resolve the name map exposed by GameLua rather than the backing body
+    /// store used by the native solver. A locked DestroyBody orphan remains
+    /// in `scene` solely so Box2D can finish the step; native name lookups no
+    /// longer return its cleared RenderObjectData record.
+    pub(crate) fn game_lua_object(&self, name: &str) -> Option<&SceneObject> {
+        (!self.object_game_lua_record_removed(name))
+            .then(|| self.scene.get(name))
+            .flatten()
+    }
+
+    pub(crate) fn game_lua_object_mut(&mut self, name: &str) -> Option<&mut SceneObject> {
+        if self.object_game_lua_record_removed(name) {
+            return None;
+        }
+        self.scene.get_mut(name)
+    }
+
+    pub(crate) fn game_lua_object_exists(&self, name: &str) -> bool {
+        self.game_lua_object(name).is_some()
+    }
+
     /// Mirror the split lifetime produced by `sub_1000674FC` when
     /// b2World::DestroyBody sees e_locked. The native body remains linked to
     /// the world, broad phase, contacts and joints, but the subsequent

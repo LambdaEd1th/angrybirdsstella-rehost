@@ -25,11 +25,10 @@ pub(super) fn install(
                     // sub_10004F608 uses throwing getRenderObject before
                     // accessing its body pointer.
                     bridge
-                        .scene
-                        .get_mut(&name)
+                        .game_lua_object_mut(&name)
                         .ok_or_else(|| runtime_error(format!("Missing object: {name}")))?
                 } else {
-                    let Some(object) = bridge.scene.get_mut(&name) else {
+                    let Some(object) = bridge.game_lua_object_mut(&name) else {
                         // The older body members use nullable/manual lookup
                         // and only log an unknown name.
                         return Ok(());

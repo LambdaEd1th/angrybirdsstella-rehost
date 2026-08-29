@@ -34,7 +34,7 @@ fn process_collision(
 ) -> LuaResult<()> {
     let hole = {
         let bridge = render.lock().expect("render bridge lock poisoned");
-        let Some(object) = bridge.scene.get(object_name) else {
+        let Some(object) = bridge.game_lua_object(object_name) else {
             return Ok(());
         };
         // sub_100020D70 performs these subtractions in float32.
@@ -48,15 +48,13 @@ fn process_collision(
     let has_dirt = render
         .lock()
         .expect("render bridge lock poisoned")
-        .scene
-        .get(object_name)
+        .game_lua_object(object_name)
         .is_some_and(|object| object.dirt.is_some());
     if !has_dirt {
         if let Some(object) = render
             .lock()
             .expect("render bridge lock poisoned")
-            .scene
-            .get_mut(object_name)
+            .game_lua_object_mut(object_name)
         {
             Arc::make_mut(&mut object.dirt_holes).push(hole);
         }
@@ -66,7 +64,7 @@ fn process_collision(
     destroy_old_fixtures(lua, render, object_name)?;
     let Some((vertices, fixtures, density, friction, restitution)) = ({
         let mut bridge = render.lock().expect("render bridge lock poisoned");
-        bridge.scene.get_mut(object_name).and_then(|object| {
+        bridge.game_lua_object_mut(object_name).and_then(|object| {
             Arc::make_mut(&mut object.dirt_holes).push(hole);
             object.dirt.as_mut().map(|dirt| {
                 let dirt = Arc::make_mut(dirt);
@@ -104,8 +102,7 @@ fn destroy_old_fixtures(
     let old_count = render
         .lock()
         .expect("render bridge lock poisoned")
-        .scene
-        .get(object_name)
+        .game_lua_object(object_name)
         .map_or(0, |object| object.collision_shape.fixture_count());
     // The native member snapshots m_fixtureList and destroys head-first. Each
     // fixture produces synchronous EndContact callbacks before proxy release.
@@ -113,8 +110,7 @@ fn destroy_old_fixtures(
         let destruction = {
             let mut bridge = render.lock().expect("render bridge lock poisoned");
             let Some((fixture, proxy_id)) = bridge
-                .scene
-                .get_mut(object_name)
+                .game_lua_object_mut(object_name)
                 .and_then(SceneObject::unlink_head_fixture)
             else {
                 break;
@@ -125,7 +121,7 @@ fn destroy_old_fixtures(
         dispatch_native_contact_exits(lua, render, &destruction.2)?;
         let mut bridge = render.lock().expect("render bridge lock poisoned");
         bridge.release_object_fixture_proxy(object_name, destruction.0, destruction.1);
-        if let Some(object) = bridge.scene.get_mut(object_name) {
+        if let Some(object) = bridge.game_lua_object_mut(object_name) {
             let old_center = object.world_center();
             object.reset_native_mass_data(old_center);
         }
@@ -145,7 +141,7 @@ fn create_replacement_fixtures(
     // after every positive-density append.
     for fixture_vertices in fixtures {
         let mut bridge = render.lock().expect("render bridge lock poisoned");
-        let Some((fixture, old_center)) = bridge.scene.get_mut(object_name).map(|object| {
+        let Some((fixture, old_center)) = bridge.game_lua_object_mut(object_name).map(|object| {
             let old_center = object.world_center();
             let fixture =
                 object.append_dirt_fixture(fixture_vertices, density, friction, restitution);
@@ -155,7 +151,7 @@ fn create_replacement_fixtures(
         };
         bridge.install_object_fixture_proxy(object_name, fixture);
         if density > 0.0
-            && let Some(object) = bridge.scene.get_mut(object_name)
+            && let Some(object) = bridge.game_lua_object_mut(object_name)
         {
             object.reset_native_mass_data(old_center);
         }
@@ -171,8 +167,7 @@ fn retain_source_vertices(
     if let Some(object) = render
         .lock()
         .expect("render bridge lock poisoned")
-        .scene
-        .get_mut(object_name)
+        .game_lua_object_mut(object_name)
         && let CollisionShape::Polygon {
             vertices: source_vertices,
             ..

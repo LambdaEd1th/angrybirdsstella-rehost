@@ -24,7 +24,7 @@ pub(in crate::game_lua::trajectory_registration) fn install_update(
             let point_sampler = bridge.simulation_store_points_sampler;
             // The native member always clears this pointer before returning.
             bridge.selected_simulation_bird = None;
-            let Some(mut simulation) = bridge.scene.get("BirdSimulation").cloned() else {
+            let Some(mut simulation) = bridge.game_lua_object("BirdSimulation").cloned() else {
                 bridge.trajectory_points.clear();
                 return Ok(());
             };

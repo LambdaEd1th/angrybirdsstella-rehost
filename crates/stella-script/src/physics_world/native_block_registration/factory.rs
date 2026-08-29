@@ -27,8 +27,7 @@ pub(super) fn create(
     if !render
         .lock()
         .expect("render bridge lock poisoned")
-        .scene
-        .contains_key(&object_name)
+        .game_lua_object_exists(&object_name)
     {
         return Ok(Value::Nil);
     }

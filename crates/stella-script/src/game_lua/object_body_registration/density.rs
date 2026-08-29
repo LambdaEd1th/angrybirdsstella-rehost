@@ -21,8 +21,7 @@ pub(super) fn install(
             {
                 let mut bridge = density_bridge.lock().expect("render bridge lock poisoned");
                 let object = bridge
-                    .scene
-                    .get_mut(&name)
+                    .game_lua_object_mut(&name)
                     .ok_or_else(|| runtime_error(format!("Missing object: {name}")))?;
                 if !object.has_physics_body() || object.fixture_densities.is_empty() {
                     return Err(runtime_error(format!(

@@ -70,8 +70,7 @@ pub(super) fn apply(
 fn snapshot(render: &Arc<Mutex<RenderBridge>>, name: &str) -> LuaResult<ObjectSnapshot> {
     let bridge = render.lock().expect("render bridge lock poisoned");
     let object = bridge
-        .scene
-        .get(name)
+        .game_lua_object(name)
         .ok_or_else(|| runtime_error(format!("Missing object: {name}")))?;
     let kind = match object.collision_shape {
         CollisionShape::None => ShapeKind::None,
@@ -104,8 +103,7 @@ fn resize_polygon_lua_fields(
     {
         let mut bridge = render.lock().expect("render bridge lock poisoned");
         let object = bridge
-            .scene
-            .get_mut(name)
+            .game_lua_object_mut(name)
             .ok_or_else(|| runtime_error(format!("Missing object: {name}")))?;
         object.native_shape_width = f64::from(width);
         object.native_shape_height = f64::from(height);

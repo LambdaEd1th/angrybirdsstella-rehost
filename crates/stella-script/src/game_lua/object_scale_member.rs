@@ -24,8 +24,7 @@ pub(super) fn apply(
 
     let mut bridge = render.lock().expect("render bridge lock poisoned");
     let object = bridge
-        .scene
-        .get_mut(name)
+        .game_lua_object_mut(name)
         .ok_or_else(|| runtime_error(format!("Missing object: {name}")))?;
     // Purple stores the live pair at RenderObjectData+0xBC/+0xC0 and the
     // persistent bounce base at +0xCC/+0xD0. sub_10005E898 reads the latter

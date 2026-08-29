@@ -22,7 +22,7 @@ pub(super) fn install(
                 runtime_error("DirtMechanics.isJointAttached argument 2 must be number")
             })?;
             let bridge = joint_bridge.lock().expect("render bridge lock poisoned");
-            let Some(object) = bridge.scene.get(&joint_name) else {
+            let Some(object) = bridge.game_lua_object(&joint_name) else {
                 return Ok(false);
             };
             // sub_100020858 uses two float32 fadd instructions before TestPoint;

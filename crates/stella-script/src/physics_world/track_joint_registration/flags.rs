@@ -24,8 +24,7 @@ pub(super) fn install(
                 if let Some(object) = flag_bridge
                     .lock()
                     .expect("render bridge lock poisoned")
-                    .scene
-                    .get_mut(&name)
+                    .game_lua_object_mut(&name)
                 {
                     match function_name {
                         "native_setBlockCollisionEnabled" => {

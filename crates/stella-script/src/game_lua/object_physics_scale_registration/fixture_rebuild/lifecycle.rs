@@ -12,7 +12,7 @@ pub(super) fn destroy_all(
         let destruction = {
             let mut bridge = render.lock().expect("render bridge lock poisoned");
             let Some((fixture, proxy_id, old_center)) =
-                bridge.scene.get_mut(name).and_then(|object| {
+                bridge.game_lua_object_mut(name).and_then(|object| {
                     let old_center = object.world_center();
                     object
                         .unlink_head_fixture()
@@ -30,7 +30,7 @@ pub(super) fn destroy_all(
         dispatch_native_contact_exits(lua, render, &destruction.3)?;
         let mut bridge = render.lock().expect("render bridge lock poisoned");
         bridge.release_object_fixture_proxy(name, destruction.0, destruction.1);
-        if let Some(object) = bridge.scene.get_mut(name) {
+        if let Some(object) = bridge.game_lua_object_mut(name) {
             object.reset_native_mass_data(destruction.2);
         }
     }
@@ -64,7 +64,7 @@ pub(super) fn create(
     // refresh. The vectors already contain the newly inserted fixture here.
     bridge.install_object_fixture_proxy(name, fixture);
     if density > 0.0
-        && let Some(object) = bridge.scene.get_mut(name)
+        && let Some(object) = bridge.game_lua_object_mut(name)
     {
         object.reset_native_mass_data(old_center);
     }
@@ -74,8 +74,7 @@ pub(super) fn restore_sensor(render: &Arc<Mutex<RenderBridge>>, name: &str, sens
     if let Some(object) = render
         .lock()
         .expect("render bridge lock poisoned")
-        .scene
-        .get_mut(name)
+        .game_lua_object_mut(name)
     {
         object.sensor = sensor;
         // Replacement definitions start false; SetSensor(true) wakes the body.

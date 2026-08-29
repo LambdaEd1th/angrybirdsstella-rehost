@@ -25,8 +25,7 @@ pub(super) fn install(
                     .expect("render bridge lock poisoned");
                 let old_center = {
                     let object = bridge
-                        .scene
-                        .get_mut(&name)
+                        .game_lua_object_mut(&name)
                         .ok_or_else(|| runtime_error(format!("Missing object: {name}")))?;
                     let center = object.world_center();
                     // sub_100059488 writes RenderObjectData::radius before
@@ -44,7 +43,7 @@ pub(super) fn install(
             let mut bridge = resize_radius_bridge
                 .lock()
                 .expect("render bridge lock poisoned");
-            if let Some(object) = bridge.scene.get_mut(&name) {
+            if let Some(object) = bridge.game_lua_object_mut(&name) {
                 object.collision_shape = CollisionShape::Circle { radius };
                 // This entry installs `a3` directly into b2CircleShape::m_radius;
                 // it does not compose with an earlier setPhysicsScale factor.

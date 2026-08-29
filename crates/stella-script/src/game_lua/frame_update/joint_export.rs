@@ -25,8 +25,8 @@ impl RenderBridge {
         joints
             .into_iter()
             .filter_map(|joint| {
-                let first = self.scene.get(&joint.first)?;
-                let second = self.scene.get(&joint.second)?;
+                let first = self.game_lua_object(&joint.first)?;
+                let second = self.game_lua_object(&joint.second)?;
                 Some(NativeJointEndpointExport {
                     name: joint.name.clone(),
                     coord_type: joint.coord_type,
