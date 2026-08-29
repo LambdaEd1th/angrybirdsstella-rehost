@@ -336,6 +336,32 @@ fn edge_circle_arm_le_routes_unordered_projection_to_the_first_endpoint() {
 }
 
 #[test]
+fn edge_circle_unordered_face_side_follows_native_not_ge_path() {
+    let huge = f32::MAX;
+    let half = huge * 0.5_f32;
+    let manifold = circle_segment_manifold(
+        (f64::from(half), f64::from(half)),
+        0.5,
+        ((0.0, 0.0), (f64::from(huge), f64::from(huge))),
+        false,
+    )
+    .expect("overflowed cross product remains a native face manifold");
+
+    assert!(matches!(
+        manifold.manifold_type(),
+        ContactManifoldType::FaceFirst
+    ));
+    assert_eq!(
+        manifold.position.local_normal.0.to_bits(),
+        0.0_f32.to_bits()
+    );
+    assert_eq!(
+        manifold.position.local_normal.1.to_bits(),
+        (-0.0_f32).to_bits()
+    );
+}
+
+#[test]
 fn sub_epsilon_edge_circle_face_is_not_rejected_before_native_division() {
     let edge_length = f32::EPSILON * 0.5_f32;
     let radius = 0.5_f32;

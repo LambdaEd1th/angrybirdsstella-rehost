@@ -1,8 +1,8 @@
 //! b2CollideEdgeAndCircle (`sub_10085E8AC`).
 
-use std::cmp::Ordering;
-
-use super::super::geometry::native_normalize_or_preserve_f32;
+use super::super::geometry::{
+    native_arm_le_f32, native_arm_lt_f32, native_normalize_or_preserve_f32,
+};
 use crate::{
     BOX2D_POLYGON_RADIUS, ContactLocalManifold, ContactManifold, ContactManifoldType,
     NativeToiTransform, contact_feature_id,
@@ -52,7 +52,7 @@ pub(crate) fn circle_segment_manifold_at_transforms(
     let end_region = from_end.0.mul_add(edge.0, from_end.1 * edge.1);
 
     let (closest, mut edge_to_circle, separation, segment_index, segment_type) =
-        if native_arm_le_zero(start_region) {
+        if native_arm_le_f32(start_region, 0.0_f32) {
             let distance_squared = from_start
                 .0
                 .mul_add(from_start.0, from_start.1 * from_start.1);
@@ -70,8 +70,12 @@ pub(crate) fn circle_segment_manifold_at_transforms(
                 (1.0_f32, 0.0_f32)
             };
             (start, normal, distance, 0, 0)
-        } else if native_arm_le_zero(end_region) {
-            let circle_from_end = (-from_end.0, -from_end.1);
+        } else if native_arm_le_f32(end_region, 0.0_f32) {
+            // 0x10085EA10/0x10085EA14 rebuild Q - B with two FSUBs. Do not
+            // negate the already-rounded B - Q projection: equal lanes have
+            // a different signed-zero result, and unordered payloads need
+            // the native subtraction direction.
+            let circle_from_end = (circle_center.0 - end.0, circle_center.1 - end.1);
             let distance_squared = circle_from_end
                 .0
                 .mul_add(circle_from_end.0, circle_from_end.1 * circle_from_end.1);
@@ -109,7 +113,10 @@ pub(crate) fn circle_segment_manifold_at_transforms(
                 return None;
             }
             let side = edge.0.mul_add(from_start.1, -(from_start.0 * edge.1));
-            let normal = if side < 0.0_f32 {
+            // 0x10085E998..0x10085EA78 uses FCMP/B.GE. An unordered side
+            // does not take GE and therefore follows the same normal choice
+            // as an ordered negative value.
+            let normal = if native_arm_lt_f32(side, 0.0_f32) {
                 (edge.1, -edge.0)
             } else {
                 (-edge.1, edge.0)
@@ -212,8 +219,4 @@ pub(crate) fn circle_segment_manifold_at_transforms(
         secondary: None,
         position,
     })
-}
-
-fn native_arm_le_zero(value: f32) -> bool {
-    !matches!(value.partial_cmp(&0.0_f32), Some(Ordering::Greater))
 }

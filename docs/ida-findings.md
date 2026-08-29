@@ -17740,3 +17740,40 @@ bindings, with empty stderr.
 `build/audit-native-polygon-circle-normal-20260829.png` is a 1024x768 RGBA PNG
 with SHA-256
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## Native edge-circle endpoint subtraction and unordered side selection
+
+The complete 140-instruction `b2CollideEdgeAndCircle` leaf at
+`0x10085E8AC` was paged through IDA and independently checked against
+Hopper's procedure assembly. Its two Voronoi projections use the expected
+unordered-inclusive `FCMP/B.LE` gates at `0x10085E934..0x10085E950`. The
+second endpoint path does not reuse and negate the already-rounded `B - Q`
+vector, however: `0x10085EA10/0x10085EA14` rebuild `Q - B` with two explicit
+`FSUB`s. This preserves native signed-zero direction and unordered payload
+behavior at the later world-manifold boundary.
+
+The face-side path has a second ARM-only distinction. Purple rounds
+`(Q-A).x * edge.y` first, folds it into `edge.x * (Q-A).y` with `FNMSUB` at
+`0x10085E990..0x10085E994`, then executes `FCMP/B.GE` at
+`0x10085E998..0x10085E99C`. Unordered NZCV=`0011` does not satisfy `GE`, so
+it falls through to the same raw normal choice as an ordered negative side:
+`(edge.y, -edge.x)`. An ordinary Rust `< 0` test instead chose the opposite
+side for NaN. The shared ARM `LT` predicate now represents the native
+fallthrough exactly, after which the existing reciprocal normalization keeps
+the recovered `B.LT` sub-epsilon/unordered behavior.
+
+A focused overflow regression places a circle at the midpoint of a diagonal
+`f32::MAX` edge. Both region projections remain positive infinity while the
+cross product becomes unordered; the retained local normal is now bit-exact
+`(+0,-0)` instead of the former `(-0,+0)`. The five relevant sites are
+commented in IDA and Hopper and the IDB is saved.
+
+The complete workspace passes 817 tests with only the deliberate long-
+duration BirdRun audit ignored. Formatting, whitespace validation, strict
+all-target/all-feature Clippy and the release workspace build are clean. A
+fresh isolated-AppData 120-frame release-wgpu upload/render/readback reports
+20 optional probes, zero invoked fallbacks and zero remaining compatibility
+bindings, with empty stderr.
+`build/audit-native-edge-circle-side-20260829.png` is a 1024x768 RGBA PNG with
+SHA-256
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
