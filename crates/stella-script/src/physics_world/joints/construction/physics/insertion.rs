@@ -8,17 +8,29 @@ pub(super) fn insert_joint(
     bridge: &mut RenderBridge,
     geometry: JointGeometry,
     parameters: JointParameters,
+    native_joint_present: bool,
 ) {
-    let physics_creation_order = bridge.allocate_physics_creation_order();
+    // Failed/metadata GameLua records do not allocate a b2Joint and therefore
+    // must not advance the shared Box2D world-list ordering counter. Keep the
+    // next value only as an inert placeholder for the unified host record.
+    let physics_creation_order = if native_joint_present {
+        bridge.allocate_physics_creation_order()
+    } else {
+        bridge.next_physics_creation_order
+    };
     let filter_first = geometry.first.clone();
     let filter_second = geometry.second.clone();
     let is_physical = geometry.is_physical;
     let collide_connected = parameters.collide_connected;
-    if let Some(previous) = bridge.joints.get(&geometry.name) {
+    if let Some(previous) = bridge
+        .joints
+        .get(&geometry.name)
+        .filter(|joint| joint.has_native_joint())
+    {
         let previous_order = previous.physics_creation_order;
         bridge.remove_native_joint_order(previous_order);
     }
-    if is_physical {
+    if native_joint_present {
         bridge.insert_native_joint_order(
             physics_creation_order,
             geometry.name.clone(),
@@ -36,6 +48,7 @@ pub(super) fn insert_joint(
             joint_type: geometry.joint_type,
             coord_type: geometry.coord_type,
             is_physical,
+            native_joint_present,
             first_anchor: geometry.first_anchor,
             second_anchor: geometry.second_anchor,
             local_axis: geometry.local_axis,
@@ -103,7 +116,7 @@ pub(super) fn insert_joint(
         },
     );
     // `sub_10086E470` flags only existing contacts, without waking endpoints.
-    if is_physical && !collide_connected {
+    if native_joint_present && !collide_connected {
         bridge.flag_contacts_for_filtering_between(&filter_first, &filter_second);
     }
 }

@@ -15,7 +15,7 @@ impl RenderBridge {
         step: f64,
     ) {
         Self::scale_joint_impulses(joint, step);
-        if !joint.is_physical {
+        if !joint.has_native_joint() {
             return;
         }
         const TWO_LINEAR_SLOPS: f32 = 0.002;

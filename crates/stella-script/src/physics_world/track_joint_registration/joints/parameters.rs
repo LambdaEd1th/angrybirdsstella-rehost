@@ -37,8 +37,8 @@ pub(super) fn install(
             // The native switch is on b2JointType: distance accepts its
             // spring/length triplet; revolute and prismatic accept motor/limit
             // fields; weld, rope and metadata joints accept none.
-            let supports_motor = joint.is_physical && matches!(joint.joint_type, 3..=5);
-            let supports_distance = joint.is_physical && joint.joint_type == 1;
+            let supports_motor = joint.has_native_joint() && matches!(joint.joint_type, 3..=5);
+            let supports_distance = joint.has_native_joint() && joint.joint_type == 1;
             let motor = supports_motor
                 .then(|| optional_bool("motor"))
                 .transpose()?

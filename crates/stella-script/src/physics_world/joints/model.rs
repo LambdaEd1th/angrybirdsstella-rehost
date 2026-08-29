@@ -8,9 +8,13 @@ pub(crate) struct PhysicsJoint {
     pub(crate) second: String,
     pub(crate) joint_type: i32,
     pub(crate) coord_type: i32,
-    /// Whether the descriptor owns a Box2D constraint. Native type 5 is
+    /// Whether the descriptor selects a Box2D joint class. Native type 5 is
     /// always a metadata-only destruction link; only type 4 is prismatic.
     pub(crate) is_physical: bool,
+    /// Whether `b2World::CreateJoint` returned a concrete native joint.
+    /// During a contact callback the world is locked: types 2/3/4/6 still
+    /// leave a GameLua `jointData` record, but its `b2Joint*` is null.
+    pub(crate) native_joint_present: bool,
     pub(crate) first_anchor: (f64, f64),
     pub(crate) second_anchor: (f64, f64),
     /// Prismatic axis in end1's local frame, matching
@@ -90,4 +94,10 @@ pub(crate) enum JointLimitState {
     AtLower,
     AtUpper,
     Equal,
+}
+
+impl PhysicsJoint {
+    pub(crate) fn has_native_joint(&self) -> bool {
+        self.is_physical && self.native_joint_present
+    }
 }

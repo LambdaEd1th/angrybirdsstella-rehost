@@ -7,7 +7,7 @@ mod parameters;
 
 use mlua::Result as LuaResult;
 
-use crate::{PhysicsJoint, RenderBridge};
+use crate::{PhysicsJoint, RenderBridge, runtime_error};
 
 pub(crate) struct CreatedPhysicsJoint {
     pub(crate) joint: PhysicsJoint,
@@ -36,8 +36,19 @@ pub(crate) fn insert_physics_joint(
             native_descriptor_number(table, "y2")?,
         )
     };
+    let native_joint_present = geometry.is_physical && !bridge.physics_world_locked;
+    if geometry.joint_type == 1 && geometry.is_physical && !native_joint_present {
+        // b2World::CreateJoint (sub_10086E470) returns nullptr while locked.
+        // Only the distance branch immediately reads b2DistanceJoint+0xA4
+        // to publish `length`, so Purple terminates before jointData/Lua
+        // publication. Keep that failed boundary but contain the native null
+        // dereference as a catchable Lua error.
+        return Err(runtime_error(
+            "createJoint cannot read a distance joint while the physics world is locked",
+        ));
+    }
     let name = geometry.name.clone();
-    insertion::insert_joint(bridge, geometry, parameters);
+    insertion::insert_joint(bridge, geometry, parameters, native_joint_present);
     Ok(Some(CreatedPhysicsJoint {
         joint: bridge.joints[&name].clone(),
         descriptor_anchors,

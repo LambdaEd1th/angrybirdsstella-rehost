@@ -53,7 +53,7 @@ impl RenderBridge {
         let filter_allowed = !filter_dirty
             || (Self::native_objects_should_collide(first, second)
                 && !self.joints.values().any(|joint| {
-                    joint.is_physical
+                    joint.has_native_joint()
                         && !joint.collide_connected
                         && ((joint.first == contact_key.0 && joint.second == contact_key.1)
                             || (joint.first == contact_key.1 && joint.second == contact_key.0))

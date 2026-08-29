@@ -73,6 +73,15 @@ pub(super) fn install(
                 if !bridge.game_lua_object_exists(&object) {
                     return Err(runtime_error(format!("Missing object: {object}")));
                 }
+                // The outer createTrack member ignores sub_10086E580's
+                // return value. That allocator tests b2World::e_locked at
+                // 0x10086E5AC..5B8 and returns null before allocating,
+                // linking or writing RenderObjectData+0x88. Parsing and both
+                // flag reads still complete, but this block gains no track.
+                if bridge.physics_world_locked {
+                    index += 1;
+                    continue;
+                }
                 bridge.tracks.insert(
                     object.clone(),
                     PhysicsTrack {

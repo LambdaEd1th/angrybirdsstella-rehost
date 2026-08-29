@@ -49,7 +49,7 @@ impl RenderBridge {
             };
             let first_moving = first.participates_in_solve();
             let second_moving = second.participates_in_solve();
-            if solve_velocity && joint.is_physical && (first_moving || second_moving) {
+            if solve_velocity && joint.has_native_joint() && (first_moving || second_moving) {
                 match joint.joint_type {
                     1 => self.solve_distance_joint_velocity(joint, &first, &second, step),
                     2 => self.solve_weld_joint_velocity(joint, &first, &second),
@@ -59,7 +59,7 @@ impl RenderBridge {
                     _ => {}
                 }
             }
-            if !solve_position || !joint.is_physical || (!first_moving && !second_moving) {
+            if !solve_position || !joint.has_native_joint() || (!first_moving && !second_moving) {
                 continue;
             }
             positions_solved &= match joint.joint_type {
@@ -93,6 +93,9 @@ impl RenderBridge {
         }
         for entry in &mut constraints.entries {
             let joint = &mut entry.joint;
+            if !joint.has_native_joint() {
+                continue;
+            }
             let Some(first) = self.scene.get(&joint.first).map(JointBodyState::capture) else {
                 continue;
             };

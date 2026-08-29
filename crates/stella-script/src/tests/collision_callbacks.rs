@@ -534,6 +534,141 @@ fn contact_listener_physics_constructors_contain_native_locked_world_crash() {
 }
 
 #[test]
+fn contact_listener_joint_construction_preserves_locked_native_null_split() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createBox("sensor", "", 0, 0, 10, 10, 0, 0, 0, true, false, 1)
+                createCircle("body", "", 0, 0, 0.5, 1, 0, 0, true, false, 1)
+                setAsSensor("sensor", true)
+                setWorldGravity(0, 0)
+                objects.joints = {}
+                locked_joint_attempts = 0
+                locked_joint_results = {}
+                local function make(name, kind)
+                    return createJoint({
+                        name = name, end1 = "sensor", end2 = "body",
+                        type = kind, coordType = 2,
+                        x1 = 0, y1 = 0, x2 = 0, y2 = 0,
+                        collideConnected = false
+                    })
+                end
+                enterCollision = function()
+                    if locked_joint_attempts ~= 0 then return end
+                    locked_joint_attempts = 1
+                    locked_joint_results.distance = pcall(make, "locked_distance", 1)
+                    locked_joint_results.weld = pcall(make, "locked_weld", 2)
+                    locked_joint_results.revolute = pcall(make, "locked_revolute", 3)
+                    locked_joint_results.prismatic = pcall(make, "locked_prismatic", 4)
+                    locked_joint_results.metadata = pcall(make, "locked_metadata", 5)
+                    locked_joint_results.rope = pcall(make, "locked_rope", 6)
+                end
+                update = function() end
+                updatePhysics = function() end
+            "#,
+        )
+        .unwrap();
+
+    runtime.update(1.0 / 30.0).unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert_eq!(environment.get::<i64>("locked_joint_attempts").unwrap(), 1);
+    let results = environment
+        .get::<mlua::Table>("locked_joint_results")
+        .unwrap();
+    assert!(!results.get::<bool>("distance").unwrap());
+    for kind in ["weld", "revolute", "prismatic", "metadata", "rope"] {
+        assert!(results.get::<bool>(kind).unwrap(), "{kind}");
+    }
+
+    let descriptors = native_lua_object(runtime.lua(), NativeLuaObject::Objects)
+        .unwrap()
+        .unwrap()
+        .get::<mlua::Table>("joints")
+        .unwrap();
+    assert!(matches!(
+        descriptors.raw_get::<Value>("locked_distance").unwrap(),
+        Value::Nil
+    ));
+    for name in [
+        "locked_weld",
+        "locked_revolute",
+        "locked_prismatic",
+        "locked_metadata",
+        "locked_rope",
+    ] {
+        assert!(matches!(
+            descriptors.raw_get::<Value>(name).unwrap(),
+            Value::Table(_)
+        ));
+    }
+
+    let bridge = runtime.render.lock().unwrap();
+    assert!(!bridge.physics_world_locked);
+    assert!(!bridge.joints.contains_key("locked_distance"));
+    for name in [
+        "locked_weld",
+        "locked_revolute",
+        "locked_prismatic",
+        "locked_rope",
+    ] {
+        let joint = &bridge.joints[name];
+        assert!(joint.is_physical, "{name}");
+        assert!(!joint.native_joint_present, "{name}");
+        assert!(!joint.has_native_joint(), "{name}");
+    }
+    let metadata = &bridge.joints["locked_metadata"];
+    assert!(!metadata.is_physical);
+    assert!(!metadata.native_joint_present);
+    assert!(bridge.native_joint_world_order.is_empty());
+    assert!(bridge.native_joint_endpoint_exports().is_empty());
+    assert!(bridge.active_contacts.keys().any(|key| {
+        (key.0 == "sensor" && key.1 == "body") || (key.0 == "body" && key.1 == "sensor")
+    }));
+}
+
+#[test]
+fn contact_listener_track_construction_obeys_native_world_lock() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createBox("sensor", "", 0, 0, 10, 10, 0, 0, 0, true, false, 1)
+                createCircle("body", "", 0, 0, 0.5, 1, 0, 0, true, false, 1)
+                setAsSensor("sensor", true)
+                setWorldGravity(0, 0)
+                locked_track_attempts = 0
+                enterCollision = function()
+                    if locked_track_attempts ~= 0 then return end
+                    locked_track_attempts = 1
+                    locked_track_result = pcall(createTrack, {
+                        points = {{ x = -1, y = 0 }, { x = 1, y = 0 }},
+                        blocks = {"body"},
+                        openEnded = true,
+                        rotateBlock = true
+                    })
+                end
+                update = function() end
+                updatePhysics = function() end
+            "#,
+        )
+        .unwrap();
+
+    runtime.update(1.0 / 30.0).unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert_eq!(environment.get::<i64>("locked_track_attempts").unwrap(), 1);
+    assert!(environment.get::<bool>("locked_track_result").unwrap());
+    let bridge = runtime.render.lock().unwrap();
+    assert!(!bridge.physics_world_locked);
+    assert!(!bridge.tracks.contains_key("body"));
+    assert!(bridge.active_contacts.keys().any(|key| {
+        (key.0 == "sensor" && key.1 == "body") || (key.0 == "body" && key.1 == "sensor")
+    }));
+}
+
+#[test]
 fn contact_listener_fixture_replacement_obeys_native_world_lock() {
     let runtime = unlocked_test_runtime();
     runtime

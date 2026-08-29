@@ -101,7 +101,7 @@ impl RenderBridge {
         step: f64,
     ) {
         Self::scale_joint_impulses(joint, step);
-        if !joint.is_physical {
+        if !joint.has_native_joint() {
             return;
         }
         let (radius_first, radius_second) = joint_anchor_offsets(joint, first, second);

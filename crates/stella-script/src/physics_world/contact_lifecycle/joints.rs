@@ -64,7 +64,11 @@ impl RenderBridge {
     pub(crate) fn destroy_native_joint(&mut self, name: &str) -> Option<PhysicsJoint> {
         // Metadata-only type-five records never enter b2World and therefore
         // remain destructible while the physics world is locked.
-        if self.physics_world_locked && self.joints.get(name).is_some_and(|joint| joint.is_physical)
+        if self.physics_world_locked
+            && self
+                .joints
+                .get(name)
+                .is_some_and(PhysicsJoint::has_native_joint)
         {
             return None;
         }
@@ -79,8 +83,8 @@ impl RenderBridge {
             .retain(|pending| pending != name);
         self.orphaned_native_joints.remove(name);
         let joint = self.joints.remove(name)?;
-        self.remove_native_joint_order(joint.physics_creation_order);
-        if joint.is_physical {
+        if joint.has_native_joint() {
+            self.remove_native_joint_order(joint.physics_creation_order);
             for object_name in [&joint.first, &joint.second] {
                 // DestroyJoint inlines SetAwake(true) independently for both
                 // endpoints. An already-awake body skips the sleepTime store.
@@ -105,7 +109,11 @@ impl RenderBridge {
         if self.joint_game_lua_record_removed(name) {
             return None;
         }
-        if self.physics_world_locked && self.joints.get(name).is_some_and(|joint| joint.is_physical)
+        if self.physics_world_locked
+            && self
+                .joints
+                .get(name)
+                .is_some_and(PhysicsJoint::has_native_joint)
         {
             self.orphaned_native_joints.insert(name.to_owned());
             return None;
@@ -174,7 +182,11 @@ impl RenderBridge {
             return None;
         }
         let joint = self.joints.get(name)?.clone();
-        if joint.joint_type != 3 || !joint.motor_enabled || !joint.limits_enabled {
+        if !joint.has_native_joint()
+            || joint.joint_type != 3
+            || !joint.motor_enabled
+            || !joint.limits_enabled
+        {
             return None;
         }
         let first = self.scene.get(&joint.first)?;
@@ -213,6 +225,7 @@ impl RenderBridge {
             .filter(|joint| {
                 !self.joint_game_lua_record_removed(&joint.name)
                     && joint.breakable
+                    && joint.has_native_joint()
                     && collision_force > joint.break_force
                     && (joint.first == object || joint.second == object)
             })

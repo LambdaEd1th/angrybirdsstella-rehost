@@ -18661,3 +18661,62 @@ bindings, with empty stderr. Its visually checked
 `build/audit-native-constructor-lock-20260829.png` output is a 1024x768 RGBA
 PNG with SHA-256
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## Locked CreateJoint and CreateTrack construction split
+
+The complete 65-instruction `b2World::CreateJoint` at `sub_10086E470` was
+checked in IDA and independently in Hopper. It reads the world flags at
+`world+0x19298` at `0x10086E490`, tests `e_locked` bit 1 at
+`0x10086E494`, and returns null at `0x10086E498` before concrete-joint
+allocation, world-list insertion, either body-edge link, joint-count increment
+or deferred contact filter flags.
+
+The large GameLua `createJoint` outer does not treat that null uniformly. The
+type-one distance branch calls CreateJoint at `0x100038718`, saves the result,
+then unconditionally reads `b2DistanceJoint+0xA4` at `0x1000387D8` to publish
+`length`. A locked distance creation therefore null-dereferences before either
+the 48-byte `jointData` append or Lua descriptor publication. The host retains
+that failed boundary but contains the process-level crash as a catchable Lua
+runtime error.
+
+Weld, revolute, prismatic and rope branches call the same allocator at
+`0x100038964`, `0x100039518`, `0x10003A408` and `0x10003AA3C`, but never
+dereference its result in their class-specific paths. They all reach the
+`sub_10007384C` append at `0x10003B32C`, copying a `jointData` record whose
+native pointer is null, and then publish the fresh canonical descriptor through
+`objects.joints` at `0x10003B430..0x10003B440`. Type five still uses the
+separate metadata vector and no Box2D allocator. Rust now models these two
+ownership layers explicitly: the logical record keeps the decoded class and
+Lua descriptor, while `native_joint_present` alone controls world order,
+solver constraints, collision suppression, contact filter flags, endpoint
+export, native parameter mutation and native destruction locking.
+Null/metadata records likewise do not advance the shared native world-list
+creation counter.
+
+The 42-instruction track allocator `sub_10086E580` uses the same flag byte. It
+tests bit 1 at `0x10086E5AC..0x10086E5B0` and returns null before allocating
+the 0xA8-byte track, linking it into the world list, incrementing the count or
+writing `RenderObjectData+0x88`. `createTrack` calls it per resolved block at
+`0x10003D030`, but the next instruction ignores X0. Thus a locked call still
+parses the point collection, resolves each object and reads both flags, returns
+success, and silently creates no track. The Rust per-block commit now preserves
+that exact no-op boundary.
+
+Two focused regressions execute these constructors from a real BeginContact.
+They prove distance failure without publication; successful null-record
+publication for types 2/3/4/6; unchanged type-five metadata behavior; absence
+of native world order, endpoint export, collision filtering and solving; and a
+successful locked `createTrack` that leaves the object untracked. The lock
+gates, five joint call sites, distance dereference, jointData append, Lua
+publication and track ignored-return site are commented in both disassemblers,
+and the IDB is saved.
+
+The complete workspace passes 836 tests with only the deliberate long-duration
+BirdRun audit ignored. Formatting, whitespace validation, strict
+all-target/all-feature Clippy and the release workspace build are clean. A
+fresh isolated-AppData 120-frame release-wgpu upload/render/readback reports 20
+optional probes, zero invoked fallbacks and zero remaining compatibility
+bindings, with empty stderr. Its visually checked
+`build/audit-native-joint-track-lock-20260829.png` output is a 1024x768 RGBA
+PNG with SHA-256
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.

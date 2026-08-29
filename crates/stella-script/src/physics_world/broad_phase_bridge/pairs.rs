@@ -107,7 +107,7 @@ impl RenderBridge {
                     (first.dynamic_body || second.dynamic_body)
                         && Self::native_objects_should_collide(first, second)
                         && !self.joints.values().any(|joint| {
-                            joint.is_physical
+                            joint.has_native_joint()
                                 && !joint.collide_connected
                                 && ((joint.first == key.0 && joint.second == key.1)
                                     || (joint.first == key.1 && joint.second == key.0))

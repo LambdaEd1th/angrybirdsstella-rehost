@@ -73,7 +73,7 @@ impl RenderBridge {
         step: f64,
     ) {
         Self::scale_joint_impulses(joint, step);
-        if !joint.is_physical {
+        if !joint.has_native_joint() {
             return;
         }
         let geometry = native_rope_geometry(joint, first, second);
