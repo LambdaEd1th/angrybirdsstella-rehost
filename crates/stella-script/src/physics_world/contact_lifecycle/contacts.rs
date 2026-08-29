@@ -29,6 +29,11 @@ impl RenderBridge {
             .filter(|key| self.active_contacts.contains_key(*key))
             .cloned()
             .collect::<Vec<_>>();
+        let manifold_contacts = attached_contacts
+            .iter()
+            .filter(|key| self.contact_manifolds.contains_key(*key))
+            .cloned()
+            .collect::<Vec<_>>();
         // 0x10086B9EC..0x10086B9F8 calls the listener before either contact
         // edge is unlinked. Its stores at 0x1000653DC..0x100065410 are the
         // reason a sleeping stack falls when Luca removes its glass support.
@@ -67,6 +72,12 @@ impl RenderBridge {
             });
         for key in &attached_contacts {
             self.remove_native_contact_order(key);
+        }
+        // ContactFactory::Destroy runs after EndContact and edge unlinking.
+        // A positive manifold point count then wakes both bodies and clears
+        // both sleep timers unconditionally.
+        for key in &manifold_contacts {
+            self.finish_native_manifold_contact_destroy(key);
         }
         self.contact_filter_dirty.retain(|(first, second, _, _)| {
             !invalidated.contains(first) && !invalidated.contains(second)
@@ -114,6 +125,11 @@ impl RenderBridge {
             .filter(|key| self.active_contacts.contains_key(*key))
             .cloned()
             .collect::<Vec<_>>();
+        let manifold_contacts = attached_contacts
+            .iter()
+            .filter(|key| self.contact_manifolds.contains_key(*key))
+            .cloned()
+            .collect::<Vec<_>>();
         // DestroyFixture reaches the same ContactManager::Destroy listener
         // path as DestroyBody, while both endpoints are still live.
         for key in &ending {
@@ -135,6 +151,9 @@ impl RenderBridge {
         self.contact_velocity_bias.retain(|key, _| !attached(key));
         for key in &attached_contacts {
             self.remove_native_contact_order(key);
+        }
+        for key in &manifold_contacts {
+            self.finish_native_manifold_contact_destroy(key);
         }
         self.contact_filter_dirty.retain(|key| !attached(key));
         self.contact_manifolds.retain(|key, _| !attached(key));

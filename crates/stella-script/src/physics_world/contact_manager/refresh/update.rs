@@ -149,6 +149,7 @@ impl RenderBridge {
                 // that only existed because of fat-AABB overlap has no
                 // touching bit and therefore performs neither operation.
                 let was_touching = self.active_contacts.contains_key(contact_key);
+                let had_manifold = self.contact_manifolds.contains_key(contact_key);
                 if was_touching {
                     self.wake_contact_bodies(contact_key);
                 }
@@ -160,6 +161,9 @@ impl RenderBridge {
                 self.remove_native_contact_order(contact_key);
                 self.contact_filter_dirty.remove(contact_key);
                 self.active_contacts.remove(contact_key);
+                if had_manifold {
+                    self.finish_native_manifold_contact_destroy(contact_key);
+                }
                 was_touching.then(|| Self::native_contact_end_event(contact_key, sensor))
             }
             NativeContactUpdate::Separated {

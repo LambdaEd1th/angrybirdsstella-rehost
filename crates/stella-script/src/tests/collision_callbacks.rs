@@ -603,6 +603,40 @@ fn remove_object_dispatches_native_end_contact_before_lua_record_removal() {
 }
 
 #[test]
+fn fixture_contact_factory_destroy_resets_only_positive_manifold_sleep_times() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createCircle("solid_removed", "", 0, 0, 1, 1, 0, 0, true, false, 1)
+                createCircle("solid_survivor", "", 1.5, 0, 1, 1, 0, 0, true, false, 1)
+
+                createCircle("sensor_removed", "", 10, 0, 1, 1, 0, 0, true, false, 1)
+                setAsSensor("sensor_removed", true)
+                createCircle("sensor_survivor", "", 11.5, 0, 1, 1, 0, 0, true, false, 1)
+                setWorldGravity(0, 0)
+            "#,
+        )
+        .unwrap();
+
+    let mut bridge = runtime.render.lock().unwrap();
+    let began = bridge.refresh_contacts();
+    assert_eq!(began.iter().filter(|event| event.began).count(), 2);
+    bridge.scene.get_mut("solid_survivor").unwrap().sleep_time = 0.61;
+    bridge.scene.get_mut("sensor_survivor").unwrap().sleep_time = 0.62;
+
+    let solid_exits = bridge.drain_contacts_for_destroyed_fixture("solid_removed", 0);
+    assert_eq!(solid_exits.len(), 1);
+    assert!(!solid_exits[0].2);
+    assert_eq!(bridge.scene["solid_survivor"].sleep_time, 0.0);
+
+    let sensor_exits = bridge.drain_contacts_for_destroyed_fixture("sensor_removed", 0);
+    assert_eq!(sensor_exits.len(), 1);
+    assert!(sensor_exits[0].2);
+    assert_eq!(bridge.scene["sensor_survivor"].sleep_time, 0.62);
+}
+
+#[test]
 fn remove_object_keeps_body_live_during_sensor_exit_effect_restoration() {
     let runtime = unlocked_test_runtime();
     runtime

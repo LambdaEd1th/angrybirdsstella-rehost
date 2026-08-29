@@ -342,14 +342,14 @@ fn contact_manager_destroy_conditionally_wakes_only_touching_contact_endpoints()
     assert!(bridge.broad_phase_contacts.is_empty());
 
     // Purple's EndContact listener invokes SetAwake(true) for both touching
-    // endpoints. It wakes sleeping bodies, but preserves an already-awake
-    // body's accumulated sleep time. The non-touching proxy-only node never
-    // reaches the listener at all.
+    // endpoints. ContactFactory::Destroy then unconditionally clears both
+    // timers only for the solid contact's positive-point manifold. The sensor
+    // has zero points, and the proxy-only node never reaches either wake path.
     for name in ["solid_sleeping", "sensor_sleeping"] {
         assert!(!bridge.scene[name].sleeping, "{name}");
         assert_eq!(bridge.scene[name].sleep_time, 0.0, "{name}");
     }
-    assert_eq!(bridge.scene["solid_awake"].sleep_time, 0.71);
+    assert_eq!(bridge.scene["solid_awake"].sleep_time, 0.0);
     assert_eq!(bridge.scene["sensor_awake"].sleep_time, 0.72);
     assert!(bridge.scene["proxy_sleeping"].sleeping);
     assert_eq!(bridge.scene["proxy_sleeping"].sleep_time, 0.5);

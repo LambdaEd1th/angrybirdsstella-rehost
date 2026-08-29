@@ -18264,11 +18264,12 @@ not alter either body's sleep state.
 
 One regression retires three persistent nodes together: a touching solid
 pair, a touching sensor pair and a separated proxy-only pair. The first two
-emit EndContact and wake their sleeping endpoints while preserving exact
-nonzero timers on their already-awake endpoints. The proxy-only node emits no
-event and leaves both endpoint states unchanged. The touching gate, listener
-ordering and both conditional SetAwake sites are commented in IDA and Hopper
-and the IDB is saved.
+emit EndContact and wake their sleeping endpoints. The sensor listener
+preserves an already-awake endpoint's exact nonzero timer; the solid contact's
+later factory-destruction behavior is covered below. The proxy-only node emits
+no event and leaves both endpoint states unchanged. The touching gate,
+listener ordering and both conditional SetAwake sites are commented in IDA
+and Hopper and the IDB is saved.
 
 The complete workspace passes 826 tests with only the deliberate long-
 duration BirdRun audit ignored. Formatting, whitespace validation, strict
@@ -18320,4 +18321,47 @@ fresh isolated-AppData 120-frame release-wgpu upload/render/readback reports
 bindings, with empty stderr. The visually checked
 `build/audit-native-collide-gates-20260829.png` is a 1024x768 RGBA PNG with
 SHA-256
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## ContactFactory Destroy manifold wake branch
+
+`b2ContactManager::Destroy` delegates final contact destruction to
+`b2ContactFactory::Destroy` at `0x100863628`. Its first instruction reads the
+current manifold point count from contact offset `+0xB4`. A count less than or
+equal to zero branches directly to the shape-pair destructor. This is the
+normal path for sensors, whose `b2Contact::Update` branch forces the manifold
+count to zero, and for broad-phase-only/non-touching nodes.
+
+A positive point count takes a separate body-state path. It conditionally
+sets body A awake at `0x100863640..0x10086364C` and body B awake at
+`0x10086365C..0x100863678`. Unlike the earlier EndContact listener, the final
+stores at `0x10086367C` and `0x100863680` then clear both `m_sleepTime` fields
+unconditionally, including endpoints that were already awake. Only after
+these writes does the function select and tail-dispatch the registered
+shape-pair destructor.
+
+Every host contact-destruction entrance now records whether the contact had a
+solid manifold before removing its maps. Collide retirement, DestroyFixture
+and DestroyBody all run the conditional listener wake first, unlink the
+contact, then apply the recovered unconditional awake/timer reset only for a
+positive-point manifold. Sensor and non-touching destruction skip that final
+step.
+
+The broad-phase regression now proves the three-way final state: a solid
+contact clears an already-awake endpoint's timer, a sensor contact preserves
+it, and a proxy-only contact does not wake its sleeping endpoint. A separate
+DestroyFixture regression repeats the solid/sensor distinction through the
+fixture teardown entry, confirming that both contact-manager paths reach the
+same factory rule. The point-count gate, both conditional awake transitions
+and both unconditional timer stores are commented in IDA and Hopper and the
+IDB is saved.
+
+The complete workspace passes 829 tests with only the deliberate long-
+duration BirdRun audit ignored. Formatting, whitespace validation, strict
+all-target/all-feature Clippy and the release workspace build are clean. A
+fresh isolated-AppData 120-frame release-wgpu upload/render/readback reports
+20 optional probes, zero invoked fallbacks and zero remaining compatibility
+bindings, with empty stderr. The visually checked
+`build/audit-native-contact-factory-destroy-20260829.png` is a 1024x768 RGBA
+PNG with SHA-256
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.

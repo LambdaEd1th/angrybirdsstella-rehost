@@ -18,6 +18,19 @@ impl RenderBridge {
         }
     }
 
+    /// Complete `b2ContactFactory::Destroy` for a contact whose manifold had
+    /// at least one point. After the EndContact listener and list unlinking,
+    /// the native factory wakes both bodies and unconditionally clears both
+    /// sleep timers. Sensor and non-touching contacts have zero points and do
+    /// not enter this branch.
+    pub(crate) fn finish_native_manifold_contact_destroy(&mut self, contact_key: &ContactKey) {
+        for name in [&contact_key.0, &contact_key.1] {
+            if let Some(object) = self.scene.get_mut(name) {
+                object.wake();
+            }
+        }
+    }
+
     pub(crate) fn native_contact_event(
         contact_key: &ContactKey,
         first: &SceneObject,
