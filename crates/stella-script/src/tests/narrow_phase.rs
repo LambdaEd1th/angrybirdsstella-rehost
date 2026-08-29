@@ -125,6 +125,85 @@ fn rotated_polygon_pair_keeps_native_reference_and_incident_local_points() {
         local.local_points[1].1.to_bits(),
         expected_second.1.to_bits()
     );
+    let refreshed = manifold.at_native_transforms(first_transform, second_transform);
+    assert_eq!(manifold.normal_x.to_bits(), refreshed.normal_x.to_bits());
+    assert_eq!(manifold.normal_y.to_bits(), refreshed.normal_y.to_bits());
+    assert_eq!((manifold.penetration as f32).to_bits(), 0x3DD4_FE2D);
+    assert_eq!(
+        manifold.penetration.to_bits(),
+        refreshed.penetration.to_bits()
+    );
+    assert_eq!(manifold.point_x.to_bits(), refreshed.point_x.to_bits());
+    assert_eq!(manifold.point_y.to_bits(), refreshed.point_y.to_bits());
+    let initial_second = manifold.secondary.expect("initial second point");
+    let refreshed_second = refreshed.secondary.expect("refreshed second point");
+    assert_eq!(
+        initial_second.penetration.to_bits(),
+        refreshed_second.penetration.to_bits()
+    );
+    assert_eq!(
+        initial_second.point_x.to_bits(),
+        refreshed_second.point_x.to_bits()
+    );
+    assert_eq!(
+        initial_second.point_y.to_bits(),
+        refreshed_second.point_y.to_bits()
+    );
+}
+
+#[test]
+fn rotated_polygon_pair_rebuilds_native_face_second_world_manifold() {
+    let first = [
+        (-1.0_f32, -0.5_f32),
+        (1.0_f32, -0.5_f32),
+        (1.0_f32, 0.5_f32),
+        (-1.0_f32, 0.5_f32),
+    ];
+    let second = [
+        (-0.8_f32, -0.45_f32),
+        (0.8_f32, -0.45_f32),
+        (0.8_f32, 0.45_f32),
+        (-0.8_f32, 0.45_f32),
+    ];
+    let global_angle = -0.29_f32;
+    let relative_angle = 0.5_f32;
+    let (global_sine, global_cosine) = global_angle.sin_cos();
+    let (first_sine, first_cosine) = (global_angle + relative_angle).sin_cos();
+    let global_transform = NativeToiTransform {
+        position: (-8.75, 3.125),
+        sine: global_sine,
+        cosine: global_cosine,
+    };
+    let first_transform = NativeToiTransform {
+        position: global_transform.position,
+        sine: first_sine,
+        cosine: first_cosine,
+    };
+    let second_transform = NativeToiTransform {
+        position: global_transform.point((0.0, 0.9)),
+        sine: global_sine,
+        cosine: global_cosine,
+    };
+    let manifold =
+        polygon_manifold_at_transforms(&first, first_transform, &second, second_transform)
+            .expect("rotated FaceB polygon contact");
+    assert!(matches!(
+        manifold.position.manifold_type,
+        ContactManifoldType::FaceSecond
+    ));
+    assert_eq!((manifold.penetration as f32).to_bits(), 0x3EF1_C667);
+    let refreshed = manifold.at_native_transforms(first_transform, second_transform);
+    assert_eq!(manifold.normal_x.to_bits(), refreshed.normal_x.to_bits());
+    assert_eq!(manifold.normal_y.to_bits(), refreshed.normal_y.to_bits());
+    assert_eq!(
+        manifold.penetration.to_bits(),
+        refreshed.penetration.to_bits()
+    );
+    assert_eq!(manifold.point_x.to_bits(), refreshed.point_x.to_bits());
+    assert_eq!(manifold.point_y.to_bits(), refreshed.point_y.to_bits());
+    assert_eq!(manifold.position.point_count, 1);
+    assert!(manifold.secondary.is_none());
+    assert!(refreshed.secondary.is_none());
 }
 
 #[test]

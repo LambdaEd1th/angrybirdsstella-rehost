@@ -17821,3 +17821,39 @@ fallbacks and zero remaining compatibility bindings, with empty stderr.
 `build/audit-native-edge-polygon-world-20260829.png` is a 1024x768 RGBA PNG
 with SHA-256
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## Native polygon-polygon initial world-manifold reconstruction
+
+The final manifold assembly in `b2CollidePolygons` confirms the same native
+boundary for polygon pairs. The FaceA path at `0x10085FA24` inverse-transforms
+an accepted world clip vertex into the incident polygon and stores that local
+point plus its contact feature. The flipped FaceB path repeats the local-only
+write at `0x10085FAD0`, including the native feature swap. The common tail at
+`0x10085FB40` stores only the local manifold point count. No world midpoint or
+penetration is produced by this collision leaf.
+
+The old polygon-polygon host path nevertheless computed a world contact as
+`point - 0.5 * separation * normal`. As with edge-polygon contacts, this
+algebraic collapse loses the separately rounded reference and incident surface
+points reconstructed by `b2WorldManifold` at `0x10085FEE0..0x10085FF44` for
+FaceA and `0x10085FFBC..0x100860020` for FaceB. Polygon pairs now retain only
+the two possible incident-local witnesses and feature IDs from clipping, build
+the native local `b2Manifold`, and immediately run the shared exact world
+reprojection using the original fixture transform order.
+
+A rotated two-point FaceA regression first demonstrated the former initial
+versus same-transform refresh mismatch and now pins the native penetration
+word `0x3DD4FE2D`. A separately rotated FaceB case pins `0x3EF1C667`. Both
+initial manifolds are bit-identical to a same-transform `b2WorldManifold`
+refresh for their normal, penetration and every emitted world contact point.
+The local-output sites are commented in IDA and Hopper and the IDB is saved.
+
+The complete workspace passes 818 tests with only the deliberate long-
+duration BirdRun audit ignored. Formatting, whitespace validation, strict
+all-target/all-feature Clippy and the release workspace build are clean. A
+fresh isolated-AppData 120-frame release-wgpu upload/render/readback reports
+20 optional probes, zero invoked fallbacks and zero remaining compatibility
+bindings, with empty stderr.
+`build/audit-native-polygon-world-20260829.png` is a 1024x768 RGBA PNG with
+SHA-256
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.

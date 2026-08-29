@@ -159,19 +159,10 @@ pub(crate) fn polygon_manifold_at_transforms(
                 .mul_add(point.0, reference_normal.1 * point.1)
                 - front_offset;
             native_arm_le_f32(separation, total_radius).then_some((
-                ContactPoint {
-                    penetration: f64::from(total_radius - separation),
-                    point_x: f64::from(
-                        (-0.5_f32 * separation).mul_add(reference_normal.0, point.0),
-                    ),
-                    point_y: f64::from(
-                        (-0.5_f32 * separation).mul_add(reference_normal.1, point.1),
-                    ),
-                    feature_id: if flip {
-                        swap_contact_features(vertex.feature_id)
-                    } else {
-                        vertex.feature_id
-                    },
+                if flip {
+                    swap_contact_features(vertex.feature_id)
+                } else {
+                    vertex.feature_id
                 },
                 incident_transform.inverse_point(point),
             ))
@@ -186,24 +177,23 @@ pub(crate) fn polygon_manifold_at_transforms(
         points.get(1).map(|point| point.1).unwrap_or((0.0, 0.0)),
     ];
     let point_count = points.len() as u8;
-    let primary = points[0].0;
-    let secondary = points.get(1).map(|point| point.0);
-    let normal = if flip {
-        (
-            f64::from(-reference_normal.0),
-            f64::from(-reference_normal.1),
-        )
-    } else {
-        (f64::from(reference_normal.0), f64::from(reference_normal.1))
+    let placeholder = |feature_id| ContactPoint {
+        penetration: 0.0,
+        point_x: 0.0,
+        point_y: 0.0,
+        feature_id,
     };
-    Some(ContactManifold {
-        normal_x: normal.0,
-        normal_y: normal.1,
-        penetration: primary.penetration,
-        point_x: primary.point_x,
-        point_y: primary.point_y,
-        feature_id: primary.feature_id,
-        secondary,
+    // b2CollidePolygons stops at this local manifold. The contact factory then
+    // runs b2WorldManifold, whose separately rounded surface points cannot be
+    // replaced by point - 0.5 * separation * normal without changing bits.
+    let local_manifold = ContactManifold {
+        normal_x: 0.0,
+        normal_y: 0.0,
+        penetration: 0.0,
+        point_x: 0.0,
+        point_y: 0.0,
+        feature_id: points[0].0,
+        secondary: points.get(1).map(|point| placeholder(point.0)),
         position: ContactLocalManifold {
             manifold_type,
             local_normal,
@@ -216,5 +206,6 @@ pub(crate) fn polygon_manifold_at_transforms(
             first_radius: BOX2D_POLYGON_RADIUS as f32,
             second_radius: BOX2D_POLYGON_RADIUS as f32,
         },
-    })
+    };
+    Some(local_manifold.at_native_transforms(first_transform, second_transform))
 }
