@@ -18854,3 +18854,37 @@ bindings, with empty stderr. Its visually checked
 `build/audit-native-reset-mass-nondynamic-20260829.png` output is a 1024x768
 RGBA PNG with SHA-256
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## Fused force and impulse accumulation
+
+The complete GameLua adapters `sub_10003F930` (`applyImpulse`) and
+`sub_10003F9CC` (`applyForceNative`) were rechecked against Hopper. Both
+accept only dynamic bodies and wake the body before the arithmetic. The
+impulse path writes each linear lane with a native ARM64 `FMADD` at
+`0x10003F984`/`0x10003F990`: `invMass * impulse + oldVelocity`. Its lever arm
+first rounds `(centerY - pointY) * impulseX` with `FMUL` at `0x10003F9A8`, then
+uses `FMADD((pointX - centerX), impulseY, firstProduct)` at `0x10003F9AC`; the
+angular lane finishes with `FMADD(invI, torque, oldAngularVelocity)` at
+`0x10003F9B4`.
+
+The force path uses the same `FMUL`/`FMADD` cross-product grouping at
+`0x10003FA3C..0x10003FA40`, but adds the resulting torque to the stored torque
+with ordinary `FADD` at `0x10003FA48`; linear force lanes likewise use ordinary
+`FADD`. The Rust adapters now use `f32::mul_add` at exactly the fused stages,
+while retaining ordinary addition where native code does so. This removes a
+previous one-ULP divergence in both impulse velocity and force torque and
+preserves the fixed-rotation rule that accumulated torque is not discarded.
+
+The new bit-level regression uses a non-power-of-two box mass and adversarial
+float32 lever arms, checking force torque, both impulse velocity lanes and
+angular impulse against the fused reference operations. Eight decisive
+arithmetic sites are commented in both IDA and Hopper, and the IDB is saved.
+
+The complete workspace passes 841 tests with only the deliberate long-duration
+BirdRun audit ignored. Formatting, whitespace validation, strict
+all-target/all-feature Clippy and the release workspace build remain clean.
+The fresh isolated-AppData 120-frame release-wgpu audit also remains free of
+invoked fallbacks, compatibility bindings and stderr output: it reports the
+same 20 optional probes, produces a visually checked 1024x768 RGBA PNG, and
+matches SHA-256
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.

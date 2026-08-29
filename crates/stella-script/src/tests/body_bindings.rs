@@ -134,6 +134,70 @@ fn impulse_and_force_adapters_are_strict_float32_and_do_not_publish_lua_state() 
 }
 
 #[test]
+fn impulse_and_force_writes_preserve_native_fmadd_boundaries() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    let old_velocity = (0.1234567_f32, -0.7654321_f32);
+    let old_angular_velocity = 0.2468135_f32;
+    let force = (f32::from_bits(0x410C_8719), f32::from_bits(0xC018_0EFF));
+    let point = (f32::from_bits(0xC117_DB7A), f32::from_bits(0xBF54_0828));
+    let impulse = (0.9876543_f32, -0.8765432_f32);
+
+    runtime
+        .execute_source(&format!(
+            r#"
+                createBox("body", "", 0, 0, 1.3, 2.7, 0.9, 0, 0, true, false, 1)
+                setVelocity("body", {}, {})
+                setAngularVelocity("body", {})
+                applyForceNative("body", {}, {}, {}, {})
+                applyImpulse("body", {}, {}, {}, {})
+                "#,
+            old_velocity.0,
+            old_velocity.1,
+            old_angular_velocity,
+            force.0,
+            force.1,
+            point.0,
+            point.1,
+            impulse.0,
+            impulse.1,
+            point.0,
+            point.1,
+        ))
+        .unwrap();
+
+    let bridge = runtime.render.lock().unwrap();
+    let body = &bridge.scene["body"];
+    let inverse_mass = body.inverse_mass as f32;
+    let inverse_inertia = body.inverse_inertia() as f32;
+    let (center_x, center_y) = body.native_world_center();
+    let force_first = (center_y - point.1) * force.0;
+    let force_torque = (point.0 - center_x).mul_add(force.1, force_first);
+    let impulse_first = (center_y - point.1) * impulse.0;
+    let impulse_torque = (point.0 - center_x).mul_add(impulse.1, impulse_first);
+
+    assert_eq!(
+        (body.force_x as f32).to_bits(),
+        force.0.to_bits(),
+        "force x is one native FADD from zero"
+    );
+    assert_eq!((body.torque as f32).to_bits(), force_torque.to_bits());
+    assert_eq!(
+        (body.velocity_x as f32).to_bits(),
+        inverse_mass.mul_add(impulse.0, old_velocity.0).to_bits()
+    );
+    assert_eq!(
+        (body.velocity_y as f32).to_bits(),
+        inverse_mass.mul_add(impulse.1, old_velocity.1).to_bits()
+    );
+    assert_eq!(
+        (body.angular_velocity as f32).to_bits(),
+        inverse_inertia
+            .mul_add(impulse_torque, old_angular_velocity)
+            .to_bits()
+    );
+}
+
+#[test]
 fn direct_body_flag_setters_preserve_native_wake_and_lua_mirroring_rules() {
     let runtime = StellaLua::new("/tmp").unwrap();
     runtime

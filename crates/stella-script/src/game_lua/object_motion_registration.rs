@@ -97,24 +97,27 @@ pub(crate) fn install(
                     // including the exact cross-product ordering seen at
                     // sub_10003F930/sub_10003F9CC.
                     let (center_x, center_y) = object.native_world_center();
+                    let first_torque_product = (center_y - point_y) * force_x;
                     let torque =
-                        (center_y - point_y) * force_x + (point_x - center_x) * force_y;
+                        (point_x - center_x).mul_add(force_y, first_torque_product);
                     if is_impulse {
                         // b2Body::ApplyLinearImpulse immediately changes the
                         // body's linear and angular velocities using the body's
                         // independently aggregated inverse mass and inertia.
                         let inverse_mass = object.inverse_mass as f32;
-                        object.velocity_x =
-                            f64::from((object.velocity_x as f32) + inverse_mass * force_x);
-                        object.velocity_y =
-                            f64::from((object.velocity_y as f32) + inverse_mass * force_y);
+                        object.velocity_x = f64::from(
+                            inverse_mass.mul_add(force_x, object.velocity_x as f32),
+                        );
+                        object.velocity_y = f64::from(
+                            inverse_mass.mul_add(force_y, object.velocity_y as f32),
+                        );
                         object.reset_display_interpolation_velocity(
                             object.velocity_x as f32,
                             object.velocity_y as f32,
                         );
                         object.angular_velocity = f64::from(
-                            (object.angular_velocity as f32)
-                                + (object.inverse_inertia() as f32) * torque,
+                            (object.inverse_inertia() as f32)
+                                .mul_add(torque, object.angular_velocity as f32),
                         );
                     } else {
                         object.force_x = f64::from((object.force_x as f32) + force_x);

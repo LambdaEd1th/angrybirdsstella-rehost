@@ -12,38 +12,42 @@ members = [
 version = "0.1.0"
 edition = "2024"
 license = "AGPL-3.0-or-later"
-rust-version = "1.93"
+rust-version = "1.98"
 
 [workspace.dependencies]
 ab_glyph = "0.2.32"
-aes = "0.9.2"
+aes = "0.9.3"
 anyhow = "1.0.100"
 cbc = { version = "0.2.1", features = ["alloc"] }
-clap = { version = "4.5.50", features = ["derive"] }
-image = { version = "0.25.8", default-features = false, features = ["png"] }
+clap = { version = "4.6.6", features = ["derive"] }
+image = { version = "0.25.10", default-features = false, features = ["png"] }
 fontdb = "0.24.0"
 libc = "0.2.189"
 ttf-parser = "0.25.1"
 clipper2-rust = "=1.1.0"
 mlua = { version = "0.12.0", features = ["lua51", "vendored", "serialize"] }
-bytemuck = { version = "1.25.0", features = ["derive"] }
-pollster = "0.4.0"
-rayon = "1.11.0"
-rodio = { version = "0.22.2", default-features = false, features = ["mp3", "vorbis", "wav"] }
+bytemuck = { version = "1.25.2", features = ["derive"] }
+pollster = "1.0.1"
+rayon = "1.12.0"
+rodio = { version = "0.22.2", default-features = false, features = [
+    "mp3",
+    "vorbis",
+    "wav",
+] }
 rustybuzz = "0.20.1"
 unicode-bidi = "0.3.18"
 unicode-script = "0.5.8"
 unicode-segmentation = "1.13.3"
 ureq = "3.4.0"
-sevenz-rust2 = { version = "0.21.4", default-features = false }
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.145"
-skrifa = "0.44.0"
-smallvec = "1.15.1"
-thiserror = "2.0.17"
-tiny-skia = "0.11.4"
+sevenz-rust2 = { version = "0.22.2", default-features = false }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+skrifa = "0.46.2"
+smallvec = "1.15.2"
+thiserror = "2.0.20"
+tiny-skia = "0.12.0"
 walkdir = "2.5.0"
-wgpu = "30.0.0"
+wgpu = "30.0.1"
 winit = "0.30.13"
 
 [profile.release]
