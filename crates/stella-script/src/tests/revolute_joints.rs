@@ -584,6 +584,12 @@ fn joint_topology_uses_deferred_native_contact_filter_flag_and_wake_order() {
         assert!(bridge.refresh_contacts().is_empty());
         assert!(bridge.contact_filter_dirty.contains(&key));
         assert!(bridge.active_contacts.contains_key(&key));
+        // Give the second endpoint an already-awake, partially accumulated
+        // sleep timer. Native DestroyJoint must preserve it while waking the
+        // actually sleeping first endpoint.
+        let second = bridge.scene.get_mut("filter_b").unwrap();
+        second.sleeping = false;
+        second.sleep_time = 0.75;
     }
 
     runtime
@@ -592,9 +598,12 @@ fn joint_topology_uses_deferred_native_contact_filter_flag_and_wake_order() {
     {
         let mut bridge = runtime.render.lock().unwrap();
         // DestroyJoint (`sub_10086E27C`) wakes both bodies. The already
-        // dirty contact is then rechecked with the joint gone and kept.
+        // dirty contact is then rechecked with the joint gone and kept. Its
+        // inlined SetAwake(true) preserves the already-awake endpoint timer.
         assert!(!bridge.scene["filter_a"].sleeping);
         assert!(!bridge.scene["filter_b"].sleeping);
+        assert_eq!(bridge.scene["filter_a"].sleep_time, 0.0);
+        assert_eq!(bridge.scene["filter_b"].sleep_time, 0.75);
         assert!(bridge.contact_filter_dirty.contains(&key));
         let events = bridge.refresh_contacts();
         assert!(!events.iter().any(|event| event.ended));

@@ -18365,3 +18365,41 @@ bindings, with empty stderr. The visually checked
 `build/audit-native-contact-factory-destroy-20260829.png` is a 1024x768 RGBA
 PNG with SHA-256
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## DestroyJoint preserves already-awake sleep time
+
+The complete 86-instruction `b2World::DestroyJoint` at `0x10086E27C` was
+checked in IDA and Hopper. It first rejects the operation while the world lock
+bit is set, then unlinks the joint from the world list. After resolving both
+endpoint bodies at `0x10086E2E0`, it performs two independent inlined
+`SetAwake(true)` sequences. Endpoint A at `0x10086E2E4..0x10086E2F4` and
+endpoint B at `0x10086E2F8..0x10086E308` write `m_sleepTime = 0` only when the
+corresponding awake bit was previously clear. There are no later
+unconditional timer stores in this function.
+
+The remainder unlinks both joint edges, destroys the concrete joint and
+decrements the world count. Only when the saved `collideConnected` byte is
+false does `0x10086E3A4..0x10086E3CC` walk the second body's contact-edge list
+and set the deferred filter flag on contacts leading back to the first body.
+This matches the host's existing topology/refilter boundary.
+
+Host joint destruction previously called the raw `wake()` helper on both
+endpoints and therefore cleared an already-awake body's partial sleep timer.
+It now wakes only endpoints that are actually sleeping. The established
+deferred-filter regression was extended so one endpoint remains asleep while
+the other is already awake with exactly `0.75` accumulated time. DestroyJoint
+wakes and clears the first, preserves the second timer, retains the dirty
+contact until Collide, then keeps the contact after the removed joint permits
+collision again. The lock gate, both awake sites and the
+`collideConnected=false` refilter gate are commented in IDA and Hopper and the
+IDB is saved.
+
+The complete workspace passes 829 tests with only the deliberate long-
+duration BirdRun audit ignored. Formatting, whitespace validation, strict
+all-target/all-feature Clippy and the release workspace build are clean. A
+fresh isolated-AppData 120-frame release-wgpu upload/render/readback reports
+20 optional probes, zero invoked fallbacks and zero remaining compatibility
+bindings, with empty stderr. The visually checked
+`build/audit-native-destroy-joint-wake-20260829.png` is a 1024x768 RGBA PNG
+with SHA-256
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.

@@ -68,7 +68,11 @@ impl RenderBridge {
         self.remove_native_joint_order(joint.physics_creation_order);
         if joint.is_physical {
             for object_name in [&joint.first, &joint.second] {
-                if let Some(object) = self.scene.get_mut(object_name) {
+                // DestroyJoint inlines SetAwake(true) independently for both
+                // endpoints. An already-awake body skips the sleepTime store.
+                if let Some(object) = self.scene.get_mut(object_name)
+                    && object.sleeping
+                {
                     object.wake();
                 }
             }
