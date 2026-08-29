@@ -17304,8 +17304,8 @@ unordered flags take that branch as well. A non-zero edge shorter than
 `FLT_EPSILON` can instead reach the face branch, whose reciprocal of
 `dot(edge, edge)` has no epsilon guard. Its later inlined `b2Vec2::Normalize`
 at `0x10085EA7C..0x10085EAA0` skips scaling only when the length is ordered
-below `FLT_EPSILON`, preserving the short vector. Hopper exposes the same
-instruction sequence and branches.
+below `FLT_EPSILON` or unordered, preserving the raw vector. Hopper exposes
+the same instruction sequence and branches.
 
 `b2EPCollider::Collide` at `0x10085EADC` follows the same normalization rule.
 The two visible inlined instances at `0x10085EC28..0x10085EC54` and
@@ -17339,31 +17339,30 @@ comparison paths hidden by the earlier high-level reconstruction. At
 `0x10085DDF0..0x10085DDF4`, `FCMP denominator, 0` followed by `B.NE` treats a
 NaN denominator as nonzero. The lower-bound path at
 `0x10085DE04..0x10085DE14` then uses `FCCMP numerator, lower * denominator,
-#0, LT` and `B.GE`: when the denominator is ordered negative, either an
-ordered less-than or an unordered numerator comparison updates the entry
-index and divides the new lower bound. The upper path at
+#0, LT` and `B.GE`: the conditioned comparison runs when the denominator is
+ordered negative or unordered, and a subsequent unordered numerator
+comparison updates the entry index and divides the new lower bound. The upper
+path at
 `0x10085DE1C..0x10085DE2C` has the symmetric `GT`-conditioned `FCCMP` and the
 same unordered update behavior. Finally, `FCMP upper, lower` / `B.LT` at
-`0x10085DE30..0x10085DE34` rejects only an ordered inverted interval; a NaN
-bound continues through the remaining planes.
+`0x10085DE30..0x10085DE34` rejects an ordered inverted interval or an
+unordered pair of bounds.
 
 The adjacent polygon constructor was checked in both disassemblers and named
 `b2PolygonShape_Set` at `0x10085DB9C`. It stores each raw `(edge.y, -edge.x)`
 normal, computes the y-square followed by the x-square `FMADD`, and compares
 the square-root length with `FLT_EPSILON` at `0x10085DC20`. Its `B.LT` skips
-normalization only for an ordered sub-epsilon length. An unordered NaN length
-therefore takes the reciprocal path and turns both stored normal lanes into
-NaN. The IDA database now carries comments at all four condition-code
-boundaries and has been saved; Hopper independently exposes the same
-instruction sequences.
+normalization for an ordered sub-epsilon or unordered length. A NaN length
+therefore preserves the raw `(edge.y, -edge.x)` lanes rather than contaminating
+the finite lane through reciprocal multiplication. The IDA database now
+carries comments at all four condition-code boundaries and has been saved;
+Hopper independently exposes the same instruction sequences.
 
-Rust now spells the two conditioned `FCCMP` tests as “not ordered greater or
-equal”, uses a literal ordered less-than for the final interval rejection, and
-has an explicit unordered-or-greater/equal helper for polygon normal
-materialization. One regression supplies a NaN `maxFraction` to a finite
-rectangle and pins Purple's valid quarter-fraction hit instead of the former
-early rejection. A second proves that a NaN polygon edge normalizes both
-lanes to NaN.
+Rust now spells the lower conditioned `FCCMP` gate and final `B.LT` as
+ordered-less-or-unordered, while retaining “not ordered greater or equal” for
+the inner numerator comparison. One regression supplies a NaN `maxFraction`
+to a finite rectangle and pins Purple's rejected unordered interval. A second
+proves that a NaN polygon edge preserves its finite raw normal lane.
 
 The complete workspace passes 799 tests with only the deliberate long-
 duration BirdRun audit ignored. Formatting, whitespace validation, strict
@@ -17432,14 +17431,14 @@ normalization, while an unordered NaN comparison also fails `B.GE` and
 preserves both raw tangent lanes. Both disassemblers carry comments at this
 condition-code boundary and the IDB is saved.
 
-This differs deliberately from the previously recovered inlined
-`b2Vec2::Normalize` sites in `b2EPCollider::Collide`: those use `B.LT`, so an
-unordered length takes the reciprocal path. Rust now uses a dedicated
-ordered-at-least-epsilon helper for polygon-polygon reference faces rather
-than the former host helper that rejected zero and sub-epsilon edges and
-divided NaN inputs. Regressions pin raw signed-zero and sub-epsilon lanes,
-normalization exactly at the epsilon boundary, and `(NaN, 1.0)` remaining
-`(NaN, 1.0)` instead of becoming `(NaN, NaN)`.
+The previously recovered inlined `b2Vec2::Normalize` sites in
+`b2EPCollider::Collide` spell the complementary control flow with `B.LT`
+around the reciprocal path. Since unordered `FCMP` produces NZCV=`0011`,
+that branch is taken as well; both forms normalize only an ordered length at
+least epsilon. Rust now shares one helper for both instruction layouts.
+Regressions pin raw signed-zero and sub-epsilon lanes, normalization exactly
+at the epsilon boundary, and `(NaN, 1.0)` remaining `(NaN, 1.0)` instead of
+becoming `(NaN, NaN)`.
 
 The complete workspace passes 806 tests with only the deliberate long-
 duration BirdRun audit ignored. Formatting, whitespace validation, strict
@@ -17448,4 +17447,34 @@ fresh isolated-AppData 120-frame release-wgpu upload/render/readback reports
 20 optional probes, zero invoked fallbacks and zero remaining compatibility
 bindings. `build/audit-native-polygon-reference-20260829.png` is a 1024x768
 RGBA PNG with SHA-256
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## AArch64 unordered flags and edge-polygon stored reference data
+
+The unordered condition-code interpretation above was verified directly on
+the current arm64 host with a minimal `FCMP`/`CSET` probe. Comparing NaN with
+`FLT_EPSILON` produces `LT=1` and `GE=0`; zero produces the same pair, while
+an equal epsilon value produces `LT=0` and `GE=1`. This exactly matches
+AArch64's unordered NZCV=`0011` state and corrects the earlier mistaken
+assumption that `B.LT` excluded unordered values. IDA and Hopper comments at
+`0x10085DC24`, `0x10085DE34`, `0x10085EBE4`, `0x10085EC40` and
+`0x10085ECA8` now record the verified behavior, and the IDB is saved.
+
+The continuation of `b2EPCollider::Collide` also removes the last host-side
+edge normalization ambiguity. On the polygon-primary branch,
+`0x10085F2D4..0x10085F2E8` loads the selected face's two vertices and its
+already stored polygon normal. `0x10085F3E8..0x10085F3F4` constructs the two
+clipping side normals solely by permuting and negating that stored normal.
+There is no square root, reciprocal, winding test or endpoint swap on this
+path. Rust now retains the authored endpoint order and derives its clipping
+tangent from the stored reference normal; the former nullable raw-edge
+normalizer has been removed.
+
+The complete workspace passes 803 tests with only the deliberate long-
+duration BirdRun audit ignored. Formatting, whitespace validation, strict
+all-target/all-feature Clippy and the release workspace build are clean. A
+fresh isolated-AppData 120-frame release-wgpu upload/render/readback reports
+20 optional probes, zero invoked fallbacks and zero remaining compatibility
+bindings. `build/audit-native-arm-unordered-20260829.png` is a 1024x768 RGBA
+PNG with SHA-256
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.

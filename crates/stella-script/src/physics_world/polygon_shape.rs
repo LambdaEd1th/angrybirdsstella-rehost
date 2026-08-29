@@ -2,8 +2,8 @@
 
 /// Recreate the exact local normal array stored by `b2PolygonShape::Set`.
 /// Purple neither repairs winding nor rejects a zero, sub-epsilon or NaN
-/// edge. Its `FCMP`/`B.LT` skips reciprocal normalization only for an ordered
-/// length below `FLT_EPSILON`.
+/// edge. Its `FCMP`/`B.LT` branches around reciprocal normalization for a
+/// sub-epsilon or unordered length.
 pub(crate) fn native_polygon_normals(vertices: &[(f32, f32)]) -> Vec<(f32, f32)> {
     vertices
         .iter()
@@ -14,7 +14,7 @@ pub(crate) fn native_polygon_normals(vertices: &[(f32, f32)]) -> Vec<(f32, f32)>
             let edge = (second.0 - first.0, second.1 - first.1);
             let mut normal = (edge.1, -edge.0);
             let length = edge.0.mul_add(edge.0, edge.1 * edge.1).sqrt();
-            if native_unordered_or_greater_or_equal(length, f32::EPSILON) {
+            if length >= f32::EPSILON {
                 let inverse_length = 1.0_f32 / length;
                 normal.0 *= inverse_length;
                 normal.1 *= inverse_length;
@@ -51,13 +51,6 @@ pub(crate) fn native_polygon_centroid_f32(vertices: &[(f32, f32)]) -> (f32, f32)
     (center.0 * inverse_area, center.1 * inverse_area)
 }
 
-fn native_unordered_or_greater_or_equal(left: f32, right: f32) -> bool {
-    matches!(
-        left.partial_cmp(&right),
-        None | Some(std::cmp::Ordering::Equal | std::cmp::Ordering::Greater)
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -72,10 +65,10 @@ mod tests {
     }
 
     #[test]
-    fn polygon_set_normalizes_an_unordered_length() {
+    fn polygon_set_preserves_an_unordered_raw_normal() {
         let normals = native_polygon_normals(&[(0.0, 0.0), (f32::NAN, 0.0), (0.0, 1.0)]);
 
-        assert!(normals[0].0.is_nan());
+        assert_eq!(normals[0].0.to_bits(), 0.0_f32.to_bits());
         assert!(normals[0].1.is_nan());
     }
 

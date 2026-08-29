@@ -2,7 +2,7 @@
 
 use super::super::{
     NativePolygon,
-    geometry::{native_normalize_or_preserve_f32, normalized_axis_f32},
+    geometry::native_normalize_or_preserve_f32,
     polygon::{ClipVertex, clip_segment_to_line, polygon_normals_f32},
 };
 use crate::{
@@ -136,24 +136,11 @@ pub(crate) fn polygon_segment_manifold_at_transforms(
     ) = if polygon_reference {
         let face_index = polygon_axis.1;
         let next_index = (face_index + 1) % polygon.len();
-        let mut start = polygon[face_index];
-        let mut end = polygon[next_index];
-        let mut start_index = face_index;
-        let mut end_index = next_index;
-        let tangent = normalized_axis_f32((end.0 - start.0, end.1 - start.1))?;
-        if tangent
-            .1
-            .mul_add(polygon_axis.2.0, -(tangent.0 * polygon_axis.2.1))
-            < 0.0_f32
-        {
-            std::mem::swap(&mut start, &mut end);
-            std::mem::swap(&mut start_index, &mut end_index);
-        }
         (
-            start,
-            end,
-            start_index,
-            end_index,
+            polygon[face_index],
+            polygon[next_index],
+            face_index,
+            next_index,
             polygon_axis.2,
             true,
             [
@@ -206,10 +193,10 @@ pub(crate) fn polygon_segment_manifold_at_transforms(
         )
     };
 
-    let reference_tangent = native_normalize_or_preserve_f32((
-        reference_end.0 - reference_start.0,
-        reference_end.1 - reference_start.1,
-    ));
+    // 0x10085F2E8..0x10085F3F4 takes the selected stored normal and rotates
+    // it into the two clipping side normals. It does not normalize the
+    // reference edge or reorder a polygon-owned face here.
+    let reference_tangent = (-reference_normal.1, reference_normal.0);
     let first_offset = -(reference_tangent
         .0
         .mul_add(reference_start.0, reference_tangent.1 * reference_start.1))

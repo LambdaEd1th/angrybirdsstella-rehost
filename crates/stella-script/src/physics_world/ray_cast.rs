@@ -177,7 +177,7 @@ pub(crate) fn native_polygon_ray_cast(
             if !native_ordered_greater_or_equal(numerator, 0.0_f32) {
                 return None;
             }
-        } else if denominator < 0.0_f32
+        } else if native_arm_lt(denominator, 0.0_f32)
             && !native_ordered_greater_or_equal(numerator, lower * denominator)
         {
             entry = Some(index);
@@ -187,9 +187,9 @@ pub(crate) fn native_polygon_ray_cast(
         {
             upper = numerator / denominator;
         }
-        // 0x10085DE30 uses FCMP/B.LT. Unlike an ordered `upper >= lower`
-        // test, an unordered pair therefore continues through the loop.
-        if upper < lower {
+        // The FCMP/B.LT at 0x10085DE30 rejects both an ordered inverted
+        // interval and an unordered pair of bounds.
+        if native_arm_lt(upper, lower) {
             return None;
         }
     }
@@ -206,6 +206,13 @@ fn native_ordered_greater_or_equal(left: f32, right: f32) -> bool {
     matches!(
         left.partial_cmp(&right),
         Some(std::cmp::Ordering::Equal | std::cmp::Ordering::Greater)
+    )
+}
+
+fn native_arm_lt(left: f32, right: f32) -> bool {
+    matches!(
+        left.partial_cmp(&right),
+        None | Some(std::cmp::Ordering::Less)
     )
 }
 
@@ -272,19 +279,16 @@ mod tests {
     }
 
     #[test]
-    fn native_polygon_ray_continues_through_unordered_clip_bounds() {
+    fn native_polygon_ray_rejects_unordered_clip_bounds() {
         let input = NativeRayCastInput {
             start: (-2.0, 0.0),
             end: (2.0, 0.0),
             max_fraction: f32::NAN,
         };
         let vertices = [(-1.0, -0.5), (1.0, -0.5), (1.0, 0.5), (-1.0, 0.5)];
-        let hit =
+        assert!(
             native_polygon_ray_cast("polygon", input, NativeToiTransform::IDENTITY, &vertices)
-                .unwrap();
-
-        assert_eq!((hit.point_x, hit.point_y), (-1.0, 0.0));
-        assert_eq!((hit.normal_x, hit.normal_y), (-1.0, -0.0));
-        assert_eq!(hit.fraction, f64::from(0.25_f32));
+                .is_none()
+        );
     }
 }
