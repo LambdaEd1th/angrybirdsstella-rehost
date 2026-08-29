@@ -137,6 +137,15 @@ impl RenderBridge {
             }
             NativeContactUpdate::Sleeping => None,
             NativeContactUpdate::Retired { sensor } => {
+                // ContactManager::Destroy calls EndContact while a touching
+                // node is still linked. Purple's listener conditionally wakes
+                // both endpoints before dispatching exit callbacks. A node
+                // that only existed because of fat-AABB overlap has no
+                // touching bit and therefore performs neither operation.
+                let was_touching = self.active_contacts.contains_key(contact_key);
+                if was_touching {
+                    self.wake_contact_bodies(contact_key);
+                }
                 self.broad_phase_contacts.remove(contact_key);
                 self.contact_manifolds.remove(contact_key);
                 self.contact_impulses.remove(contact_key);
@@ -144,8 +153,8 @@ impl RenderBridge {
                 self.contact_velocity_bias.remove(contact_key);
                 self.remove_native_contact_order(contact_key);
                 self.contact_filter_dirty.remove(contact_key);
-                self.active_contacts.remove(contact_key)?;
-                Some(Self::native_contact_end_event(contact_key, sensor))
+                self.active_contacts.remove(contact_key);
+                was_touching.then(|| Self::native_contact_end_event(contact_key, sensor))
             }
             NativeContactUpdate::Separated {
                 clear_filter_flag,

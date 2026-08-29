@@ -279,6 +279,84 @@ fn fat_aabb_creates_contact_before_narrow_phase_begin_contact() {
 }
 
 #[test]
+fn contact_manager_destroy_conditionally_wakes_only_touching_contact_endpoints() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createCircle("solid_sleeping", "", 0, 0, 1, 1, 0, 0, true, false, 1)
+                createCircle("solid_awake", "", 1.5, 0, 1, 1, 0, 0, true, false, 1)
+
+                createCircle("sensor_sleeping", "", 10, 0, 1, 1, 0, 0, true, false, 1)
+                setAsSensor("sensor_sleeping", true)
+                createCircle("sensor_awake", "", 11.5, 0, 1, 1, 0, 0, true, false, 1)
+
+                -- These live circles are separated, but their expanded proxy
+                -- AABBs still overlap and therefore own a non-touching node.
+                createCircle("proxy_sleeping", "", 20, 0, 1, 1, 0, 0, true, false, 1)
+                createCircle("proxy_awake", "", 22.15, 0, 1, 1, 0, 0, true, false, 1)
+                setWorldGravity(0, 0)
+            "#,
+        )
+        .unwrap();
+
+    let mut bridge = runtime.render.lock().unwrap();
+    let began = bridge.refresh_contacts();
+    assert_eq!(began.iter().filter(|event| event.began).count(), 2);
+    assert_eq!(bridge.active_contacts.len(), 2);
+    assert_eq!(bridge.broad_phase_contacts.len(), 3);
+
+    for name in ["solid_sleeping", "sensor_sleeping", "proxy_sleeping"] {
+        let object = bridge.scene.get_mut(name).unwrap();
+        object.sleeping = true;
+        object.sleep_time = 0.5;
+    }
+    for (name, sleep_time) in [
+        ("solid_awake", 0.71),
+        ("sensor_awake", 0.72),
+        ("proxy_awake", 0.73),
+    ] {
+        let object = bridge.scene.get_mut(name).unwrap();
+        object.sleeping = false;
+        object.sleep_time = sleep_time;
+    }
+
+    // Model the already-completed broad-phase proxy moves by publishing the
+    // replacement fat AABBs directly. Collide then retires all three
+    // persistent nodes through ContactManager::Destroy without UpdatePairs
+    // introducing unrelated swept-path candidates into this focused test.
+    for (name, x) in [
+        ("solid_awake", 100.0),
+        ("sensor_awake", 200.0),
+        ("proxy_awake", 300.0),
+    ] {
+        bridge.body_proxy_states.get_mut(name).unwrap().fat_aabbs[0] =
+            (x - 1.0, -1.0, x + 1.0, 1.0);
+    }
+    let ended = bridge.refresh_contacts();
+
+    assert_eq!(ended.iter().filter(|event| event.ended).count(), 2);
+    assert!(ended.iter().any(|event| event.ended && !event.sensor));
+    assert!(ended.iter().any(|event| event.ended && event.sensor));
+    assert!(bridge.active_contacts.is_empty());
+    assert!(bridge.broad_phase_contacts.is_empty());
+
+    // Purple's EndContact listener invokes SetAwake(true) for both touching
+    // endpoints. It wakes sleeping bodies, but preserves an already-awake
+    // body's accumulated sleep time. The non-touching proxy-only node never
+    // reaches the listener at all.
+    for name in ["solid_sleeping", "sensor_sleeping"] {
+        assert!(!bridge.scene[name].sleeping, "{name}");
+        assert_eq!(bridge.scene[name].sleep_time, 0.0, "{name}");
+    }
+    assert_eq!(bridge.scene["solid_awake"].sleep_time, 0.71);
+    assert_eq!(bridge.scene["sensor_awake"].sleep_time, 0.72);
+    assert!(bridge.scene["proxy_sleeping"].sleeping);
+    assert_eq!(bridge.scene["proxy_sleeping"].sleep_time, 0.5);
+    assert_eq!(bridge.scene["proxy_awake"].sleep_time, 0.73);
+}
+
+#[test]
 fn body_transform_synchronizes_only_its_own_fixture_proxies() {
     let runtime = unlocked_test_runtime();
     runtime

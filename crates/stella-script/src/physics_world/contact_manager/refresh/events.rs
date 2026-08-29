@@ -6,7 +6,13 @@ use crate::*;
 impl RenderBridge {
     pub(crate) fn wake_contact_bodies(&mut self, contact_key: &ContactKey) {
         for name in [&contact_key.0, &contact_key.1] {
-            if let Some(object) = self.scene.get_mut(name) {
+            // b2Body::SetAwake(true) only clears m_sleepTime while changing
+            // an asleep body to awake. Purple's contact listener uses that
+            // method for both endpoints, so an already-awake body retains
+            // the sleep time it has accumulated toward the next sleep.
+            if let Some(object) = self.scene.get_mut(name)
+                && object.sleeping
+            {
                 object.wake();
             }
         }

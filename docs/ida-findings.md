@@ -18233,3 +18233,49 @@ bindings, with empty stderr. The visually checked
 `build/audit-native-add-pair-wake-20260829.png` is a 1024x768 RGBA PNG with
 SHA-256
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## ContactManager Destroy and conditional EndContact wake
+
+The complete 62-instruction `b2ContactManager::Destroy` at
+`0x10086B9B8` was checked in IDA and Hopper. After resolving both fixture
+bodies, it tests the listener pointer and the contact's touching bit at
+`0x10086B9DC..0x10086B9E8`. Only a touching contact calls the listener at
+`0x10086B9EC..0x10086B9F8`; a node that exists only because its fat AABBs
+overlap skips the callback. The world contact list and both body-edge lists
+are unlinked only after that call, followed by factory destruction and the
+contact-count decrement. Destroy itself contains no body-awake stores.
+
+Purple's concrete EndContact listener at `0x1000653AC` supplies the observable
+wake behavior. It first requires both fixtures to retain live
+`RenderObjectData`, then checks each body's awake bit independently at
+`0x1000653E4` and `0x100065404`. An asleep endpoint has its bit set and
+`m_sleepTime` cleared; an already-awake endpoint skips both writes and keeps
+the sleep time it has accumulated toward its next sleep. This path precedes
+both `exitTriggerCollision` and `exitCollision`, and it is shared by sensor
+and solid contacts.
+
+The Collide retirement path formerly removed a touching node and emitted the
+Lua exit record without applying this listener wake. It now conditionally
+wakes both endpoints before unlinking whenever the native touching state is
+present. The common contact-listener wake helper was also corrected to model
+`b2Body::SetAwake(true)`: it no longer clears the timer of an endpoint that is
+already awake. Non-touching fat-AABB-only nodes still retire silently and do
+not alter either body's sleep state.
+
+One regression retires three persistent nodes together: a touching solid
+pair, a touching sensor pair and a separated proxy-only pair. The first two
+emit EndContact and wake their sleeping endpoints while preserving exact
+nonzero timers on their already-awake endpoints. The proxy-only node emits no
+event and leaves both endpoint states unchanged. The touching gate, listener
+ordering and both conditional SetAwake sites are commented in IDA and Hopper
+and the IDB is saved.
+
+The complete workspace passes 826 tests with only the deliberate long-
+duration BirdRun audit ignored. Formatting, whitespace validation, strict
+all-target/all-feature Clippy and the release workspace build are clean. A
+fresh isolated-AppData 120-frame release-wgpu upload/render/readback reports
+20 optional probes, zero invoked fallbacks and zero remaining compatibility
+bindings, with empty stderr. The visually checked
+`build/audit-native-contact-destroy-20260829.png` is a 1024x768 RGBA PNG with
+SHA-256
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
