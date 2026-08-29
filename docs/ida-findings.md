@@ -17418,3 +17418,34 @@ fresh isolated-AppData 120-frame release-wgpu upload/render/readback reports
 bindings. `build/audit-native-polygon-set-20260829.png` is a 1024x768 RGBA PNG
 with SHA-256
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## Native polygon reference-edge ordered normalization
+
+IDA and Hopper now name `b2CollidePolygons` at `0x10085F648`. The selected
+reference edge is subtracted at `0x10085F884..0x10085F888`; its Y square is
+rounded by `FMUL` at `0x10085F88C`, and `FMADD` at `0x10085F890` adds the X
+square before `FSQRT`. This is followed by `FCMP length, FLT_EPSILON` at
+`0x10085F8A0` and `B.GE` at `0x10085F8A4`. Only an ordered length greater
+than or equal to epsilon reaches the reciprocal and two multiplies at
+`0x10085F8BC..0x10085F8C8`. Zero and ordered sub-epsilon edges branch around
+normalization, while an unordered NaN comparison also fails `B.GE` and
+preserves both raw tangent lanes. Both disassemblers carry comments at this
+condition-code boundary and the IDB is saved.
+
+This differs deliberately from the previously recovered inlined
+`b2Vec2::Normalize` sites in `b2EPCollider::Collide`: those use `B.LT`, so an
+unordered length takes the reciprocal path. Rust now uses a dedicated
+ordered-at-least-epsilon helper for polygon-polygon reference faces rather
+than the former host helper that rejected zero and sub-epsilon edges and
+divided NaN inputs. Regressions pin raw signed-zero and sub-epsilon lanes,
+normalization exactly at the epsilon boundary, and `(NaN, 1.0)` remaining
+`(NaN, 1.0)` instead of becoming `(NaN, NaN)`.
+
+The complete workspace passes 806 tests with only the deliberate long-
+duration BirdRun audit ignored. Formatting, whitespace validation, strict
+all-target/all-feature Clippy and the release workspace build are clean. A
+fresh isolated-AppData 120-frame release-wgpu upload/render/readback reports
+20 optional probes, zero invoked fallbacks and zero remaining compatibility
+bindings. `build/audit-native-polygon-reference-20260829.png` is a 1024x768
+RGBA PNG with SHA-256
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.

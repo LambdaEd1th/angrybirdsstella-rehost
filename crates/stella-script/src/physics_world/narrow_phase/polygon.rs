@@ -3,7 +3,7 @@
 mod clipping;
 mod separation;
 
-use super::geometry::normalized_axis_f32;
+use super::geometry::native_normalize_if_ordered_at_least_epsilon_f32;
 #[cfg(test)]
 use crate::NativePolygon;
 use crate::{
@@ -95,10 +95,10 @@ pub(crate) fn polygon_manifold_at_transforms(
     };
     let reference_start = reference[reference_edge];
     let reference_end = reference[(reference_edge + 1) % reference.len()];
-    let tangent = normalized_axis_f32((
+    let tangent = native_normalize_if_ordered_at_least_epsilon_f32((
         reference_end.0 - reference_start.0,
         reference_end.1 - reference_start.1,
-    ))?;
+    ));
     // sub_10085F8DC..0x10085F920 derives the stored normal from the local
     // reference edge, rather than rotating the world-space SAT normal back.
     let local_normal = (tangent.1, -tangent.0);
