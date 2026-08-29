@@ -22,6 +22,12 @@ pub(super) fn rebuild(
     {
         object.native_shape_radius = f64::from(fixture_scale * radius as f32);
     }
+    // sub_10004050C writes RenderObjectData::radius before entering the two
+    // b2Body members.  Both members then reject the operation under e_locked,
+    // leaving the old fixture geometry, coefficients, proxy and mass intact.
+    if lifecycle::world_locked(render) {
+        return Ok(());
+    }
     lifecycle::destroy_all(lua, render, name)?;
 
     let old_center = {

@@ -24,6 +24,13 @@ pub(super) fn rebuild(
     sensor: bool,
 ) -> LuaResult<()> {
     let storage = save_fixture_list(render, name)?;
+    // The native member prepares replacement shapes before calling
+    // DestroyFixture.  e_locked prevents any body/fixture mutation; keep that
+    // native state split from the visual and Lua width/height writes already
+    // performed by sub_10004050C.
+    if lifecycle::world_locked(render) {
+        return Ok(());
+    }
     lifecycle::destroy_all(lua, render, name)?;
 
     match storage {

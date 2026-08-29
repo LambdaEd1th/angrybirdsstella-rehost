@@ -18523,3 +18523,50 @@ compatibility bindings, with empty stderr. The visually checked
 `build/audit-native-logical-object-lookup-20260829.png` is a 1024x768 RGBA PNG
 with SHA-256
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## Fixture lifecycle world-lock gates
+
+The complete ARM64 members at `sub_10086B454` (`b2Body::CreateFixture`, 58
+instructions) and `sub_10086B548` (`b2Body::DestroyFixture`, 62 instructions)
+were checked independently in IDA and Hopper. Both load the body's world from
+`b2Body+0x58`, read the flags at `world+0x19298`, and test bit 1. CreateFixture
+returns null at `0x10086B484` before allocation, shape cloning, proxy creation,
+fixture-list insertion, mass reset or the world's new-fixture flag.
+DestroyFixture returns at `0x10086B578` before fixture-list unlink, contact
+destruction, proxy release, fixture free, count decrement or mass reset.
+
+The outer GameLua order is intentionally not atomic. `native_resizeRadius` at
+`sub_100059488` writes `RenderObjectData+0x98` at `0x1000594B8`, then calls
+DestroyFixture and CreateFixture. Its locked result is therefore a new retained
+radius field paired with the complete old native circle fixture. The circle
+branch of `setPhysicsScale` performs the same retained-radius write at
+`0x100040A84` after its earlier visual/Lua scale writes. The host now checks the
+world lock only after those outer writes and preserves the existing collision
+shape, fixture coefficients, sensor flag, fixture proxy, active contacts and
+mass data when the native members reject replacement.
+
+`sub_100067CE8`, the polygon replacement helper, first prepares copied scaled
+shapes and then repeatedly calls DestroyFixture on `body->m_fixtureList`. A
+locked native call cannot advance that loop. Shipped callers keep this helper
+outside World::Step; for a hostile callback that violates the native calling
+precondition, the host contains the otherwise permanent non-progress loop by
+returning after the already-observable visual/Lua width and height writes while
+leaving all native fixture state unchanged.
+
+A focused regression performs both circle `setPhysicsScale` and
+`native_resizeRadius` from a real BeginContact callback. It proves that the
+retained visual/radius fields change while circle geometry, scale accumulated
+in the live fixture, coefficients, sensor bit, proxies, contacts and inverse
+mass remain byte-for-byte equivalent at the host model boundary. The two lock
+gates, both outer radius writes and the polygon non-progress site are commented
+in IDA and Hopper and the IDB is saved.
+
+The complete workspace passes 832 tests with only the deliberate long-duration
+BirdRun audit ignored. Formatting, whitespace validation, strict
+all-target/all-feature Clippy and the release workspace build are clean. A
+fresh isolated-AppData 120-frame release-wgpu upload/render/readback reports 20
+optional probes, zero invoked fallbacks and zero remaining compatibility
+bindings, with empty stderr. The visually checked
+`build/audit-native-fixture-lock-20260829.png` is a 1024x768 RGBA PNG with
+SHA-256
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.

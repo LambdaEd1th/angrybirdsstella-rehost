@@ -427,6 +427,84 @@ fn contact_listener_body_type_mutation_obeys_native_world_lock() {
 }
 
 #[test]
+fn contact_listener_fixture_replacement_obeys_native_world_lock() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createBox("sensor", "", 0, 0, 10, 10, 0, 0, 0, true, false, 1)
+                createCircle("scaled", "", -2, 0, 1, 2, 0.2, 0.3, true, false, 1)
+                createCircle("resized", "", 2, 0, 1, 3, 0.4, 0.5, true, false, 1)
+                setAsSensor("sensor", true)
+                setAsSensor("resized", true)
+                setWorldGravity(0, 0)
+                locked_fixture_mutations = 0
+                enterCollision = function()
+                    if locked_fixture_mutations == 0 then
+                        locked_fixture_mutations = 1
+                        setPhysicsScale("scaled", 3, 5)
+                        native_resizeRadius("resized", 4, 9, 0.8, 0.7)
+                    end
+                end
+                update = function() end
+                updatePhysics = function() end
+            "#,
+        )
+        .unwrap();
+
+    let (scaled_proxy, scaled_mass, resized_proxy, resized_mass) = {
+        let bridge = runtime.render.lock().unwrap();
+        (
+            bridge.scene["scaled"].fixture_proxy_ids.clone(),
+            bridge.scene["scaled"].inverse_mass,
+            bridge.scene["resized"].fixture_proxy_ids.clone(),
+            bridge.scene["resized"].inverse_mass,
+        )
+    };
+    runtime.update(1.0 / 30.0).unwrap();
+
+    assert_eq!(
+        game_environment(runtime.lua())
+            .unwrap()
+            .get::<i64>("locked_fixture_mutations")
+            .unwrap(),
+        1
+    );
+    let bridge = runtime.render.lock().unwrap();
+    assert!(!bridge.physics_world_locked);
+
+    let scaled = &bridge.scene["scaled"];
+    assert_eq!((scaled.scale_x, scaled.scale_y), (3.0, 5.0));
+    assert_eq!((scaled.physics_scale_x, scaled.physics_scale_y), (1.0, 1.0));
+    assert_eq!(
+        scaled.native_shape_radius,
+        f64::from((3.0_f32 + 0.0001_f32) * 1.0_f32)
+    );
+    assert!(matches!(scaled.collision_shape, CollisionShape::Circle { radius } if radius == 1.0));
+    assert_eq!(scaled.fixture_densities, vec![2.0]);
+    assert_eq!(scaled.fixture_frictions, vec![f64::from(0.2_f32)]);
+    assert_eq!(scaled.fixture_restitutions, vec![f64::from(0.3_f32)]);
+    assert_eq!(scaled.fixture_proxy_ids, scaled_proxy);
+    assert_eq!(scaled.inverse_mass, scaled_mass);
+
+    let resized = &bridge.scene["resized"];
+    assert_eq!(resized.native_shape_radius, 4.0);
+    assert!(matches!(resized.collision_shape, CollisionShape::Circle { radius } if radius == 1.0));
+    assert_eq!(resized.fixture_densities, vec![3.0]);
+    assert_eq!(resized.fixture_frictions, vec![f64::from(0.4_f32)]);
+    assert_eq!(resized.fixture_restitutions, vec![f64::from(0.5_f32)]);
+    assert!(resized.sensor);
+    assert_eq!(resized.fixture_proxy_ids, resized_proxy);
+    assert_eq!(resized.inverse_mass, resized_mass);
+    assert!(bridge.active_contacts.keys().any(|key| {
+        (key.0 == "sensor" && key.1 == "scaled") || (key.0 == "scaled" && key.1 == "sensor")
+    }));
+    assert!(bridge.active_contacts.keys().any(|key| {
+        (key.0 == "sensor" && key.1 == "resized") || (key.0 == "resized" && key.1 == "sensor")
+    }));
+}
+
+#[test]
 fn joint_destruction_obeys_native_world_lock() {
     let runtime = unlocked_test_runtime();
     runtime

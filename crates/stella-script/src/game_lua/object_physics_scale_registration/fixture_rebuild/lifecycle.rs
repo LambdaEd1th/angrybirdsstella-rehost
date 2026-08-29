@@ -3,11 +3,23 @@
 use super::super::arguments::FixtureCoefficients;
 use crate::*;
 
+pub(super) fn world_locked(render: &Arc<Mutex<RenderBridge>>) -> bool {
+    render
+        .lock()
+        .expect("render bridge lock poisoned")
+        .physics_world_locked
+}
+
 pub(super) fn destroy_all(
     lua: &Lua,
     render: &Arc<Mutex<RenderBridge>>,
     name: &str,
 ) -> LuaResult<()> {
+    // b2Body::DestroyFixture reads b2World::e_locked before it touches the
+    // intrusive fixture list, contacts, proxies or aggregate mass data.
+    if world_locked(render) {
+        return Ok(());
+    }
     loop {
         let destruction = {
             let mut bridge = render.lock().expect("render bridge lock poisoned");
@@ -59,6 +71,12 @@ pub(super) fn create(
     old_center: (f64, f64),
     density: f64,
 ) {
+    // b2Body::CreateFixture returns nullptr while the world is locked.  In
+    // particular, it does not allocate or head-insert a fixture, install a
+    // proxy, refresh mass data or raise the world's new-fixture flag.
+    if world_locked(render) {
+        return;
+    }
     let mut bridge = render.lock().expect("render bridge lock poisoned");
     // sub_10086B454 installs the fixture proxy before head insertion and mass
     // refresh. The vectors already contain the newly inserted fixture here.

@@ -19,7 +19,7 @@ pub(super) fn install(
                 f64::from(native_required_number(&args, 3, "native_resizeRadius")? as f32);
             let restitution =
                 f64::from(native_required_number(&args, 4, "native_resizeRadius")? as f32);
-            let (old_center, exits) = {
+            let (old_center, world_locked) = {
                 let mut bridge = resize_radius_bridge
                     .lock()
                     .expect("render bridge lock poisoned");
@@ -34,10 +34,21 @@ pub(super) fn install(
                     object.native_shape_radius = radius;
                     center
                 };
+                (old_center, bridge.physics_world_locked)
+            };
+            // b2Body::DestroyFixture and CreateFixture both return immediately
+            // while b2World::Step owns e_locked.  RenderObjectData::radius was
+            // already written above, but the old fixture, proxy, contacts,
+            // coefficients, sensor flag and mass data all survive unchanged.
+            if world_locked {
+                return Ok(());
+            }
+            let exits = {
+                let mut bridge = resize_radius_bridge
+                    .lock()
+                    .expect("render bridge lock poisoned");
                 bridge.remove_object_broad_phase_proxy_state(&name);
-                let exits = bridge
-                    .drain_contacts_for_invalidated_objects(std::slice::from_ref(&name), false);
-                (old_center, exits)
+                bridge.drain_contacts_for_invalidated_objects(std::slice::from_ref(&name), false)
             };
             dispatch_native_contact_exits(lua, &resize_radius_bridge, &exits)?;
             let mut bridge = resize_radius_bridge
