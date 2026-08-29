@@ -17670,3 +17670,39 @@ fresh isolated-AppData 120-frame release-wgpu upload/render/readback reports
 bindings, with empty stderr. `build/audit-native-clip-count-20260829.png` is a
 1024x768 RGBA PNG with SHA-256
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## Native polygon-circle unordered face scan
+
+The face-selection loop in `b2CollidePolygonAndCircle` (`0x10085E624`) was
+followed through its unordered paths in IDA and Hopper. After the packed
+`FMUL`/`FADDP` separation at `0x10085E6AC..0x10085E6B0`, Purple first rejects
+only an ordered separation greater than the combined radius. It then executes
+`FMAX candidate, running` at `0x10085E6BC`, but selects a new face index with
+the independent ordered `GT` condition at `0x10085E6C0..0x10085E6C4`.
+Consequently an unordered candidate propagates and quiets its NaN through the
+running separation without replacing the seed index.
+
+The resulting unordered scalar is not treated as an ordinary false Rust
+comparison. `FCMP separation, FLT_EPSILON` followed by `CSET LT` at
+`0x10085E6E0..0x10085E6E4` selects the face branch for NZCV=`0011`. If the
+face branch is not selected, the first and second Voronoi tests use `B.LE` at
+`0x10085E780` and `0x10085E7A0`; both likewise accept unordered inputs. The
+five sites are commented in both disassemblers and the IDB is saved.
+
+Rust now keeps the running `FMAX` scalar separate from ordered face-index
+replacement, loads the selected normal from the stored normal array only
+after the scan, and uses the shared ARM `LT`/`LE` predicates for the face and
+vertex-region gates. A regression supplies a polygon whose x coordinates are
+unordered: index zero remains selected, its native `(1, NaN)` normal reaches
+the local/world manifold, and the separation remains unordered instead of
+the former host-created zero normal.
+
+The complete workspace passes 815 tests with only the deliberate long-
+duration BirdRun audit ignored. Formatting, whitespace validation, strict
+all-target/all-feature Clippy and the release workspace build are clean. A
+fresh isolated-AppData 120-frame release-wgpu upload/render/readback reports
+20 optional probes, zero invoked fallbacks and zero remaining compatibility
+bindings, with empty stderr.
+`build/audit-native-polygon-circle-unordered-20260829.png` is a 1024x768 RGBA
+PNG with SHA-256
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.

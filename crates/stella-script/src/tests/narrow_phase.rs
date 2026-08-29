@@ -170,6 +170,20 @@ fn polygon_circle_retains_a_duplicate_setter_edge() {
 }
 
 #[test]
+fn polygon_circle_unordered_face_scan_keeps_the_seed_normal() {
+    let polygon = [(f64::NAN, 0.0), (f64::NAN, 1.0), (f64::NAN, 2.0)];
+
+    let manifold = circle_polygon_manifold((0.0, 0.0), 0.5, &polygon, false)
+        .expect("native FMAX/LT flow keeps the unordered face manifold");
+    let local = manifold.position;
+
+    assert_eq!(local.local_normal.0.to_bits(), 1.0_f32.to_bits());
+    assert!(local.local_normal.1.is_nan());
+    assert!(manifold.normal_y.is_nan());
+    assert!(manifold.penetration.is_nan());
+}
+
+#[test]
 fn rotated_polygon_circle_keeps_shape_local_normal_and_reference_point() {
     let polygon = [
         (-0.7_f32, -0.4_f32),

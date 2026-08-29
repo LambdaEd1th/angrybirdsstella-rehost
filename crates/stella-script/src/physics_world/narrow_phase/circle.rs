@@ -1,5 +1,6 @@
 //! Circle-circle and polygon-circle narrow-phase members.
 
+use super::geometry::{native_arm_le_f32, native_arm_lt_f32, native_fmax_f32};
 #[cfg(test)]
 use crate::NativePolygon;
 use crate::{
@@ -126,7 +127,6 @@ pub(crate) fn circle_polygon_manifold_at_transforms(
     let normals = native_polygon_normals(polygon);
     let mut face_index = 0;
     let mut face_separation = -f32::MAX;
-    let mut face_normal = (0.0_f32, 0.0_f32);
     for index in 0..polygon.len() {
         let start = polygon[index];
         let normal = normals[index];
@@ -137,12 +137,17 @@ pub(crate) fn circle_polygon_manifold_at_transforms(
         if separation > total_radius {
             return None;
         }
-        if separation > face_separation {
-            face_separation = separation;
+        let replaces_face = separation > face_separation;
+        face_separation = native_fmax_f32(separation, face_separation);
+        if replaces_face {
             face_index = index;
-            face_normal = normal;
         }
     }
+    // 0x10085E6BC updates the running scalar with FMAX independently from
+    // the ordered-GT index selection at 0x10085E6C0..0x10085E6C4. The
+    // selected normal is loaded only after the scan, even when the first
+    // candidate was unordered and therefore did not replace index zero.
+    let face_normal = normals[face_index];
 
     let first_vertex = polygon[face_index];
     let second_vertex = polygon[(face_index + 1) % polygon.len()];
@@ -171,9 +176,12 @@ pub(crate) fn circle_polygon_manifold_at_transforms(
     // for an edge contact (large enough to destabilize closed joint loops).
     // The native epsilon branch classifies centers within the polygon as a
     // face contact before testing either vertex Voronoi region.
-    let (polygon_to_circle, _separation, plane_point) = if face_separation < f32::EPSILON {
+    let face_region = native_arm_lt_f32(face_separation, f32::EPSILON);
+    let first_vertex_region = native_arm_le_f32(first_region, 0.0_f32);
+    let second_vertex_region = native_arm_le_f32(second_region, 0.0_f32);
+    let (polygon_to_circle, _separation, plane_point) = if face_region {
         (face_normal, face_separation, face_center)
-    } else if first_region <= 0.0_f32 {
+    } else if first_vertex_region {
         let distance_squared = first_delta
             .0
             .mul_add(first_delta.0, first_delta.1 * first_delta.1);
@@ -189,7 +197,7 @@ pub(crate) fn circle_polygon_manifold_at_transforms(
             first_delta
         };
         (normal, distance, first_vertex)
-    } else if second_region <= 0.0_f32 {
+    } else if second_vertex_region {
         let distance_squared = second_delta
             .0
             .mul_add(second_delta.0, second_delta.1 * second_delta.1);
