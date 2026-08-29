@@ -92,6 +92,30 @@ pub(crate) fn remove_native_objects_with_joint_callbacks(
 ) -> LuaResult<Vec<String>> {
     let mut removed = Vec::new();
     for name in initial {
+        // RenderObjectData::~RenderObjectData calls b2World::DestroyBody
+        // before GameLua erases its name-map record. During Begin/EndContact
+        // the world is locked, so Box2D performs no native teardown while the
+        // logical erase still completes.
+        let locked_native_body = {
+            let bridge = render.lock().expect("render bridge lock poisoned");
+            bridge.physics_world_locked
+                && !bridge.object_game_lua_record_removed(&name)
+                && bridge
+                    .scene
+                    .get(&name)
+                    .is_some_and(SceneObject::has_physics_body)
+        };
+        if locked_native_body {
+            let did_remove = render
+                .lock()
+                .expect("render bridge lock poisoned")
+                .orphan_native_body_after_locked_destroy(&name);
+            if did_remove {
+                removed.push(name);
+            }
+            continue;
+        }
+
         let attached = render
             .lock()
             .expect("render bridge lock poisoned")
@@ -99,11 +123,10 @@ pub(crate) fn remove_native_objects_with_joint_callbacks(
         for joint_name in attached {
             dispatch_and_remove_lua_joint(lua, &joint_name)?;
         }
-        let exists = render
-            .lock()
-            .expect("render bridge lock poisoned")
-            .scene
-            .contains_key(&name);
+        let exists = {
+            let bridge = render.lock().expect("render bridge lock poisoned");
+            bridge.scene.contains_key(&name) && !bridge.object_game_lua_record_removed(&name)
+        };
         if !exists {
             continue;
         }

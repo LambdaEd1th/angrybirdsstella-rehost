@@ -12,6 +12,9 @@ impl RenderBridge {
     }
 
     pub(crate) fn attached_joint_names(&self, object: &str) -> Vec<String> {
+        if self.object_game_lua_record_removed(object) {
+            return Vec::new();
+        }
         self.joints
             .values()
             .filter(|joint| {

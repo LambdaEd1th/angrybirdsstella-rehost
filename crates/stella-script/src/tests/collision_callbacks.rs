@@ -505,6 +505,86 @@ fn joint_destruction_obeys_native_world_lock() {
 }
 
 #[test]
+fn contact_listener_body_destruction_obeys_native_world_lock() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createBox("sensor", "", 0, 0, 4, 4, 0, 0, 0, true, false, 1)
+                createCircle("body", "", 0, 0, 0.5, 1, 0, 0, true, false, 1)
+                setAsSensor("sensor", true)
+                objects.joints = {}
+                createJoint({
+                    name = "body_joint", end1 = "sensor", end2 = "body",
+                    type = 3, x1 = 0, y1 = 0, x2 = 0, y2 = 0,
+                    collideConnected = true
+                })
+                setWorldGravity(0, 0)
+                enterCollision = function(first, second)
+                    if first == "body" or second == "body" then
+                        removeObject("body")
+                    end
+                end
+                update = function() end
+                updatePhysics = function() end
+            "#,
+        )
+        .unwrap();
+    runtime.update(1.0 / 30.0).unwrap();
+
+    let world = object_world(runtime.lua()).unwrap();
+    assert!(matches!(
+        world.raw_get::<Value>("body").unwrap(),
+        Value::Nil
+    ));
+    let joints = native_lua_object(runtime.lua(), NativeLuaObject::Objects)
+        .unwrap()
+        .unwrap()
+        .get::<mlua::Table>("joints")
+        .unwrap();
+    assert!(matches!(
+        joints.raw_get::<Value>("body_joint").unwrap(),
+        Value::Table(_)
+    ));
+
+    let bridge = runtime.render.lock().unwrap();
+    // b2World::DestroyBody returns immediately on e_locked, but
+    // RenderObjectData's wrapper still clears its logical body pointer and
+    // removeObject erases the GameLua name-map/render-tree entry.
+    assert!(bridge.scene.contains_key("body"));
+    assert!(bridge.orphaned_native_bodies.contains("body"));
+    assert!(
+        bridge
+            .native_body_world_order
+            .values()
+            .any(|name| name == "body")
+    );
+    assert!(bridge.joints.contains_key("body_joint"));
+    assert!(bridge.attached_joint_names("body").is_empty());
+    assert!(bridge.active_contacts.keys().any(|key| {
+        (key.0 == "sensor" && key.1 == "body") || (key.0 == "body" && key.1 == "sensor")
+    }));
+    assert!(!bridge.scene_range_names().iter().any(|name| name == "body"));
+    assert!(!bridge.physics_world_locked);
+    drop(bridge);
+
+    // The RenderObjectData body pointer was cleared by the first call, so a
+    // repeated logical remove cannot rediscover the orphaned native body.
+    runtime.execute_source(r#"removeObject("body")"#).unwrap();
+    let mut bridge = runtime.render.lock().unwrap();
+    assert!(bridge.scene.contains_key("body"));
+    assert!(bridge.orphaned_native_bodies.contains("body"));
+
+    // The b2World owner still releases every native allocation at level
+    // teardown, including the otherwise unreachable body and its joint.
+    bridge.clear_native_level_scene();
+    assert!(bridge.scene.is_empty());
+    assert!(bridge.orphaned_native_bodies.is_empty());
+    assert!(bridge.joints.is_empty());
+    assert!(bridge.native_body_world_order.is_empty());
+}
+
+#[test]
 fn contact_listener_mutation_reaches_later_contact_update_in_same_collide_walk() {
     let runtime = unlocked_test_runtime();
     runtime

@@ -169,6 +169,7 @@ pub(super) fn insert(
     // float32 aggregate mass and moving c to the fixture center of mass.
     scene_object.reset_native_mass_data((request.x, request.y));
     let name = request.name;
+    bridge.orphaned_native_bodies.remove(&name);
     let z_bucket = crate::native_fcvtzs_f32(scene_object.z_order as f32);
     let sheet = crate::native_scene_sheet_id(&scene_object);
     if !skips_initial_render_index {

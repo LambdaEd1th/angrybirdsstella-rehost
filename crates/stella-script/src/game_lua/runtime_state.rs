@@ -95,6 +95,14 @@ pub(crate) struct RenderBridge {
     pub(crate) dynamic_tree: NativeDynamicTree,
     pub(crate) composite_updates: BTreeMap<String, Vec<CompositePart>>,
     pub(crate) scene: BTreeMap<String, SceneObject>,
+    /// Native b2Bodies left in the world when GameLua removes a
+    /// RenderObjectData record from inside a locked b2World::Step. Purple's
+    /// wrapper clears the RenderObjectData body pointer and erases the
+    /// logical name-map entry even though b2World::DestroyBody returned
+    /// without touching the body, fixtures, contacts or attached joints.
+    /// The rehost retains the SceneObject as the native solver payload while
+    /// excluding its name from later GameLua/render lookups.
+    pub(crate) orphaned_native_bodies: BTreeSet<String>,
     /// Identity of the Lua `objects.world` table that owns `scene`.
     ///
     /// Level restart replaces that table before rebuilding objects with the
@@ -372,6 +380,7 @@ impl Default for RenderBridge {
             dynamic_tree: NativeDynamicTree::default(),
             composite_updates: BTreeMap::new(),
             scene: BTreeMap::new(),
+            orphaned_native_bodies: BTreeSet::new(),
             object_world_identity: None,
             scene_render_index: NativeSceneRenderIndex::default(),
             z_order_min: f64::NEG_INFINITY,

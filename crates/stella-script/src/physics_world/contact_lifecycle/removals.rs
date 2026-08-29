@@ -24,6 +24,7 @@ impl RenderBridge {
         self.contact_creation_order.clear();
         self.native_contact_world_order.clear();
         self.pending_object_destructions.clear();
+        self.orphaned_native_bodies.clear();
         self.joints.clear();
         self.native_joint_world_order.clear();
         self.pending_native_joint_destructions.clear();
@@ -54,11 +55,42 @@ impl RenderBridge {
             .collect()
     }
 
+    pub(crate) fn object_game_lua_record_removed(&self, name: &str) -> bool {
+        self.orphaned_native_bodies.contains(name)
+    }
+
+    /// Mirror the split lifetime produced by `sub_1000674FC` when
+    /// b2World::DestroyBody sees e_locked. The native body remains linked to
+    /// the world, broad phase, contacts and joints, but the subsequent
+    /// removeObject code erases the RenderObjectData name from GameLua's
+    /// render tree. Keeping the SceneObject resident supplies the native
+    /// solver payload until the whole b2World is destroyed.
+    pub(crate) fn orphan_native_body_after_locked_destroy(&mut self, name: &str) -> bool {
+        if self.orphaned_native_bodies.contains(name) {
+            return false;
+        }
+        let Some(object) = self.scene.get(name) else {
+            return false;
+        };
+        if !object.has_physics_body() {
+            return self.remove_one_object_with_destroy_links(name);
+        }
+
+        self.pending_object_destructions.remove(name);
+        let z_bucket = native_fcvtzs_f32(object.z_order as f32);
+        let sheet = native_scene_sheet_id(object);
+        self.scene_render_index.erase_first(z_bucket, sheet, name);
+        self.tracks.remove(name);
+        self.orphaned_native_bodies.insert(name.to_owned());
+        true
+    }
+
     /// Remove one object without recursively consuming zero-delay destruction
     /// links. The Lua host uses this boundary to run Purple's per-joint
     /// callbacks before the attached native joints are destroyed.
     pub(crate) fn remove_one_object_with_destroy_links(&mut self, name: &str) -> bool {
         self.pending_object_destructions.remove(name);
+        self.orphaned_native_bodies.remove(name);
         self.remove_object_broad_phase_proxy_state(name);
         let Some(object) = self.scene.remove(name) else {
             return false;

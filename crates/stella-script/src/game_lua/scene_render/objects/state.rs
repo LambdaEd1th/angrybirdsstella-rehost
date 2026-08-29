@@ -278,6 +278,9 @@ impl RenderBridge {
     }
 
     pub(crate) fn scene_draw_visit(&self, name: &str) -> Option<SceneDrawVisit> {
+        if self.orphaned_native_bodies.contains(name) {
+            return None;
+        }
         let object = self.scene.get(name)?;
         if !object.visible {
             return None;

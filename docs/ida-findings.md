@@ -18432,3 +18432,55 @@ bindings, with empty stderr. The visually checked
 `build/audit-native-destroy-joint-lock-20260829.png` is a 1024x768 RGBA PNG
 with SHA-256
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## DestroyBody world-lock and RenderObjectData lifetime split
+
+The complete 139-instruction `b2World::DestroyBody` at `0x10086E02C` was
+checked independently in IDA and Hopper. Its first state test at
+`0x10086E054..0x10086E06C` reads the same `e_locked` bit used by
+DestroyJoint and returns before all teardown when that bit is set. The body
+joint-edge traversal, destruction-listener calls, controller unlink, contact
+destruction, fixture/proxy destruction, world-list unlink and 0xC0-byte body
+free all lie after that early return.
+
+GameLua's RenderObjectData cleanup wrapper at `sub_1000674FC` does not share
+that atomic lifetime. It loads the retained b2Body pointer from
+`RenderObjectData+0x88`, calls DestroyBody at `0x100067524`, then clears the
+pointer unconditionally at `0x100067528`. The explicit `removeObject` path in
+`sub_100042260` invokes this wrapper at `0x100042E50` and subsequently erases
+the RenderObjectData name-map node at `0x100042E78`. A remove made by a Lua
+contact callback therefore makes the object logically unreachable and
+removes it from scene rendering while the locked native world continues to
+own its body, fixtures, broad-phase proxies, contacts and attached joints.
+There is no later body pointer from which a repeated remove-by-name can retry
+the native destruction; the remaining allocation lives until b2World owner
+teardown.
+
+The host now models that split explicitly. A locked physical remove erases
+the Lua world entry and the persistent render-index leaf, drops its draw
+callback and marks the SceneObject as a native-body orphan. The record stays
+in body-list, solver, proxy, contact and joint-edge storage, but is excluded
+from GameLua scene-frame reporting, bounce aggregation, rendering and
+logical attached-joint lookup. Unlocked removal and non-physics removal keep
+their existing immediate teardown. Repeating removeObject after the original
+logical erase is a no-op, while complete level/world destruction releases the
+orphan and all of its native edges.
+
+A focused regression establishes an overlapping sensor contact and a
+physical joint, locks the world, removes the dynamic body, then proves that
+the Lua entry and render leaf disappear without emitting contact or joint
+teardown. It also verifies that the native body order, contact and constraint
+survive a repeated unlocked name lookup and that whole-world cleanup owns the
+final release. The world gate, unconditional body-pointer clear and both
+outer remove/erase sites are commented in IDA and Hopper and the IDB is
+saved.
+
+The complete workspace passes 831 tests with only the deliberate long-
+duration BirdRun audit ignored. Formatting, whitespace validation, strict
+all-target/all-feature Clippy and the release workspace build are clean. A
+fresh isolated-AppData 120-frame release-wgpu upload/render/readback reports
+20 optional probes, zero invoked fallbacks and zero remaining compatibility
+bindings, with empty stderr. The visually checked
+`build/audit-native-destroy-body-lock-20260829.png` is a 1024x768 RGBA PNG
+with SHA-256
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.

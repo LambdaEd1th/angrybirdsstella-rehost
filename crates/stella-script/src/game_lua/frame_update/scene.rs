@@ -10,7 +10,13 @@ impl RenderBridge {
         // phase divisor is always one.
         let delta = delta as f32;
         let threshold = (self.game_world_scale as f32) * 0.01_f32;
-        for (index, object) in self.scene.values_mut().enumerate() {
+        let mut logical_index = 0_usize;
+        for (name, object) in &mut self.scene {
+            if self.orphaned_native_bodies.contains(name) {
+                continue;
+            }
+            let index = logical_index;
+            logical_index += 1;
             if !object.bounce_active {
                 continue;
             }
@@ -55,6 +61,9 @@ impl RenderBridge {
         let mut has_awake_objects = false;
         let mut has_moving_objects_zero_tolerance = false;
         for (name, object) in &mut self.scene {
+            if self.orphaned_native_bodies.contains(name) {
+                continue;
+            }
             if !object.has_physics_body() {
                 continue;
             }

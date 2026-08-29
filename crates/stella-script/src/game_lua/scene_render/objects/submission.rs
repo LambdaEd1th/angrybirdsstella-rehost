@@ -96,6 +96,9 @@ impl RenderBridge {
     }
 
     pub(crate) fn scene_draw_object(&self, name: &str) -> Option<SceneDrawObject> {
+        if self.orphaned_native_bodies.contains(name) {
+            return None;
+        }
         self.scene.get(name).map(SceneDrawObject::from)
     }
 
