@@ -11,7 +11,14 @@ impl SceneObject {
     pub(crate) fn reset_native_mass_data(&mut self, old_world_center: (f64, f64)) {
         // b2Body::ResetMassData discards any previous SetMassData inertia.
         self.moment_of_inertia = None;
-        self.fixture_mass_data = self.compute_native_fixture_mass_data_f32();
+        // The native body only traverses its fixture list for dynamic bodies
+        // (type 2). Static and kinematic bodies clear m_mass/m_I and return
+        // before ComputeMass; their fixture list densities remain available
+        // for the next dynamic ResetMassData call. Keep the previous
+        // aggregate in that branch instead of eagerly recomputing it.
+        if self.dynamic_body {
+            self.fixture_mass_data = self.compute_native_fixture_mass_data_f32();
+        }
         let mass = self.fixture_mass_data.0;
         self.body_mass = if self.dynamic_body && mass > 0.0_f32 {
             mass

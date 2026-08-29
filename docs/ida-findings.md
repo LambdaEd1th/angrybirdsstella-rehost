@@ -6503,6 +6503,35 @@ compatibility bindings. It emitted
 `build/audit-system-font-smoke-20260820.png`, SHA-256
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
 
+## Non-dynamic ResetMassData fixture-cache behavior
+
+The native `b2Body::ResetMassData` path at `0x10086B1F4` clears the body mass,
+inverse mass, inertia and inverse inertia at `0x10086B214`, then tests the body
+type at `0x10086B218..0x10086B220`. Static and kinematic types branch through
+`0x10086B224..0x10086B238`, copying the transform origin into both sweep
+centres and returning before the fixture-list traversal at `0x10086B23C`.
+Therefore a density update on a non-dynamic body changes the fixture-list head
+but does not recompute the body's aggregate mass until a later transition to
+dynamic type.
+
+The Rust `reset_native_mass_data` implementation now follows that split: it
+recomputes `fixture_mass_data` only while `dynamic_body` is true, while always
+clearing the body mass state and zeroing the authoritative local centre for
+non-dynamic types. A new regression changes a 2x3 box from dynamic to
+kinematic, calls `native_setDensity(4)`, verifies zero body mass with the old
+density-1 aggregate retained, then switches back to dynamic and verifies the
+density-4 mass and inverse mass. The native density wrapper and the two
+ResetMassData branches are commented in both IDA and Hopper; the IDB is saved.
+
+The complete workspace now passes 843 tests with one deliberate long-duration
+BirdRun audit ignored. Strict all-target/all-feature Clippy and the release
+workspace build are clean. A fresh isolated-AppData release-wgpu launch and
+120-frame readback exits successfully with empty stderr, 20 optional probes,
+zero invoked fallbacks and zero compatibility bindings; the visually checked
+1024x768 RGBA screenshot is `build/audit-reset-mass-nondynamic-20260829.png`
+with SHA-256
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
 The image was deliberately not viewed or compared. It proves only that the
 live SystemFont/wgpu path executed; still images, including original-game
 captures without precisely matching runtime state and time, remain

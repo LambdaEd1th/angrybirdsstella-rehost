@@ -875,6 +875,44 @@ fn reset_mass_data_separates_non_dynamic_body_center_from_fixture_mass_center() 
 }
 
 #[test]
+fn non_dynamic_reset_keeps_fixture_mass_until_dynamic_transition() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createBox("body", "", 0, 0, 2, 3, 1, 0, 0, true, false, 1)
+                setObjectParameter("body", 39, 1)
+                native_setDensity("body", 4)
+                "#,
+        )
+        .unwrap();
+
+    {
+        let bridge = runtime.render.lock().unwrap();
+        let body = &bridge.scene["body"];
+        // native_setDensity writes the fixture-list density and invokes
+        // ResetMassData, but the native static/kinematic branch returns
+        // before traversing fixtures. The body mass is zero while the
+        // previously cached fixture aggregate remains the old density-1
+        // value (2 x 3 box => mass 6).
+        assert_eq!(body.fixture_densities, vec![4.0]);
+        assert_eq!(body.native_body_mass(), 0.0);
+        assert_eq!(body.native_fixture_mass_data_f32().0, 6.0);
+    }
+
+    runtime
+        .execute_source(r#"setObjectParameter("body", 39, 2)"#)
+        .unwrap();
+    let bridge = runtime.render.lock().unwrap();
+    let body = &bridge.scene["body"];
+    // Re-entering dynamic type runs the fixture traversal and now observes
+    // the density-4 fixture, matching b2Body::SetType -> ResetMassData.
+    assert_eq!(body.native_fixture_mass_data_f32().0, 24.0);
+    assert_eq!(body.native_body_mass(), 24.0);
+    assert_eq!(body.inverse_mass, f64::from(24.0_f32.recip()));
+}
+
+#[test]
 fn native_density_changes_only_head_fixture_before_resetting_compound_mass() {
     let runtime = unlocked_test_runtime();
     runtime
