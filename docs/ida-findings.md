@@ -17899,3 +17899,42 @@ bindings, with empty stderr.
 `build/audit-native-edge-circle-world-20260829.png` is a 1024x768 RGBA PNG
 with SHA-256
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## Native polygon-circle initial world separation
+
+All 162 instructions of `b2CollidePolygonAndCircle` at `0x10085E624` were
+checked in IDA and Hopper. Each accepted region produces the same local FaceA
+manifold shape. The inside/face branch writes type and point count at
+`0x10085E724`; the ordinary edge-face branch repeats it at `0x10085E7E4`.
+The first and second vertex branches at `0x10085E814` and `0x10085E868` store
+their polygon-local delta normals and vertex plane points without changing to
+a Circles manifold. The common tail at `0x10085E89C` copies the circle's local
+center into manifold point zero and clears its feature id. No branch writes a
+world penetration.
+
+The Rust collision leaf already reproduced the correct local normal and plane
+point, and constructed the two world surface points in the recovered order.
+It still simplified penetration to `totalRadius - planeDistance`, however.
+Purple instead projects the difference of those independently rounded world
+surfaces onto the face normal inside `b2WorldManifold`. The polygon-circle
+path now ends at the local manifold boundary and runs that shared world
+reconstruction in polygon-first or circle-first fixture order as appropriate.
+
+A translated and rotated FaceA contact first demonstrated the old
+initial-versus-refresh mismatch and now pins the native penetration word
+`0x3B0312A8`. The same geometry in circle-first order exercises FaceB. Both
+orders are bit-identical to a same-transform world refresh for normal,
+penetration and contact midpoint. The circle-circle leaf was audited in the
+same pass and already matched the recovered Circles surface and separation
+sequence, so it required no code change. The polygon-circle local-output sites
+are commented in IDA and Hopper and the IDB is saved.
+
+The complete workspace passes 818 tests with only the deliberate long-
+duration BirdRun audit ignored. Formatting, whitespace validation, strict
+all-target/all-feature Clippy and the release workspace build are clean. A
+fresh isolated-AppData 120-frame release-wgpu upload/render/readback reports
+20 optional probes, zero invoked fallbacks and zero remaining compatibility
+bindings, with empty stderr.
+`build/audit-native-polygon-circle-world-20260829.png` is a 1024x768 RGBA PNG
+with SHA-256
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.

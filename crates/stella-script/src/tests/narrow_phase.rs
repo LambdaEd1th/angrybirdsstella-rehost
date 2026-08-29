@@ -297,14 +297,15 @@ fn rotated_polygon_circle_keeps_shape_local_normal_and_reference_point() {
         cosine,
     };
     let circle_world_center = polygon_transform.point((0.2, 1.1));
+    let circle_transform = NativeToiTransform {
+        position: circle_world_center,
+        sine: 0.0,
+        cosine: 1.0,
+    };
     let manifold = circle_polygon_manifold_at_transforms(
         (0.0, 0.0),
         0.5,
-        NativeToiTransform {
-            position: circle_world_center,
-            sine: 0.0,
-            cosine: 1.0,
-        },
+        circle_transform,
         &polygon,
         polygon_transform,
         false,
@@ -322,6 +323,51 @@ fn rotated_polygon_circle_keeps_shape_local_normal_and_reference_point() {
     assert_eq!(local.local_point.0.to_bits(), expected_plane_x.to_bits());
     assert_eq!(local.local_point.1.to_bits(), expected_plane_y.to_bits());
     assert_eq!(local.local_points[0], (0.0, 0.0));
+    let refreshed = manifold.at_native_transforms(polygon_transform, circle_transform);
+    assert_eq!(manifold.normal_x.to_bits(), refreshed.normal_x.to_bits());
+    assert_eq!(manifold.normal_y.to_bits(), refreshed.normal_y.to_bits());
+    assert_eq!((manifold.penetration as f32).to_bits(), 0x3B03_12A8);
+    assert_eq!(
+        manifold.penetration.to_bits(),
+        refreshed.penetration.to_bits()
+    );
+    assert_eq!(manifold.point_x.to_bits(), refreshed.point_x.to_bits());
+    assert_eq!(manifold.point_y.to_bits(), refreshed.point_y.to_bits());
+
+    let reversed = circle_polygon_manifold_at_transforms(
+        (0.0, 0.0),
+        0.5,
+        circle_transform,
+        &polygon,
+        polygon_transform,
+        true,
+    )
+    .expect("rotated circle-first polygon contact");
+    assert!(matches!(
+        reversed.position.manifold_type,
+        ContactManifoldType::FaceSecond
+    ));
+    let reversed_refreshed = reversed.at_native_transforms(circle_transform, polygon_transform);
+    assert_eq!(
+        reversed.normal_x.to_bits(),
+        reversed_refreshed.normal_x.to_bits()
+    );
+    assert_eq!(
+        reversed.normal_y.to_bits(),
+        reversed_refreshed.normal_y.to_bits()
+    );
+    assert_eq!(
+        reversed.penetration.to_bits(),
+        reversed_refreshed.penetration.to_bits()
+    );
+    assert_eq!(
+        reversed.point_x.to_bits(),
+        reversed_refreshed.point_x.to_bits()
+    );
+    assert_eq!(
+        reversed.point_y.to_bits(),
+        reversed_refreshed.point_y.to_bits()
+    );
 }
 
 #[test]

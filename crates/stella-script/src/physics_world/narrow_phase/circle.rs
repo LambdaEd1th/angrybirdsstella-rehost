@@ -221,61 +221,47 @@ pub(crate) fn circle_polygon_manifold_at_transforms(
         (face_normal, separation, face_center)
     };
 
-    // Reconstruct b2WorldManifold's face point after the local collision leaf
-    // has frozen the shape-local normal, reference point and circle center.
-    let reference_normal = polygon_transform.rotate(polygon_to_circle);
-    let plane_world = polygon_transform.point(plane_point);
-    let world_delta = (
-        circle_world_center.0 - plane_world.0,
-        circle_world_center.1 - plane_world.1,
-    );
-    let world_separation = world_delta
-        .0
-        .mul_add(reference_normal.0, world_delta.1 * reference_normal.1);
-    let polygon_surface = (
-        (polygon_radius - world_separation).mul_add(reference_normal.0, circle_world_center.0),
-        (polygon_radius - world_separation).mul_add(reference_normal.1, circle_world_center.1),
-    );
-    let circle_surface = (
-        (-circle_radius).mul_add(reference_normal.0, circle_world_center.0),
-        (-circle_radius).mul_add(reference_normal.1, circle_world_center.1),
-    );
-    let normal = if circle_is_first {
-        (-reference_normal.0, -reference_normal.1)
+    let position = if circle_is_first {
+        ContactLocalManifold {
+            manifold_type: ContactManifoldType::FaceSecond,
+            local_normal: polygon_to_circle,
+            local_point: plane_point,
+            local_points: [circle_local_center, (0.0, 0.0)],
+            point_count: 1,
+            first_radius: circle_radius,
+            second_radius: polygon_radius,
+        }
     } else {
-        reference_normal
+        ContactLocalManifold {
+            manifold_type: ContactManifoldType::FaceFirst,
+            local_normal: polygon_to_circle,
+            local_point: plane_point,
+            local_points: [circle_local_center, (0.0, 0.0)],
+            point_count: 1,
+            first_radius: polygon_radius,
+            second_radius: circle_radius,
+        }
     };
-    Some(ContactManifold {
-        normal_x: f64::from(normal.0),
-        normal_y: f64::from(normal.1),
-        penetration: f64::from(total_radius - world_separation),
-        point_x: f64::from((polygon_surface.0 + circle_surface.0) * 0.5_f32),
-        point_y: f64::from((polygon_surface.1 + circle_surface.1) * 0.5_f32),
+    // b2CollidePolygonAndCircle finishes with the local face manifold. Let
+    // b2WorldManifold derive penetration from its independently rounded world
+    // surfaces instead of collapsing it to totalRadius - planeDistance.
+    let local_manifold = ContactManifold {
+        normal_x: 0.0,
+        normal_y: 0.0,
+        penetration: 0.0,
+        point_x: 0.0,
+        point_y: 0.0,
         // Every branch of sub_10085E624 clears b2ManifoldPoint::id.key.
         feature_id: 0,
         secondary: None,
-        position: if circle_is_first {
-            ContactLocalManifold {
-                manifold_type: ContactManifoldType::FaceSecond,
-                local_normal: polygon_to_circle,
-                local_point: plane_point,
-                local_points: [circle_local_center, (0.0, 0.0)],
-                point_count: 1,
-                first_radius: circle_radius,
-                second_radius: polygon_radius,
-            }
-        } else {
-            ContactLocalManifold {
-                manifold_type: ContactManifoldType::FaceFirst,
-                local_normal: polygon_to_circle,
-                local_point: plane_point,
-                local_points: [circle_local_center, (0.0, 0.0)],
-                point_count: 1,
-                first_radius: polygon_radius,
-                second_radius: circle_radius,
-            }
-        },
-    })
+        position,
+    };
+    let (first_transform, second_transform) = if circle_is_first {
+        (circle_transform, polygon_transform)
+    } else {
+        (polygon_transform, circle_transform)
+    };
+    Some(local_manifold.at_native_transforms(first_transform, second_transform))
 }
 
 fn native_polygon_circle_vertex_normal(delta: (f32, f32), distance: f32) -> (f32, f32) {
