@@ -18,7 +18,7 @@ fn contact_solver_warm_starts_cached_normal_impulse() {
 
     let mut bridge = runtime.render.lock().unwrap();
     bridge.solve_contacts();
-    let pair = ("circle".to_owned(), "ground".to_owned(), 0, 0);
+    let pair = ("ground".to_owned(), "circle".to_owned(), 0, 0);
     assert!(bridge.contact_impulses[&pair].normal > 0.0);
     bridge.scene.get_mut("circle").unwrap().velocity_y = -0.2;
     bridge.begin_contact_step();
@@ -266,7 +266,7 @@ fn two_point_position_constraint_rebuilds_transform_after_first_impulse() {
 
     let mut bridge = runtime.render.lock().unwrap();
     bridge.solve_contacts();
-    let pair = ("ground".to_owned(), "mover".to_owned(), 0, 0);
+    let pair = ("mover".to_owned(), "ground".to_owned(), 0, 0);
     assert_eq!(bridge.position_contacts[&pair].point_count(), 2);
     bridge.solve_contact_positions();
     assert!(bridge.scene["mover"].angle.abs() > 1e-8);

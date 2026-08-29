@@ -2,7 +2,58 @@
 
 use crate::*;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NativeContactShapeType {
+    Circle,
+    Edge,
+    Polygon,
+}
+
+impl NativeContactShapeType {
+    fn of(shape: &CollisionShape) -> Option<Self> {
+        match shape {
+            CollisionShape::None => None,
+            CollisionShape::Circle { .. } => Some(Self::Circle),
+            CollisionShape::Line { .. } => Some(Self::Edge),
+            CollisionShape::Box { .. } | CollisionShape::Polygon { .. } => Some(Self::Polygon),
+        }
+    }
+}
+
 impl RenderBridge {
+    /// Apply Purple's `b2ContactFactory::Create` fixture ordering after the
+    /// broad phase has sorted a pair by proxy id.  The factory registers only
+    /// one primary direction for unlike shapes and calls that constructor
+    /// with swapped arguments from the mirrored table entry.  Edge/edge has
+    /// no registration at all.
+    fn native_contact_factory_key(
+        &self,
+        first_name: String,
+        first_fixture: usize,
+        second_name: String,
+        second_fixture: usize,
+    ) -> Option<ContactKey> {
+        let first_type = NativeContactShapeType::of(&self.scene.get(&first_name)?.collision_shape)?;
+        let second_type =
+            NativeContactShapeType::of(&self.scene.get(&second_name)?.collision_shape)?;
+        let swap = match (first_type, second_type) {
+            (NativeContactShapeType::Circle, NativeContactShapeType::Circle)
+            | (NativeContactShapeType::Polygon, NativeContactShapeType::Polygon)
+            | (NativeContactShapeType::Edge, NativeContactShapeType::Circle)
+            | (NativeContactShapeType::Polygon, NativeContactShapeType::Circle)
+            | (NativeContactShapeType::Edge, NativeContactShapeType::Polygon) => false,
+            (NativeContactShapeType::Circle, NativeContactShapeType::Edge)
+            | (NativeContactShapeType::Circle, NativeContactShapeType::Polygon)
+            | (NativeContactShapeType::Polygon, NativeContactShapeType::Edge) => true,
+            (NativeContactShapeType::Edge, NativeContactShapeType::Edge) => return None,
+        };
+        Some(if swap {
+            (second_name, first_name, second_fixture, first_fixture)
+        } else {
+            (first_name, second_name, first_fixture, second_fixture)
+        })
+    }
+
     pub(crate) fn find_new_broad_phase_contacts(&mut self) {
         let moved = std::mem::take(&mut self.moved_proxy_ids);
         let mut pairs = BTreeMap::new();
@@ -25,15 +76,24 @@ impl RenderBridge {
                 if name == other_name {
                     continue;
                 }
-                let proxy_pair = if proxy_id <= other_proxy {
-                    (proxy_id, other_proxy)
+                let (proxy_pair, proxy_ordered) = if proxy_id <= other_proxy {
+                    (
+                        (proxy_id, other_proxy),
+                        (name.clone(), fixture, other_name, other_fixture),
+                    )
                 } else {
-                    (other_proxy, proxy_id)
+                    (
+                        (other_proxy, proxy_id),
+                        (other_name, other_fixture, name.clone(), fixture),
+                    )
                 };
-                let contact_key = if name <= other_name {
-                    (name.clone(), other_name, fixture, other_fixture)
-                } else {
-                    (other_name, name.clone(), other_fixture, fixture)
+                let Some(contact_key) = self.native_contact_factory_key(
+                    proxy_ordered.0,
+                    proxy_ordered.1,
+                    proxy_ordered.2,
+                    proxy_ordered.3,
+                ) else {
+                    continue;
                 };
                 pairs.entry(proxy_pair).or_insert(contact_key);
             }

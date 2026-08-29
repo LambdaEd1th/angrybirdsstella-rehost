@@ -985,7 +985,7 @@ fn recovered_type_five_is_a_destroy_link_not_a_collision_joint() {
         let events = bridge.solve_contacts();
         assert!(
             events.iter().any(|event| {
-                event.first == "linked" && event.second == "source" && event.began
+                event.first == "source" && event.second == "linked" && event.began
             })
         );
     }

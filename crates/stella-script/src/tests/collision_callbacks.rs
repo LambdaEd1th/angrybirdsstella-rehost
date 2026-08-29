@@ -114,11 +114,11 @@ fn physics_contact_resolves_body_and_dispatches_native_collision_callback() {
     assert_eq!(environment.get::<i64>("collision_count").unwrap(), 1);
     assert_eq!(
         environment.get::<String>("collision_first").unwrap(),
-        "bird"
+        "wall"
     );
     assert_eq!(
         environment.get::<String>("collision_second").unwrap(),
-        "wall"
+        "bird"
     );
     assert!(environment.get::<f64>("collision_impulse").unwrap() > 0.0);
     assert!(environment.get::<bool>("collision_damaged").unwrap());
@@ -128,7 +128,7 @@ fn physics_contact_resolves_body_and_dispatches_native_collision_callback() {
         1.0
     );
     assert!(environment.get::<f64>("collision_point_x").unwrap() > 1.9);
-    assert_eq!(environment.get::<f64>("collision_normal_x").unwrap(), 1.0);
+    assert_eq!(environment.get::<f64>("collision_normal_x").unwrap(), -1.0);
     let wall: mlua::Table = world.get("wall").unwrap();
     assert_eq!(bird.get::<f64>("strength").unwrap(), 99.0);
     assert_eq!(wall.get::<f64>("strength").unwrap(), 99.0);
@@ -193,7 +193,10 @@ fn native_bird_collision_reorders_names_damages_once_and_uses_eight_value_abi() 
     );
     assert_eq!(environment.get::<f64>("bird_damage").unwrap(), 1.0);
     assert!(environment.get::<f64>("bird_point_x").unwrap() > 1.9);
-    assert_eq!(environment.get::<f64>("bird_normal_x").unwrap(), 1.0);
+    // ContactFactory stores the polygon target as fixture A. The bird name is
+    // reordered to the first Lua argument, but Purple does not invert the
+    // already constructed world-manifold normal.
+    assert_eq!(environment.get::<f64>("bird_normal_x").unwrap(), -1.0);
     assert!(matches!(
         environment.get::<Value>("bird_ninth").unwrap(),
         Value::Nil

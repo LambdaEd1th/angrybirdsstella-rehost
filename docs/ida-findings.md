@@ -18137,3 +18137,54 @@ bindings, with empty stderr. The visually checked
 `build/audit-native-sensor-end-20260829.png` is a 1024x768 RGBA PNG with
 SHA-256
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## Native ContactFactory fixture order
+
+The complete 96-instruction `b2ContactManager::AddPair` at `0x10086BC2C`
+and 91-instruction `b2ContactFactory::Create` at `0x1008634B4` were checked
+in IDA and Hopper. `b2BroadPhase::UpdatePairs` has already sorted each pair by
+signed proxy id when it calls AddPair at `0x10086C190`. AddPair preserves that
+input order through body filtering and passes both fixture/child-index pairs
+unchanged to the factory at `0x10086BCF4`.
+
+The factory's lazily initialized matrix then provides the observable fixture
+A/B order. Circle-circle and polygon-polygon use their proxy order directly.
+Polygon-circle is primary at `0x100863504`, edge-circle at `0x100863538`, and
+edge-polygon at `0x10086356C`. Their mirrored entries at
+`0x10086350C/0x10086354C/0x100863570` store a clear primary byte, causing
+`0x100863614..0x100863624` to swap both fixtures and child indices before the
+same constructor is called. No edge-edge matrix entry is installed, so that
+pair never creates a world contact node.
+
+The former host instead canonicalized every fixture pair by object-name
+lexical order. This changed same-shape order whenever names disagreed with
+proxy allocation, and put unlike shapes on the wrong ContactFactory side.
+Although the resulting forces are often algebraically symmetric, the error
+changes local manifold type, floating-point evaluation direction, body-edge
+order and Lua callback identity. Purple's BeginContact resolves object A and
+B directly from contact fixtures at `0x100062618/0x100062624`.
+`blockCollision` receives those names unchanged at `0x100064D88`, while the
+one-bird path may reorder only its two string arguments; the world-manifold
+point and normal passed at `0x1000638E8..0x100063910` are not inverted.
+
+Broad-phase pair construction now starts from ascending proxy ids and applies
+the recovered factory matrix before creating its `ContactKey`. Cross-shape
+contacts therefore consistently use polygon-circle, edge-circle or
+edge-polygon orientation; same-shape contacts retain proxy order; and
+edge-edge candidates are discarded before consuming contact creation order.
+The regression deliberately uses names opposite to proxy order, covers all
+three ordering rules, and confirms the absent edge-edge registration. The
+existing discrete, TOI, compound-fixture, position-constraint and Lua
+collision tests now assert native fixture order rather than the removed
+lexical convention. The factory, AddPair, listener and callback sites are
+commented in both disassemblers and the IDB is saved.
+
+The complete workspace passes 824 tests with only the deliberate long-
+duration BirdRun audit ignored. Formatting, whitespace validation, strict
+all-target/all-feature Clippy and the release workspace build are clean. A
+fresh isolated-AppData 120-frame release-wgpu upload/render/readback reports
+20 optional probes, zero invoked fallbacks and zero remaining compatibility
+bindings, with empty stderr. The visually checked
+`build/audit-native-contact-factory-20260829.png` is a 1024x768 RGBA PNG with
+SHA-256
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.

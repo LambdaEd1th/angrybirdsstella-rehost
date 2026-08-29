@@ -399,15 +399,82 @@ fn contact_manager_updates_native_list_head_first() {
         .collect::<Vec<_>>();
     assert_eq!(began.len(), 2);
     // UpdatePairs creates (groundProxy=0, aProxy=1) before (0, bProxy=3),
-    // and AddPair pushes each contact at the list head. Collide therefore
-    // updates b/ground before a/ground.
+    // ContactFactory retains polygon/circle order, and AddPair pushes each
+    // contact at the list head. Collide therefore updates ground/b before
+    // ground/a.
     assert_eq!(
         (began[0].first.as_str(), began[0].second.as_str()),
-        ("b", "ground")
+        ("ground", "b")
     );
     assert_eq!(
         (began[1].first.as_str(), began[1].second.as_str()),
-        ("a", "ground")
+        ("ground", "a")
+    );
+}
+
+#[test]
+fn contact_factory_uses_proxy_order_and_native_shape_pair_direction() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createCircle("a_circle", "", 0, 0, 1, 1, 0, 0, true, false, 1)
+                createBox("z_box", "", 0, 0, 1, 1, 1, 0, 0, true, false, 1)
+
+                createBox("z_older_box", "", 10, 0, 1, 1, 1, 0, 0, true, false, 1)
+                createBox("a_newer_box", "", 10, 0, 1, 1, 1, 0, 0, true, false, 1)
+
+                createBox("a_edge_target", "", 20, 0, 1, 1, 1, 0, 0, true, false, 1)
+                clearVertices()
+                addVertex(-1, 0)
+                addVertex(1, 0)
+                createLineShape("z_edge", "", 20, 0, 2, 0, 0, 0, 0, true, false, 1)
+
+                clearVertices()
+                addVertex(-1, 0)
+                addVertex(1, 0)
+                createLineShape("dynamic_edge", "", 30, 0, 2, 0, 1, 0, 0, true, false, 1)
+                clearVertices()
+                addVertex(-1, 0)
+                addVertex(1, 0)
+                createLineShape("static_edge", "", 30, 0, 2, 0, 0, 0, 0, true, false, 1)
+                "#,
+        )
+        .unwrap();
+
+    let mut bridge = runtime.render.lock().unwrap();
+    bridge.refresh_contacts();
+
+    // Polygon/circle is registered only with the polygon as fixture A, even
+    // though the circle owns the lower proxy id.
+    assert!(bridge.broad_phase_contacts.contains(&(
+        "z_box".to_owned(),
+        "a_circle".to_owned(),
+        0,
+        0,
+    )));
+    // Same-type contacts preserve lower-proxy order rather than object-name
+    // order.
+    assert!(bridge.broad_phase_contacts.contains(&(
+        "z_older_box".to_owned(),
+        "a_newer_box".to_owned(),
+        0,
+        0,
+    )));
+    // Edge/polygon is registered only with the edge as fixture A, even when
+    // the polygon was created first.
+    assert!(bridge.broad_phase_contacts.contains(&(
+        "z_edge".to_owned(),
+        "a_edge_target".to_owned(),
+        0,
+        0,
+    )));
+    assert!(
+        bridge
+            .broad_phase_contacts
+            .iter()
+            .all(|key| key.0 != "dynamic_edge" && key.1 != "dynamic_edge"),
+        "Purple's factory has no edge/edge contact registration"
     );
 }
 

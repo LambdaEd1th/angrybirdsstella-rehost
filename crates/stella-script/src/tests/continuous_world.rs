@@ -102,7 +102,7 @@ fn continuous_step_stops_a_fast_circle_at_a_static_thin_edge() {
     // This body is active but is not part of the selected TOI island. Native
     // SolveTOI therefore leaves its proxy untouched in the post-island loop.
     bridge.scene.get_mut("unrelated").unwrap().x = 12.0;
-    let key = ("body".to_owned(), "wall".to_owned(), 0, 0);
+    let key = ("wall".to_owned(), "body".to_owned(), 0, 0);
     assert!(bridge.broad_phase_contacts.contains(&key));
 
     let mut toi_state = NativeToiStepState::default();
@@ -183,7 +183,7 @@ fn solve_toi_completes_above_the_native_near_one_alpha_boundary() {
         body.apply_native_position_delta(0.16_f32, 0.0, 0.0);
     }
     bridge.sync_native_broad_phase();
-    let key = ("body".to_owned(), "wall".to_owned(), 0, 0);
+    let key = ("wall".to_owned(), "body".to_owned(), 0, 0);
     assert!(bridge.broad_phase_contacts.contains(&key));
 
     let mut toi_state = NativeToiStepState::default();
@@ -294,7 +294,7 @@ fn native_toi_advances_and_integrates_a_selected_kinematic_endpoint() {
         bridge
             .broad_phase_contacts
             .iter()
-            .any(|key| key.0 == "body" && key.1 == "wall"),
+            .any(|key| key.0 == "wall" && key.1 == "body"),
         "contacts={:?} body_proxy={:?} wall_proxy={:?}",
         bridge.broad_phase_contacts,
         bridge.body_proxy_states["body"],
@@ -310,7 +310,7 @@ fn native_toi_advances_and_integrates_a_selected_kinematic_endpoint() {
         .expect("dynamic/kinematic pair must enter Purple's TOI candidate path");
     assert_eq!(
         pending[0].0.toi_bodies,
-        ("body".to_owned(), "wall".to_owned())
+        ("wall".to_owned(), "body".to_owned())
     );
     assert!(bridge.finish_toi_contact_update(&pending[0].0));
     let wall_at_impact = bridge.scene["wall"].x;
@@ -431,7 +431,7 @@ fn toi_auxiliary_walk_rolls_back_a_kinematic_body_rejected_by_its_callback() {
         .unwrap()
         .apply_native_position_delta(-0.05_f32, 0.0, 0.0);
     bridge.sync_native_broad_phase();
-    let selected_key = ("body".to_owned(), "static".to_owned(), 0, 0);
+    let selected_key = ("static".to_owned(), "body".to_owned(), 0, 0);
     let auxiliary = bridge
         .advance_next_toi_auxiliary_contact(
             ("body", "static"),
@@ -444,7 +444,7 @@ fn toi_auxiliary_walk_rolls_back_a_kinematic_body_rejected_by_its_callback() {
 
     assert_eq!(
         auxiliary.0.key,
-        ("body".to_owned(), "moving".to_owned(), 0, 0)
+        ("moving".to_owned(), "body".to_owned(), 0, 0)
     );
     assert!((bridge.scene["moving"].x - 0.0375).abs() < 1e-6);
     assert!(bridge.scene["moving"].motion_started);
@@ -491,7 +491,7 @@ fn toi_auxiliary_walk_restores_a_rejected_kinematic_body_sweep() {
         .apply_native_position_delta(0.0, -0.1_f32, 0.0);
     bridge.sync_native_broad_phase();
     let rejected_end = NativeSweepStart::capture(&bridge.scene["moving"]);
-    let selected_key = ("body".to_owned(), "static".to_owned(), 0, 0);
+    let selected_key = ("static".to_owned(), "body".to_owned(), 0, 0);
     assert!(
         bridge
             .advance_next_toi_auxiliary_contact(
@@ -617,7 +617,7 @@ fn shallow_existing_contact_still_enters_native_toi_without_a_second_begin() {
 
     let mut bridge = runtime.render.lock().unwrap();
     bridge.sync_native_broad_phase();
-    let key = ("body".to_owned(), "wall".to_owned(), 0, 0);
+    let key = ("wall".to_owned(), "body".to_owned(), 0, 0);
     let initial = bridge.refresh_contacts();
     assert!(initial.iter().any(|event| event.began));
     assert!(bridge.active_contacts.contains_key(&key));
@@ -756,8 +756,8 @@ fn continuous_world_rescans_after_toi_bounce_for_a_second_edge() {
 
     runtime.update(1.0 / 30.0).unwrap();
     let bridge = runtime.render.lock().unwrap();
-    let left = ("body".to_owned(), "left".to_owned(), 0, 0);
-    let right = ("body".to_owned(), "right".to_owned(), 0, 0);
+    let left = ("left".to_owned(), "body".to_owned(), 0, 0);
+    let right = ("right".to_owned(), "body".to_owned(), 0, 0);
     assert!(bridge.active_contacts.contains_key(&right));
     assert!(bridge.active_contacts.contains_key(&left));
     assert!(bridge.scene["body"].x > -0.041_f64);
@@ -821,8 +821,8 @@ fn toi_island_adds_both_static_contacts_at_a_simultaneous_corner() {
         .iter()
         .map(|(contact, _)| contact.key.clone())
         .collect::<BTreeSet<_>>();
-    assert!(keys.contains(&("body".to_owned(), "vertical".to_owned(), 0, 0)));
-    assert!(keys.contains(&("body".to_owned(), "horizontal".to_owned(), 0, 0)));
+    assert!(keys.contains(&("vertical".to_owned(), "body".to_owned(), 0, 0)));
+    assert!(keys.contains(&("horizontal".to_owned(), "body".to_owned(), 0, 0)));
     let contacts = pending
         .iter()
         .map(|(contact, _)| contact.clone())
@@ -859,12 +859,12 @@ fn toi_island_includes_an_existing_touching_auxiliary_contact_once() {
 
     let mut bridge = runtime.render.lock().unwrap();
     bridge.sync_native_broad_phase();
-    let horizontal = ("body".to_owned(), "horizontal".to_owned(), 0, 0);
+    let horizontal = ("horizontal".to_owned(), "body".to_owned(), 0, 0);
     assert!(
         bridge
             .refresh_contacts()
             .iter()
-            .any(|event| { event.began && event.first == "body" && event.second == "horizontal" })
+            .any(|event| { event.began && event.first == "horizontal" && event.second == "body" })
     );
     let horizontal_feature = bridge.contact_manifolds[&horizontal].feature_id;
     bridge.contact_impulses.insert(
@@ -1012,14 +1012,14 @@ fn toi_auxiliary_contact_walk_observes_prior_begin_callback_mutation() {
     );
     let bridge = runtime.render.lock().unwrap();
     assert!(bridge.active_contacts.contains_key(&(
-        "body".to_owned(),
         "horizontal".to_owned(),
+        "body".to_owned(),
         0,
         0
     )));
     assert!(!bridge.active_contacts.contains_key(&(
-        "body".to_owned(),
         "vertical".to_owned(),
+        "body".to_owned(),
         0,
         0
     )));

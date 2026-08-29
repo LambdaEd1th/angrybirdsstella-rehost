@@ -10,7 +10,8 @@ pub(crate) use damage::*;
 pub(crate) use dispatch::*;
 pub(crate) use prepare::*;
 
-/// One contact per fixture pair, with bodies stored in lexical order.
+/// One contact per fixture pair, with bodies stored in native ContactFactory
+/// fixture-A/fixture-B order.
 pub(crate) type ContactKey = (String, String, usize, usize);
 
 #[derive(Debug, Clone)]

@@ -21,19 +21,19 @@ fn contact_lifecycle_tracks_each_box2d_fixture_pair() {
     let events = bridge.solve_contacts();
     let begins = events
         .iter()
-        .filter(|event| event.first == "circle" && event.second == "ground" && event.began)
+        .filter(|event| event.first == "ground" && event.second == "circle" && event.began)
         .count();
     assert_eq!(begins, 2);
     assert_eq!(bridge.active_contacts.len(), 2);
     assert!(
         bridge
             .active_contacts
-            .contains_key(&("circle".to_owned(), "ground".to_owned(), 0, 0))
+            .contains_key(&("ground".to_owned(), "circle".to_owned(), 0, 0))
     );
     assert!(
         bridge
             .active_contacts
-            .contains_key(&("circle".to_owned(), "ground".to_owned(), 0, 1))
+            .contains_key(&("ground".to_owned(), "circle".to_owned(), 1, 0))
     );
 }
 
@@ -61,7 +61,7 @@ fn fixture_pair_constraints_use_sequential_live_body_velocities() {
     let impulses = bridge
         .contact_impulses
         .iter()
-        .filter(|((first, second, _, _), _)| first == "circle" && second == "ground")
+        .filter(|((first, second, _, _), _)| first == "ground" && second == "circle")
         .map(|(_, impulse)| impulse.normal)
         .collect::<Vec<_>>();
     assert_eq!(impulses.len(), 2);
