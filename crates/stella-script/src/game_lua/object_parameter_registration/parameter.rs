@@ -125,7 +125,10 @@ pub(super) fn install(
                     body_type_changed =
                         object.set_native_body_type(if native_value == 1.0 { 1 } else { 2 });
                 }
-                38 if object.has_physics_body() => {
+                // b2Body::SetMassData tests e_locked before reading or
+                // writing the body mass state. The outer parameter switch
+                // has no reflected RenderObjectData field for this case.
+                38 if object.has_physics_body() && !physics_world_locked => {
                     object.set_native_mass_data_from_origin_inertia(native_value);
                 }
                 39 if object.has_physics_body()

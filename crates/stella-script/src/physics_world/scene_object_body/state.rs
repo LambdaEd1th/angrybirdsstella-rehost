@@ -55,7 +55,7 @@ impl SceneObject {
         }
         if let Some(moment) = self.moment_of_inertia {
             let moment = moment as f32;
-            return if moment > 0.0_f32 {
+            return if moment != 0.0_f32 {
                 f64::from(moment.recip())
             } else {
                 0.0

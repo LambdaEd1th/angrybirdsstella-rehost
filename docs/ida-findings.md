@@ -18720,3 +18720,54 @@ bindings, with empty stderr. Its visually checked
 `build/audit-native-joint-track-lock-20260829.png` output is a 1024x768 RGBA
 PNG with SHA-256
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## SetMassData and SetTransform world-lock boundaries
+
+An immediate-value audit of every access to `b2World+0x19298` closes the
+remaining body mutation leaves. IDA finds exactly 15 references covering the
+world constructor/Step flag lifecycle, Create/DestroyBody, Create/DestroyJoint,
+Create/DestroyTrack, Create/DestroyFixture, SetType, SetMassData and
+SetTransform. Hopper independently agrees with the two previously incomplete
+members and their sole GameLua callers. The GameLua world-replacement member
+at `sub_10005B72C` is not another lock gate: `0x10005B784..0x10005B78C`
+clears flags bit 2, the automatic clear-forces option, while `e_locked` is bit
+1.
+
+The complete 59-instruction `b2Body::SetMassData` at `sub_10086B64C` reads the
+world flags at `0x10086B650..0x10086B65C` and returns at `0x10086B660` while
+locked, before even checking that the body is dynamic. ObjectParameter 38
+builds the input from the body's current mass and local centre, replaces only
+the origin inertia, and calls this leaf at `0x10004F2C4`; it has no separate
+RenderObjectData field to publish. The Rust parameter member now makes the
+same silent locked no-op. The arithmetic is aligned as well: after a positive
+input inertia passes the first check, native code stores
+`I - mass * dot(center, center)` and its reciprocal without rechecking the
+subtracted result, so a negative centre-of-mass inertia retains a negative
+inverse rather than being host-clamped to zero.
+
+The complete 60-instruction `b2Body::SetTransform` at `sub_10086B794` tests the
+same flag at `0x10086B7C8..0x10086B7CC`. A locked call returns before `sincosf`,
+transform/sweep writes, fixture proxy synchronization and FindNewContacts.
+The two outer members deliberately continue after that return: setPosition at
+`sub_10003FA60` writes Lua `x/y`, RenderObjectData's live pose and both
+interpolation slots after the call at `0x10003FAC4`; setRotation does the same
+for angle after `0x10003FBEC`. The rehost now keeps that ownership split:
+locked physics bodies retain their authoritative native transform, while the
+outer Lua and render-pose writes still occur. Non-physics objects have no
+b2Body gate and continue to change their stored pose normally.
+
+A real BeginContact regression changes position, rotation and mass data while
+World::Step owns the lock. It proves the body transform and inertia remain
+unchanged while a non-physics RenderObjectData pose changes in the same
+callback. A second arithmetic regression pins the native negative reciprocal.
+All nine decisive sites are commented in IDA and Hopper, and the IDB is saved.
+
+The complete workspace passes 838 tests with only the deliberate long-duration
+BirdRun audit ignored. Formatting, whitespace validation, strict
+all-target/all-feature Clippy and the release workspace build are clean. A
+fresh isolated-AppData 120-frame release-wgpu upload/render/readback reports 20
+optional probes, zero invoked fallbacks and zero remaining compatibility
+bindings, with empty stderr. Its visually checked
+`build/audit-native-mass-transform-lock-20260829.png` output is a 1024x768 RGBA
+PNG with SHA-256
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.

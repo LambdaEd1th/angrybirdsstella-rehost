@@ -772,6 +772,31 @@ fn object_parameter_mass_data_converts_origin_inertia_to_com_inertia() {
 }
 
 #[test]
+fn object_parameter_mass_data_preserves_native_negative_com_inertia_reciprocal() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                clearVertices()
+                addVertex(0, 0)
+                addVertex(2, 0)
+                addVertex(0, 2)
+                createPolygon("triangle", "", 0, 0, 2, 2, 1, 0, 0, true, false, 1)
+                setObjectParameter("triangle", 38, 0.1)
+                "#,
+        )
+        .unwrap();
+
+    let bridge = runtime.render.lock().unwrap();
+    let triangle = &bridge.scene["triangle"];
+    let moment = triangle.moment_of_inertia.unwrap() as f32;
+    assert!(moment < 0.0);
+    // SetMassData stores 1 / (I - m * dot(center, center)) without a second
+    // positivity check after the subtraction.
+    assert_eq!(triangle.inverse_inertia(), f64::from(moment.recip()));
+}
+
+#[test]
 fn mass_reset_preserves_box2d_origin_and_shifts_center_velocity() {
     let runtime = unlocked_test_runtime();
     runtime

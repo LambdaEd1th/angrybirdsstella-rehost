@@ -427,6 +427,46 @@ fn contact_listener_body_type_mutation_obeys_native_world_lock() {
 }
 
 #[test]
+fn contact_listener_transform_and_mass_data_mutations_obey_native_world_lock() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createBox("sensor", "", 0, 0, 4, 4, 0, 0, 0, true, false, 1)
+                createCircle("body", "", 0, 0, 0.5, 1, 0, 0, true, false, 1)
+                createNonPhysicsObject("marker", "", 0, 0, 1)
+                setAsSensor("sensor", true)
+                setWorldGravity(0, 0)
+                setObjectParameter("body", 38, 4)
+                enterCollision = function()
+                    setPosition("body", 20, 30)
+                    setRotation("body", 1.25)
+                    setObjectParameter("body", 38, 17)
+                    setPosition("marker", 7, 8)
+                    setRotation("marker", 0.75)
+                end
+                update = function() end
+                updatePhysics = function() end
+            "#,
+        )
+        .unwrap();
+
+    runtime.update(1.0 / 30.0).unwrap();
+    let bridge = runtime.render.lock().unwrap();
+    let body = &bridge.scene["body"];
+    // SetTransform and SetMassData both return before touching b2Body while
+    // BeginContact owns the world lock. Their outer GameLua pose writes do
+    // not alter the native body transform.
+    assert_eq!((body.x, body.y, body.angle), (0.0, 0.0, 0.0));
+    assert_eq!(body.moment_of_inertia, Some(4.0));
+
+    // The non-physics RenderObjectData path has no b2Body lock gate.
+    let marker = &bridge.scene["marker"];
+    assert_eq!((marker.x, marker.y, marker.angle), (7.0, 8.0, 0.75));
+    assert!(!bridge.physics_world_locked);
+}
+
+#[test]
 fn contact_listener_physics_constructors_contain_native_locked_world_crash() {
     let runtime = unlocked_test_runtime();
     runtime
