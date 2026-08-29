@@ -357,6 +357,71 @@ fn contact_manager_destroy_conditionally_wakes_only_touching_contact_endpoints()
 }
 
 #[test]
+fn collide_awake_gate_ignores_host_motion_started_state() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createCircle("first", "", 0, 0, 1, 1, 0, 0, true, false, 1)
+                createCircle("second", "", 1.5, 0, 1, 1, 0, 0, true, false, 1)
+                setWorldGravity(0, 0)
+            "#,
+        )
+        .unwrap();
+
+    let mut bridge = runtime.render.lock().unwrap();
+    assert!(bridge.refresh_contacts().iter().any(|event| event.began));
+    let key = ("first".to_owned(), "second".to_owned(), 0, 0);
+    assert_eq!(bridge.active_contacts.get(&key), Some(&false));
+
+    // motion_started is a Rust integration marker, not a b2Body member.
+    // Keep both native bodies awake while moving only their live geometry
+    // apart inside the unchanged fat-AABB contact node.
+    for name in ["first", "second"] {
+        let object = bridge.scene.get_mut(name).unwrap();
+        object.motion_started = false;
+        object.sleeping = false;
+    }
+    bridge.scene.get_mut("second").unwrap().x = 2.1;
+    let ended = bridge.refresh_contacts();
+    assert!(ended.iter().any(|event| event.ended && !event.sensor));
+    assert!(!bridge.active_contacts.contains_key(&key));
+    assert!(bridge.broad_phase_contacts.contains(&key));
+}
+
+#[test]
+fn collide_fat_aabb_unordered_comparison_retains_native_contact() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createCircle("first", "", 0, 0, 1, 1, 0, 0, true, false, 1)
+                createCircle("second", "", 1.5, 0, 1, 1, 0, 0, true, false, 1)
+                setWorldGravity(0, 0)
+            "#,
+        )
+        .unwrap();
+
+    let mut bridge = runtime.render.lock().unwrap();
+    assert!(bridge.refresh_contacts().iter().any(|event| event.began));
+    let key = ("first".to_owned(), "second".to_owned(), 0, 0);
+    bridge
+        .body_proxy_states
+        .get_mut("second")
+        .unwrap()
+        .fat_aabbs[0]
+        .0 = f32::NAN;
+
+    // AArch64 FCMP sets the unordered flags for NaN and each B.GT is false.
+    // Collide consequently reaches Contact::Update and keeps this touching
+    // node instead of treating the AABBs as separated.
+    let events = bridge.refresh_contacts();
+    assert!(!events.iter().any(|event| event.ended));
+    assert_eq!(bridge.active_contacts.get(&key), Some(&false));
+    assert!(bridge.broad_phase_contacts.contains(&key));
+}
+
+#[test]
 fn body_transform_synchronizes_only_its_own_fixture_proxies() {
     let runtime = unlocked_test_runtime();
     runtime

@@ -18279,3 +18279,45 @@ bindings, with empty stderr. The visually checked
 `build/audit-native-contact-destroy-20260829.png` is a 1024x768 RGBA PNG with
 SHA-256
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## ContactManager Collide awake and fat-AABB gates
+
+The complete 93-instruction `b2ContactManager::Collide` at `0x10086BAB0`
+was checked in IDA and Hopper. For each endpoint, `0x10086BAEC..0x10086BB20`
+tests only `b2Body::m_type != b2_staticBody` and `e_awakeFlag`. The OR at
+`0x10086BB24` skips the node only when neither body is both non-static and
+awake. Velocity, force and the Rust bridge's `motion_started` integration
+marker are absent from this native gate.
+
+After optional deferred filtering, Collide resolves the two fixture proxies'
+fat AABBs and performs four float32 subtractions at
+`0x10086BB88..0x10086BBD8`: second lower minus first upper for x/y, followed
+by first lower minus second upper for x/y. Each result destroys the contact
+only through an ordered `B.GT`. Boundary equality remains overlapping, and an
+unordered `FCMP` result such as NaN makes every `B.GT` false, falling through
+to `b2Contact::Update` at `0x10086BBE4`.
+
+The host awake predicate additionally required `motion_started`, which could
+freeze filter, retirement and narrow-phase state for a native-awake body. The
+predicate now uses only non-static type plus awake state. Its former chained
+`<=` AABB expression also treated NaN as non-overlap; it now performs the
+recovered float32 subtractions in instruction order and destroys only when
+one ordered greater-than comparison succeeds.
+
+One regression begins a touching contact, clears only the host integration
+markers while keeping both native bodies awake, separates the live geometry
+inside the existing fat node, and confirms that EndContact still occurs. A
+second publishes a NaN fat-AABB lower bound on a touching node and confirms
+that Collide retains and updates it without an exit. The two awake gates and
+the first/last ordered AABB branches are commented in IDA and Hopper and the
+IDB is saved.
+
+The complete workspace passes 828 tests with only the deliberate long-
+duration BirdRun audit ignored. Formatting, whitespace validation, strict
+all-target/all-feature Clippy and the release workspace build are clean. A
+fresh isolated-AppData 120-frame release-wgpu upload/render/readback reports
+20 optional probes, zero invoked fallbacks and zero remaining compatibility
+bindings, with empty stderr. The visually checked
+`build/audit-native-collide-gates-20260829.png` is a 1024x768 RGBA PNG with
+SHA-256
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.

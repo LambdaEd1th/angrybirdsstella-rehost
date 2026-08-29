@@ -37,8 +37,11 @@ impl RenderBridge {
             return NativeContactUpdate::MissingEndpoint;
         };
 
-        let first_awake = first.moves_during_step() && first.motion_started && !first.sleeping;
-        let second_awake = second.moves_during_step() && second.motion_started && !second.sleeping;
+        // Collide reads only b2Body::m_type and e_awakeFlag. The host-side
+        // motion_started integration marker has no native counterpart and
+        // must not suppress contact filtering or Contact::Update.
+        let first_awake = first.moves_during_step() && !first.sleeping;
+        let second_awake = second.moves_during_step() && !second.sleeping;
         // ContactManager::Collide skips filter, fat-AABB and Contact::Update
         // together when neither non-static endpoint is awake. The old
         // touching bit and manifold consequently remain byte-for-byte live.
@@ -69,10 +72,13 @@ impl RenderBridge {
                     .and_then(|state| state.fat_aabbs.get(contact_key.3)),
             )
             .is_some_and(|(first_fat, second_fat)| {
-                first_fat.0 <= second_fat.2
-                    && second_fat.0 <= first_fat.2
-                    && first_fat.1 <= second_fat.3
-                    && second_fat.1 <= first_fat.3
+                // b2ContactManager::Collide performs these four float32
+                // subtractions in this order and destroys only on B.GT.
+                // Unordered comparisons therefore retain the contact.
+                !((second_fat.0 - first_fat.2) > 0.0
+                    || (second_fat.1 - first_fat.3) > 0.0
+                    || (first_fat.0 - second_fat.2) > 0.0
+                    || (first_fat.1 - second_fat.3) > 0.0)
             });
         if !allowed || !fat_overlap {
             return NativeContactUpdate::Retired {
