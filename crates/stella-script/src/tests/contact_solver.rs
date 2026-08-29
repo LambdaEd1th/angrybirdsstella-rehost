@@ -257,6 +257,42 @@ fn sensor_contact_update_uses_native_gjk_overlap_tolerance() {
 }
 
 #[test]
+fn sensor_touching_transitions_do_not_wake_sleeping_endpoint() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .execute_source(
+            r#"
+                createCircle("awake", "", 0, 0, 1, 1, 0, 0, true, false, 1)
+                createCircle("sleeping_sensor", "", 1.5, 0, 1, 1, 0, 0, true, false, 1)
+                setAsSensor("sleeping_sensor", true)
+                setWorldGravity(0, 0)
+                setVelocity("awake", 0.1, 0)
+                "#,
+        )
+        .unwrap();
+
+    let mut bridge = runtime.render.lock().unwrap();
+    let sleeping_sensor = bridge.scene.get_mut("sleeping_sensor").unwrap();
+    sleeping_sensor.motion_started = false;
+    sleeping_sensor.sleeping = true;
+    sleeping_sensor.sleep_time = 0.5;
+
+    let began = bridge.refresh_contacts();
+    assert!(began.iter().any(|event| event.began && event.sensor));
+    assert!(bridge.scene["sleeping_sensor"].sleeping);
+    assert_eq!(bridge.scene["sleeping_sensor"].sleep_time, 0.5);
+
+    // Keep the old fat AABBs overlapping while moving the live geometry out
+    // of range, so Contact::Update takes its sensor false-transition path
+    // rather than ContactManager retiring the broad-phase node.
+    bridge.scene.get_mut("awake").unwrap().x = -0.6;
+    let ended = bridge.refresh_contacts();
+    assert!(ended.iter().any(|event| event.ended && event.sensor));
+    assert!(bridge.scene["sleeping_sensor"].sleeping);
+    assert_eq!(bridge.scene["sleeping_sensor"].sleep_time, 0.5);
+}
+
+#[test]
 fn sleeping_box2d_contact_freezes_until_body_wakes_after_separation() {
     let runtime = StellaLua::new("/tmp").unwrap();
     runtime

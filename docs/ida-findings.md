@@ -18065,3 +18065,39 @@ bindings, with empty stderr. The visually checked
 `build/audit-native-sensor-gjk-20260829.png` is a 1024x768 RGBA PNG with
 SHA-256
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## Native sensor touching transitions do not wake bodies
+
+The control-flow split inside `b2Contact::Update` also fixes the lifetime of
+sleeping bodies. After `b2TestOverlap`, the sensor branch at `0x1008637D0`
+jumps directly to touching-flag publication at `0x1008638E8`. It never
+reaches the previous-versus-current touching comparison at
+`0x10086389C..0x1008638AC` or the two body wake writes beginning at
+`0x1008638B0`. By contrast, the solid branch compares the two touching bits
+after feature-id impulse transfer and wakes both endpoints only when that
+solid state changes.
+
+The former shared Rust transition handler woke both bodies whenever any
+contact began or ended, including sensors. A moving bird entering a gravity,
+water or trigger fixture could consequently wake an otherwise sleeping
+structure, and the extra island solve could show up later as unprompted drift
+or collapse. Sensor BeginContact and EndContact now update listener/lifetime
+state without touching either endpoint's awake flag or sleep time. Solid
+transitions retain their existing native wake behavior.
+
+A regression starts one dynamic sensor endpoint asleep while an awake body
+enters it, then moves only the awake body's geometry outside the overlap while
+keeping the broad-phase contact node live. Both Begin and End callbacks occur,
+and the sleeping endpoint preserves its flag and exact `0.5` sleep time across
+both transitions. The sensor jump and solid-only wake block are commented in
+IDA and Hopper and the IDB is saved.
+
+The complete workspace passes 822 tests with only the deliberate long-
+duration BirdRun audit ignored. Formatting, whitespace validation, strict
+all-target/all-feature Clippy and the release workspace build are clean. A
+fresh isolated-AppData 120-frame release-wgpu upload/render/readback reports
+20 optional probes, zero invoked fallbacks and zero remaining compatibility
+bindings, with empty stderr. The visually checked
+`build/audit-native-sensor-wake-20260829.png` is a 1024x768 RGBA PNG with
+SHA-256
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.

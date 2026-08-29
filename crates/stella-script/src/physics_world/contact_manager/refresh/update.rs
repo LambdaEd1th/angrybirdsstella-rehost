@@ -147,7 +147,12 @@ impl RenderBridge {
                 self.contact_impulses.remove(contact_key);
                 self.solver_contact_impulses.remove(contact_key);
                 self.contact_velocity_bias.remove(contact_key);
-                self.wake_contact_bodies(contact_key);
+                // b2Contact::Update performs its touching-transition wake
+                // block only on the non-sensor path. Sensor Begin/EndContact
+                // changes never wake either endpoint.
+                if !sensor {
+                    self.wake_contact_bodies(contact_key);
+                }
                 Some(Self::native_contact_end_event(contact_key, sensor))
             }
             NativeContactUpdate::SensorTouching {
@@ -164,9 +169,6 @@ impl RenderBridge {
                 // while it is still overlapping, the old count is therefore
                 // zero and none of its former impulses can match new points.
                 self.contact_impulses.remove(contact_key);
-                if began {
-                    self.wake_contact_bodies(contact_key);
-                }
                 began.then(|| Self::native_sensor_contact_begin_event(contact_key))
             }
             NativeContactUpdate::SolidTouching {
