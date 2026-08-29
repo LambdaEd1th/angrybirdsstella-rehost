@@ -17777,3 +17777,47 @@ bindings, with empty stderr.
 `build/audit-native-edge-circle-side-20260829.png` is a 1024x768 RGBA PNG with
 SHA-256
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## Native edge-polygon initial world-manifold reconstruction
+
+All 709 instructions of `b2EPCollider::Collide` at `0x10085EADC` were paged
+through IDA and checked against Hopper. For the independent two-sided edges
+created by `createLineShape`, the no-adjacency path selects the centroid side
+with `FCMP/CSET GE/B.LT` at `0x10085ED64..0x10085ED70`, then installs the
+active edge normal and its negated equal lower/upper angular limits. The edge
+axis retains packed `FMUL/FADDP` plus running `FMIN`; the polygon axis retains
+its ordered `FCCMP` angle/separation gate; and the final primary-axis choice
+retains the `0.98f * edgeSeparation + 0.001f` hysteresis. No additional
+Rust/native discrepancy was found in those selections.
+
+The audit instead exposed a downstream reconstruction error. The collision
+leaf finishes at `0x10085F5F0` with a purely local `b2Manifold`. Purple then
+calls `b2WorldManifold` at `0x10085FE58`. Its FaceA loop
+`0x10085FEE0..0x10085FF44` transforms the stored incident point into world
+space, recomputes plane distance, constructs reference and incident surface
+points with separate `FMADD`s, adds the independently rounded surfaces, and
+only then multiplies by `0.5`. FaceB independently repeats that sequence at
+`0x10085FFBC..0x100860020` before negating its output normal.
+
+The old edge-polygon host path algebraically collapsed this into
+`point - 0.5 * separation * normal` in edge-local space and transformed the
+result afterward. That changes both operation order and the coordinate space
+where rounding occurs. Initial edge-polygon contacts now emit only their
+native local witnesses and feature IDs, then use the same recovered
+`b2WorldManifold` implementation already used for TOI refresh. A rotated
+finite edge regression changes the observable penetration word from the old
+`0x3B449BDE` to native `0x3B44934E` and proves that immediately created FaceA
+and FaceB manifolds are bit-identical to a same-transform refresh. A retained
+zero-length edge likewise now yields the native negated-zero penetration
+instead of an artificial combined skin radius.
+
+The relevant local-output and FaceA/FaceB reconstruction sites are commented
+in IDA and Hopper and the IDB is saved. The complete workspace passes 817
+tests with only the deliberate long-duration BirdRun audit ignored.
+Formatting, whitespace validation, strict all-target/all-feature Clippy and
+the release workspace build are clean. A fresh isolated-AppData 120-frame
+release-wgpu upload/render/readback reports 20 optional probes, zero invoked
+fallbacks and zero remaining compatibility bindings, with empty stderr.
+`build/audit-native-edge-polygon-world-20260829.png` is a 1024x768 RGBA PNG
+with SHA-256
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.

@@ -232,26 +232,16 @@ pub(crate) fn polygon_segment_manifold_at_transforms(
                 .0
                 .mul_add(point.0, reference_normal.1 * point.1)
                 - front_offset;
-            let contact_edge = (
-                (-0.5_f32 * separation).mul_add(reference_normal.0, point.0),
-                (-0.5_f32 * separation).mul_add(reference_normal.1, point.1),
-            );
-            let contact_world = segment_transform.point(contact_edge);
             let incident_local = if reference_is_polygon {
                 point
             } else {
                 relative_transform.inverse_point(point)
             };
             native_arm_le_f32(separation, total_radius).then_some((
-                ContactPoint {
-                    penetration: f64::from(total_radius - separation),
-                    point_x: f64::from(contact_world.0),
-                    point_y: f64::from(contact_world.1),
-                    feature_id: if swap_features {
-                        swap_contact_features(vertex.feature_id)
-                    } else {
-                        vertex.feature_id
-                    },
+                if swap_features {
+                    swap_contact_features(vertex.feature_id)
+                } else {
+                    vertex.feature_id
                 },
                 incident_local,
             ))
@@ -261,25 +251,11 @@ pub(crate) fn polygon_segment_manifold_at_transforms(
         return None;
     }
     points.truncate(2);
-    let normal_edge = if polygon_is_first {
-        if reference_is_polygon {
-            reference_normal
-        } else {
-            (-reference_normal.0, -reference_normal.1)
-        }
-    } else if reference_is_polygon {
-        (-reference_normal.0, -reference_normal.1)
-    } else {
-        reference_normal
-    };
-    let normal = segment_transform.rotate(normal_edge);
     let local_points = [
         points[0].1,
         points.get(1).map(|point| point.1).unwrap_or((0.0, 0.0)),
     ];
     let point_count = points.len() as u8;
-    let primary = points[0].0;
-    let secondary = points.get(1).map(|point| point.0);
     let manifold_type = match (reference_is_polygon, polygon_is_first) {
         (true, true) | (false, false) => ContactManifoldType::FaceFirst,
         (true, false) | (false, true) => ContactManifoldType::FaceSecond,
@@ -292,14 +268,20 @@ pub(crate) fn polygon_segment_manifold_at_transforms(
     } else {
         (reference_normal, reference_start)
     };
-    Some(ContactManifold {
-        normal_x: f64::from(normal.0),
-        normal_y: f64::from(normal.1),
-        penetration: primary.penetration,
-        point_x: primary.point_x,
-        point_y: primary.point_y,
-        feature_id: primary.feature_id,
-        secondary,
+    let placeholder = |feature_id| ContactPoint {
+        penetration: 0.0,
+        point_x: 0.0,
+        point_y: 0.0,
+        feature_id,
+    };
+    let local_manifold = ContactManifold {
+        normal_x: 0.0,
+        normal_y: 0.0,
+        penetration: 0.0,
+        point_x: 0.0,
+        point_y: 0.0,
+        feature_id: points[0].0,
+        secondary: points.get(1).map(|point| placeholder(point.0)),
         position: ContactLocalManifold {
             manifold_type,
             local_normal,
@@ -309,7 +291,13 @@ pub(crate) fn polygon_segment_manifold_at_transforms(
             first_radius: BOX2D_POLYGON_RADIUS as f32,
             second_radius: BOX2D_POLYGON_RADIUS as f32,
         },
-    })
+    };
+    let (first_transform, second_transform) = if polygon_is_first {
+        (polygon_transform, segment_transform)
+    } else {
+        (segment_transform, polygon_transform)
+    };
+    Some(local_manifold.at_native_transforms(first_transform, second_transform))
 }
 
 fn polygon_to_edge_transform(

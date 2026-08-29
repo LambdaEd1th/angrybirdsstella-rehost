@@ -647,9 +647,11 @@ fn degenerate_edge_polygon_preserves_zero_tangent_and_two_contacts() {
     assert_eq!(manifold.position.point_count, 2);
     assert_eq!(manifold.normal_x, 0.0);
     assert_eq!(manifold.normal_y, 0.0);
+    // b2WorldManifold reprojects the retained zero face normal. Both surface
+    // offsets collapse to zero lanes, so the final negated separation is -0.
     assert_eq!(
-        manifold.penetration,
-        f64::from((2.0 * BOX2D_POLYGON_RADIUS) as f32)
+        manifold.penetration.to_bits(),
+        f64::from(-0.0_f32).to_bits()
     );
     assert!(manifold.secondary.is_some());
 }
@@ -917,6 +919,28 @@ fn rotated_edge_polygon_keeps_edge_reference_in_edge_local_space() {
         (manifold.normal_y as f32).to_bits(),
         expected_world_normal.1.to_bits()
     );
+    let refreshed = manifold.at_native_transforms(transform, transform);
+    assert_eq!((manifold.penetration as f32).to_bits(), 0x3B44_934E);
+    assert_eq!(
+        manifold.penetration.to_bits(),
+        refreshed.penetration.to_bits()
+    );
+    assert_eq!(manifold.point_x.to_bits(), refreshed.point_x.to_bits());
+    assert_eq!(manifold.point_y.to_bits(), refreshed.point_y.to_bits());
+    let initial_second = manifold.secondary.expect("initial second point");
+    let refreshed_second = refreshed.secondary.expect("refreshed second point");
+    assert_eq!(
+        initial_second.penetration.to_bits(),
+        refreshed_second.penetration.to_bits()
+    );
+    assert_eq!(
+        initial_second.point_x.to_bits(),
+        refreshed_second.point_x.to_bits()
+    );
+    assert_eq!(
+        initial_second.point_y.to_bits(),
+        refreshed_second.point_y.to_bits()
+    );
 }
 
 #[test]
@@ -950,4 +974,13 @@ fn rotated_edge_polygon_keeps_polygon_reference_in_polygon_local_space() {
     assert_eq!(local.point_count, 1);
     assert_eq!(local.local_points[0].0.to_bits(), segment.1.0.to_bits());
     assert_eq!(local.local_points[0].1.to_bits(), segment.1.1.to_bits());
+    let refreshed = manifold.at_native_transforms(transform, transform);
+    assert_eq!(manifold.normal_x.to_bits(), refreshed.normal_x.to_bits());
+    assert_eq!(manifold.normal_y.to_bits(), refreshed.normal_y.to_bits());
+    assert_eq!(
+        manifold.penetration.to_bits(),
+        refreshed.penetration.to_bits()
+    );
+    assert_eq!(manifold.point_x.to_bits(), refreshed.point_x.to_bits());
+    assert_eq!(manifold.point_y.to_bits(), refreshed.point_y.to_bits());
 }
