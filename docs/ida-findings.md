@@ -17373,3 +17373,48 @@ fresh isolated-AppData 120-frame release-wgpu upload/render/readback reports
 bindings and empty stderr. `build/audit-native-polygon-ray-nan-20260829.png`
 is a 1024x768 RGBA PNG with SHA-256
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## Native polygon Set centroid data and retained winding
+
+The remainder of `b2PolygonShape::Set` at `0x10085DB9C` was recovered
+instruction by instruction in both IDA and Hopper. Its centroid loop spans
+`0x10085DC4C..0x10085DCE0`. At `0x10085DC94`, `FMUL S17, S6, S7` first rounds
+`y1 * x2`; `FNMSUB` at `0x10085DC98` then forms `x1 * y2 - rounded(y1 * x2)`.
+The signed area is accumulated with `FMADD cross, 0.5, area` at
+`0x10085DC9C`. The same cross product is multiplied by the exact float32
+`1/6` constant (`0x3E2AAAAB`) at `0x10085DCA0`, and the endpoint sums feed
+the two first-moment `FMADD`s at `0x10085DCAC` and `0x10085DCB0`.
+`0x10085DCD4` unconditionally computes `1.0 / area`, followed by the two
+centroid multiplications. A zero-count, zero-area, sub-epsilon-area or NaN
+polygon is not intercepted before that division. These instruction
+boundaries are commented in IDA, the matching constructor is named in both
+disassemblers and the IDB is saved.
+
+Rust now materializes the constructor-owned normal array and centroid in one
+shared `polygon_shape` module. The centroid preserves the native intermediate
+rounding rather than algebraically regrouping the calculation into twice the
+area and a final `1/(3A)` scale. A bit-level regression uses a finite triangle
+for which the native and regrouped Y centroid differ by one ULP, and another
+pins the native `NaN, NaN` empty-polygon result. Polygon-circle,
+polygon-polygon and edge-polygon consumers now read the same source-order
+normal and centroid data instead of independently rebuilding it.
+
+The constructor also contains no signed-area test and never reverses a
+clockwise vertex array. It retains every edge slot, including a duplicate
+zero-length edge whose raw `(edge.y, -edge.x)` normal is left at zero by the
+ordered-sub-epsilon branch. The rehost consequently no longer repairs
+winding or rejects such edges before collision. This also corrects the
+expected failure surface of `setPhysicsScale`: a signed negative X scale
+reverses a rebuilt box's winding, so its inward native normals do not begin
+the formerly host-repaired contact. Regressions pin clockwise polygon-circle
+exclusion, a duplicate-edge polygon contact, NaN normal materialization and
+the negative-scale fixture lifecycle.
+
+The complete workspace passes 803 tests with only the deliberate long-
+duration BirdRun audit ignored. Formatting, whitespace validation, strict
+all-target/all-feature Clippy and the release workspace build are clean. A
+fresh isolated-AppData 120-frame release-wgpu upload/render/readback reports
+20 optional probes, zero invoked fallbacks and zero remaining compatibility
+bindings. `build/audit-native-polygon-set-20260829.png` is a 1024x768 RGBA PNG
+with SHA-256
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.

@@ -2,12 +2,12 @@
 
 use super::super::{
     NativePolygon,
-    geometry::{native_normalize_or_preserve_f32, normalized_axis_f32, polygon_centroid_f32},
+    geometry::{native_normalize_or_preserve_f32, normalized_axis_f32},
     polygon::{ClipVertex, clip_segment_to_line, polygon_normals_f32},
 };
 use crate::{
     BOX2D_POLYGON_RADIUS, ContactLocalManifold, ContactManifold, ContactManifoldType, ContactPoint,
-    NativeToiTransform, contact_feature_id, swap_contact_features,
+    NativeToiTransform, contact_feature_id, native_polygon_centroid_f32, swap_contact_features,
 };
 
 #[cfg(test)]
@@ -63,7 +63,7 @@ pub(crate) fn polygon_segment_manifold_at_transforms(
 
     // With no adjacent vertices (the independent edge fixtures created by
     // Purple), sub_10085EADC chooses the edge side from the polygon centroid.
-    let polygon_centroid = relative_transform.point(polygon_centroid_f32(polygon_local)?);
+    let polygon_centroid = relative_transform.point(native_polygon_centroid_f32(polygon_local));
     let centroid_delta = (
         polygon_centroid.0 - edge_start.0,
         polygon_centroid.1 - edge_start.1,

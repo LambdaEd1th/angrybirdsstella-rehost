@@ -24,6 +24,7 @@ mod narrow_phase;
 mod native_block_registration;
 mod object_extension_registration;
 mod polygon_decomposition;
+mod polygon_shape;
 mod position_constraints;
 mod position_integration;
 mod ray_cast;
@@ -54,6 +55,7 @@ pub(crate) use joints::*;
 pub(crate) use manifold::*;
 pub(crate) use narrow_phase::*;
 pub(crate) use polygon_decomposition::*;
+pub(crate) use polygon_shape::*;
 pub(crate) use position_constraints::*;
 pub(crate) use position_integration::{
     NATIVE_MAX_ROTATION, NATIVE_MAX_ROTATION_SQUARED, NATIVE_MAX_TRANSLATION,

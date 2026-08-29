@@ -1,12 +1,7 @@
 //! b2FindMaxSeparation and b2EdgeSeparation (`sub_10085FB84`/`sub_10085FD74`).
 
-#[cfg(test)]
-use super::super::geometry::polygon_signed_area_f32;
-use super::super::{
-    NativePolygon,
-    geometry::{normalized_axis_f32, polygon_centroid_f32},
-};
-use crate::NativeToiTransform;
+use super::super::NativePolygon;
+use crate::{NativeToiTransform, native_polygon_centroid_f32, native_polygon_normals};
 
 #[cfg(test)]
 pub(crate) fn polygon_max_separation(
@@ -25,8 +20,8 @@ pub(crate) fn polygon_max_separation(
         .iter()
         .map(|&(x, y)| (x as f32, y as f32))
         .collect::<NativePolygon<_>>();
-    let reference_centroid = polygon_centroid_f32(&reference_points)?;
-    let incident_centroid = polygon_centroid_f32(&incident_points)?;
+    let reference_centroid = native_polygon_centroid_f32(&reference_points);
+    let incident_centroid = native_polygon_centroid_f32(&incident_points);
     let centroid_delta = (
         incident_centroid.0 - reference_centroid.0,
         incident_centroid.1 - reference_centroid.1,
@@ -102,8 +97,8 @@ pub(super) fn polygon_max_separation_at_transforms(
         return None;
     }
     let normals = polygon_normals_f32(reference)?;
-    let reference_centroid = polygon_centroid_f32(reference)?;
-    let incident_centroid = polygon_centroid_f32(incident)?;
+    let reference_centroid = native_polygon_centroid_f32(reference);
+    let incident_centroid = native_polygon_centroid_f32(incident);
     let reference_world_centroid = reference_transform.point(reference_centroid);
     let incident_world_centroid = incident_transform.point(incident_centroid);
     let centroid_delta = reference_transform.inverse_rotate((
@@ -231,40 +226,17 @@ fn edge_separation(
 
 #[cfg(test)]
 fn polygon_normals(polygon: &[(f64, f64)]) -> Option<NativePolygon<(f32, f32)>> {
-    let orientation = polygon_signed_area_f32(polygon);
-    (0..polygon.len())
-        .map(|index| {
-            let start = (polygon[index].0 as f32, polygon[index].1 as f32);
-            let end = (
-                polygon[(index + 1) % polygon.len()].0 as f32,
-                polygon[(index + 1) % polygon.len()].1 as f32,
-            );
-            let edge = (end.0 - start.0, end.1 - start.1);
-            normalized_axis_f32(if orientation >= 0.0_f32 {
-                (edge.1, -edge.0)
-            } else {
-                (-edge.1, edge.0)
-            })
-        })
-        .collect()
+    let polygon = polygon
+        .iter()
+        .map(|&(x, y)| (x as f32, y as f32))
+        .collect::<NativePolygon<_>>();
+    Some(native_polygon_normals(&polygon).into_iter().collect())
 }
 
 pub(in crate::physics_world::narrow_phase) fn polygon_normals_f32(
     polygon: &[(f32, f32)],
 ) -> Option<NativePolygon<(f32, f32)>> {
-    let orientation = super::super::geometry::polygon_signed_area_from_f32(polygon);
-    (0..polygon.len())
-        .map(|index| {
-            let start = polygon[index];
-            let end = polygon[(index + 1) % polygon.len()];
-            let edge = (end.0 - start.0, end.1 - start.1);
-            normalized_axis_f32(if orientation >= 0.0_f32 {
-                (edge.1, -edge.0)
-            } else {
-                (-edge.1, edge.0)
-            })
-        })
-        .collect()
+    Some(native_polygon_normals(polygon).into_iter().collect())
 }
 
 type NativePoint2 = (f32, f32);

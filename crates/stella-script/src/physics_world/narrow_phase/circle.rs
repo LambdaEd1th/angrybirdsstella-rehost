@@ -1,11 +1,10 @@
 //! Circle-circle and polygon-circle narrow-phase members.
 
-use super::geometry::{normalized_axis_f32, polygon_signed_area_from_f32};
 #[cfg(test)]
 use crate::NativePolygon;
 use crate::{
     BOX2D_POLYGON_RADIUS, ContactLocalManifold, ContactManifold, ContactManifoldType,
-    NativeToiTransform,
+    NativeToiTransform, native_polygon_normals,
 };
 
 #[cfg(test)]
@@ -124,20 +123,13 @@ pub(crate) fn circle_polygon_manifold_at_transforms(
     let circle_center = polygon_transform.inverse_point(circle_world_center);
     let polygon_radius = BOX2D_POLYGON_RADIUS as f32;
     let total_radius = circle_radius + polygon_radius;
-    let orientation = polygon_signed_area_from_f32(polygon);
+    let normals = native_polygon_normals(polygon);
     let mut face_index = 0;
     let mut face_separation = -f32::MAX;
     let mut face_normal = (0.0_f32, 0.0_f32);
     for index in 0..polygon.len() {
         let start = polygon[index];
-        let end = polygon[(index + 1) % polygon.len()];
-        let edge = (end.0 - start.0, end.1 - start.1);
-        let outward = if orientation >= 0.0_f32 {
-            (edge.1, -edge.0)
-        } else {
-            (-edge.1, edge.0)
-        };
-        let normal = normalized_axis_f32(outward)?;
+        let normal = normals[index];
         // sub_10085E624 uses a vector multiply followed by faddp here,
         // so both products round before the addition rather than fusing.
         let separation =

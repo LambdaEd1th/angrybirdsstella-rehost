@@ -1,6 +1,6 @@
 //! Purple's float32 Box2D shape ray casts.
 
-use crate::NativeToiTransform;
+use crate::{NativeToiTransform, native_polygon_normals};
 
 #[derive(Debug, Clone)]
 pub(crate) struct RayHit {
@@ -202,40 +202,10 @@ pub(crate) fn native_polygon_ray_cast(
     Some(input.hit(name, output))
 }
 
-pub(crate) fn native_polygon_normals(vertices: &[(f32, f32)]) -> Vec<(f32, f32)> {
-    vertices
-        .iter()
-        .copied()
-        .zip(vertices.iter().copied().cycle().skip(1))
-        .take(vertices.len())
-        .map(|(first, second)| {
-            let edge = (second.0 - first.0, second.1 - first.1);
-            let mut normal = (edge.1, -edge.0);
-            let length = edge.0.mul_add(edge.0, edge.1 * edge.1).sqrt();
-            // b2PolygonShape::Set uses FCMP/B.LT at 0x10085DC20. An
-            // unordered length does not take the skip branch and is divided,
-            // turning both stored normal lanes into NaN just like Purple.
-            if native_unordered_or_greater_or_equal(length, f32::EPSILON) {
-                let inverse_length = 1.0_f32 / length;
-                normal.0 *= inverse_length;
-                normal.1 *= inverse_length;
-            }
-            normal
-        })
-        .collect()
-}
-
 fn native_ordered_greater_or_equal(left: f32, right: f32) -> bool {
     matches!(
         left.partial_cmp(&right),
         Some(std::cmp::Ordering::Equal | std::cmp::Ordering::Greater)
-    )
-}
-
-fn native_unordered_or_greater_or_equal(left: f32, right: f32) -> bool {
-    matches!(
-        left.partial_cmp(&right),
-        None | Some(std::cmp::Ordering::Equal | std::cmp::Ordering::Greater)
     )
 }
 
@@ -316,22 +286,5 @@ mod tests {
         assert_eq!((hit.point_x, hit.point_y), (-1.0, 0.0));
         assert_eq!((hit.normal_x, hit.normal_y), (-1.0, -0.0));
         assert_eq!(hit.fraction, f64::from(0.25_f32));
-    }
-
-    #[test]
-    fn polygon_normals_keep_setters_signed_vertex_order() {
-        let clockwise = [(-1.0, -1.0), (-1.0, 1.0), (1.0, 1.0), (1.0, -1.0)];
-        assert_eq!(
-            native_polygon_normals(&clockwise),
-            vec![(1.0, -0.0), (0.0, -1.0), (-1.0, -0.0), (0.0, 1.0)]
-        );
-    }
-
-    #[test]
-    fn polygon_set_normalizes_an_unordered_length() {
-        let normals = native_polygon_normals(&[(0.0, 0.0), (f32::NAN, 0.0), (0.0, 1.0)]);
-
-        assert!(normals[0].0.is_nan());
-        assert!(normals[0].1.is_nan());
     }
 }

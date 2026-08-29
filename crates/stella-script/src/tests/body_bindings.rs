@@ -987,7 +987,10 @@ fn physics_scale_matches_native_fixture_rebuild_lifecycle_and_sources() {
 
     assert_eq!(bridge.scene["edge"].scale_x, -3.0);
     assert_eq!(bridge.scene["edge"].scale_y, 4.0);
-    assert!(bridge.refresh_contacts().iter().any(|event| event.began));
+    // The signed X ratio reverses the rebuilt box winding. Purple's
+    // b2PolygonShape::Set retains the resulting inward normals instead of
+    // repairing them, so the replacement fixture does not begin a contact.
+    assert!(!bridge.refresh_contacts().iter().any(|event| event.began));
 }
 
 #[test]

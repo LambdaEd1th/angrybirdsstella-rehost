@@ -125,6 +125,28 @@ fn polygon_circle_uses_native_float_boundary_and_zero_feature_id() {
 }
 
 #[test]
+fn polygon_circle_does_not_repair_clockwise_setter_normals() {
+    let clockwise = [(-1.0, -1.0), (-1.0, 1.0), (1.0, 1.0), (1.0, -1.0)];
+
+    assert!(circle_polygon_manifold((1.5, 0.0), 0.5, &clockwise, false).is_none());
+}
+
+#[test]
+fn polygon_circle_retains_a_duplicate_setter_edge() {
+    let polygon = [
+        (-1.0, -1.0),
+        (1.0, -1.0),
+        (1.0, -1.0),
+        (1.0, 1.0),
+        (-1.0, 1.0),
+    ];
+    let manifold = circle_polygon_manifold((0.0, 1.5), 0.5, &polygon, false)
+        .expect("duplicate edge remains in the native stored-normal walk");
+
+    assert_eq!((manifold.normal_x, manifold.normal_y), (0.0, 1.0));
+}
+
+#[test]
 fn rotated_polygon_circle_keeps_shape_local_normal_and_reference_point() {
     let polygon = [
         (-0.7_f32, -0.4_f32),
