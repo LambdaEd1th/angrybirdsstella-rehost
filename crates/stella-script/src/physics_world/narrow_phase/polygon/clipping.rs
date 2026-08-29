@@ -22,13 +22,13 @@ pub(in crate::physics_world::narrow_phase) fn clip_segment_to_line(
     let first_distance = first_dot - offset;
     let second_distance = second_dot - offset;
     let mut output = SmallVec::new();
-    if first_distance <= 0.0_f32 {
+    if native_arm_le_zero(first_distance) {
         output.push(segment[0]);
     }
-    if second_distance <= 0.0_f32 {
+    if native_arm_le_zero(second_distance) {
         output.push(segment[1]);
     }
-    if first_distance * second_distance < 0.0_f32 {
+    if native_arm_lt_zero(first_distance * second_distance) {
         // sub_1008601C8 subtracts the two un-offset dot products. Reusing
         // distance1-distance2 introduces two extra f32 rounding boundaries.
         let fraction = first_distance / (first_dot - second_dot);
@@ -42,6 +42,20 @@ pub(in crate::physics_world::narrow_phase) fn clip_segment_to_line(
         });
     }
     output
+}
+
+fn native_arm_le_zero(value: f32) -> bool {
+    !matches!(
+        value.partial_cmp(&0.0_f32),
+        Some(std::cmp::Ordering::Greater)
+    )
+}
+
+fn native_arm_lt_zero(value: f32) -> bool {
+    matches!(
+        value.partial_cmp(&0.0_f32),
+        None | Some(std::cmp::Ordering::Less)
+    )
 }
 
 #[cfg(test)]
@@ -70,5 +84,33 @@ mod tests {
         assert_eq!(output[0].feature_id, first_feature);
         assert_eq!(output[1].point.1.to_bits(), 0x3ee8_ecf9);
         assert_eq!(output[1].feature_id, contact_feature_id(5, 13, 0, 1));
+    }
+
+    #[test]
+    fn unordered_distances_copy_both_endpoints_and_interpolate() {
+        let first_feature = contact_feature_id(7, 13, 1, 0);
+        let second_feature = contact_feature_id(7, 14, 1, 0);
+        let output = clip_segment_to_line(
+            [
+                ClipVertex {
+                    point: (1.0, 2.0),
+                    feature_id: first_feature,
+                },
+                ClipVertex {
+                    point: (3.0, 4.0),
+                    feature_id: second_feature,
+                },
+            ],
+            (f32::NAN, 1.0),
+            0.0,
+            5,
+        );
+
+        assert_eq!(output.len(), 3);
+        assert_eq!(output[0].feature_id, first_feature);
+        assert_eq!(output[1].feature_id, second_feature);
+        assert!(output[2].point.0.is_nan());
+        assert!(output[2].point.1.is_nan());
+        assert_eq!(output[2].feature_id, contact_feature_id(5, 13, 0, 1));
     }
 }

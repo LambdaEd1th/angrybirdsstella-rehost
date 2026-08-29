@@ -17478,3 +17478,39 @@ fresh isolated-AppData 120-frame release-wgpu upload/render/readback reports
 bindings. `build/audit-native-arm-unordered-20260829.png` is a 1024x768 RGBA
 PNG with SHA-256
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## Native clip-segment unordered endpoint and intersection flow
+
+IDA and Hopper now name `b2ClipSegmentToLine` at `0x100860148`. The function
+forms each signed distance with a separately rounded Y product followed by an
+X `FMADD`, then subtracts the caller's line offset. `FCMP distance0, 0` /
+`B.LE` at `0x100860174..0x100860178` copies endpoint zero for ordered
+non-positive or unordered distance. The second test uses `FCMP` / `B.GT` at
+`0x100860198..0x10086019C`; only an ordered positive distance skips endpoint
+one, so unordered also falls through to the copy.
+
+The two distances are multiplied at `0x1008601BC` and compared with zero.
+`B.GE` at `0x1008601C4` skips interpolation only for an ordered non-negative
+product. A negative or unordered product enters the intersection path. Its
+fraction is `distance0 / (dot0 - dot1)` at `0x1008601C8..0x1008601CC`, not
+`distance0 / (distance0 - distance1)`; the two point lanes then use native
+`FMADD`s. The feature bytes retain the reference vertex, endpoint-zero
+incident index, vertex/face input type and face/vertex output type exactly.
+Both disassemblers carry comments at the three condition-code boundaries and
+the IDB is saved.
+
+Rust now uses explicit ARM `LE` and `LT` predicates instead of host `<=` and
+`<` operators for these decisions. A regression supplies unordered distances
+and pins the native three-output result: both original endpoints are copied,
+then a NaN intersection carrying the rewritten feature ID is appended. The
+existing finite bit-level regression continues to pin the un-offset-dot
+denominator rounding.
+
+The complete workspace passes 804 tests with only the deliberate long-
+duration BirdRun audit ignored. Formatting, whitespace validation, strict
+all-target/all-feature Clippy and the release workspace build are clean. A
+fresh isolated-AppData 120-frame release-wgpu upload/render/readback reports
+20 optional probes, zero invoked fallbacks and zero remaining compatibility
+bindings. `build/audit-native-clip-unordered-20260829.png` is a 1024x768 RGBA
+PNG with SHA-256
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
