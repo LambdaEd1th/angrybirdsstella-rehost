@@ -18101,3 +18101,39 @@ bindings, with empty stderr. The visually checked
 `build/audit-native-sensor-wake-20260829.png` is a 1024x768 RGBA PNG with
 SHA-256
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## EndContact uses current fixture sensor state
+
+The touching bit alone does not preserve the listener's sensor
+classification. `b2Contact::Update` dispatches EndContact at `0x100863940`
+after evaluating the current fixture state. Purple's concrete listener then
+loads fixture A's live `isSensor` byte at `0x100065414`; if it is clear, it
+loads fixture B's live byte at `0x10006541C`. Either current byte selects the
+`exitTriggerCollision` path and its sensor-overlap bookkeeping. No cached
+"sensor at previous touching frame" field participates in that decision.
+
+The Rust contact map stores a boolean beside each touching pair so island
+assembly can exclude sensor constraints. Its separation and broad-phase
+retirement paths were also reusing that old boolean to construct EndContact,
+which is a different responsibility. Toggling a live solid contact to sensor
+before it separated consequently missed trigger exit; toggling a sensor to
+solid could invoke trigger exit after the fixture was no longer a sensor.
+
+Prepared separation and retirement results now carry the two fixtures'
+current combined sensor state. Removing the old active entry only establishes
+that EndContact is due; callback classification and the solid-only wake rule
+use the current value. A bidirectional regression begins solid, toggles to
+sensor and separates, then begins sensor, toggles to solid and separates. The
+two EndContact records are respectively sensor and non-sensor exactly as the
+live native listener observes them. The dispatch and listener-byte loads are
+commented in IDA and Hopper and the IDB is saved.
+
+The complete workspace passes 823 tests with only the deliberate long-
+duration BirdRun audit ignored. Formatting, whitespace validation, strict
+all-target/all-feature Clippy and the release workspace build are clean. A
+fresh isolated-AppData 120-frame release-wgpu upload/render/readback reports
+20 optional probes, zero invoked fallbacks and zero remaining compatibility
+bindings, with empty stderr. The visually checked
+`build/audit-native-sensor-end-20260829.png` is a 1024x768 RGBA PNG with
+SHA-256
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.

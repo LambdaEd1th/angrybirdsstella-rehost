@@ -6,9 +6,12 @@ use crate::*;
 enum NativeContactUpdate {
     MissingEndpoint,
     Sleeping,
-    Retired,
+    Retired {
+        sensor: bool,
+    },
     Separated {
         clear_filter_flag: bool,
+        sensor: bool,
     },
     SensorTouching {
         clear_filter_flag: bool,
@@ -72,7 +75,9 @@ impl RenderBridge {
                     && second_fat.1 <= first_fat.3
             });
         if !allowed || !fat_overlap {
-            return NativeContactUpdate::Retired;
+            return NativeContactUpdate::Retired {
+                sensor: first.sensor || second.sensor,
+            };
         }
 
         let clear_filter_flag = filter_dirty && filter_allowed;
@@ -80,7 +85,10 @@ impl RenderBridge {
         let sensor = first.sensor || second.sensor;
         if sensor {
             if !first.native_fixture_overlaps(second, contact_key.2, contact_key.3) {
-                return NativeContactUpdate::Separated { clear_filter_flag };
+                return NativeContactUpdate::Separated {
+                    clear_filter_flag,
+                    sensor,
+                };
             }
             return NativeContactUpdate::SensorTouching {
                 clear_filter_flag,
@@ -89,7 +97,10 @@ impl RenderBridge {
         }
         let Some(manifold) = first.collision_fixture_manifold(second, contact_key.2, contact_key.3)
         else {
-            return NativeContactUpdate::Separated { clear_filter_flag };
+            return NativeContactUpdate::Separated {
+                clear_filter_flag,
+                sensor,
+            };
         };
         let began = was_touching.is_none();
         NativeContactUpdate::SolidTouching {
@@ -125,7 +136,7 @@ impl RenderBridge {
                 None
             }
             NativeContactUpdate::Sleeping => None,
-            NativeContactUpdate::Retired => {
+            NativeContactUpdate::Retired { sensor } => {
                 self.broad_phase_contacts.remove(contact_key);
                 self.contact_manifolds.remove(contact_key);
                 self.contact_impulses.remove(contact_key);
@@ -133,16 +144,19 @@ impl RenderBridge {
                 self.contact_velocity_bias.remove(contact_key);
                 self.remove_native_contact_order(contact_key);
                 self.contact_filter_dirty.remove(contact_key);
-                let sensor = self.active_contacts.remove(contact_key)?;
+                self.active_contacts.remove(contact_key)?;
                 Some(Self::native_contact_end_event(contact_key, sensor))
             }
-            NativeContactUpdate::Separated { clear_filter_flag } => {
+            NativeContactUpdate::Separated {
+                clear_filter_flag,
+                sensor,
+            } => {
                 // The native Collide loop reaches filter clearing only after
                 // its awake gate, so two sleeping bodies retain a dirty flag.
                 if clear_filter_flag {
                     self.contact_filter_dirty.remove(contact_key);
                 }
-                let sensor = self.active_contacts.remove(contact_key)?;
+                self.active_contacts.remove(contact_key)?;
                 self.contact_manifolds.remove(contact_key);
                 self.contact_impulses.remove(contact_key);
                 self.solver_contact_impulses.remove(contact_key);

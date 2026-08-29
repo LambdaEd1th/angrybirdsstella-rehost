@@ -293,6 +293,39 @@ fn sensor_touching_transitions_do_not_wake_sleeping_endpoint() {
 }
 
 #[test]
+fn contact_end_uses_current_fixture_sensor_state_after_toggle() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .execute_source(
+            r#"
+                createCircle("first", "", 0, 0, 1, 1, 0, 0, true, false, 1)
+                createCircle("second", "", 1.5, 0, 1, 1, 0, 0, true, false, 1)
+                setWorldGravity(0, 0)
+                setVelocity("first", 0.1, 0)
+                "#,
+        )
+        .unwrap();
+
+    let mut bridge = runtime.render.lock().unwrap();
+    let solid_begin = bridge.refresh_contacts();
+    assert!(solid_begin.iter().any(|event| event.began && !event.sensor));
+
+    bridge.scene.get_mut("second").unwrap().sensor = true;
+    bridge.scene.get_mut("first").unwrap().x = -2.1;
+    let sensor_end = bridge.refresh_contacts();
+    assert!(sensor_end.iter().any(|event| event.ended && event.sensor));
+
+    bridge.scene.get_mut("first").unwrap().x = 0.0;
+    let sensor_begin = bridge.refresh_contacts();
+    assert!(sensor_begin.iter().any(|event| event.began && event.sensor));
+
+    bridge.scene.get_mut("second").unwrap().sensor = false;
+    bridge.scene.get_mut("first").unwrap().x = -2.1;
+    let solid_end = bridge.refresh_contacts();
+    assert!(solid_end.iter().any(|event| event.ended && !event.sensor));
+}
+
+#[test]
 fn sleeping_box2d_contact_freezes_until_body_wakes_after_separation() {
     let runtime = StellaLua::new("/tmp").unwrap();
     runtime
