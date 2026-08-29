@@ -479,6 +479,48 @@ fn contact_factory_uses_proxy_order_and_native_shape_pair_direction() {
 }
 
 #[test]
+fn add_pair_wakes_both_sleeping_endpoints_before_sensor_update() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createCircle("sleeping_sensor", "", 0, 0, 1, 1, 0, 0, true, false, 1)
+                createCircle("sleeping_body", "", 0, 0, 1, 1, 0, 0, true, false, 1)
+                setAsSensor("sleeping_sensor", true)
+                setSleeping("sleeping_sensor", true)
+                setSleeping("sleeping_body", true)
+
+                createCircle("mixed_sensor", "", 10, 0, 1, 1, 0, 0, true, false, 1)
+                createCircle("awake_body", "", 10, 0, 1, 1, 0, 0, true, false, 1)
+                setAsSensor("mixed_sensor", true)
+                setSleeping("mixed_sensor", true)
+                "#,
+        )
+        .unwrap();
+
+    let mut bridge = runtime.render.lock().unwrap();
+    bridge.scene.get_mut("sleeping_sensor").unwrap().sleep_time = 0.5;
+    bridge.scene.get_mut("sleeping_body").unwrap().sleep_time = 0.6;
+    bridge.scene.get_mut("mixed_sensor").unwrap().sleep_time = 0.7;
+    bridge.scene.get_mut("awake_body").unwrap().sleep_time = 0.75;
+    let events = bridge.refresh_contacts();
+
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.began && event.sensor)
+            .count(),
+        2
+    );
+    for name in ["sleeping_sensor", "sleeping_body", "mixed_sensor"] {
+        assert!(!bridge.scene[name].sleeping, "{name}");
+        assert_eq!(bridge.scene[name].sleep_time, 0.0, "{name}");
+    }
+    assert!(!bridge.scene["awake_body"].sleeping);
+    assert_eq!(bridge.scene["awake_body"].sleep_time, 0.75);
+}
+
+#[test]
 fn recovered_edge_capsule_rejects_aabb_only_endpoint_overlap() {
     let runtime = unlocked_test_runtime();
     runtime

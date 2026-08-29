@@ -262,7 +262,7 @@ fn sensor_touching_transitions_do_not_wake_sleeping_endpoint() {
     runtime
         .execute_source(
             r#"
-                createCircle("awake", "", 0, 0, 1, 1, 0, 0, true, false, 1)
+                createCircle("awake", "", -0.6, 0, 1, 1, 0, 0, true, false, 1)
                 createCircle("sleeping_sensor", "", 1.5, 0, 1, 1, 0, 0, true, false, 1)
                 setAsSensor("sleeping_sensor", true)
                 setWorldGravity(0, 0)
@@ -272,11 +272,19 @@ fn sensor_touching_transitions_do_not_wake_sleeping_endpoint() {
         .unwrap();
 
     let mut bridge = runtime.render.lock().unwrap();
+    // The expanded proxy AABBs overlap, so AddPair creates the sensor contact
+    // while both endpoints are awake, but the live circles are still apart.
+    assert!(bridge.refresh_contacts().is_empty());
+    assert_eq!(bridge.broad_phase_contacts.len(), 1);
     let sleeping_sensor = bridge.scene.get_mut("sleeping_sensor").unwrap();
     sleeping_sensor.motion_started = false;
     sleeping_sensor.sleeping = true;
     sleeping_sensor.sleep_time = 0.5;
 
+    // Move only the live geometry inside the already-created contact node.
+    // Contact::Update's sensor false->true branch must not perform another
+    // SetAwake operation.
+    bridge.scene.get_mut("awake").unwrap().x = 0.0;
     let began = bridge.refresh_contacts();
     assert!(began.iter().any(|event| event.began && event.sensor));
     assert!(bridge.scene["sleeping_sensor"].sleeping);

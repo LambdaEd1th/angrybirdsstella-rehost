@@ -17250,28 +17250,32 @@ probes, zero invoked fallbacks, zero remaining compatibility bindings and
 empty stderr. `build/audit-native-test-point-20260829.png` retains the expected
 SHA-256 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
 
-## Native SetTransform sleep gate and trap-sucker cleanup
+## Native SetTransform/AddPair wake boundary and trap-sucker cleanup
 
 A live IDA/Hopper recheck of `b2Body::SetTransform` at `0x10086B794`
 confirms that it writes the transform and sweep, calls
 `b2Fixture::Synchronize` for each attached fixture, then tail-calls
-`b2ContactManager::FindNewContacts` at `0x10086BC24`. It never writes either
-body's awake flag. `b2ContactManager::Collide` at `0x10086BAB0` separately
-tests whether each endpoint is both non-static and awake; when neither is, the
-loop advances without calling `b2Contact::Update` at `0x10086373C`. Hopper's
-assembly exposes the same branch and no hidden trap-sucker special case. The
-corresponding IDA symbols, plus `b2ContactManager::Destroy` at `0x10086B9B8`
-and `b2Body::ShouldCollide` at `0x10086B73C`, are named and saved in the IDB.
+`b2ContactManager::FindNewContacts` at `0x10086BC24`. SetTransform itself does
+not write an awake flag. The later complete AddPair audit, however, shows that
+FindNewContacts does wake either sleeping endpoint when it actually creates a
+new contact. `b2ContactManager::Collide` at `0x10086BAB0` separately tests
+whether each endpoint is both non-static and awake; when neither is, the loop
+advances without calling `b2Contact::Update` at `0x10086373C`. This skip
+therefore applies to an already-existing sleeping contact, not a newly linked
+pair whose AddPair wake has just run. Hopper's assembly exposes the same split
+and no hidden trap-sucker special case. The corresponding IDA symbols, plus
+`b2ContactManager::Destroy` at `0x10086B9B8` and
+`b2Body::ShouldCollide` at `0x10086B73C`, are named and saved in the IDB.
 
 The rehost's former `TrapSuckerSensor_*` compatibility hook violated that
 boundary by looking for tight overlaps after `SetTransform` and explicitly
-waking sleeping dynamic bodies. It has been removed. A focused original-data
-regression now proves that moving the static Chapter02_L02 intake onto an
-artificially sleeping structure creates the broad-phase pair immediately but
-does not wake the target, activate the contact, or invoke the shipped trap
-callback. The independent naturally simulated level regression still captures
-the authored right-hand structure, showing that later exact solver and contact
-alignment removed the trajectory mismatch that originally motivated the hook.
+waking sleeping dynamic bodies outside Box2D. It has been removed. The native
+AddPair path now owns that wake instead: moving the static Chapter02_L02 intake
+onto an artificially sleeping structure creates the broad-phase pair and
+wakes the target immediately, while Contact::Update and the shipped trap
+callback wait for the next Collide pass. The independent naturally simulated
+level regression still captures the authored right-hand structure, showing
+that the compatibility hook remains unnecessary.
 
 The complete workspace passes 789 tests with the deliberate long-duration
 BirdRun audit ignored. Formatting, whitespace validation, strict all-target/
@@ -18186,5 +18190,46 @@ fresh isolated-AppData 120-frame release-wgpu upload/render/readback reports
 20 optional probes, zero invoked fallbacks and zero remaining compatibility
 bindings, with empty stderr. The visually checked
 `build/audit-native-contact-factory-20260829.png` is a 1024x768 RGBA PNG with
+SHA-256
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## AddPair wakes newly linked contact endpoints
+
+The tail of `b2ContactManager::AddPair` makes the SetTransform boundary
+unambiguous. After the new contact and its two body edges have been linked,
+`0x10086BD64..0x10086BD74` checks fixture A's body's `e_awakeFlag`. Only when
+the flag is clear does it set the bit and write zero to `m_sleepTime` at
+offset `+0xB4`. `0x10086BD78..0x10086BD88` repeats the same conditional
+sequence for fixture B. There is no sensor test around this block, so a new
+sensor contact wakes sleeping endpoints exactly like a solid contact. An
+endpoint whose awake bit was already set retains its accumulated sleep time.
+
+The host previously inserted the contact maps and intrusive-order metadata but
+did not update body sleep state. When both endpoints were sleeping,
+ContactManager's later awake gate skipped the newly created node indefinitely.
+This was especially visible for a static sensor moved by SetTransform: the
+proxy pair existed, but the sleeping structure never entered the trigger.
+New-contact insertion now runs the recovered conditional wake on both bodies
+before Collide can snapshot its contact list.
+
+The lifetime distinction is covered explicitly. One regression creates two
+sleeping sensor-contact endpoints and confirms that AddPair wakes both and
+clears both timers; a second pair confirms that an already-awake endpoint's
+nonzero timer is preserved. The existing sensor transition regression now
+creates its broad-phase contact while awake, then sleeps one endpoint and
+changes only live geometry inside that same node. Its false-to-true and
+true-to-false `b2Contact::Update` transitions still preserve sleep, matching
+the separate sensor branch recovered earlier. The Chapter02_L02 regression
+also confirms that moving the intake creates and wakes the pair immediately,
+then captures the structure on the following physics pass. Both SetAwake
+sites are commented in IDA and Hopper and the IDB is saved.
+
+The complete workspace passes 825 tests with only the deliberate long-
+duration BirdRun audit ignored. Formatting, whitespace validation, strict
+all-target/all-feature Clippy and the release workspace build are clean. A
+fresh isolated-AppData 120-frame release-wgpu upload/render/readback reports
+20 optional probes, zero invoked fallbacks and zero remaining compatibility
+bindings, with empty stderr. The visually checked
+`build/audit-native-add-pair-wake-20260829.png` is a 1024x768 RGBA PNG with
 SHA-256
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.

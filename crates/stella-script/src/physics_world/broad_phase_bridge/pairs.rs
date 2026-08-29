@@ -115,7 +115,18 @@ impl RenderBridge {
                 });
             if allowed && self.broad_phase_contacts.insert(key.clone()) {
                 let order = self.allocate_physics_creation_order();
-                self.insert_native_contact_order(key, order);
+                self.insert_native_contact_order(key.clone(), order);
+                // AddPair links the new contact first, then performs the
+                // inlined SetAwake(true) sequence on both endpoint bodies.
+                // This applies to sensor contacts too; Contact::Update's
+                // later sensor transition itself still does not wake them.
+                for name in [&key.0, &key.1] {
+                    if let Some(object) = self.scene.get_mut(name)
+                        && object.sleeping
+                    {
+                        object.wake();
+                    }
+                }
             }
         }
         let stale = self

@@ -49,7 +49,7 @@ fn chapter02_level02_trap_sucker_retains_authored_fixture() {
 }
 
 #[test]
-fn chapter02_level02_moving_static_intake_does_not_wake_a_sleeping_structure() {
+fn chapter02_level02_moving_static_intake_add_pair_wakes_and_captures_structure() {
     let (_sandbox, runtime) = load_chapter02_level02("chapter02-l02-sleeping-intake");
     const TARGET: &str = "BLOCK_WOOD_1X10_1_9";
     {
@@ -84,8 +84,8 @@ fn chapter02_level02_moving_static_intake_does_not_wake_a_sleeping_structure() {
     {
         let bridge = runtime.render.lock().unwrap();
         assert!(
-            bridge.scene[TARGET].sleeping,
-            "SetTransform must not wake the sleeping dynamic endpoint"
+            !bridge.scene[TARGET].sleeping,
+            "FindNewContacts/AddPair must wake the sleeping dynamic endpoint"
         );
         assert!(
             bridge.broad_phase_contacts.iter().any(pair_matches),
@@ -93,7 +93,7 @@ fn chapter02_level02_moving_static_intake_does_not_wake_a_sleeping_structure() {
         );
         assert!(
             !bridge.active_contacts.keys().any(pair_matches),
-            "the sleeping pair must remain outside Contact::Update"
+            "SetTransform creates the node but does not itself run Contact::Update"
         );
     }
 
@@ -107,8 +107,8 @@ fn chapter02_level02_moving_static_intake_does_not_wake_a_sleeping_structure() {
         .get::<mlua::Table>(TARGET)
         .unwrap();
     assert!(
-        !target.get::<bool>("inTrapSucker").unwrap_or(false),
-        "a moving static sensor must not bypass ContactManager::Collide's awake gate"
+        target.get::<bool>("inTrapSucker").unwrap_or(false),
+        "the AddPair wake must let ContactManager process the moved intake sensor"
     );
 }
 
@@ -692,7 +692,7 @@ fn active_and_collision_setters_destroy_contacts_in_native_callback_order() {
 }
 
 #[test]
-fn set_transform_drains_broad_phase_pairs_immediately_without_waking() {
+fn set_transform_drains_pairs_and_add_pair_wakes_new_contact_endpoints() {
     let runtime = StellaLua::new("/tmp").unwrap();
     runtime
         .execute_source(
@@ -712,13 +712,15 @@ fn set_transform_drains_broad_phase_pairs_immediately_without_waking() {
     runtime.execute_source(r#"setPosition("b", 0, 0)"#).unwrap();
     let key = ("a".to_owned(), "b".to_owned(), 0, 0);
     let mut bridge = runtime.render.lock().unwrap();
-    // SetTransform (`sub_10086B794`) calls UpdatePairs before returning,
-    // but does not change either body's awake flag.
+    // SetTransform (`sub_10086B794`) does not write awake itself, but its
+    // synchronous UpdatePairs/AddPair tail wakes both endpoints of a newly
+    // created contact.
     assert!(bridge.broad_phase_contacts.contains(&key));
-    assert!(bridge.scene["a"].sleeping);
-    assert!(bridge.scene["b"].sleeping);
-    assert!(bridge.refresh_contacts().is_empty());
+    assert!(!bridge.scene["a"].sleeping);
+    assert!(!bridge.scene["b"].sleeping);
     assert!(!bridge.active_contacts.contains_key(&key));
+    assert!(bridge.refresh_contacts().iter().any(|event| event.began));
+    assert!(bridge.active_contacts.contains_key(&key));
     drop(bridge);
     assert_eq!(
         object_world(runtime.lua())
