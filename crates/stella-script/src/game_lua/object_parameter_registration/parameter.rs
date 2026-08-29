@@ -9,7 +9,7 @@ pub(super) fn install(
 ) -> LuaResult<()> {
     globals.set(
         "setObjectParameter",
-        lua.create_function(move |lua, args: MultiValue| {
+        lua.create_function(move |_lua, args: MultiValue| {
             // sub_1000889E4 validates all three fixed slots before invoking
             // sub_10004EF74. Both numeric slots are narrowed to float32.
             let name = native_required_string(&args, 0, "setObjectParameter")?;
@@ -26,29 +26,33 @@ pub(super) fn install(
             // Parameter 22 reaches b2Body::SetActive. Its contact callbacks
             // occur synchronously while the body is being deactivated.
             if parameter == 22 {
-                let exits = {
-                    let mut bridge = render.lock().expect("render bridge lock poisoned");
+                let mut bridge = render.lock().expect("render bridge lock poisoned");
+                let sensor_definition = {
                     let Some(object) = bridge.game_lua_object_mut(&name) else {
                         return Err(runtime_error(format!("Missing object: {name}")));
                     };
                     if !object.has_physics_body() {
                         return Ok(());
                     }
-                    if object.sensor_definition {
+                    // Parameter 22 is the sensor-active switch, not a body
+                    // active switch. Native `sub_10004F128..sub_10004F194`
+                    // stores the requested byte only when the render object
+                    // is a sensor definition.
+                    let sensor_definition = object.sensor_definition;
+                    if sensor_definition {
                         object.sensor_active = enabled;
                     }
-                    let was_active = object.active;
-                    bridge.set_object_active_state(&name, enabled);
-                    if was_active && !enabled {
-                        bridge.drain_contacts_for_invalidated_objects(
-                            std::slice::from_ref(&name),
-                            false,
-                        )
-                    } else {
-                        Vec::new()
-                    }
+                    sensor_definition
                 };
-                return dispatch_native_contact_exits(lua, &render, &exits);
+                // The native path wakes sleeping *other* contact bodies only
+                // for an enabled sensor, then unconditionally calls
+                // b2Body::SetActive(true). SetActive has no world-lock gate
+                // and does not emit EndContact on this path.
+                if sensor_definition && enabled {
+                    bridge.wake_sensor_contact_neighbors(&name);
+                }
+                bridge.set_object_active_state(&name, true);
+                return Ok(());
             }
 
             let mut bridge = render.lock().expect("render bridge lock poisoned");

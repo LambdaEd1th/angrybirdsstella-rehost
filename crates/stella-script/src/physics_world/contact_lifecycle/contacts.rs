@@ -1,6 +1,33 @@
 use crate::*;
 
 impl RenderBridge {
+    /// `sub_10004EF74` parameter 22 wakes only the *other* endpoint of each
+    /// touching contact when a sensor definition is enabled. The native loop
+    /// walks the body's contact-edge list, tests the touching bit, and leaves
+    /// an already-awake endpoint's sleep timer untouched.
+    pub(crate) fn wake_sensor_contact_neighbors(&mut self, body: &str) {
+        let neighbors = self
+            .native_contact_world_order
+            .values()
+            .filter_map(|key| {
+                if key.0 == body && self.active_contacts.contains_key(key) {
+                    Some(key.1.clone())
+                } else if key.1 == body && self.active_contacts.contains_key(key) {
+                    Some(key.0.clone())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        for neighbor in neighbors {
+            if let Some(object) = self.scene.get_mut(&neighbor)
+                && object.sleeping
+            {
+                object.wake();
+            }
+        }
+    }
+
     /// Destroy contacts attached to bodies whose fixture proxies have just
     /// been removed. `sub_10086B9B8` invokes the game's EndContact listener
     /// before unlinking a touching contact. That listener (`sub_1000653AC`)

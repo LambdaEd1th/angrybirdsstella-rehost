@@ -18888,3 +18888,26 @@ invoked fallbacks, compatibility bindings and stderr output: it reports the
 same 20 optional probes, produces a visually checked 1024x768 RGBA PNG, and
 matches SHA-256
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## Sensor-active parameter and SetActive direction
+
+IDA/Hopper's complete `sub_10004EF74` switch shows that ObjectParameter 22 is
+not a body-active toggle. When the render object has the sensor-definition
+byte at `+0x142`, the wrapper stores `(value == 1)` at `+0x143`; for an enabled
+sensor it then walks the body's contact-edge list at `0x10004F14C` and wakes
+only sleeping opposite endpoints whose contact touching bit is set. The final
+call at `0x10004F190` always passes `true` to `sub_10086B88C`, so value zero
+still reactivates an inactive body and never emits the deactivation
+EndContact path.
+
+The rehost now follows that direction exactly: parameter 22 updates
+`sensor_active` only for sensor definitions, wakes sleeping contact neighbors
+without resetting an already-awake timer, and unconditionally reinstalls the
+body's broad-phase proxies. The new regression covers the enabled wake,
+sensor-byte disable, inactive-body reactivation and the absence of a spurious
+exit callback. Six decisive sites are commented in both IDA and Hopper, and
+the IDB is saved. The release-wgpu smoke audit after this change again reports
+20 optional probes, zero invoked fallbacks, zero remaining compatibility
+bindings and empty stderr; its visually checked 1024x768 RGBA screenshot has
+SHA-256
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.

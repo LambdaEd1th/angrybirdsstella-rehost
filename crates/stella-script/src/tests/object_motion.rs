@@ -145,6 +145,56 @@ fn body_type_changes_flag_every_attached_contact_for_native_refiltering() {
 }
 
 #[test]
+fn sensor_parameter_wakes_contact_neighbor_and_only_reactivates_body() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createBox("sensor_owner", "", 0, 0, 2, 2, 1, 0, 0, true, false, 1)
+                createBox("neighbor", "", 0, 0, 2, 2, 1, 0, 0, true, false, 1)
+                setObjectParameter("sensor_owner", 20, 1)
+                "#,
+        )
+        .unwrap();
+
+    {
+        let mut bridge = runtime.render.lock().unwrap();
+        assert!(bridge.refresh_contacts().iter().any(|event| event.began));
+        bridge
+            .scene
+            .get_mut("neighbor")
+            .expect("contact neighbor")
+            .sleeping = true;
+    }
+
+    runtime
+        .execute_source(r#"setObjectParameter("sensor_owner", 22, 1)"#)
+        .unwrap();
+    {
+        let bridge = runtime.render.lock().unwrap();
+        assert!(bridge.scene["sensor_owner"].sensor_active);
+        assert!(bridge.scene["sensor_owner"].active);
+        assert!(!bridge.scene["neighbor"].sleeping);
+        assert_eq!(bridge.scene["neighbor"].sleep_time, 0.0);
+    }
+
+    runtime
+        .execute_source(
+            r#"
+                setObjectParameter("sensor_owner", 22, 0)
+                setActive("sensor_owner", false)
+                setObjectParameter("sensor_owner", 22, 0)
+                "#,
+        )
+        .unwrap();
+    let bridge = runtime.render.lock().unwrap();
+    assert!(!bridge.scene["sensor_owner"].sensor_active);
+    // Parameter 22 always calls SetActive(true), even when disabling the
+    // sensor byte; it is not the body-active switch.
+    assert!(bridge.scene["sensor_owner"].active);
+}
+
+#[test]
 fn collision_bounce_uses_native_impulse_decay_phase_and_float32_scale() {
     let runtime = unlocked_test_runtime();
     runtime
