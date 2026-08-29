@@ -45,35 +45,16 @@ pub(crate) fn circle_circle_manifold_at_transforms(
     if distance_squared > radius_sum * radius_sum {
         return None;
     }
-    let normal = if distance_squared > f32::EPSILON * f32::EPSILON {
-        let inverse_distance = distance_squared.sqrt().recip();
-        (delta.0 * inverse_distance, delta.1 * inverse_distance)
-    } else {
-        // b2WorldManifold's native circles branch retains this axis for
-        // coincident and sub-epsilon centers.
-        (1.0_f32, 0.0_f32)
-    };
-    let first_surface = (
-        first_radius.mul_add(normal.0, first_center.0),
-        first_radius.mul_add(normal.1, first_center.1),
-    );
-    let second_surface = (
-        (-second_radius).mul_add(normal.0, second_center.0),
-        (-second_radius).mul_add(normal.1, second_center.1),
-    );
-    let surface_delta = (
-        second_surface.0 - first_surface.0,
-        second_surface.1 - first_surface.1,
-    );
-    let separation = surface_delta
-        .0
-        .mul_add(normal.0, surface_delta.1 * normal.1);
-    Some(ContactManifold {
-        normal_x: f64::from(normal.0),
-        normal_y: f64::from(normal.1),
-        penetration: f64::from(-separation),
-        point_x: f64::from((first_surface.0 + second_surface.0) * 0.5_f32),
-        point_y: f64::from((first_surface.1 + second_surface.1) * 0.5_f32),
+    // b2CollideCircles uses the packed FMUL/FADDP distance above only for its
+    // overlap decision, then emits two local centers. b2WorldManifold
+    // deliberately recomputes the world delta with scalar FMUL/FMADD before
+    // normalizing it, so the packed distance cannot be reused for world data.
+    let local_manifold = ContactManifold {
+        normal_x: 0.0,
+        normal_y: 0.0,
+        penetration: 0.0,
+        point_x: 0.0,
+        point_y: 0.0,
         feature_id: 0,
         secondary: None,
         position: ContactLocalManifold {
@@ -85,7 +66,8 @@ pub(crate) fn circle_circle_manifold_at_transforms(
             first_radius,
             second_radius,
         },
-    })
+    };
+    Some(local_manifold.at_native_transforms(first_transform, second_transform))
 }
 
 #[cfg(test)]

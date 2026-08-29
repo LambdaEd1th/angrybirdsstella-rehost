@@ -388,6 +388,28 @@ fn circle_circle_uses_native_inclusive_boundary_and_small_delta_axis() {
     assert_eq!((near.normal_x, near.normal_y), (1.0, 0.0));
     assert_eq!(near.penetration, 2.0);
     assert_eq!(near.point_y, f64::from(tiny_y * 0.5_f32));
+
+    let diagonal = circle_circle_manifold_at_transforms(
+        (0.0, 0.0),
+        1.0,
+        NativeToiTransform::IDENTITY,
+        (f32::from_bits(0x3F5B_FAC1), f32::from_bits(0x3F5C_952C)),
+        1.0,
+        NativeToiTransform::IDENTITY,
+    )
+    .expect("diagonal circle contact");
+    let refreshed =
+        diagonal.at_native_transforms(NativeToiTransform::IDENTITY, NativeToiTransform::IDENTITY);
+    assert_eq!((diagonal.normal_x as f32).to_bits(), 0x3F34_C576);
+    assert_eq!((diagonal.normal_y as f32).to_bits(), 0x3F35_445B);
+    assert_eq!(diagonal.normal_x.to_bits(), refreshed.normal_x.to_bits());
+    assert_eq!(diagonal.normal_y.to_bits(), refreshed.normal_y.to_bits());
+    assert_eq!(
+        diagonal.penetration.to_bits(),
+        refreshed.penetration.to_bits()
+    );
+    assert_eq!(diagonal.point_x.to_bits(), refreshed.point_x.to_bits());
+    assert_eq!(diagonal.point_y.to_bits(), refreshed.point_y.to_bits());
 }
 
 #[test]

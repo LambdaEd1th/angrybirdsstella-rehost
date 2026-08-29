@@ -17924,10 +17924,10 @@ A translated and rotated FaceA contact first demonstrated the old
 initial-versus-refresh mismatch and now pins the native penetration word
 `0x3B0312A8`. The same geometry in circle-first order exercises FaceB. Both
 orders are bit-identical to a same-transform world refresh for normal,
-penetration and contact midpoint. The circle-circle leaf was audited in the
-same pass and already matched the recovered Circles surface and separation
-sequence, so it required no code change. The polygon-circle local-output sites
-are commented in IDA and Hopper and the IDB is saved.
+penetration and contact midpoint. The polygon-circle local-output sites are
+commented in IDA and Hopper and the IDB is saved. Circle-circle's distinct
+overlap-test versus world-distance grouping is covered in the following
+audit.
 
 The complete workspace passes 818 tests with only the deliberate long-
 duration BirdRun audit ignored. Formatting, whitespace validation, strict
@@ -17937,4 +17937,41 @@ fresh isolated-AppData 120-frame release-wgpu upload/render/readback reports
 bindings, with empty stderr.
 `build/audit-native-polygon-circle-world-20260829.png` is a 1024x768 RGBA PNG
 with SHA-256
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## Native circle overlap versus world-distance grouping
+
+The 37-instruction `b2CollideCircles` leaf at `0x10085E590` keeps two
+different distance responsibilities separate. It transforms both local
+centers, subtracts them as a packed vector, squares both lanes with packed
+`FMUL` and reduces them with `FADDP` at `0x10085E5E8..0x10085E5EC`. That
+rounded squared distance is used only by the combined-radius overlap test.
+On success, `0x10085E600..0x10085E61C` writes a type-Circles local manifold:
+shape A's local center, shape B's local center, one point and a zero feature
+id. It does not retain the overlap-test distance.
+
+The Circles branch of `b2WorldManifold` transforms those local centers again.
+At `0x1008600A4..0x1008600B0` it subtracts the world centers, rounds `dy*dy`
+with scalar `FMUL`, then folds `dx*dx` into it with `FMADD`. The former Rust
+path reused the collision leaf's packed `FMUL/FADDP` result when normalizing
+the world axis. That can change both normal lanes by one ULP even though the
+overlap decision remains identical. Circle collisions now stop after the
+native local manifold and use the shared Circles world reconstruction.
+
+The finite diagonal delta words `0x3F5BFAC1/0x3F5C952C` expose the difference.
+The packed overlap distance normalizes them to
+`0x3F34C575/0x3F35445A`; Purple's scalar world-distance sequence produces
+`0x3F34C576/0x3F35445B`, now pinned by regression. The initial manifold is
+also bit-identical to a same-transform refresh for normal, penetration and
+midpoint. The collision and world-distance sites are commented in IDA and
+Hopper and the IDB is saved.
+
+The complete workspace passes 818 tests with only the deliberate long-
+duration BirdRun audit ignored. Formatting, whitespace validation, strict
+all-target/all-feature Clippy and the release workspace build are clean. A
+fresh isolated-AppData 120-frame release-wgpu upload/render/readback reports
+20 optional probes, zero invoked fallbacks and zero remaining compatibility
+bindings, with empty stderr.
+`build/audit-native-circle-world-20260829.png` is a 1024x768 RGBA PNG with
+SHA-256
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
