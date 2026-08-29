@@ -146,9 +146,15 @@ pub(super) fn install_velocity_multiplier(
                 && (object.dynamic_body || object.kinematic_body)
             {
                 let multiplier = multiplier as f32;
-                object.velocity_x = f64::from((object.velocity_x as f32) * multiplier);
-                object.velocity_y = f64::from((object.velocity_y as f32) * multiplier);
-                if object.velocity_x != 0.0 || object.velocity_y != 0.0 {
+                let velocity_x = (object.velocity_x as f32) * multiplier;
+                let velocity_y = (object.velocity_y as f32) * multiplier;
+                object.velocity_x = f64::from(velocity_x);
+                object.velocity_y = f64::from(velocity_y);
+                // Native sub_100041A44 squares both float32 lanes with
+                // packed FMUL/FADDP and wakes only for a strict positive
+                // reduction.  In particular, a NaN multiplier is stored but
+                // must not wake a sleeping body (`NaN != 0` would diverge).
+                if velocity_x * velocity_x + velocity_y * velocity_y > 0.0 {
                     object.wake();
                     object.motion_started = true;
                 }

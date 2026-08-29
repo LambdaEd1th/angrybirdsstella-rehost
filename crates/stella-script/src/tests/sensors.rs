@@ -243,6 +243,30 @@ fn recovered_completion_bindings_update_native_physics_and_render_state() {
 }
 
 #[test]
+fn multiply_velocity_uses_native_float32_strict_wake_test() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createBox("body", "", 0, 0, 2, 2, 1, 0, 0, true, false, 1)
+                setVelocity("body", 1, 0)
+                setSleeping("body", true)
+                -- Lua's IEEE division produces a NaN number. Purple stores
+                -- the resulting NaN velocity but its FMUL/FADDP wake test
+                -- takes the strict `> 0` branch only for finite motion.
+                multiplyVelocity("body", 0 / 0)
+            "#,
+        )
+        .unwrap();
+
+    let bridge = runtime.render.lock().unwrap();
+    let body = &bridge.scene["body"];
+    assert!(body.velocity_x.is_nan());
+    assert!(body.velocity_y.is_nan());
+    assert!(body.sleeping);
+}
+
+#[test]
 fn recovered_object_extension_members_keep_native_float_and_lua_mirror_boundaries() {
     let runtime = StellaLua::new("/tmp").unwrap();
     runtime

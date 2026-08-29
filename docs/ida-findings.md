@@ -6503,6 +6503,33 @@ compatibility bindings. It emitted
 `build/audit-system-font-smoke-20260820.png`, SHA-256
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
 
+## multiplyVelocity float32 strict wake semantics
+
+The small GameLua adapter `sub_100041A44` was rechecked in IDA and Hopper.
+After the nullable RenderObject lookup, it reads both native velocity lanes at
+`0x100041A64`, multiplies each by the float32 multiplier and packs the two
+results back into the body at `0x100041AA4`. The wake decision is independent
+of the eventual store: `0x100041A80..0x100041A8C` performs packed float32
+FMUL/FADDP and takes the branch only when the reduction is strictly greater
+than zero. Therefore a zero or NaN result is still written but does not wake a
+sleeping body; testing the stored values with `!= 0` would incorrectly wake
+for NaN.
+
+The Rust adapter now retains the two float32 products before publishing them,
+uses the same ordinary float32 square-and-add reduction and leaves the body
+asleep for unordered results. A regression sets a dynamic body asleep,
+multiplies its velocity by a Lua-generated NaN and verifies both NaN lanes are
+stored while the sleeping flag remains set. IDA and Hopper carry matching
+comments on the product, strict comparison and unconditional store sites, and
+the IDB is saved.
+
+The complete workspace passes 845 tests (86 app, 31 assets, one core and 727
+script/physics), with the deliberate long-duration BirdRun audit as the sole
+ignored test. Formatting, strict all-target/all-feature Clippy and the release
+workspace build remain clean. The isolated release-wgpu smoke route continues
+to report zero invoked compatibility fallbacks, zero remaining compatibility
+bindings and empty stderr.
+
 ## SetType fixture refilter and move-buffer requeue
 
 IDA/Hopper show `sub_10086B0CC` invoking `sub_10086CC90` once for every fixture
