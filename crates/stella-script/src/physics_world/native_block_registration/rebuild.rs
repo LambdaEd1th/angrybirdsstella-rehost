@@ -61,7 +61,13 @@ fn process_collision(
         return Ok(());
     }
 
-    destroy_old_fixtures(lua, render, object_name)?;
+    let world_locked = render
+        .lock()
+        .expect("render bridge lock poisoned")
+        .physics_world_locked;
+    if !world_locked {
+        destroy_old_fixtures(lua, render, object_name)?;
+    }
     let Some((vertices, fixtures, density, friction, restitution)) = ({
         let mut bridge = render.lock().expect("render bridge lock poisoned");
         bridge.game_lua_object_mut(object_name).and_then(|object| {
@@ -81,6 +87,14 @@ fn process_collision(
     }) else {
         return Ok(());
     };
+    // sub_100020D70 saves each old fixture's m_next before calling
+    // DestroyFixture, so the outer traversal still reaches clipping while
+    // every locked destruction is a no-op.  The visual Dirt paths are now
+    // updated, but CreateFixture also returns null: retain the complete old
+    // native collision fixture/proxy/contact/mass representation.
+    if world_locked {
+        return Ok(());
+    }
     let fixture_count = fixtures.len();
     create_replacement_fixtures(
         render,
@@ -99,6 +113,13 @@ fn destroy_old_fixtures(
     render: &Arc<Mutex<RenderBridge>>,
     object_name: &str,
 ) -> LuaResult<()> {
+    if render
+        .lock()
+        .expect("render bridge lock poisoned")
+        .physics_world_locked
+    {
+        return Ok(());
+    }
     let old_count = render
         .lock()
         .expect("render bridge lock poisoned")
@@ -137,6 +158,13 @@ fn create_replacement_fixtures(
     friction: f64,
     restitution: f64,
 ) {
+    if render
+        .lock()
+        .expect("render bridge lock poisoned")
+        .physics_world_locked
+    {
+        return;
+    }
     // CreateFixture installs the proxy before head insertion and resets mass
     // after every positive-density append.
     for fixture_vertices in fixtures {

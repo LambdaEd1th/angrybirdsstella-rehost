@@ -379,6 +379,87 @@ fn native_dirt_cut_destroys_contacts_and_rebuilds_mass_and_proxies() {
 }
 
 #[test]
+fn native_dirt_cut_inside_contact_keeps_locked_fixture_and_updates_visual_paths() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createBox("sensor", "", 0, 0, 20, 20, 0, 0, 0, true, false, 1)
+                setAsSensor("sensor", true)
+                createBox("dirt", "DIRT", 0, 0, 10, 10, 1, 0.4, 0.3, true, false, 1)
+                blocks = {
+                    DIRT_DEF = {
+                        components = {
+                            dirt = {
+                                bgTexture = "DIRT_BACKGROUND",
+                                fgTexture = "DIRT_FOREGROUND"
+                            }
+                        }
+                    }
+                }
+                objects.world.dirt.definition = "DIRT_DEF"
+                dirt_extension = createNativeBlockExtension("dirt", "dirt")
+                dirt_extension.render()
+                setWorldGravity(0, 0)
+                locked_dirt_check_count = 0
+                dirt_exit_count = 0
+                enterCollision = function()
+                    if locked_dirt_check_count == 0 then
+                        dirt_extension.onCollision(0, 0, 0, 1, 2, "sensor", 0, 0)
+                        locked_dirt_check_count = dirt_extension.checkCollisions()
+                    end
+                end
+                exitCollision = function()
+                    dirt_exit_count = dirt_exit_count + 1
+                end
+                update = function() end
+                updatePhysics = function() end
+            "#,
+        )
+        .unwrap();
+
+    let (old_paths, old_proxy_ids, old_mass, old_inverse_mass) = {
+        let bridge = runtime.render.lock().unwrap();
+        let dirt = &bridge.scene["dirt"];
+        (
+            dirt.dirt.as_ref().unwrap().foreground_paths.clone(),
+            dirt.fixture_proxy_ids.clone(),
+            dirt.body_mass,
+            dirt.inverse_mass,
+        )
+    };
+    runtime.update(1.0 / 30.0).unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert_eq!(
+        environment.get::<i64>("locked_dirt_check_count").unwrap(),
+        1
+    );
+    assert_eq!(environment.get::<i64>("dirt_exit_count").unwrap(), 0);
+    let bridge = runtime.render.lock().unwrap();
+    assert!(!bridge.physics_world_locked);
+    let dirt = &bridge.scene["dirt"];
+    assert!(matches!(
+        dirt.collision_shape,
+        CollisionShape::Box {
+            width: 10.0,
+            height: 10.0
+        }
+    ));
+    assert_eq!(dirt.fixture_densities, vec![1.0]);
+    assert_eq!(dirt.fixture_frictions, vec![f64::from(0.4_f32)]);
+    assert_eq!(dirt.fixture_restitutions, vec![f64::from(0.3_f32)]);
+    assert_eq!(dirt.fixture_proxy_ids, old_proxy_ids);
+    assert_eq!(dirt.body_mass, old_mass);
+    assert_eq!(dirt.inverse_mass, old_inverse_mass);
+    assert_eq!(dirt.dirt_holes.len(), 1);
+    assert_ne!(dirt.dirt.as_ref().unwrap().foreground_paths, old_paths);
+    assert!(bridge.active_contacts.keys().any(|key| {
+        (key.0 == "sensor" && key.1 == "dirt") || (key.0 == "dirt" && key.1 == "sensor")
+    }));
+}
+
+#[test]
 fn native_dirt_destroys_fixture_heads_before_newer_contacts_on_older_fixtures() {
     let runtime = StellaLua::new("/tmp").unwrap();
     runtime

@@ -18570,3 +18570,45 @@ bindings, with empty stderr. The visually checked
 `build/audit-native-fixture-lock-20260829.png` is a 1024x768 RGBA PNG with
 SHA-256
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## Locked Dirt fixture rebuild outer ordering
+
+The remaining DestroyFixture caller, the 693-instruction Dirt cut member
+`sub_100020D70`, was checked as one complete CFG in IDA and independently at
+both lifecycle sites in Hopper. It loads `b2Body::m_fixtureList` at
+`0x100020DB4`, saves the current fixture's `m_next` at `0x100020DBC`, calls
+DestroyFixture at `0x100020DC4`, and advances from that saved pointer. A locked
+DestroyFixture therefore does not stall the outer traversal: every old fixture
+is visited once, but none is unlinked and none of its contacts, proxies or mass
+state changes.
+
+The member then continues through its native octagon, Clipper, path-cleaning,
+mesh and ear-cutting passes. Each output triangle reaches CreateFixture at
+`0x100021688`; when the world is still locked every call returns null. The exact
+locked result is thus a newly cut Dirt visual component paired with the entire
+old Box2D collision representation. This differs from the polygon scale helper,
+whose loop rereads the still-live fixture-list head and consequently cannot
+advance under the same lock.
+
+The host Dirt rebuild now samples the world lock before physical teardown,
+always commits the hole and visual foreground-path cut, and skips collision
+shape, coefficient, proxy, contact and mass replacement while locked. Both
+lower fixture helpers also carry defensive lock gates so a future caller cannot
+bypass this lifecycle rule.
+
+A focused regression invokes `onCollision` and `checkCollisions` from a real
+BeginContact callback. The foreground path changes and the hole is retained,
+while the original box fixture, copied coefficients, proxy identifier, body
+mass, inverse mass and active contact remain unchanged and no EndContact is
+emitted. The saved-next load, destruction call, continuation point and triangle
+creation call are commented in IDA and Hopper and the IDB is saved.
+
+The complete workspace passes 833 tests with only the deliberate long-duration
+BirdRun audit ignored. Formatting, whitespace validation, strict
+all-target/all-feature Clippy and the release workspace build are clean. A
+fresh isolated-AppData 120-frame release-wgpu upload/render/readback reports 20
+optional probes, zero invoked fallbacks and zero remaining compatibility
+bindings, with empty stderr. Its
+`build/audit-native-dirt-fixture-lock-20260829.png` output is a 1024x768 RGBA
+PNG with SHA-256
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
