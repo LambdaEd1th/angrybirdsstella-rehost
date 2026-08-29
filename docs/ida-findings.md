@@ -17706,3 +17706,37 @@ bindings, with empty stderr.
 `build/audit-native-polygon-circle-unordered-20260829.png` is a 1024x768 RGBA
 PNG with SHA-256
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## Native polygon-circle reciprocal vertex normalization
+
+The two vertex-region exits of `b2CollidePolygonAndCircle` were compared
+instruction by instruction after the unordered scan correction. For the first
+vertex, `0x10085E834..0x10085E844` executes `FDIV 1.0, distance` once and then
+two `FMUL`s with the delta lanes. The second vertex repeats the same sequence
+at `0x10085E884..0x10085E894`. Purple does not divide x and y by the distance
+independently. This distinction is finite and observable: for delta words
+`0xBF2F4093/0xBF671388`, the native reciprocal-multiply path produces
+`0xBF1AB254/0xBF4BF913`, while direct divisions produce the next float in both
+lanes.
+
+The adjacent second Voronoi projection also reconstructs its direction with
+explicit `first - second` subtractions at `0x10085E78C..0x10085E790`. It does
+not negate the previously rounded `second - first` vector. These instructions
+are now commented in IDA and Hopper and the IDB is saved.
+
+Rust factors both vertex exits through one native normalization helper that
+retains zero, sub-epsilon and unordered deltas, or computes one reciprocal and
+multiplies both components. The reverse edge is formed with its own two
+subtractions. A lower-left square-corner regression reaches the real vertex
+manifold and pins both exact output words against the former direct-division
+result.
+
+The complete workspace passes 816 tests with only the deliberate long-
+duration BirdRun audit ignored. Formatting, whitespace validation, strict
+all-target/all-feature Clippy and the release workspace build are clean. A
+fresh isolated-AppData 120-frame release-wgpu upload/render/readback reports
+20 optional probes, zero invoked fallbacks and zero remaining compatibility
+bindings, with empty stderr.
+`build/audit-native-polygon-circle-normal-20260829.png` is a 1024x768 RGBA PNG
+with SHA-256
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.

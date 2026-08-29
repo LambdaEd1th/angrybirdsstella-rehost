@@ -184,6 +184,25 @@ fn polygon_circle_unordered_face_scan_keeps_the_seed_normal() {
 }
 
 #[test]
+fn polygon_circle_vertex_normal_multiplies_one_native_reciprocal() {
+    let polygon = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)];
+    let center = (
+        f64::from(-f32::from_bits(0x3F2F_4093)),
+        f64::from(-f32::from_bits(0x3F67_1388)),
+    );
+
+    let manifold = circle_polygon_manifold(center, 1.2, &polygon, false)
+        .expect("lower-left vertex remains inside the combined radius");
+
+    assert_eq!(manifold.position.local_normal.0.to_bits(), 0xBF1A_B254);
+    assert_eq!(manifold.position.local_normal.1.to_bits(), 0xBF4B_F913);
+    assert_ne!(
+        manifold.position.local_normal.0.to_bits(),
+        (center.0 as f32 / f32::from_bits(0x3F91_021E)).to_bits()
+    );
+}
+
+#[test]
 fn rotated_polygon_circle_keeps_shape_local_normal_and_reference_point() {
     let polygon = [
         (-0.7_f32, -0.4_f32),

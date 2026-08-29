@@ -159,6 +159,10 @@ pub(crate) fn circle_polygon_manifold_at_transforms(
         second_vertex.0 - first_vertex.0,
         second_vertex.1 - first_vertex.1,
     );
+    let reverse_edge = (
+        first_vertex.0 - second_vertex.0,
+        first_vertex.1 - second_vertex.1,
+    );
     let first_delta = (
         circle_center.0 - first_vertex.0,
         circle_center.1 - first_vertex.1,
@@ -168,7 +172,9 @@ pub(crate) fn circle_polygon_manifold_at_transforms(
         circle_center.0 - second_vertex.0,
         circle_center.1 - second_vertex.1,
     );
-    let second_region = second_delta.0.mul_add(-edge.0, second_delta.1 * -edge.1);
+    let second_region = second_delta
+        .0
+        .mul_add(reverse_edge.0, second_delta.1 * reverse_edge.1);
 
     // This is b2CollidePolygonAndCircle's face/vertex region selection, not
     // a generic SAT support point. The latter chooses an arbitrary extreme
@@ -189,13 +195,7 @@ pub(crate) fn circle_polygon_manifold_at_transforms(
             return None;
         }
         let distance = distance_squared.sqrt();
-        let normal = if distance >= f32::EPSILON {
-            (first_delta.0 / distance, first_delta.1 / distance)
-        } else {
-            // sub_10085E624 intentionally leaves the zero/small delta in the
-            // manifold instead of falling back to the adjacent face normal.
-            first_delta
-        };
+        let normal = native_polygon_circle_vertex_normal(first_delta, distance);
         (normal, distance, first_vertex)
     } else if second_vertex_region {
         let distance_squared = second_delta
@@ -205,11 +205,7 @@ pub(crate) fn circle_polygon_manifold_at_transforms(
             return None;
         }
         let distance = distance_squared.sqrt();
-        let normal = if distance >= f32::EPSILON {
-            (second_delta.0 / distance, second_delta.1 / distance)
-        } else {
-            second_delta
-        };
+        let normal = native_polygon_circle_vertex_normal(second_delta, distance);
         (normal, distance, second_vertex)
     } else {
         let relative = (
@@ -280,4 +276,18 @@ pub(crate) fn circle_polygon_manifold_at_transforms(
             }
         },
     })
+}
+
+fn native_polygon_circle_vertex_normal(delta: (f32, f32), distance: f32) -> (f32, f32) {
+    if distance >= f32::EPSILON {
+        // 0x10085E834..0x10085E844 and 0x10085E884..0x10085E894
+        // divide 1.0 by the distance once, then multiply both lanes. Two
+        // direct component divisions can differ from this by one ULP.
+        let inverse_distance = distance.recip();
+        (delta.0 * inverse_distance, delta.1 * inverse_distance)
+    } else {
+        // Purple retains a zero, sub-epsilon or unordered delta rather than
+        // falling back to the adjacent face normal.
+        delta
+    }
 }
