@@ -92,6 +92,9 @@ pub(crate) fn install_data_imports(
                 .ok_or_else(|| runtime_error(format!("bundle file not found: {source}")))?;
             let destination =
                 app_data_path(&bundle_copy_root, &destination).map_err(runtime_error)?;
+            // The native callback consumes and closes the bundle input before
+            // creating the destination directory or opening the output stream.
+            let bytes = fs::read(source).map_err(runtime_error)?;
             if let Some(parent) = destination.parent() {
                 fs::create_dir_all(parent).map_err(runtime_error)?;
             }
@@ -100,7 +103,6 @@ pub(crate) fn install_data_imports(
             // fsyncs it, closes the stream, then renames the temporary file
             // over the requested path.  Keep that commit protocol here so a
             // partially-written copy never replaces an existing AppData file.
-            let bytes = fs::read(source).map_err(runtime_error)?;
             let temporary = PathBuf::from(format!("{}.tmp", destination.display()));
             fs::write(&temporary, bytes).map_err(runtime_error)?;
             replace_app_data_file(&temporary, &destination).map_err(runtime_error)?;
