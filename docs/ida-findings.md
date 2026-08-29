@@ -17857,3 +17857,45 @@ bindings, with empty stderr.
 `build/audit-native-polygon-world-20260829.png` is a 1024x768 RGBA PNG with
 SHA-256
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## Native edge-circle initial world-manifold reconstruction
+
+The complete 140-instruction `b2CollideEdgeAndCircle` leaf confirms that all
+three successful regions also stop at a local `b2Manifold`. Endpoint A writes
+a one-point Circles manifold at `0x10085E9F4` with edge vertex A as its local
+reference point. Endpoint B repeats that layout with vertex B at
+`0x10085EA5C`. The face path at `0x10085EAAC` stores type FaceA, the
+edge-local normal and vertex-A plane point. Their common tail at
+`0x10085EAD0` copies the circle shape's local center into manifold point zero.
+None of these paths computes a world normal, surface midpoint or penetration.
+
+The former Rust path instead built both surfaces in edge-local coordinates,
+averaged them, and transformed the midpoint afterward. For endpoint contacts
+it also rotated the locally normalized axis instead of allowing the Circles
+branch of `b2WorldManifold` to transform both local centers and normalize
+their world delta. These reorderings are observable under rotation and at
+degenerate boundaries. Edge-circle contacts now construct only the recovered
+local manifold and feature ID, then invoke the shared world reconstruction in
+the original circle/edge fixture order.
+
+A rotated FaceA regression first reproduced the old initial-versus-refresh
+penetration mismatch and now pins the native word `0x3A830CDF`. A rotated
+circle-first endpoint now obtains its world-normal words
+`0x3F51D476/0xBF12A76D` from the transformed centers rather than the former
+rotated local axis. Exact-boundary regressions also retain the recovered
+world-manifold artifacts: one face contact has quarter-epsilon penetration, a
+zero-length endpoint contact has two epsilon penetration, and a sub-epsilon
+non-unit face normal yields negated-zero penetration. Initial output is
+bit-identical to a same-transform world refresh in both the endpoint and face
+cases. The local-write sites are commented in IDA and Hopper and the IDB is
+saved.
+
+The complete workspace passes 818 tests with only the deliberate long-
+duration BirdRun audit ignored. Formatting, whitespace validation, strict
+all-target/all-feature Clippy and the release workspace build are clean. A
+fresh isolated-AppData 120-frame release-wgpu upload/render/readback reports
+20 optional probes, zero invoked fallbacks and zero remaining compatibility
+bindings, with empty stderr.
+`build/audit-native-edge-circle-world-20260829.png` is a 1024x768 RGBA PNG
+with SHA-256
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.

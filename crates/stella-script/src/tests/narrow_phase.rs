@@ -353,7 +353,12 @@ fn edge_circle_uses_native_regions_features_and_inclusive_radius() {
     let face = circle_segment_manifold((0.0, f64::from(combined)), f64::from(radius), edge, false)
         .expect("native edge face boundary contact");
     assert_eq!((face.normal_x, face.normal_y), (0.0, 1.0));
-    assert_eq!(face.penetration, 0.0);
+    // b2WorldManifold independently builds both skin surfaces before taking
+    // their projected separation, leaving this exact quarter-epsilon word.
+    assert_eq!(
+        (face.penetration as f32).to_bits(),
+        (f32::EPSILON * 0.25_f32).to_bits()
+    );
     assert_eq!(face.feature_id, contact_feature_id(0, 0, 1, 0));
 
     let vertex = circle_segment_manifold(
@@ -396,9 +401,9 @@ fn degenerate_edge_circle_uses_the_first_endpoint_region() {
         ContactManifoldType::Circles
     ));
     assert_eq!((manifold.normal_x, manifold.normal_y), (1.0, 0.0));
-    // Adding the combined radius to a non-zero endpoint, subtracting it back,
-    // then taking sqrt(distanceSquared) leaves one native float32 epsilon.
-    assert_eq!(manifold.penetration, f64::from(f32::EPSILON));
+    // The local endpoint reconstruction loses one epsilon and the subsequent
+    // b2WorldManifold surface projection exposes a second one.
+    assert_eq!(manifold.penetration, f64::from(2.0_f32 * f32::EPSILON));
     assert_eq!(manifold.feature_id, contact_feature_id(0, 0, 0, 0));
 }
 
@@ -459,9 +464,11 @@ fn sub_epsilon_edge_circle_face_is_not_rejected_before_native_division() {
     ));
     assert_eq!(manifold.normal_x.to_bits(), f64::from(-0.0_f32).to_bits());
     assert_eq!(manifold.normal_y, f64::from(edge_length));
+    // The retained non-unit face normal is used again by b2WorldManifold;
+    // both projected surface deltas underflow to a signed zero separation.
     assert_eq!(
-        manifold.penetration,
-        f64::from(combined - combined * edge_length)
+        manifold.penetration.to_bits(),
+        f64::from(-0.0_f32).to_bits()
     );
     assert_eq!(manifold.feature_id, contact_feature_id(0, 0, 1, 0));
 }
@@ -514,6 +521,16 @@ fn rotated_edge_circle_face_keeps_native_shape_local_witnesses() {
     let expected_normal = segment_transform.rotate((-0.0, 1.0));
     assert_eq!(manifold.normal_x, f64::from(expected_normal.0));
     assert_eq!(manifold.normal_y, f64::from(expected_normal.1));
+    let refreshed = manifold.at_native_transforms(segment_transform, circle_transform);
+    assert_eq!(manifold.normal_x.to_bits(), refreshed.normal_x.to_bits());
+    assert_eq!(manifold.normal_y.to_bits(), refreshed.normal_y.to_bits());
+    assert_eq!((manifold.penetration as f32).to_bits(), 0x3A83_0CDF);
+    assert_eq!(
+        manifold.penetration.to_bits(),
+        refreshed.penetration.to_bits()
+    );
+    assert_eq!(manifold.point_x.to_bits(), refreshed.point_x.to_bits());
+    assert_eq!(manifold.point_y.to_bits(), refreshed.point_y.to_bits());
 }
 
 #[test]
@@ -561,10 +578,23 @@ fn rotated_circle_edge_endpoint_keeps_native_shape_local_witnesses() {
         local.second_radius.to_bits(),
         (BOX2D_POLYGON_RADIUS as f32).to_bits()
     );
-    let expected_normal = segment_transform.rotate((1.0, 0.0));
-    assert_eq!(manifold.normal_x, f64::from(expected_normal.0));
-    assert_eq!(manifold.normal_y, f64::from(expected_normal.1));
+    let locally_rotated_axis = segment_transform.rotate((1.0, 0.0));
+    assert_ne!(
+        (manifold.normal_x as f32).to_bits(),
+        locally_rotated_axis.0.to_bits()
+    );
+    assert_eq!((manifold.normal_x as f32).to_bits(), 0x3F51_D476);
+    assert_eq!((manifold.normal_y as f32).to_bits(), 0xBF12_A76D);
     assert_eq!(manifold.feature_id, contact_feature_id(0, 0, 0, 0));
+    let refreshed = manifold.at_native_transforms(circle_transform, segment_transform);
+    assert_eq!(manifold.normal_x.to_bits(), refreshed.normal_x.to_bits());
+    assert_eq!(manifold.normal_y.to_bits(), refreshed.normal_y.to_bits());
+    assert_eq!(
+        manifold.penetration.to_bits(),
+        refreshed.penetration.to_bits()
+    );
+    assert_eq!(manifold.point_x.to_bits(), refreshed.point_x.to_bits());
+    assert_eq!(manifold.point_y.to_bits(), refreshed.point_y.to_bits());
 }
 
 #[test]
@@ -813,10 +843,7 @@ fn degenerate_create_line_fixture_reaches_native_contact_dispatch() {
         ContactManifoldType::Circles
     ));
     assert_eq!(manifold.feature_id, contact_feature_id(0, 0, 0, 0));
-    assert_eq!(
-        manifold.penetration,
-        f64::from((0.5_f32 + BOX2D_POLYGON_RADIUS as f32) - 0.5_f32)
-    );
+    assert_eq!(manifold.penetration, f64::from(BOX2D_POLYGON_RADIUS as f32));
 }
 
 #[test]

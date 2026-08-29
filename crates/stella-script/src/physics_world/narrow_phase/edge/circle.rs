@@ -51,7 +51,7 @@ pub(crate) fn circle_segment_manifold_at_transforms(
     let start_region = from_start.0.mul_add(edge.0, from_start.1 * edge.1);
     let end_region = from_end.0.mul_add(edge.0, from_end.1 * edge.1);
 
-    let (closest, mut edge_to_circle, separation, segment_index, segment_type) =
+    let (closest, edge_to_circle, segment_index, segment_type) =
         if native_arm_le_f32(start_region, 0.0_f32) {
             let distance_squared = from_start
                 .0
@@ -69,7 +69,7 @@ pub(crate) fn circle_segment_manifold_at_transforms(
             } else {
                 (1.0_f32, 0.0_f32)
             };
-            (start, normal, distance, 0, 0)
+            (start, normal, 0, 0)
         } else if native_arm_le_f32(end_region, 0.0_f32) {
             // 0x10085EA10/0x10085EA14 rebuild Q - B with two FSUBs. Do not
             // negate the already-rounded B - Q projection: equal lanes have
@@ -92,7 +92,7 @@ pub(crate) fn circle_segment_manifold_at_transforms(
             } else {
                 (1.0_f32, 0.0_f32)
             };
-            (end, normal, distance, 1, 0)
+            (end, normal, 1, 0)
         } else {
             let denominator = edge.0.mul_add(edge.0, edge.1 * edge.1);
             // The native leaf does not materialize the closest point. It
@@ -122,45 +122,13 @@ pub(crate) fn circle_segment_manifold_at_transforms(
                 (-edge.1, edge.0)
             };
             let normal = native_normalize_or_preserve_f32(normal);
-            // b2WorldManifold's face branch derives separation from the edge
-            // plane rather than reusing sqrt(distanceSquared).
-            let separation = from_start.0.mul_add(normal.0, from_start.1 * normal.1);
             (
                 (circle_center.0 - delta.0, circle_center.1 - delta.1),
                 normal,
-                separation,
                 0,
                 1,
             )
         };
-
-    let edge_surface = if segment_type == 1 {
-        // Face-A b2WorldManifold: project the circle center back onto the edge
-        // plane, then advance by the edge skin radius.
-        (
-            (edge_radius - separation).mul_add(edge_to_circle.0, circle_center.0),
-            (edge_radius - separation).mul_add(edge_to_circle.1, circle_center.1),
-        )
-    } else {
-        (
-            edge_radius.mul_add(edge_to_circle.0, closest.0),
-            edge_radius.mul_add(edge_to_circle.1, closest.1),
-        )
-    };
-    let circle_surface = (
-        (-circle_radius).mul_add(edge_to_circle.0, circle_center.0),
-        (-circle_radius).mul_add(edge_to_circle.1, circle_center.1),
-    );
-    let point_edge = (
-        (edge_surface.0 + circle_surface.0) * 0.5_f32,
-        (edge_surface.1 + circle_surface.1) * 0.5_f32,
-    );
-    let point = segment_transform.point(point_edge);
-    let reference_normal = edge_to_circle;
-    if circle_is_first {
-        edge_to_circle = (-edge_to_circle.0, -edge_to_circle.1);
-    }
-    edge_to_circle = segment_transform.rotate(edge_to_circle);
     let feature_id = if circle_is_first {
         contact_feature_id(0, segment_index, 0, segment_type)
     } else {
@@ -191,7 +159,7 @@ pub(crate) fn circle_segment_manifold_at_transforms(
     } else if circle_is_first {
         ContactLocalManifold {
             manifold_type: ContactManifoldType::FaceSecond,
-            local_normal: reference_normal,
+            local_normal: edge_to_circle,
             local_point: start,
             local_points: [circle_local_center, (0.0, 0.0)],
             point_count: 1,
@@ -201,7 +169,7 @@ pub(crate) fn circle_segment_manifold_at_transforms(
     } else {
         ContactLocalManifold {
             manifold_type: ContactManifoldType::FaceFirst,
-            local_normal: reference_normal,
+            local_normal: edge_to_circle,
             local_point: start,
             local_points: [circle_local_center, (0.0, 0.0)],
             point_count: 1,
@@ -209,14 +177,23 @@ pub(crate) fn circle_segment_manifold_at_transforms(
             second_radius: circle_radius,
         }
     };
-    Some(ContactManifold {
-        normal_x: f64::from(edge_to_circle.0),
-        normal_y: f64::from(edge_to_circle.1),
-        penetration: f64::from(radius_sum - separation),
-        point_x: f64::from(point.0),
-        point_y: f64::from(point.1),
+    // b2CollideEdgeAndCircle emits this local b2Manifold only. Rebuild the
+    // world data after both local witnesses are frozen so rotated circles and
+    // faces retain b2WorldManifold's operation order.
+    let local_manifold = ContactManifold {
+        normal_x: 0.0,
+        normal_y: 0.0,
+        penetration: 0.0,
+        point_x: 0.0,
+        point_y: 0.0,
         feature_id,
         secondary: None,
         position,
-    })
+    };
+    let (first_transform, second_transform) = if circle_is_first {
+        (circle_transform, segment_transform)
+    } else {
+        (segment_transform, circle_transform)
+    };
+    Some(local_manifold.at_native_transforms(first_transform, second_transform))
 }
