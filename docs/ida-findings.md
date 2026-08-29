@@ -18771,3 +18771,37 @@ bindings, with empty stderr. Its visually checked
 `build/audit-native-mass-transform-lock-20260829.png` output is a 1024x768 RGBA
 PNG with SHA-256
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## Re-entrant SetActive contact lifecycle
+
+The adjacent 54-instruction `b2Body::SetActive` at `sub_10086B88C` was checked
+completely in IDA and Hopper. Unlike SetType, SetMassData and SetTransform, it
+does not read `b2World+0x19298` and deliberately remains callable while
+World::Step owns `e_locked`. It first compares the requested value with the
+current active bit. Deactivation clears that bit at `0x10086B8F8..0x10086B900`,
+destroys every fixture proxy in intrusive-list order, then walks the body's
+contact-edge head and calls `b2ContactManager::Destroy` at `0x10086B950`.
+Touching contacts therefore issue EndContact synchronously after the body is
+already inactive.
+
+This ordering is re-entrant. An EndContact callback can call SetActive(true),
+observe the inactive state, set the bit again and recreate fixture proxies
+before the outer deactivation returns. The moved proxies are not immediately
+updated by SetActive itself. The trailing FindNewContacts call in
+`b2World::Solve` at `0x10086E9F0` drains them later in the same Step and creates
+a fresh proxy-only contact; that contact does not run Contact::Update or become
+touching until the next Collide pass.
+
+The existing Rust proxy/contact lifecycle already preserves this split. A new
+real BeginContact regression now stops the body from inside its enter callback,
+observes the nested EndContact between the two halves of that callback,
+reactivates from EndContact, and proves the same Step ends with an active body,
+no touching contact and one newly allocated non-touching contact. The active
+bit clear, synchronous destruction and Solve-tail pair rebuild are commented in
+both disassemblers, and the IDB is saved.
+
+The complete workspace passes 839 tests with only the deliberate long-duration
+BirdRun audit ignored. Formatting, whitespace validation, strict
+all-target/all-feature Clippy and the release workspace build are clean. The
+same fresh isolated-AppData 120-frame release-wgpu audit remains free of
+invoked fallbacks, compatibility bindings and stderr output.

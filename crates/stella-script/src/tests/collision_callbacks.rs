@@ -467,6 +467,51 @@ fn contact_listener_transform_and_mass_data_mutations_obey_native_world_lock() {
 }
 
 #[test]
+fn contact_listener_set_active_destroys_touching_contact_synchronously() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createBox("sensor", "", 0, 0, 4, 4, 0, 0, 0, true, false, 1)
+                createCircle("body", "", 0, 0, 0.5, 1, 0, 0, true, false, 1)
+                setAsSensor("sensor", true)
+                setWorldGravity(0, 0)
+                callback_order = {}
+                enterCollision = function()
+                    table.insert(callback_order, "enter-before")
+                    setActive("body", false)
+                    table.insert(callback_order, "enter-after")
+                end
+                exitCollision = function()
+                    table.insert(callback_order, "exit")
+                    -- The inactive bit is already visible to this nested
+                    -- listener, so reactivation survives the outer call.
+                    setActive("body", true)
+                end
+                update = function() end
+                updatePhysics = function() end
+            "#,
+        )
+        .unwrap();
+
+    runtime.update(1.0 / 30.0).unwrap();
+    let environment = game_environment(runtime.lua()).unwrap();
+    let order = environment.get::<mlua::Table>("callback_order").unwrap();
+    assert_eq!(order.raw_len(), 3);
+    assert_eq!(order.raw_get::<String>(1).unwrap(), "enter-before");
+    assert_eq!(order.raw_get::<String>(2).unwrap(), "exit");
+    assert_eq!(order.raw_get::<String>(3).unwrap(), "enter-after");
+
+    let bridge = runtime.render.lock().unwrap();
+    assert!(bridge.scene["body"].active);
+    assert!(bridge.active_contacts.is_empty());
+    // Reactivation buffers fresh proxies. World::Solve's trailing
+    // FindNewContacts recreates a proxy-only contact in the same Step, but it
+    // cannot become touching until the next Collide traversal.
+    assert_eq!(bridge.native_contact_world_order.len(), 1);
+}
+
+#[test]
 fn contact_listener_physics_constructors_contain_native_locked_world_crash() {
     let runtime = unlocked_test_runtime();
     runtime
