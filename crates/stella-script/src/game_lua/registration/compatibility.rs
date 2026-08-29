@@ -104,7 +104,10 @@ pub(super) fn install(
                 // requires an exact STRING in slot one and ignores extras.
                 let path = native_required_string(&args, 0, "fileExistsInAppData")?;
                 Ok(app_data_path(&root, &path)
-                    .map(|path| path.is_file())
+                    // `sub_100501CD0` is a direct `access(path, 0)` probe;
+                    // unlike Rust's `is_file`, it also reports directories as
+                    // existing.
+                    .map(|path| path.exists())
                     .unwrap_or(false))
             }
         })?,

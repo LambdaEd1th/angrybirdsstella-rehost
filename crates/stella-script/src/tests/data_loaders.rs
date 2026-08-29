@@ -279,6 +279,7 @@ fn app_data_lua_serializer_and_loaders_round_trip_native_table_shape() {
     )
     .unwrap();
     fs::write(app_root.join("plain.txt"), b"plain\ntext").unwrap();
+    fs::create_dir_all(app_root.join("existing-directory")).unwrap();
 
     let runtime = StellaLua::new(&data_root).unwrap();
     runtime
@@ -315,6 +316,7 @@ fn app_data_lua_serializer_and_loaders_round_trip_native_table_shape() {
                     "roundtrip.lua", "persisted", false
                 )) == 0)
                 assert(fileExistsInAppData("roundtrip.lua", "ignored"))
+                assert(fileExistsInAppData("existing-directory"))
                 assert(not fileExistsInAppData("bundle-only.lua"))
                 assert(not pcall(fileExistsInAppData, 123))
 

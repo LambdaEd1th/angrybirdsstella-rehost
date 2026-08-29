@@ -6526,6 +6526,16 @@ strict argument/void behavior and removal of the successful `.tmp` artifact.
 IDA and Hopper comments were added at the constructor, destructor and bundle
 path-builder sites, and the IDB was saved.
 
+## AppData existence probes include directories
+
+The native `fileExistsInAppData` member `sub_10005A290` delegates to
+`sub_1004F88B4`, which joins the AppData base and calls `sub_100501CD0`.
+IDA/Hopper show `sub_100501CD0` is the direct predicate
+`access(path, 0) != -1`; it does not require a regular file.  The Rust adapter
+now uses `Path::exists()` so an existing AppData directory has the same true
+result as the original.  The data-loader regression covers both a regular
+file and a directory while retaining strict string-argument handling.
+
 ## SetType awake-state preservation
 
 IDA's complete `b2Body::SetType` (`sub_10086B0CC`) shows the wake branch at
