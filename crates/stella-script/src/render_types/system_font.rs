@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use super::font_shaper;
 use super::system_font_layout::*;
 
 /// Cross-platform rendering payload for Purple's UIKit `SystemFont::Impl`.
@@ -198,7 +199,7 @@ impl SystemFontRenderBinding {
     /// character/advance loop would disagree for ligatures, combining marks,
     /// contextual scripts and fonts whose kerning lives only in GPOS.
     pub fn native_system_font_layout(&self, text: &str) -> Option<SystemFontLayout> {
-        let base_face = rustybuzz::Face::from_slice(&self.font_data, self.face_index)?;
+        let base_face = font_shaper::Face::from_slice(&self.font_data, self.face_index)?;
         let base_layout_face = SystemFontLayoutFace {
             family: self.family.clone(),
             font_data: self.font_data.clone(),
@@ -240,7 +241,7 @@ impl SystemFontRenderBinding {
                             faces.push(face_run.face.clone());
                             slot
                         };
-                        let mut face = rustybuzz::Face::from_slice(
+                        let mut face = font_shaper::Face::from_slice(
                             &face_run.face.font_data,
                             face_run.face.face_index,
                         )?;
@@ -251,15 +252,15 @@ impl SystemFontRenderBinding {
                         }
                         let scale = face_run.face.native_raster_em_size(self.size)
                             / f64::from(face_run.face.units_per_em);
-                        let mut buffer = rustybuzz::UnicodeBuffer::new();
+                        let mut buffer = font_shaper::UnicodeBuffer::new();
                         buffer.push_str(&line[face_run.range]);
                         buffer.set_direction(if run.right_to_left {
-                            rustybuzz::Direction::RightToLeft
+                            font_shaper::Direction::RightToLeft
                         } else {
-                            rustybuzz::Direction::LeftToRight
+                            font_shaper::Direction::LeftToRight
                         });
-                        buffer.set_script(native_system_font_rustybuzz_script(script_run.script));
-                        let shaped = rustybuzz::shape(&face, &[], buffer);
+                        buffer.set_script(native_system_font_script(script_run.script));
+                        let shaped = font_shaper::shape(&face, &[], buffer);
                         glyphs.reserve(shaped.len());
                         let mut previous_cluster = None;
                         for (info, position) in
@@ -573,16 +574,16 @@ mod system_font_bounds_tests {
             return;
         };
         let layout = binding.native_system_font_layout("abc אבג 123").unwrap();
-        let face = rustybuzz::Face::from_slice(&binding.font_data, 0).unwrap();
+        let face = font_shaper::Face::from_slice(&binding.font_data, 0).unwrap();
         let expected = [
-            face.glyph_index('a').unwrap().0,
-            face.glyph_index('b').unwrap().0,
-            face.glyph_index('c').unwrap().0,
-            face.glyph_index(' ').unwrap().0,
-            face.glyph_index('1').unwrap().0,
-            face.glyph_index('2').unwrap().0,
-            face.glyph_index('3').unwrap().0,
-            face.glyph_index(' ').unwrap().0,
+            face.glyph_index('a').unwrap().to_u32() as u16,
+            face.glyph_index('b').unwrap().to_u32() as u16,
+            face.glyph_index('c').unwrap().to_u32() as u16,
+            face.glyph_index(' ').unwrap().to_u32() as u16,
+            face.glyph_index('1').unwrap().to_u32() as u16,
+            face.glyph_index('2').unwrap().to_u32() as u16,
+            face.glyph_index('3').unwrap().to_u32() as u16,
+            face.glyph_index(' ').unwrap().to_u32() as u16,
             0,
             0,
             0,

@@ -4,6 +4,7 @@
 //! native renderer objects. The Rust facade mirrors those ownership boundaries
 //! while preserving the original flat public API used by the host crates.
 
+mod font_shaper;
 mod geometry;
 mod platform_action;
 mod screenshot;

@@ -6,7 +6,6 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-ab_glyph.workspace = true
 anyhow.workspace = true
 bytemuck.workspace = true
 clap.workspace = true
@@ -17,6 +16,5 @@ stella-assets = { path = "../stella-assets" }
 stella-script = { path = "../stella-script" }
 skrifa.workspace = true
 tiny-skia.workspace = true
-ttf-parser.workspace = true
 wgpu.workspace = true
 winit.workspace = true

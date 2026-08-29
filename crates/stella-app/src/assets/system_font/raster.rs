@@ -2,21 +2,24 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-use ab_glyph::{Font, FontRef, GlyphId, OutlineCurve};
 use anyhow::{Result, anyhow};
 use image::{Rgba, RgbaImage};
+use skrifa::bitmap::{BitmapData, BitmapFormat, MaskData};
+use skrifa::instance::{LocationRef, Size};
+use skrifa::outline::{DrawSettings, OutlinePen};
+use skrifa::{FontRef, GlyphId, MetadataProvider};
 use tiny_skia::{Mask, Path, PathBuilder};
-use ttf_parser::{RasterGlyphImage, RasterImageFormat};
 
 use super::{
-    NativeSystemDecodedRaster, NativeSystemPlacedRaster, NativeSystemRasterColor,
-    SystemFontLayoutFace, SystemFontShapedLine, color_outline::render_system_color_outline,
+    NativeSystemDecodedRaster, NativeSystemGlyphBounds, NativeSystemPlacedRaster,
+    NativeSystemRasterColor, SystemFontLayoutFace, SystemFontShapedLine,
+    color_outline::render_system_color_outline,
 };
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn append_line_glyphs(
     fonts: &[FontRef<'_>],
-    parser_faces: &[ttf_parser::Face<'_>],
+    parser_faces: &[FontRef<'_>],
     face_scales: &[f32],
     layout_faces: &[SystemFontLayoutFace],
     point_size: i32,
@@ -39,22 +42,23 @@ pub(super) fn append_line_glyphs(
         ) else {
             continue;
         };
-        let glyph_id = GlyphId(shaped.glyph_id);
+        let glyph_id = GlyphId::new(u32::from(shaped.glyph_id));
         let x = start_x + shaped.x as f32;
         let y = baseline - shaped.y as f32;
         let key = (shaped.face_slot, shaped.glyph_id);
         let raster = if let Some(cached) = raster_cache.get(&key) {
             cached.clone()
         } else {
+            let strikes = parser_face.bitmap_strikes();
             let decoded = if let Some(image) =
-                parser_face.glyph_raster_image(ttf_parser::GlyphId(shaped.glyph_id), requested_ppem)
+                strikes.glyph_for_size(Size::new(f32::from(requested_ppem)), glyph_id)
             {
                 Some(Arc::new(decode_system_raster(
                     image,
-                    parser_face.tables().sbix.is_some(),
-                    parser_face.glyph_bounding_box(ttf_parser::GlyphId(shaped.glyph_id)),
+                    strikes.format() == Some(BitmapFormat::Sbix),
+                    glyph_bounds(parser_face, glyph_id),
                 )?))
-            } else if parser_face.is_color_glyph(ttf_parser::GlyphId(shaped.glyph_id)) {
+            } else if parser_face.color_glyphs().get(glyph_id).is_some() {
                 render_system_color_outline(
                     layout_face,
                     parser_face,
@@ -100,51 +104,27 @@ pub(super) fn append_line_glyphs(
 }
 
 pub(super) fn decode_system_raster(
-    raster: RasterGlyphImage<'_>,
+    raster: skrifa::bitmap::BitmapGlyph<'_>,
     sbix: bool,
-    glyph_bbox: Option<ttf_parser::Rect>,
+    glyph_bbox: Option<NativeSystemGlyphBounds>,
 ) -> Result<NativeSystemDecodedRaster> {
-    let (image, color) = match raster.format {
-        RasterImageFormat::PNG => (
-            image::load_from_memory_with_format(raster.data, image::ImageFormat::Png)
+    let (image, color) = match raster.data {
+        BitmapData::Png(data) => (
+            image::load_from_memory_with_format(data, image::ImageFormat::Png)
                 .map_err(|error| anyhow!("invalid embedded PNG system glyph: {error}"))?
                 .into_rgba8(),
             NativeSystemRasterColor::Intrinsic,
         ),
-        RasterImageFormat::BitmapPremulBgra32 => (
-            decode_system_bgra32(raster.width, raster.height, raster.data)?,
+        BitmapData::Bgra(data) => (
+            decode_system_bgra32(raster.width, raster.height, data)?,
             NativeSystemRasterColor::Intrinsic,
         ),
-        RasterImageFormat::BitmapMono => (
-            decode_system_coverage(raster.width, raster.height, raster.data, 1, true)?,
-            NativeSystemRasterColor::Foreground,
-        ),
-        RasterImageFormat::BitmapMonoPacked => (
-            decode_system_coverage(raster.width, raster.height, raster.data, 1, false)?,
-            NativeSystemRasterColor::Foreground,
-        ),
-        RasterImageFormat::BitmapGray2 => (
-            decode_system_coverage(raster.width, raster.height, raster.data, 2, true)?,
-            NativeSystemRasterColor::Foreground,
-        ),
-        RasterImageFormat::BitmapGray2Packed => (
-            decode_system_coverage(raster.width, raster.height, raster.data, 2, false)?,
-            NativeSystemRasterColor::Foreground,
-        ),
-        RasterImageFormat::BitmapGray4 => (
-            decode_system_coverage(raster.width, raster.height, raster.data, 4, true)?,
-            NativeSystemRasterColor::Foreground,
-        ),
-        RasterImageFormat::BitmapGray4Packed => (
-            decode_system_coverage(raster.width, raster.height, raster.data, 4, false)?,
-            NativeSystemRasterColor::Foreground,
-        ),
-        RasterImageFormat::BitmapGray8 => (
-            decode_system_coverage(raster.width, raster.height, raster.data, 8, true)?,
+        BitmapData::Mask(mask) => (
+            decode_system_mask(mask, raster.width, raster.height)?,
             NativeSystemRasterColor::Foreground,
         ),
     };
-    if image.width() == 0 || image.height() == 0 || raster.pixels_per_em == 0 {
+    if image.width() == 0 || image.height() == 0 || raster.ppem_y <= 0.0 {
         return Err(anyhow!(
             "embedded system glyph has zero-sized raster metrics"
         ));
@@ -152,23 +132,32 @@ pub(super) fn decode_system_raster(
     Ok(NativeSystemDecodedRaster {
         image,
         color,
-        x: raster.x,
-        y: raster.y,
-        pixels_per_em: raster.pixels_per_em,
+        x: raster
+            .inner_bearing_x
+            .round()
+            .clamp(f32::from(i16::MIN), f32::from(i16::MAX)) as i16,
+        y: raster
+            .inner_bearing_y
+            .round()
+            .clamp(f32::from(i16::MIN), f32::from(i16::MAX)) as i16,
+        pixels_per_em: raster.ppem_y.round().clamp(1.0, f32::from(u16::MAX)) as u16,
         sbix,
         glyph_bbox,
     })
 }
 
+#[cfg(test)]
 pub(super) fn decode_system_coverage(
-    width: u16,
-    height: u16,
+    width: u32,
+    height: u32,
     data: &[u8],
     bits_per_pixel: usize,
     row_padded: bool,
 ) -> Result<RgbaImage> {
-    let width = usize::from(width);
-    let height = usize::from(height);
+    let width =
+        usize::try_from(width).map_err(|_| anyhow!("embedded system glyph width overflow"))?;
+    let height =
+        usize::try_from(height).map_err(|_| anyhow!("embedded system glyph height overflow"))?;
     let row_bits = width
         .checked_mul(bits_per_pixel)
         .ok_or_else(|| anyhow!("embedded system glyph row overflow"))?;
@@ -208,9 +197,25 @@ pub(super) fn decode_system_coverage(
     Ok(image)
 }
 
-pub(super) fn decode_system_bgra32(width: u16, height: u16, data: &[u8]) -> Result<RgbaImage> {
-    let pixels = usize::from(width)
-        .checked_mul(usize::from(height))
+fn decode_system_mask(mask: MaskData<'_>, width: u32, height: u32) -> Result<RgbaImage> {
+    let alpha = mask
+        .decode(width, height)
+        .map_err(|_| anyhow!("truncated embedded system glyph mask"))?;
+    let mut image = RgbaImage::new(width, height);
+    for (pixel, alpha) in image.pixels_mut().zip(alpha) {
+        *pixel = Rgba([255, 255, 255, alpha]);
+    }
+    Ok(image)
+}
+
+pub(super) fn decode_system_bgra32(width: u32, height: u32, data: &[u8]) -> Result<RgbaImage> {
+    let pixels = usize::try_from(width)
+        .ok()
+        .and_then(|width| {
+            usize::try_from(height)
+                .ok()
+                .and_then(|height| width.checked_mul(height))
+        })
         .ok_or_else(|| anyhow!("embedded BGRA system glyph allocation overflow"))?;
     let required = pixels
         .checked_mul(4)
@@ -218,7 +223,7 @@ pub(super) fn decode_system_bgra32(width: u16, height: u16, data: &[u8]) -> Resu
     if data.len() < required {
         return Err(anyhow!("truncated embedded BGRA system glyph"));
     }
-    let mut image = RgbaImage::new(u32::from(width), u32::from(height));
+    let mut image = RgbaImage::new(width, height);
     for (pixel, source) in image
         .pixels_mut()
         .zip(data[..required].as_chunks::<4>().0.iter())
@@ -347,65 +352,131 @@ pub(super) fn glyph_outline_path(
     origin_x: f32,
     baseline: f32,
 ) -> Option<Path> {
-    let outline = font.outline(glyph_id)?;
-    let transform_point = |point: ab_glyph::Point| {
-        tiny_skia::Point::from_xy(
-            origin_x + point.x * unit_scale,
-            baseline - point.y * unit_scale,
-        )
+    let outline = font.outline_glyphs().get(glyph_id)?;
+    let mut pen = SkiaOutlineBuilder {
+        builder: PathBuilder::new(),
+        origin_x,
+        baseline,
+        unit_scale,
     };
-    let mut builder = PathBuilder::new();
-    let mut contour_start = None;
-    let mut last_end = None;
-    for curve in &outline.curves {
-        let (start, end) = match curve {
-            OutlineCurve::Line(start, end) => (*start, *end),
-            OutlineCurve::Quad(start, _, end) => (*start, *end),
-            OutlineCurve::Cubic(start, _, _, end) => (*start, *end),
-        };
-        if last_end != Some(start) {
-            if contour_start.is_some() {
-                builder.close();
-            }
-            let device_start = transform_point(start);
-            builder.move_to(device_start.x, device_start.y);
-            contour_start = Some(start);
-        }
-        match curve {
-            OutlineCurve::Line(_, end) => {
-                let end = transform_point(*end);
-                builder.line_to(end.x, end.y);
-            }
-            OutlineCurve::Quad(_, control, end) => {
-                let control = transform_point(*control);
-                let end = transform_point(*end);
-                builder.quad_to(control.x, control.y, end.x, end.y);
-            }
-            OutlineCurve::Cubic(_, control_a, control_b, end) => {
-                let control_a = transform_point(*control_a);
-                let control_b = transform_point(*control_b);
-                let end = transform_point(*end);
-                builder.cubic_to(
-                    control_a.x,
-                    control_a.y,
-                    control_b.x,
-                    control_b.y,
-                    end.x,
-                    end.y,
-                );
-            }
-        }
-        last_end = Some(end);
-        if contour_start == Some(end) {
-            builder.close();
-            contour_start = None;
-            last_end = None;
+    outline
+        .draw(
+            DrawSettings::unhinted(Size::unscaled(), LocationRef::default()),
+            &mut pen,
+        )
+        .ok()?;
+    pen.builder.finish()
+}
+
+fn glyph_bounds(font: &FontRef<'_>, glyph_id: GlyphId) -> Option<NativeSystemGlyphBounds> {
+    let outline = font.outline_glyphs().get(glyph_id)?;
+    let mut pen = BoundsPen::default();
+    outline
+        .draw(
+            DrawSettings::unhinted(Size::unscaled(), LocationRef::default()),
+            &mut pen,
+        )
+        .ok()?;
+    Some(NativeSystemGlyphBounds {
+        x_min: pen
+            .x_min?
+            .round()
+            .clamp(f32::from(i16::MIN), f32::from(i16::MAX)) as i16,
+        y_min: pen
+            .y_min?
+            .round()
+            .clamp(f32::from(i16::MIN), f32::from(i16::MAX)) as i16,
+    })
+}
+
+struct SkiaOutlineBuilder {
+    builder: PathBuilder,
+    origin_x: f32,
+    baseline: f32,
+    unit_scale: f32,
+}
+
+impl SkiaOutlineBuilder {
+    fn point(&self, x: f32, y: f32) -> tiny_skia::Point {
+        tiny_skia::Point::from_xy(
+            self.origin_x + x * self.unit_scale,
+            self.baseline - y * self.unit_scale,
+        )
+    }
+}
+
+impl OutlinePen for SkiaOutlineBuilder {
+    fn move_to(&mut self, x: f32, y: f32) {
+        let point = self.point(x, y);
+        self.builder.move_to(point.x, point.y);
+    }
+
+    fn line_to(&mut self, x: f32, y: f32) {
+        let point = self.point(x, y);
+        self.builder.line_to(point.x, point.y);
+    }
+
+    fn quad_to(&mut self, x1: f32, y1: f32, x: f32, y: f32) {
+        let control = self.point(x1, y1);
+        let end = self.point(x, y);
+        self.builder.quad_to(control.x, control.y, end.x, end.y);
+    }
+
+    fn curve_to(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x: f32, y: f32) {
+        let control_a = self.point(x1, y1);
+        let control_b = self.point(x2, y2);
+        let end = self.point(x, y);
+        self.builder.cubic_to(
+            control_a.x,
+            control_a.y,
+            control_b.x,
+            control_b.y,
+            end.x,
+            end.y,
+        );
+    }
+
+    fn close(&mut self) {
+        self.builder.close();
+    }
+}
+
+#[derive(Default)]
+struct BoundsPen {
+    x_min: Option<f32>,
+    y_min: Option<f32>,
+    x_max: Option<f32>,
+    y_max: Option<f32>,
+}
+
+impl BoundsPen {
+    fn include(&mut self, x: f32, y: f32) {
+        if x.is_finite() && y.is_finite() {
+            self.x_min = Some(self.x_min.map_or(x, |value| value.min(x)));
+            self.y_min = Some(self.y_min.map_or(y, |value| value.min(y)));
+            self.x_max = Some(self.x_max.map_or(x, |value| value.max(x)));
+            self.y_max = Some(self.y_max.map_or(y, |value| value.max(y)));
         }
     }
-    if contour_start.is_some() {
-        builder.close();
+}
+
+impl OutlinePen for BoundsPen {
+    fn move_to(&mut self, x: f32, y: f32) {
+        self.include(x, y);
     }
-    builder.finish()
+    fn line_to(&mut self, x: f32, y: f32) {
+        self.include(x, y);
+    }
+    fn quad_to(&mut self, x1: f32, y1: f32, x: f32, y: f32) {
+        self.include(x1, y1);
+        self.include(x, y);
+    }
+    fn curve_to(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x: f32, y: f32) {
+        self.include(x1, y1);
+        self.include(x2, y2);
+        self.include(x, y);
+    }
+    fn close(&mut self) {}
 }
 
 fn over_layer(target: &mut [f32; 4], color: [u8; 4], coverage: f32) {

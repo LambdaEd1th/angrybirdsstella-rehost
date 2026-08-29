@@ -19069,3 +19069,14 @@ the IDB is saved. The release-wgpu smoke audit after this change again reports
 bindings and empty stderr; its visually checked 1024x768 RGBA screenshot has
 SHA-256
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+# Dependency-security follow-up (2026-08-30)
+
+RustSec now records `ttf-parser` (RUSTSEC-2026-0192) and `rustybuzz`
+(RUSTSEC-2026-0206) as unmaintained.  The maintained replacements are now
+wired into the recovered SystemFont path: `skrifa` provides the font cmap,
+metrics, outlines, COLR paints and bitmap strikes, while `harfrust` provides
+the HarfBuzz-compatible GSUB/GPOS shaper.  The small compatibility facade is
+contained in `render_types/font_shaper.rs` so the recovered layout ABI still
+uses the same font-unit glyph IDs/positions.  Linux `winit` no longer enables
+the optional Adwaita CSD feature, which was the remaining transitive source of
+`ab_glyph`/`ttf-parser`; X11/Wayland/raw-window-handle support is unchanged.

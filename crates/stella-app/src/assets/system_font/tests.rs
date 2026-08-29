@@ -37,10 +37,22 @@ fn system_font_stroke_is_a_closed_centered_vector_outline() {
         eprintln!("skipping Purple.app font regression: OpenSans-Regular.ttf is unavailable");
         return;
     };
-    let font = FontRef::try_from_slice(&open_sans).unwrap();
-    let units_per_em = font.units_per_em().unwrap();
-    let unit_scale = 40.0 / units_per_em;
-    let path = glyph_outline_path(&font, font.glyph_id('M'), unit_scale, 10.0, 50.0).unwrap();
+    let font = FontRef::new(&open_sans).unwrap();
+    let units_per_em = font
+        .metrics(
+            skrifa::instance::Size::unscaled(),
+            skrifa::instance::LocationRef::default(),
+        )
+        .units_per_em;
+    let unit_scale = 40.0 / f32::from(units_per_em);
+    let path = glyph_outline_path(
+        &font,
+        font.charmap().map('M').unwrap(),
+        unit_scale,
+        10.0,
+        50.0,
+    )
+    .unwrap();
     assert!(
         path.segments()
             .any(|segment| matches!(segment, tiny_skia::PathSegment::Close))
@@ -246,13 +258,18 @@ fn apple_sbix_png_rasterizes_in_intrinsic_color_without_an_outline_square() {
     let Ok(data) = std::fs::read("/System/Library/Fonts/Apple Color Emoji.ttc") else {
         return;
     };
-    let face = ttf_parser::Face::parse(&data, 0).unwrap();
-    let glyph = face.glyph_index('\u{1F600}').unwrap();
-    let raster = face.glyph_raster_image(glyph, 40).unwrap();
+    use skrifa::instance::Size;
+    use skrifa::{FontRef, GlyphId, MetadataProvider};
+    let face = FontRef::from_index(&data, 0).unwrap();
+    let glyph = face.charmap().map('\u{1F600}').unwrap();
+    let strikes = face.bitmap_strikes();
+    let raster = strikes
+        .glyph_for_size(Size::new(40.0), GlyphId::new(glyph.to_u32()))
+        .unwrap();
     let decoded = decode_system_raster(
         raster,
-        face.tables().sbix.is_some(),
-        face.glyph_bounding_box(glyph),
+        strikes.format() == Some(skrifa::bitmap::BitmapFormat::Sbix),
+        None,
     )
     .unwrap();
     assert_eq!(decoded.color, NativeSystemRasterColor::Intrinsic);

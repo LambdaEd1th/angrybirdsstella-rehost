@@ -7,11 +7,13 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use skrifa::raw::TableProvider;
 pub(super) use unicode_script::Script as UnicodeScriptCode;
 use unicode_script::UnicodeScript;
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::SystemFontLayoutFace;
+use super::font_shaper;
 
 #[derive(Clone)]
 pub struct SystemFontFallbackCatalog(Arc<SystemFontFallbackCatalogInner>);
@@ -144,12 +146,12 @@ impl SystemFontFallbackCatalog {
             .0
             .database
             .with_face_data(face_id, |data, face_index| {
-                let face = ttf_parser::Face::parse(data, face_index).ok()?;
+                let face = font_shaper::Face::from_slice(data, face_index)?;
                 Some(SystemFontLayoutFace {
                     family,
                     font_data: Arc::from(data),
                     face_index,
-                    units_per_em: face.units_per_em(),
+                    units_per_em: u16::try_from(face.units_per_em()).ok()?,
                 })
             })
             .flatten()?;
@@ -279,7 +281,7 @@ pub(super) fn native_system_font_script_runs(
 pub(super) fn native_system_font_face_runs(
     line: &str,
     range: Range<usize>,
-    base_face: &rustybuzz::Face<'_>,
+    base_face: &font_shaper::Face<'_>,
     base_layout_face: &SystemFontLayoutFace,
     fallback_catalog: Option<&SystemFontFallbackCatalog>,
 ) -> Vec<NativeSystemFontFaceRun> {
@@ -327,14 +329,12 @@ fn native_system_font_face_supports(
 ) -> bool {
     database
         .with_face_data(face_id, |data, face_index| {
-            ttf_parser::Face::parse(data, face_index)
-                .ok()
-                .is_some_and(|face| {
-                    cluster.chars().all(|character| {
-                        native_system_font_fallback_ignorable(character)
-                            || face.glyph_index(character).is_some()
-                    })
+            font_shaper::Face::from_slice(data, face_index).is_some_and(|face| {
+                cluster.chars().all(|character| {
+                    native_system_font_fallback_ignorable(character)
+                        || face.glyph_index(character).is_some()
                 })
+            })
         })
         .unwrap_or(false)
 }
@@ -345,21 +345,19 @@ fn native_system_font_face_has_color_tables(
 ) -> bool {
     database
         .with_face_data(face_id, |data, face_index| {
-            ttf_parser::Face::parse(data, face_index)
-                .ok()
-                .is_some_and(|face| {
-                    let tables = face.tables();
-                    tables.sbix.is_some()
-                        || tables.bdat.is_some()
-                        || tables.cbdt.is_some()
-                        || tables.ebdt.is_some()
-                        || tables.colr.is_some()
-                })
+            let Some(face) = skrifa::FontRef::from_index(data, face_index).ok() else {
+                return false;
+            };
+            skrifa::MetadataProvider::charmap(&face).has_map()
+                && (face.sbix().is_ok()
+                    || face.cbdt().is_ok()
+                    || face.ebdt().is_ok()
+                    || face.colr().is_ok())
         })
         .unwrap_or(false)
 }
 
-fn native_system_font_face_covers_cluster(face: &rustybuzz::Face<'_>, cluster: &str) -> bool {
+fn native_system_font_face_covers_cluster(face: &font_shaper::Face<'_>, cluster: &str) -> bool {
     cluster.chars().all(|character| {
         native_system_font_fallback_ignorable(character) || face.glyph_index(character).is_some()
     })
@@ -533,9 +531,9 @@ fn native_system_font_concrete_script(script: UnicodeScriptCode) -> Option<Unico
     .then_some(script)
 }
 
-pub(super) fn native_system_font_rustybuzz_script(script: UnicodeScriptCode) -> rustybuzz::Script {
-    let tag = rustybuzz::ttf_parser::Tag::from_bytes(&script.as_iso15924_tag().to_be_bytes());
-    rustybuzz::Script::from_iso15924_tag(tag).unwrap_or(rustybuzz::script::UNKNOWN)
+pub(super) fn native_system_font_script(script: UnicodeScriptCode) -> font_shaper::Script {
+    let tag = skrifa::Tag::new(&script.as_iso15924_tag().to_be_bytes());
+    font_shaper::Script::from_iso15924_tag(tag).unwrap_or(harfrust::script::UNKNOWN)
 }
 
 #[cfg(test)]
@@ -583,7 +581,7 @@ mod tests {
             return;
         };
         let base_data = Arc::<[u8]>::from(open_sans.clone());
-        let base = rustybuzz::Face::from_slice(&base_data, 0).unwrap();
+        let base = font_shaper::Face::from_slice(&base_data, 0).unwrap();
         let base_layout = SystemFontLayoutFace {
             family: "OpenSans".to_owned(),
             font_data: base_data.clone(),

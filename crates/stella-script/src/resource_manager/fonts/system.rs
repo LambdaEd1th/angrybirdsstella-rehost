@@ -3,6 +3,10 @@
 use std::sync::{Arc, OnceLock};
 
 use mlua::Result as LuaResult;
+use skrifa::{
+    FontRef, MetadataProvider,
+    instance::{LocationRef, Size},
+};
 
 use super::FontMetric;
 use crate::{SystemFontFallbackCatalog, SystemFontRenderBinding, native_fcvtzs_f32, runtime_error};
@@ -175,11 +179,12 @@ pub(crate) fn create_system_font_state(
     let resolved = fonts
         .database
         .with_face_data(face_id, |data, face_index| {
-            let face = ttf_parser::Face::parse(data, face_index).ok()?;
-            let scale = f64::from(size) / f64::from(face.units_per_em());
-            let ascending = f64::from(face.ascender()) * scale;
-            let descending = -f64::from(face.descender()) * scale;
-            let leading = f64::from(face.line_gap()) * scale;
+            let face = FontRef::from_index(data, face_index).ok()?;
+            let metrics = face.metrics(Size::unscaled(), LocationRef::default());
+            let scale = f64::from(size) / f64::from(metrics.units_per_em);
+            let ascending = f64::from(metrics.ascent) * scale;
+            let descending = -f64::from(metrics.descent) * scale;
+            let leading = f64::from(metrics.leading) * scale;
             Some((
                 std::sync::Arc::<[u8]>::from(data),
                 face_index,

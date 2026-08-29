@@ -5,8 +5,14 @@
 //! while this module evaluates the font's paint graph into one intrinsic-color
 //! raster before the recovered `drawString` passes composite it.
 
+use super::{
+    LABEL_POOL_BYTE_LIMIT, NativeSystemDecodedRaster, NativeSystemRasterColor, SystemFontLayoutFace,
+};
 use anyhow::{Result, anyhow};
 use image::{Rgba, RgbaImage};
+use skrifa::instance::Size;
+use skrifa::outline::{DrawSettings, OutlinePen};
+use skrifa::raw::TableProvider;
 use skrifa::{
     FontRef, GlyphId, MetadataProvider,
     color::{Brush, ColorPainter, CompositeMode, Extend},
@@ -15,11 +21,6 @@ use skrifa::{
 use tiny_skia::{
     BlendMode, FillRule, Mask, Path, PathBuilder, Pixmap, PixmapPaint, PremultipliedColorU8,
     Transform,
-};
-use ttf_parser::OutlineBuilder;
-
-use super::{
-    LABEL_POOL_BYTE_LIMIT, NativeSystemDecodedRaster, NativeSystemRasterColor, SystemFontLayoutFace,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -31,12 +32,13 @@ struct FontBounds {
 }
 
 impl FontBounds {
-    fn from_ttf_rect(rect: ttf_parser::Rect) -> Self {
+    fn from_font(font: &FontRef<'_>) -> Self {
+        let head = font.head().ok();
         Self {
-            x_min: f32::from(rect.x_min),
-            y_min: f32::from(rect.y_min),
-            x_max: f32::from(rect.x_max),
-            y_max: f32::from(rect.y_max),
+            x_min: head.as_ref().map_or(0.0, |head| f32::from(head.x_min())),
+            y_min: head.as_ref().map_or(0.0, |head| f32::from(head.y_min())),
+            x_max: head.as_ref().map_or(0.0, |head| f32::from(head.x_max())),
+            y_max: head.as_ref().map_or(0.0, |head| f32::from(head.y_max())),
         }
     }
 
@@ -66,14 +68,14 @@ impl FontBounds {
 }
 
 struct ColorBoundsPainter<'a, 'font> {
-    face: &'a ttf_parser::Face<'font>,
+    face: &'a FontRef<'font>,
     bounds: Option<FontBounds>,
     transform: skrifa::color::Transform,
     transform_stack: Vec<skrifa::color::Transform>,
 }
 
 impl<'a, 'font> ColorBoundsPainter<'a, 'font> {
-    fn new(face: &'a ttf_parser::Face<'font>) -> Self {
+    fn new(face: &'a FontRef<'font>) -> Self {
         Self {
             face,
             bounds: None,
@@ -103,13 +105,23 @@ impl<'a, 'font> ColorBoundsPainter<'a, 'font> {
         let Ok(glyph_id) = u16::try_from(glyph_id.to_u32()) else {
             return;
         };
-        if let Some(rect) = self.face.glyph_bounding_box(ttf_parser::GlyphId(glyph_id)) {
-            self.include_rect(
-                f32::from(rect.x_min),
-                f32::from(rect.y_min),
-                f32::from(rect.x_max),
-                f32::from(rect.y_max),
-            );
+        if let Some(outline) = self
+            .face
+            .outline_glyphs()
+            .get(GlyphId::new(u32::from(glyph_id)))
+        {
+            let mut bounds = BoundsPen::default();
+            if outline
+                .draw(
+                    DrawSettings::unhinted(Size::unscaled(), LocationRef::default()),
+                    &mut bounds,
+                )
+                .is_ok()
+                && let (Some(x_min), Some(y_min), Some(x_max), Some(y_max)) =
+                    (bounds.x_min, bounds.y_min, bounds.x_max, bounds.y_max)
+            {
+                self.include_rect(x_min, y_min, x_max, y_max);
+            }
         }
     }
 }
@@ -159,6 +171,44 @@ struct TinyOutlineBuilder {
     builder: PathBuilder,
 }
 
+#[derive(Default)]
+struct BoundsPen {
+    x_min: Option<f32>,
+    y_min: Option<f32>,
+    x_max: Option<f32>,
+    y_max: Option<f32>,
+}
+
+impl BoundsPen {
+    fn include(&mut self, x: f32, y: f32) {
+        if x.is_finite() && y.is_finite() {
+            self.x_min = Some(self.x_min.map_or(x, |value| value.min(x)));
+            self.y_min = Some(self.y_min.map_or(y, |value| value.min(y)));
+            self.x_max = Some(self.x_max.map_or(x, |value| value.max(x)));
+            self.y_max = Some(self.y_max.map_or(y, |value| value.max(y)));
+        }
+    }
+}
+
+impl OutlinePen for BoundsPen {
+    fn move_to(&mut self, x: f32, y: f32) {
+        self.include(x, y);
+    }
+    fn line_to(&mut self, x: f32, y: f32) {
+        self.include(x, y);
+    }
+    fn quad_to(&mut self, x1: f32, y1: f32, x: f32, y: f32) {
+        self.include(x1, y1);
+        self.include(x, y);
+    }
+    fn curve_to(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x: f32, y: f32) {
+        self.include(x1, y1);
+        self.include(x2, y2);
+        self.include(x, y);
+    }
+    fn close(&mut self) {}
+}
+
 impl TinyOutlineBuilder {
     fn new() -> Self {
         Self {
@@ -171,7 +221,7 @@ impl TinyOutlineBuilder {
     }
 }
 
-impl OutlineBuilder for TinyOutlineBuilder {
+impl OutlinePen for TinyOutlineBuilder {
     fn move_to(&mut self, x: f32, y: f32) {
         self.builder.move_to(x, y);
     }
@@ -193,10 +243,15 @@ impl OutlineBuilder for TinyOutlineBuilder {
     }
 }
 
-fn glyph_path(face: &ttf_parser::Face<'_>, glyph_id: GlyphId) -> Option<Path> {
-    let glyph_id = u16::try_from(glyph_id.to_u32()).ok()?;
+fn glyph_path(face: &FontRef<'_>, glyph_id: GlyphId) -> Option<Path> {
     let mut builder = TinyOutlineBuilder::new();
-    face.outline_glyph(ttf_parser::GlyphId(glyph_id), &mut builder)?;
+    face.outline_glyphs()
+        .get(glyph_id)?
+        .draw(
+            DrawSettings::unhinted(Size::unscaled(), LocationRef::default()),
+            &mut builder,
+        )
+        .ok()?;
     builder.finish()
 }
 
@@ -363,7 +418,7 @@ struct ColorLayer {
 }
 
 struct ColorRasterPainter<'a, 'font> {
-    face: &'a ttf_parser::Face<'font>,
+    face: &'a FontRef<'font>,
     width: u32,
     height: u32,
     root_transform: Transform,
@@ -379,7 +434,7 @@ struct ColorRasterPainter<'a, 'font> {
 
 impl<'a, 'font> ColorRasterPainter<'a, 'font> {
     fn new(
-        face: &'a ttf_parser::Face<'font>,
+        face: &'a FontRef<'font>,
         width: u32,
         height: u32,
         root_transform: Transform,
@@ -681,7 +736,7 @@ fn blend_mode(mode: CompositeMode) -> BlendMode {
 
 pub(super) fn render_system_color_outline(
     layout_face: &SystemFontLayoutFace,
-    parser_face: &ttf_parser::Face<'_>,
+    parser_face: &FontRef<'_>,
     glyph_id: u16,
     point_size: i32,
     foreground: [u8; 4],
@@ -704,7 +759,7 @@ pub(super) fn render_system_color_outline(
         })?;
     let bounds = bounds_painter
         .bounds
-        .unwrap_or_else(|| FontBounds::from_ttf_rect(parser_face.global_bounding_box()));
+        .unwrap_or_else(|| FontBounds::from_font(parser_face));
     let point_size = point_size.max(1);
     let scale = point_size as f32 / f32::from(layout_face.units_per_em);
     let left = (bounds.x_min * scale).floor() as i32 - 1;

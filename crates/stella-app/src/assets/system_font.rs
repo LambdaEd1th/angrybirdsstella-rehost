@@ -1,8 +1,9 @@
 //! UIKit SystemFont label-cache equivalent backed by cross-platform outlines.
 
-use ab_glyph::{Font, FontRef, PxScale, ScaleFont};
 use anyhow::{Result, anyhow};
 use image::RgbaImage;
+use skrifa::instance::Size;
+use skrifa::{FontRef, MetadataProvider};
 use std::sync::Arc;
 use tiny_skia::{FillRule, LineJoin, Mask, Stroke, Transform};
 
@@ -47,7 +48,13 @@ struct NativeSystemDecodedRaster {
     y: i16,
     pixels_per_em: u16,
     sbix: bool,
-    glyph_bbox: Option<ttf_parser::Rect>,
+    glyph_bbox: Option<NativeSystemGlyphBounds>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct NativeSystemGlyphBounds {
+    pub(crate) x_min: i16,
+    pub(crate) y_min: i16,
 }
 
 #[derive(Debug, Clone)]
@@ -74,16 +81,16 @@ pub(crate) fn rasterize_system_label(
         .faces
         .iter()
         .map(|face| {
-            FontRef::try_from_slice_and_index(&face.font_data, face.face_index)
-                .map_err(|_| anyhow!("invalid retained system font {}", face.family))
+            FontRef::from_index(&face.font_data, face.face_index)
+                .map_err(|error| anyhow!("invalid retained system font {}: {error}", face.family))
         })
         .collect::<Result<Vec<_>>>()?;
     let parser_faces = layout
         .faces
         .iter()
         .map(|face| {
-            ttf_parser::Face::parse(&face.font_data, face.face_index)
-                .map_err(|_| anyhow!("invalid retained system font {}", face.family))
+            FontRef::from_index(&face.font_data, face.face_index)
+                .map_err(|error| anyhow!("invalid retained system font {}: {error}", face.family))
         })
         .collect::<Result<Vec<_>>>()?;
     let face_scales = layout
@@ -100,10 +107,11 @@ pub(crate) fn rasterize_system_label(
     }
 
     // UIFont's point size is pixels-per-em in Purple's logical framebuffer.
-    // ab_glyph's PxScale instead denotes ascent-minus-descent, so convert the
-    // em scale explicitly rather than treating the point size as PxScale.
-    let scale = PxScale::from(font.height_unscaled() * unit_scale);
-    let scaled = font.as_scaled(scale);
+    // Skrifa exposes the same typographic ascent after applying that em scale.
+    let metrics = font.metrics(
+        Size::new(binding.size.max(1) as f32),
+        skrifa::instance::LocationRef::default(),
+    );
     let native_width = layout.width;
     // getStringHeight/drawString measure the complete NSString independently;
     // they do not sum the constructor's three already-truncated metric ints.
@@ -133,7 +141,7 @@ pub(crate) fn rasterize_system_label(
     let mut glyph_paths = Vec::new();
     let mut raster_glyphs = Vec::new();
     let mut raster_cache = HashMap::<(u16, u16), Option<Arc<NativeSystemDecodedRaster>>>::new();
-    let baseline = binding.stroke_width as f32 + scaled.ascent();
+    let baseline = binding.stroke_width as f32 + metrics.ascent;
     for (line_index, line) in layout.lines.iter().enumerate() {
         append_line_glyphs(
             &fonts,
