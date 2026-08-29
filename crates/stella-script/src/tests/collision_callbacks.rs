@@ -427,6 +427,113 @@ fn contact_listener_body_type_mutation_obeys_native_world_lock() {
 }
 
 #[test]
+fn contact_listener_physics_constructors_contain_native_locked_world_crash() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createBox("sensor", "", 0, 0, 10, 10, 0, 0, 0, true, false, 1)
+                createCircle("body", "", 0, 0, 0.5, 1, 0, 0, true, false, 1)
+                setAsSensor("sensor", true)
+                setWorldGravity(0, 0)
+                locked_constructor_attempts = 0
+                locked_constructor_results = {}
+                enterCollision = function()
+                    if locked_constructor_attempts ~= 0 then return end
+                    locked_constructor_attempts = 1
+                    locked_constructor_results.box = pcall(function()
+                        createBox("locked_box", "", 20, 0, 1, 1,
+                            1, 0, 0, true, false, 1)
+                    end)
+                    locked_constructor_results.circle = pcall(function()
+                        createCircle("locked_circle", "", 22, 0, 1,
+                            1, 0, 0, true, false, 1)
+                    end)
+                    clearVertices()
+                    addVertex(-1, -1)
+                    addVertex(1, -1)
+                    addVertex(0, 1)
+                    locked_constructor_results.polygon = pcall(function()
+                        createPolygon("locked_polygon", "", 24, 0, 2, 2,
+                            1, 0, 0, true, false, 1)
+                    end)
+                    clearVertices()
+                    addVertex(-1, 0)
+                    addVertex(1, 0)
+                    locked_constructor_results.line = pcall(function()
+                        createLineShape("locked_line", "", 26, 0, 2, 1,
+                            0, 0, 0, true, false, 1)
+                    end)
+                    locked_constructor_results.none = pcall(function()
+                        createNonPhysicsObject("locked_none", "", 28, 0, 1)
+                    end)
+                end
+                update = function() end
+                updatePhysics = function() end
+            "#,
+        )
+        .unwrap();
+
+    let initial_body_slot = runtime.render.lock().unwrap().next_body_allocation_slot;
+    runtime.update(1.0 / 30.0).unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert_eq!(
+        environment
+            .get::<i64>("locked_constructor_attempts")
+            .unwrap(),
+        1
+    );
+    let results = environment
+        .get::<mlua::Table>("locked_constructor_results")
+        .unwrap();
+    for kind in ["box", "circle", "polygon", "line"] {
+        assert!(!results.get::<bool>(kind).unwrap(), "{kind}");
+    }
+    assert!(results.get::<bool>("none").unwrap());
+
+    let world = object_world(runtime.lua()).unwrap();
+    let bridge = runtime.render.lock().unwrap();
+    assert!(!bridge.physics_world_locked);
+    assert_eq!(bridge.next_body_allocation_slot, initial_body_slot);
+    assert!(bridge.active_contacts.keys().any(|key| {
+        (key.0 == "sensor" && key.1 == "body") || (key.0 == "body" && key.1 == "sensor")
+    }));
+    for name in [
+        "locked_box",
+        "locked_circle",
+        "locked_polygon",
+        "locked_line",
+    ] {
+        assert!(matches!(world.raw_get::<Value>(name).unwrap(), Value::Nil));
+        assert!(!bridge.scene.contains_key(name));
+        assert!(
+            !bridge
+                .native_body_world_order
+                .values()
+                .any(|entry| entry == name)
+        );
+    }
+    assert!(matches!(
+        world.raw_get::<Value>("locked_none").unwrap(),
+        Value::Table(_)
+    ));
+    assert!(bridge.scene.contains_key("locked_none"));
+    assert!(!bridge.scene["locked_none"].has_physics_body());
+    drop(bridge);
+    let callbacks = runtime.draw_callbacks.borrow();
+    for name in [
+        "locked_box",
+        "locked_circle",
+        "locked_polygon",
+        "locked_line",
+    ] {
+        assert!(!callbacks.records.contains_key(name));
+    }
+    assert!(callbacks.records.contains_key("locked_none"));
+}
+
+#[test]
 fn contact_listener_fixture_replacement_obeys_native_world_lock() {
     let runtime = unlocked_test_runtime();
     runtime

@@ -18612,3 +18612,52 @@ bindings, with empty stderr. Its
 `build/audit-native-dirt-fixture-lock-20260829.png` output is a 1024x768 RGBA
 PNG with SHA-256
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## Locked CreateBody constructor failure containment
+
+The complete 36-instruction `b2World::CreateBody` at `sub_10086DF90` was
+checked independently in IDA and Hopper. It reads `world+0x19298` at
+`0x10086DFB0`, tests the `e_locked` bit at `0x10086DFB4`, and returns null at
+`0x10086DFB8` before allocating the 0xC0-byte body, constructing it, inserting
+it at the world-body-list head or incrementing the body count.
+
+All four GameLua physics constructors treat that null result as an invalid
+calling precondition rather than a recoverable result. Box and circle pass it
+directly to CreateFixture at `0x1000348FC` and `0x10003512C`, where the first
+body-world load dereferences null. The line helper retains it at
+`0x1000681C4` and calls CreateFixture at `0x1000682A4` for each consecutive
+vertex pair. Even with fewer than two vertices, the outer `createLineShapeLua`
+unconditionally reads `body+0x98` for the published mass at `0x1000366FC`.
+Polygon retains the corresponding null at `0x1000683A0`; a simple polygon
+reaches CreateFixture at `0x1000684B0`, decomposed polygons reach the three
+fixture sites in `sub_1008725FC`, and an invalid/no-fixture polygon still
+reaches the unconditional outer mass read at `0x1000359C0`. There is therefore
+no locked shape or vertex-count branch that produces a usable native object.
+
+The original outer constructors allocate a RenderObjectData record and replace
+their native name-map pointer before CreateBody, but the ensuing process-level
+null dereference prevents Lua from observing or recovering that partial state.
+The host contains this fatal native precondition at its common constructor
+commit boundary: createBox, createCircle, createPolygon and createLineShape
+return a catchable Lua runtime error while the world is locked and publish no
+Lua mirror, draw callback, SceneObject, body-list entry, proxy or allocation
+slot. `createNonPhysicsObject` has no b2World call and remains legal in the same
+callback. This is intentionally a crash containment boundary, not a claim that
+Purple itself returned a Lua error.
+
+A focused regression invokes all five constructors from a real BeginContact.
+It proves that each physical call fails without side effects, the non-physics
+call succeeds, the original contact remains valid, and the body allocation
+counter does not advance. The CreateBody lock gate, four direct fixture/mass
+failure paths and decomposed-polygon fixture sites are commented in IDA and
+Hopper and the IDB is saved.
+
+The complete workspace passes 834 tests with only the deliberate long-duration
+BirdRun audit ignored. Formatting, whitespace validation, strict
+all-target/all-feature Clippy and the release workspace build are clean. A
+fresh isolated-AppData 120-frame release-wgpu upload/render/readback reports 20
+optional probes, zero invoked fallbacks and zero remaining compatibility
+bindings, with empty stderr. Its visually checked
+`build/audit-native-constructor-lock-20260829.png` output is a 1024x768 RGBA
+PNG with SHA-256
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.

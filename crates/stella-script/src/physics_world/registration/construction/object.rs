@@ -11,7 +11,7 @@ use std::{
 
 use mlua::{Lua, Result as LuaResult};
 
-use crate::{DrawCallbackRecord, DrawCallbacks, RenderBridge, object_world};
+use crate::{DrawCallbackRecord, DrawCallbacks, RenderBridge, object_world, runtime_error};
 
 use super::PreparedConstruction;
 
@@ -21,6 +21,24 @@ pub(super) fn commit(
     draw_callbacks: &Rc<RefCell<DrawCallbacks>>,
     prepared: PreparedConstruction,
 ) -> LuaResult<()> {
+    if prepared.request.kind.has_body()
+        && render
+            .lock()
+            .expect("render bridge lock poisoned")
+            .physics_world_locked
+    {
+        // b2World::CreateBody (sub_10086DF90) returns nullptr when e_locked
+        // is set.  Box/circle immediately pass that pointer to CreateFixture;
+        // polygon/line either do the same or later read body+0x98 for mass.
+        // No native physics constructor checks null, so invoking one from
+        // BeginContact terminates Purple through a null dereference.
+        // Preserve the failed construction and absence of a usable record,
+        // but contain the process crash as a catchable Lua runtime error.
+        return Err(runtime_error(format!(
+            "{} cannot create a body while the physics world is locked",
+            prepared.request.kind.script_name()
+        )));
+    }
     let world_identity = object_world(lua)?.to_pointer() as usize;
     render
         .lock()
