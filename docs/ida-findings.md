@@ -17593,3 +17593,43 @@ bindings, with empty stderr.
 `build/audit-native-manifold-unordered-20260829.png` is a 1024x768 RGBA PNG
 with SHA-256
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## Native edge-polygon packed axis scan and FCCMP gate
+
+The no-adjacency path of `b2EPCollider::Collide` (`0x10085EADC`) was audited
+through its complete primary-axis scan in both IDA and Hopper. Each edge-axis
+projection subtracts the first edge vertex at `0x10085F0A8`, multiplies both
+packed lanes with `FMUL` at `0x10085F0AC`, and horizontally adds the two
+already-rounded products with `FADDP` at `0x10085F0B0`. The accumulator at
+`0x10085F0B4` is specifically `FMIN candidate, running`, not the reverse.
+When two projections are NaN, Purple therefore propagates and quiets the
+newest candidate's sign and payload.
+
+The polygon-axis angular-limit dot has the same packed arithmetic:
+`0x10085F160` subtracts the chosen angular limit, `0x10085F164` multiplies
+both lanes and `0x10085F168` performs `FADDP`. It is not the scalar `FMADD`
+that the host previously used. `FCMP angularDot, -angularSlop` at
+`0x10085F16C` is followed by `FCCMP candidateSeparation, bestSeparation,
+#4, GE` and `B.LE` at `0x10085F174`. The separation comparison therefore
+runs only for an ordered angular result greater than or equal to the exact
+negative two-degree constant `0xBD0EFA36`. An unordered angular result loads
+NZCV=`0100` and unconditionally skips the candidate; an unordered or tied
+separation also skips it. The packed arithmetic, operand order and compound
+condition are commented in both disassemblers and the IDB is saved.
+
+Rust now uses a shared local packed-dot kernel for all three edge-polygon axis
+dots, preserving two independent float32 products before the add. The edge
+axis folds `FMIN(candidate, running)` in native operand order, and the angular
+gate requires ordered `GE` before ordered-greater separation can replace the
+axis. Regressions distinguish packed `FMUL/FADDP` from `mul_add` by one ULP,
+pin newest-NaN payload propagation, and cover the exact angular boundary,
+unordered angle, unordered separation and separation tie.
+
+The complete workspace passes 813 tests with only the deliberate long-
+duration BirdRun audit ignored. Formatting, whitespace validation, strict
+all-target/all-feature Clippy and the release workspace build are clean. A
+fresh isolated-AppData 120-frame release-wgpu upload/render/readback reports
+20 optional probes, zero invoked fallbacks and zero remaining compatibility
+bindings, with empty stderr. `build/audit-native-edge-axis-20260829.png` is a
+1024x768 RGBA PNG with SHA-256
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.

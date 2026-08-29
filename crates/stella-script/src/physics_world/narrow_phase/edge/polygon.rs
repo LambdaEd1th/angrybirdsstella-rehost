@@ -12,6 +12,8 @@ use crate::{
     NativeToiTransform, contact_feature_id, native_polygon_centroid_f32, swap_contact_features,
 };
 
+const NATIVE_EDGE_ANGULAR_SLOP: f32 = f32::from_bits(0x3D0E_FA36);
+
 #[cfg(test)]
 pub(crate) fn polygon_segment_manifold(
     polygon: &[(f64, f64)],
@@ -81,10 +83,8 @@ pub(crate) fn polygon_segment_manifold_at_transforms(
     };
     let edge_separation = polygon.iter().fold(f32::MAX, |separation, &point| {
         let delta = (point.0 - edge_start.0, point.1 - edge_start.1);
-        native_fmin_f32(
-            separation,
-            edge_normal.0 * delta.0 + edge_normal.1 * delta.1,
-        )
+        let candidate = native_fmul_faddp_dot_f32(edge_normal, delta);
+        native_edge_axis_min(candidate, separation)
     });
     let total_radius = (2.0 * BOX2D_POLYGON_RADIUS) as f32;
     if edge_separation > total_radius {
@@ -95,14 +95,13 @@ pub(crate) fn polygon_segment_manifold_at_transforms(
     let edge_perpendicular = (-edge_normal.1, edge_normal.0);
     let lower_limit = (-edge_normal.0, -edge_normal.1);
     let upper_limit = lower_limit;
-    let angular_slop = f32::from_bits(0x3D0E_FA36);
     for &(index, normal) in &polygon_normals {
         let vertex = polygon[index];
         let start_delta = (edge_start.0 - vertex.0, edge_start.1 - vertex.1);
         let end_delta = (edge_end.0 - vertex.0, edge_end.1 - vertex.1);
         let separation = native_fmin_f32(
-            normal.0 * start_delta.0 + normal.1 * start_delta.1,
-            normal.0 * end_delta.0 + normal.1 * end_delta.1,
+            native_fmul_faddp_dot_f32(normal, start_delta),
+            native_fmul_faddp_dot_f32(normal, end_delta),
         );
         if separation > total_radius {
             return None;
@@ -117,14 +116,9 @@ pub(crate) fn polygon_segment_manifold_at_transforms(
         } else {
             lower_limit
         };
-        if edge_normal.0.mul_add(
-            candidate_normal.0 - limit.0,
-            edge_normal.1 * (candidate_normal.1 - limit.1),
-        ) < -angular_slop
-        {
-            continue;
-        }
-        if separation > polygon_axis.0 {
+        let normal_delta = (candidate_normal.0 - limit.0, candidate_normal.1 - limit.1);
+        let angular_separation = native_fmul_faddp_dot_f32(edge_normal, normal_delta);
+        if native_polygon_axis_improves(angular_separation, separation, polygon_axis.0) {
             polygon_axis = (separation, index, normal);
         }
     }
@@ -342,5 +336,67 @@ fn polygon_to_edge_transform(
             edge_transform.sine,
             polygon_transform.cosine * edge_transform.cosine,
         ),
+    }
+}
+
+/// Match the packed `FMUL` followed by `FADDP` used by the edge-polygon axis
+/// scans. Both products round before the horizontal addition.
+fn native_fmul_faddp_dot_f32(first: (f32, f32), second: (f32, f32)) -> f32 {
+    let product_x = first.0 * second.0;
+    let product_y = first.1 * second.1;
+    product_x + product_y
+}
+
+/// `0x10085F0B4` uses `FMIN candidate, running`; when both lanes are NaN,
+/// the current candidate's payload replaces the prior accumulator payload.
+fn native_edge_axis_min(candidate: f32, running: f32) -> f32 {
+    native_fmin_f32(candidate, running)
+}
+
+/// `0x10085F16C..0x10085F174` updates only when the angular limit comparison
+/// is ordered greater/equal and the candidate separation is ordered greater.
+fn native_polygon_axis_improves(
+    angular_separation: f32,
+    candidate_separation: f32,
+    running_separation: f32,
+) -> bool {
+    angular_separation >= -NATIVE_EDGE_ANGULAR_SLOP && candidate_separation > running_separation
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn edge_axis_fmin_keeps_the_latest_nan_candidate_payload() {
+        let first = f32::from_bits(0x7FC1_2345);
+        let second = f32::from_bits(0xFFC5_4321);
+        let running = native_edge_axis_min(first, f32::MAX);
+        let running = native_edge_axis_min(second, running);
+
+        assert_eq!(running.to_bits(), second.to_bits());
+    }
+
+    #[test]
+    fn packed_axis_dot_rounds_both_products_before_faddp() {
+        let first = (f32::from_bits(0x42FB_DBF2), f32::from_bits(0x40CD_2D26));
+        let second = (f32::from_bits(0xC30B_7EFE), f32::from_bits(0x4419_C605));
+        let native = native_fmul_faddp_dot_f32(first, second);
+        let fused = first.0.mul_add(second.0, first.1 * second.1);
+
+        assert_eq!(native.to_bits(), 0xC654_DB62);
+        assert_eq!(fused.to_bits(), 0xC654_DB61);
+    }
+
+    #[test]
+    fn polygon_axis_gate_rejects_unordered_angle_or_separation() {
+        assert!(native_polygon_axis_improves(
+            -NATIVE_EDGE_ANGULAR_SLOP,
+            1.0,
+            0.0,
+        ));
+        assert!(!native_polygon_axis_improves(f32::NAN, 1.0, 0.0));
+        assert!(!native_polygon_axis_improves(0.0, f32::NAN, 0.0));
+        assert!(!native_polygon_axis_improves(0.0, 0.0, 0.0));
     }
 }
