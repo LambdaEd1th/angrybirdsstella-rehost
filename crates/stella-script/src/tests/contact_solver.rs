@@ -227,6 +227,36 @@ fn sensor_contact_update_discards_former_solid_impulses() {
 }
 
 #[test]
+fn sensor_contact_update_uses_native_gjk_overlap_tolerance() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .execute_source(
+            r#"
+                createCircle("body", "", 0, 0, 1, 1, 0, 0, true, false, 1)
+                createCircle("sensor", "", 2.0000005, 0, 1, 0, 0, 0, true, false, 1)
+                setAsSensor("sensor", true)
+                setWorldGravity(0, 0)
+                setVelocity("body", 0.1, 0)
+                "#,
+        )
+        .unwrap();
+
+    let mut bridge = runtime.render.lock().unwrap();
+    let pair = ("body".to_owned(), "sensor".to_owned(), 0, 0);
+    assert!(
+        bridge.scene["body"]
+            .collision_fixture_manifold(&bridge.scene["sensor"], 0, 0)
+            .is_none()
+    );
+    assert!(bridge.scene["body"].native_fixture_overlaps(&bridge.scene["sensor"], 0, 0));
+
+    let events = bridge.refresh_contacts();
+    assert!(events.iter().any(|event| event.began && event.sensor));
+    assert_eq!(bridge.active_contacts.get(&pair), Some(&true));
+    assert!(!bridge.contact_manifolds.contains_key(&pair));
+}
+
+#[test]
 fn sleeping_box2d_contact_freezes_until_body_wakes_after_separation() {
     let runtime = StellaLua::new("/tmp").unwrap();
     runtime

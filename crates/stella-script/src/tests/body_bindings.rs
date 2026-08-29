@@ -987,10 +987,22 @@ fn physics_scale_matches_native_fixture_rebuild_lifecycle_and_sources() {
 
     assert_eq!(bridge.scene["edge"].scale_x, -3.0);
     assert_eq!(bridge.scene["edge"].scale_y, 4.0);
-    // The signed X ratio reverses the rebuilt box winding. Purple's
-    // b2PolygonShape::Set retains the resulting inward normals instead of
-    // repairing them, so the replacement fixture does not begin a contact.
-    assert!(!bridge.refresh_contacts().iter().any(|event| event.began));
+    // The signed X ratio reverses the rebuilt box winding. Purple's solid
+    // manifold path retains the inward normals and rejects this pair, but the
+    // fixture is a sensor: b2Contact::Update instead calls radius-aware GJK,
+    // whose distance proxy uses vertices and still reports the overlap.
+    assert!(
+        bridge.scene["scaled"]
+            .collision_fixture_manifold(&bridge.scene["other"], 0, 0)
+            .is_none()
+    );
+    assert!(bridge.scene["scaled"].native_fixture_overlaps(&bridge.scene["other"], 0, 0));
+    assert!(
+        bridge
+            .refresh_contacts()
+            .iter()
+            .any(|event| event.began && event.sensor)
+    );
 }
 
 #[test]

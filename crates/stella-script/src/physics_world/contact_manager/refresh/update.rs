@@ -10,12 +10,15 @@ enum NativeContactUpdate {
     Separated {
         clear_filter_flag: bool,
     },
-    Touching {
+    SensorTouching {
+        clear_filter_flag: bool,
+        began: bool,
+    },
+    SolidTouching {
         clear_filter_flag: bool,
         manifold: ContactManifold,
-        sensor: bool,
         began: bool,
-        event_kinematics: Option<NativeContactEventKinematics>,
+        event_kinematics: NativeContactEventKinematics,
     },
 }
 
@@ -74,20 +77,26 @@ impl RenderBridge {
 
         let clear_filter_flag = filter_dirty && filter_allowed;
         let was_touching = self.active_contacts.get(contact_key).copied();
+        let sensor = first.sensor || second.sensor;
+        if sensor {
+            if !first.native_fixture_overlaps(second, contact_key.2, contact_key.3) {
+                return NativeContactUpdate::Separated { clear_filter_flag };
+            }
+            return NativeContactUpdate::SensorTouching {
+                clear_filter_flag,
+                began: was_touching.is_none(),
+            };
+        }
         let Some(manifold) = first.collision_fixture_manifold(second, contact_key.2, contact_key.3)
         else {
             return NativeContactUpdate::Separated { clear_filter_flag };
         };
-        let sensor = first.sensor || second.sensor;
         let began = was_touching.is_none();
-        let event_kinematics =
-            (began || !sensor).then(|| NativeContactEventKinematics::capture(first, second));
-        NativeContactUpdate::Touching {
+        NativeContactUpdate::SolidTouching {
             clear_filter_flag,
             manifold,
-            sensor,
             began,
-            event_kinematics,
+            event_kinematics: NativeContactEventKinematics::capture(first, second),
         }
     }
 
@@ -141,56 +150,60 @@ impl RenderBridge {
                 self.wake_contact_bodies(contact_key);
                 Some(Self::native_contact_end_event(contact_key, sensor))
             }
-            NativeContactUpdate::Touching {
+            NativeContactUpdate::SensorTouching {
+                clear_filter_flag,
+                began,
+            } => {
+                if clear_filter_flag {
+                    self.contact_filter_dirty.remove(contact_key);
+                }
+                self.active_contacts.insert(contact_key.clone(), true);
+                self.contact_manifolds.remove(contact_key);
+                // The sensor branch at 0x1008637C8 sets the native manifold
+                // point count to zero. If this fixture later becomes solid
+                // while it is still overlapping, the old count is therefore
+                // zero and none of its former impulses can match new points.
+                self.contact_impulses.remove(contact_key);
+                if began {
+                    self.wake_contact_bodies(contact_key);
+                }
+                began.then(|| Self::native_sensor_contact_begin_event(contact_key))
+            }
+            NativeContactUpdate::SolidTouching {
                 clear_filter_flag,
                 manifold,
-                sensor,
                 began,
                 event_kinematics,
             } => {
                 if clear_filter_flag {
                     self.contact_filter_dirty.remove(contact_key);
                 }
-                self.active_contacts.insert(contact_key.clone(), sensor);
-                if sensor {
-                    self.contact_manifolds.remove(contact_key);
-                    // The sensor branch at 0x1008637C8 sets the native
-                    // manifold point count to zero. If this fixture later
-                    // becomes solid while it is still overlapping, the old
-                    // count is therefore zero and none of its former impulses
-                    // can match the new points.
-                    self.contact_impulses.remove(contact_key);
-                } else {
-                    // b2Contact::Update zeroes each newly evaluated point,
-                    // then scans the saved old manifold by b2ContactID and
-                    // copies matching impulses (0x100863820..0x100863874).
-                    // Publish that new manifold cache now, before BeginContact
-                    // and Purple's no-op PreSolve callback, rather than
-                    // deferring feature alignment until solver construction.
-                    let aligned_impulses = self
-                        .contact_impulses
-                        .get(contact_key)
-                        .copied()
-                        .unwrap_or_default()
-                        .aligned_to(&manifold.points());
-                    self.contact_impulses
-                        .insert(contact_key.clone(), aligned_impulses);
-                    self.contact_manifolds.insert(contact_key.clone(), manifold);
-                }
+                self.active_contacts.insert(contact_key.clone(), false);
+                // b2Contact::Update zeroes each newly evaluated point, then
+                // scans the saved old manifold by b2ContactID and copies
+                // matching impulses (0x100863820..0x100863874). Publish that
+                // cache before BeginContact and Purple's no-op PreSolve.
+                let aligned_impulses = self
+                    .contact_impulses
+                    .get(contact_key)
+                    .copied()
+                    .unwrap_or_default()
+                    .aligned_to(&manifold.points());
+                self.contact_impulses
+                    .insert(contact_key.clone(), aligned_impulses);
+                self.contact_manifolds.insert(contact_key.clone(), manifold);
                 if began {
                     self.wake_contact_bodies(contact_key);
                 }
-                // A sensor produces only Begin/End records. Every touching
-                // solid contact also needs a record for its PostSolve impulse.
-                event_kinematics.map(|kinematics| {
-                    Self::native_contact_event_from_kinematics(
-                        contact_key,
-                        manifold,
-                        sensor,
-                        began,
-                        kinematics,
-                    )
-                })
+                // Every touching solid contact needs a record for its later
+                // PostSolve impulse, even when BeginContact did not run.
+                Some(Self::native_contact_event_from_kinematics(
+                    contact_key,
+                    manifold,
+                    false,
+                    began,
+                    event_kinematics,
+                ))
             }
         }
     }

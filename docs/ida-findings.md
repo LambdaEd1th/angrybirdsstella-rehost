@@ -18022,3 +18022,46 @@ bindings, with empty stderr. The visually checked
 `build/audit-native-contact-update-20260829.png` is a 1024x768 RGBA PNG with
 SHA-256
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## Native sensor contact GJK path
+
+The sensor half of `b2Contact::Update` is deliberately independent from the
+solid manifold evaluator. After testing the two fixture sensor bytes,
+`0x1008637B4..0x1008637BC` loads both concrete shape pointers and child
+indices, and `0x1008637C0` calls `b2TestOverlap` at `sub_10086021C` with the
+two live body transforms. Only the non-sensor branch reaches the contact
+class's shape-pair `Evaluate` virtual call at `0x1008637D4..0x1008637EC`.
+
+The shared `b2TestOverlap` leaf had already been recovered for track and aim
+queries: it builds indexed distance proxies, runs float32 radius-aware GJK,
+and at `0x1008602A8..0x1008602B8` accepts a residual distance strictly below
+word `0x35A00000` (`10 * FLT_EPSILON`). Contact refresh nevertheless still
+called the solid manifold builder before it looked at the sensor flag. This
+lost two native behaviors: a small positive gap inside the GJK tolerance did
+not begin a sensor overlap, and an inward-normal polygon produced by a signed
+physics scale was rejected even though its vertex distance proxy overlaps.
+
+`SceneObject::native_fixture_overlaps` now exposes the recovered proxy/GJK
+path for an arbitrary fixture pair, while the existing head-fixture wrapper
+delegates to it. Contact refresh determines the sensor branch first and uses
+that indexed overlap result without manufacturing or storing a solid
+manifold. Sensor BeginContact records consequently carry only the identity and
+transition fields that Purple actually consumes. The solid branch continues
+to evaluate, feature-align and publish its local manifold separately.
+
+A float32 circle gap of roughly `4.77e-7` proves that the solid circle
+manifold is empty while native GJK reports touching. The fixture-rebuild
+regression independently covers a reflected, inward-normal sensor polygon:
+its solid manifold remains empty, but its GJK overlap now emits BeginContact.
+The branch call, tolerance comparison and both listener paths are commented
+in IDA and Hopper and the IDB is saved.
+
+The complete workspace passes 821 tests with only the deliberate long-
+duration BirdRun audit ignored. Formatting, whitespace validation, strict
+all-target/all-feature Clippy and the release workspace build are clean. A
+fresh isolated-AppData 120-frame release-wgpu upload/render/readback reports
+20 optional probes, zero invoked fallbacks and zero remaining compatibility
+bindings, with empty stderr. The visually checked
+`build/audit-native-sensor-gjk-20260829.png` is a 1024x768 RGBA PNG with
+SHA-256
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.

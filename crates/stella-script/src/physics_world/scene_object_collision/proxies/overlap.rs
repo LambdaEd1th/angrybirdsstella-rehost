@@ -26,16 +26,15 @@ pub(crate) fn native_distance_proxies_overlap(
 }
 
 impl SceneObject {
-    /// `sub_100032970` passes only each body's intrusive fixture-list head to
-    /// `b2TestOverlap`. Fixtures are head-inserted natively, while this model
-    /// retains creation order, so the selected fixture is the final entry.
-    pub(crate) fn native_head_fixture_overlaps(&self, other: &Self) -> bool {
-        let Some(first_fixture) = self.collision_shape.fixture_count().checked_sub(1) else {
-            return false;
-        };
-        let Some(second_fixture) = other.collision_shape.fixture_count().checked_sub(1) else {
-            return false;
-        };
+    /// Run the native radius-aware GJK overlap test for one concrete fixture
+    /// pair. `b2Contact::Update` uses this path for sensors instead of calling
+    /// the shape-pair collision routine that constructs a solid manifold.
+    pub(crate) fn native_fixture_overlaps(
+        &self,
+        other: &Self,
+        first_fixture: usize,
+        second_fixture: usize,
+    ) -> bool {
         let Some(first_proxy) = self.native_distance_proxy(first_fixture) else {
             return false;
         };
@@ -48,5 +47,18 @@ impl SceneObject {
             &second_proxy,
             other.native_collision_transform(),
         )
+    }
+
+    /// `sub_100032970` passes only each body's intrusive fixture-list head to
+    /// `b2TestOverlap`. Fixtures are head-inserted natively, while this model
+    /// retains creation order, so the selected fixture is the final entry.
+    pub(crate) fn native_head_fixture_overlaps(&self, other: &Self) -> bool {
+        let Some(first_fixture) = self.collision_shape.fixture_count().checked_sub(1) else {
+            return false;
+        };
+        let Some(second_fixture) = other.collision_shape.fixture_count().checked_sub(1) else {
+            return false;
+        };
+        self.native_fixture_overlaps(other, first_fixture, second_fixture)
     }
 }

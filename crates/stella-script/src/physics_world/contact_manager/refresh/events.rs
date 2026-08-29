@@ -80,4 +80,27 @@ impl RenderBridge {
             second_velocity_y: 0.0,
         }
     }
+
+    pub(crate) fn native_sensor_contact_begin_event(contact_key: &ContactKey) -> ContactEvent {
+        ContactEvent {
+            first: contact_key.0.clone(),
+            second: contact_key.1.clone(),
+            first_fixture: contact_key.2,
+            second_fixture: contact_key.3,
+            sensor: true,
+            began: true,
+            ended: false,
+            impulse: 0.0,
+            normal_x: 0.0,
+            normal_y: 0.0,
+            point_x: 0.0,
+            point_y: 0.0,
+            first_mass: 0.0,
+            first_velocity_x: 0.0,
+            first_velocity_y: 0.0,
+            second_mass: 0.0,
+            second_velocity_x: 0.0,
+            second_velocity_y: 0.0,
+        }
+    }
 }
