@@ -1183,17 +1183,22 @@ fn native_lua_probe_and_bundle_copy_use_strict_paths_and_void_copy_abi() {
         .as_nanos();
     let root = std::env::temp_dir().join(format!("stella-native-file-helpers-{unique}"));
     let data_root = root.join("data");
-    fs::create_dir_all(data_root.join("scripts")).unwrap();
+    fs::create_dir_all(data_root.join("scripts_common/nested")).unwrap();
     fs::create_dir_all(root.join("appdata")).unwrap();
     fs::write(data_root.join("payload.bin"), [0, 1, 2, 0xff]).unwrap();
-    fs::write(data_root.join("scripts/probe.lua"), b"return true").unwrap();
+    fs::write(
+        data_root.join("scripts_common/nested/arbitrary.bin"),
+        [4, 5, 6, 0xfe],
+    )
+    .unwrap();
+    fs::write(data_root.join("scripts_common/probe.lua"), b"return true").unwrap();
 
     let runtime = StellaLua::new(&data_root).unwrap();
     runtime
         .execute_source(
             r##"
                 direct_lua_exists = checkForLuaFile(
-                    "scripts/probe.lua", "ignored"
+                    "scripts_common/probe.lua", "ignored"
                 )
                 prefixed_lua_exists = checkForLuaFile("probe.lua")
                 missing_lua_exists = checkForLuaFile("missing.lua")
@@ -1204,6 +1209,12 @@ fn native_lua_probe_and_bundle_copy_use_strict_paths_and_void_copy_abi() {
                     "#",
                     copyFileFromBundleToAppData(
                         "payload.bin", "nested/copied.bin", "ignored"
+                    )
+                )
+                bundle_copy_arbitrary_results = select(
+                    "#",
+                    copyFileFromBundleToAppData(
+                        "scripts_common/nested/arbitrary.bin", "arbitrary.bin"
                     )
                 )
                 bundle_copy_short_fails = not pcall(
@@ -1224,12 +1235,23 @@ fn native_lua_probe_and_bundle_copy_use_strict_paths_and_void_copy_abi() {
     assert!(environment.get::<bool>("lua_probe_type_fails").unwrap());
     assert!(environment.get::<bool>("lua_probe_numeric_fails").unwrap());
     assert_eq!(environment.get::<i64>("bundle_copy_results").unwrap(), 0);
+    assert_eq!(
+        environment
+            .get::<i64>("bundle_copy_arbitrary_results")
+            .unwrap(),
+        0
+    );
     assert!(environment.get::<bool>("bundle_copy_short_fails").unwrap());
     assert!(environment.get::<bool>("bundle_copy_type_fails").unwrap());
     assert_eq!(
         fs::read(root.join("appdata/nested/copied.bin")).unwrap(),
         [0, 1, 2, 0xff]
     );
+    assert_eq!(
+        fs::read(root.join("appdata/arbitrary.bin")).unwrap(),
+        [4, 5, 6, 0xfe]
+    );
+    assert!(!root.join("appdata/arbitrary.bin.tmp").exists());
     drop(runtime);
     fs::remove_dir_all(root).unwrap();
 }

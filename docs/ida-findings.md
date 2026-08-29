@@ -6503,6 +6503,29 @@ compatibility bindings. It emitted
 `build/audit-system-font-smoke-20260820.png`, SHA-256
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
 
+## Bundle-to-AppData copy path and commit protocol
+
+The native `copyFileFromBundleToAppData` closure is registered at
+`0x10002F240` and dispatches to `sub_10005A2B4`.  IDA/Hopper show that the
+callback opens a `BundleInputStream` for the source, reads the complete byte
+span, creates parent directories, writes an `AppDataOutputStream`, and returns
+the Lua `void` ABI.  `BundleInputStream::Impl::constructPath` at `0x100505DE8`
+strips one leading slash and joins the request to the bundle root, so this
+member is not limited to the `config`/`localization` prefixes used by ordinary
+text loads.  The rehost now has a separate `resolve_bundle_file` path that
+retains traversal protection while allowing arbitrary shipped files (for
+example `scripts_common/...`) to be copied.
+
+The output stream constructor at `0x100505080` appends `.tmp` and opens that
+path with `fopen(..., "wb")`.  Its destructor at `0x10050565C` flushes,
+`fsync`s and closes the temporary file, then renames it over the requested
+AppData path.  The Rust adapter now follows the same temporary-file commit
+protocol (with a Windows replacement fallback), rather than copying directly
+over an existing file.  A focused regression covers arbitrary bundle paths,
+strict argument/void behavior and removal of the successful `.tmp` artifact.
+IDA and Hopper comments were added at the constructor, destructor and bundle
+path-builder sites, and the IDB was saved.
+
 ## SetType awake-state preservation
 
 IDA's complete `b2Body::SetType` (`sub_10086B0CC`) shows the wake branch at

@@ -2,7 +2,7 @@
 
 use std::{
     fs,
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
     sync::Arc,
 };
 
@@ -10,8 +10,8 @@ use mlua::{Error as LuaError, Lua, LuaSerdeExt, MultiValue, Result as LuaResult,
 
 use super::{paths::resolve_text_table, pipeline::load_text_bytes};
 use crate::{
-    game_environment, native_required_boolean, native_required_string, prepare_lua_chunk,
-    resolve_data_file, runtime_error,
+    app_data_path, game_environment, native_required_boolean, native_required_string,
+    prepare_lua_chunk, resolve_bundle_file, resolve_data_file, runtime_error,
 };
 
 pub(crate) fn install_data_imports(
@@ -88,30 +88,42 @@ pub(crate) fn install_data_imports(
             let source = resolve_data_file(&bundle_copy_root, &source)
                 .ok()
                 .or_else(|| resolve_text_table(&bundle_copy_root, &source))
+                .or_else(|| resolve_bundle_file(&bundle_copy_root, &source).ok())
                 .ok_or_else(|| runtime_error(format!("bundle file not found: {source}")))?;
-            let relative = Path::new(destination.trim_start_matches('/'));
-            if relative.components().any(|component| {
-                matches!(
-                    component,
-                    Component::ParentDir | Component::RootDir | Component::Prefix(_)
-                )
-            }) {
-                return Err(runtime_error("unsafe app-data destination"));
-            }
-            let app_data = bundle_copy_root
-                .parent()
-                .unwrap_or(bundle_copy_root.as_path())
-                .join("appdata");
-            let destination = app_data.join(relative);
+            let destination =
+                app_data_path(&bundle_copy_root, &destination).map_err(runtime_error)?;
             if let Some(parent) = destination.parent() {
                 fs::create_dir_all(parent).map_err(runtime_error)?;
             }
-            fs::copy(source, destination).map_err(runtime_error)?;
+
+            // `AppDataOutputStream::Impl` writes to `<path>.tmp`, flushes and
+            // fsyncs it, closes the stream, then renames the temporary file
+            // over the requested path.  Keep that commit protocol here so a
+            // partially-written copy never replaces an existing AppData file.
+            let bytes = fs::read(source).map_err(runtime_error)?;
+            let temporary = PathBuf::from(format!("{}.tmp", destination.display()));
+            fs::write(&temporary, bytes).map_err(runtime_error)?;
+            replace_app_data_file(&temporary, &destination).map_err(runtime_error)?;
             Ok(())
         })?,
     )?;
 
     Ok(())
+}
+
+fn replace_app_data_file(temporary: &Path, destination: &Path) -> std::io::Result<()> {
+    match fs::rename(temporary, destination) {
+        Ok(()) => Ok(()),
+        #[cfg(windows)]
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            // POSIX `rename` (used by the original iOS/macOS binary) replaces
+            // an existing path.  Windows' std implementation does not, so
+            // remove the old file only for that platform before retrying.
+            fs::remove_file(destination)?;
+            fs::rename(temporary, destination)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 pub(crate) fn install_string_loader(

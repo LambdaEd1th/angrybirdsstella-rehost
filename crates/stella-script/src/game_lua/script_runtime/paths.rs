@@ -31,6 +31,20 @@ pub(crate) fn resolve_data_file(data_root: &Path, requested: &str) -> Result<Pat
     )
 }
 
+/// Resolve a path exactly as the native bundle stream does, while keeping the
+/// result inside the extracted runtime data directory.  The native
+/// `BundleInputStream::Impl::constructPath` strips one leading slash and then
+/// joins the request to the bundle root; unlike the text/script helpers it
+/// does not restrict callers to a short list of subdirectories.  Keeping this
+/// resolver separate prevents broad bundle access from changing the lookup
+/// order of regular script and resource loads.
+pub(crate) fn resolve_bundle_file(
+    data_root: &Path,
+    requested: &str,
+) -> Result<PathBuf, ScriptError> {
+    resolve_file(data_root, requested, &[Path::new("")])
+}
+
 pub(crate) fn app_data_root(data_root: &Path) -> PathBuf {
     data_root.parent().unwrap_or(data_root).join("appdata")
 }
