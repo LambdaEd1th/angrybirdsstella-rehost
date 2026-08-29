@@ -45,6 +45,18 @@ pub(in crate::physics_world::narrow_phase) fn clip_segment_to_line(
     output
 }
 
+/// Both native manifold callers require at least two outputs after each
+/// clipping plane and then consume only the first two slots.
+pub(in crate::physics_world::narrow_phase) fn clip_segment_to_line_pair(
+    segment: [ClipVertex; 2],
+    normal: (f32, f32),
+    offset: f32,
+    reference_vertex: usize,
+) -> Option<[ClipVertex; 2]> {
+    let output = clip_segment_to_line(segment, normal, offset, reference_vertex);
+    (output.len() >= 2).then(|| [output[0], output[1]])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -99,5 +111,19 @@ mod tests {
         assert!(output[2].point.0.is_nan());
         assert!(output[2].point.1.is_nan());
         assert_eq!(output[2].feature_id, contact_feature_id(5, 13, 0, 1));
+    }
+
+    #[test]
+    fn native_manifold_clip_stage_rejects_a_single_boundary_endpoint() {
+        let first = ClipVertex {
+            point: (0.0, 0.0),
+            feature_id: contact_feature_id(1, 2, 1, 0),
+        };
+        let second = ClipVertex {
+            point: (1.0, 0.0),
+            feature_id: contact_feature_id(1, 3, 1, 0),
+        };
+
+        assert!(clip_segment_to_line_pair([first, second], (1.0, 0.0), 0.0, 4).is_none());
     }
 }

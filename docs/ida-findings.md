@@ -17633,3 +17633,40 @@ fresh isolated-AppData 120-frame release-wgpu upload/render/readback reports
 bindings, with empty stderr. `build/audit-native-edge-axis-20260829.png` is a
 1024x768 RGBA PNG with SHA-256
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## Native manifold side-clip count contract
+
+The two callers of `b2ClipSegmentToLine` were followed through both clipping
+planes. `b2CollidePolygons` compares the first result with two at
+`0x10085F950` and branches out on `B.LT` at `0x10085F954`; after the second
+call it repeats the same `CMP #2` / `B.LT` pair at
+`0x10085F9AC..0x10085F9B0`. `b2EPCollider::Collide` does likewise at
+`0x10085F418..0x10085F41C` and `0x10085F438..0x10085F43C`. A result count of
+zero or one therefore aborts before front-plane filtering in all four cases.
+The condition is not merely a nonempty check.
+
+This distinction is observable at an exact clipping boundary. If one
+endpoint has zero signed distance and the other is ordered positive, only the
+boundary endpoint is copied; their product is signed zero, so the strict
+intersection branch does not add another point. Purple rejects that
+single-point intermediate result. Conversely, the already recovered
+unordered path may produce three outputs, after which each caller consumes
+only slots zero and one. The four count branches are commented in IDA and
+Hopper and the IDB is saved.
+
+Rust now centralizes this caller contract in a two-point clipping wrapper.
+Both polygon-polygon and edge-polygon paths use it after each plane, so a
+single endpoint returns `None`, two points proceed, and a native three-output
+unordered result is truncated in source order. A regression constructs the
+zero/positive boundary-distance pair and pins rejection at the manifold-stage
+wrapper while the direct three-output unordered clipping regression remains
+unchanged.
+
+The complete workspace passes 814 tests with only the deliberate long-
+duration BirdRun audit ignored. Formatting, whitespace validation, strict
+all-target/all-feature Clippy and the release workspace build are clean. A
+fresh isolated-AppData 120-frame release-wgpu upload/render/readback reports
+20 optional probes, zero invoked fallbacks and zero remaining compatibility
+bindings, with empty stderr. `build/audit-native-clip-count-20260829.png` is a
+1024x768 RGBA PNG with SHA-256
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.

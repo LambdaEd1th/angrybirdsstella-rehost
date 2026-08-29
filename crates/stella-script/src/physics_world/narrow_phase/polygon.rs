@@ -11,7 +11,7 @@ use crate::{
     NativeToiTransform, contact_feature_id, swap_contact_features,
 };
 
-pub(super) use clipping::{ClipVertex, clip_segment_to_line};
+pub(super) use clipping::{ClipVertex, clip_segment_to_line_pair};
 #[cfg(test)]
 pub(crate) use separation::polygon_max_separation;
 pub(super) use separation::polygon_normals_f32;
@@ -127,7 +127,7 @@ pub(crate) fn polygon_manifold_at_transforms(
             ),
         },
     ];
-    let mut clipped = clip_segment_to_line(
+    let mut clipped = clip_segment_to_line_pair(
         incident_vertices,
         (-world_tangent.0, -world_tangent.1),
         -(world_tangent.0.mul_add(
@@ -135,22 +135,16 @@ pub(crate) fn polygon_manifold_at_transforms(
             world_tangent.1 * reference_world_start.1,
         )) + total_radius,
         reference_edge,
-    );
-    if clipped.len() < 2 {
-        return None;
-    }
-    clipped = clip_segment_to_line(
-        [clipped[0], clipped[1]],
+    )?;
+    clipped = clip_segment_to_line_pair(
+        clipped,
         world_tangent,
         world_tangent.0.mul_add(
             reference_world_end.0,
             world_tangent.1 * reference_world_end.1,
         ) + total_radius,
         (reference_edge + 1) % reference.len(),
-    );
-    if clipped.is_empty() {
-        return None;
-    }
+    )?;
 
     let front_offset = reference_normal.0.mul_add(
         reference_world_start.0,

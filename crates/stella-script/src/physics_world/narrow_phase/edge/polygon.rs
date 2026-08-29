@@ -5,7 +5,7 @@ use super::super::{
     geometry::{
         native_arm_le_f32, native_arm_lt_f32, native_fmin_f32, native_normalize_or_preserve_f32,
     },
-    polygon::{ClipVertex, clip_segment_to_line, polygon_normals_f32},
+    polygon::{ClipVertex, clip_segment_to_line_pair, polygon_normals_f32},
 };
 use crate::{
     BOX2D_POLYGON_RADIUS, ContactLocalManifold, ContactManifold, ContactManifoldType, ContactPoint,
@@ -203,28 +203,22 @@ pub(crate) fn polygon_segment_manifold_at_transforms(
         .0
         .mul_add(reference_start.0, reference_tangent.1 * reference_start.1))
         + total_radius;
-    let mut clipped = clip_segment_to_line(
+    let mut clipped = clip_segment_to_line_pair(
         incident,
         (-reference_tangent.0, -reference_tangent.1),
         first_offset,
         reference_start_index,
-    );
-    if clipped.len() < 2 {
-        return None;
-    }
+    )?;
     let second_offset = reference_tangent
         .0
         .mul_add(reference_end.0, reference_tangent.1 * reference_end.1)
         + total_radius;
-    clipped = clip_segment_to_line(
-        [clipped[0], clipped[1]],
+    clipped = clip_segment_to_line_pair(
+        clipped,
         reference_tangent,
         second_offset,
         reference_end_index,
-    );
-    if clipped.is_empty() {
-        return None;
-    }
+    )?;
 
     let front_offset = reference_normal
         .0
