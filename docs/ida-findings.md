@@ -17555,3 +17555,41 @@ fresh isolated-AppData 120-frame release-wgpu upload/render/readback reports
 bindings. `build/audit-native-separation-minmax-20260829.png` is a 1024x768
 RGBA PNG with SHA-256
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## Native unordered final manifold-point filtering
+
+The final contact-point gates in both polygon collision routines were checked
+against IDA and Hopper instead of relying on the decompiler's C-like `<=`
+rendering. In `b2CollidePolygons` (`0x10085F648`), the first clipped point is
+compared at `0x10085FA04`; both the ordinary and flipped layouts reach a
+`B.LE` at `0x10085FA0C`/`0x10085FA18`. The second point is compared at
+`0x10085FA78` or `0x10085FB08` and skipped only by `B.GT` at
+`0x10085FA7C`/`0x10085FB0C`. Consequently an unordered comparison
+(NZCV=`0011`) retains both points: `LE` is true and `GT` is false.
+
+`b2EPCollider::Collide` (`0x10085EADC`) has the same split in both reference
+layouts. Its first-point branches at `0x10085F480` and `0x10085F4CC` are
+`B.LE`; its second-point branches at `0x10085F52C` and `0x10085F5B8` are
+`B.GT`. Thus only an ordered separation greater than the combined polygon
+radius is rejected. The eight condition-code sites are now commented in both
+disassemblers and the IDB is saved.
+
+Rust's ordinary `separation <= total_radius` rejected NaN and therefore
+discarded a contact that Purple retains. Both polygon-polygon and
+edge-polygon manifold builders now use one shared AArch64 `LE` predicate.
+The clip-segment implementation also reuses that predicate, removing its
+identical private copy without changing finite or unordered behavior.
+End-to-end narrow-phase regressions pass unordered polygon geometry through
+separation selection, clipping and the final point filters; each pins the
+native two-point NaN manifold instead of a missing contact. A focused helper
+test covers ordered less/equal/greater and unordered inputs.
+
+The complete workspace passes 810 tests with only the deliberate long-
+duration BirdRun audit ignored. Formatting, whitespace validation, strict
+all-target/all-feature Clippy and the release workspace build are clean. A
+fresh isolated-AppData 120-frame release-wgpu upload/render/readback reports
+20 optional probes, zero invoked fallbacks and zero remaining compatibility
+bindings, with empty stderr.
+`build/audit-native-manifold-unordered-20260829.png` is a 1024x768 RGBA PNG
+with SHA-256
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.

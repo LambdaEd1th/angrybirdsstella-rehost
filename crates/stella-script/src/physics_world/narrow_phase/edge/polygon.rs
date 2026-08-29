@@ -2,7 +2,9 @@
 
 use super::super::{
     NativePolygon,
-    geometry::{native_arm_lt_f32, native_fmin_f32, native_normalize_or_preserve_f32},
+    geometry::{
+        native_arm_le_f32, native_arm_lt_f32, native_fmin_f32, native_normalize_or_preserve_f32,
+    },
     polygon::{ClipVertex, clip_segment_to_line, polygon_normals_f32},
 };
 use crate::{
@@ -252,7 +254,7 @@ pub(crate) fn polygon_segment_manifold_at_transforms(
             } else {
                 relative_transform.inverse_point(point)
             };
-            (separation <= total_radius).then_some((
+            native_arm_le_f32(separation, total_radius).then_some((
                 ContactPoint {
                     penetration: f64::from(total_radius - separation),
                     point_x: f64::from(contact_world.0),

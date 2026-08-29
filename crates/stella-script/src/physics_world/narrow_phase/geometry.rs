@@ -56,6 +56,12 @@ pub(crate) fn native_arm_lt_f32(left: f32, right: f32) -> bool {
     )
 }
 
+/// AArch64 `FCMP` followed by `B.LE`: ordered less-than/equal and unordered
+/// all satisfy the condition because unordered sets NZCV=0011.
+pub(crate) fn native_arm_le_f32(left: f32, right: f32) -> bool {
+    !matches!(left.partial_cmp(&right), Some(std::cmp::Ordering::Greater))
+}
+
 /// AArch64 `FMIN`: propagate and quiet the first NaN operand, retain negative
 /// zero, otherwise return the smaller ordered operand.
 pub(crate) fn native_fmin_f32(left: f32, right: f32) -> f32 {
@@ -95,7 +101,8 @@ pub(crate) fn native_fmax_f32(left: f32, right: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        native_arm_lt_f32, native_fmax_f32, native_fmin_f32, native_normalize_or_preserve_f32,
+        native_arm_le_f32, native_arm_lt_f32, native_fmax_f32, native_fmin_f32,
+        native_normalize_or_preserve_f32,
     };
 
     #[test]
@@ -104,6 +111,14 @@ mod tests {
         assert!(native_arm_lt_f32(f32::NAN, 0.0));
         assert!(!native_arm_lt_f32(0.0, 0.0));
         assert!(!native_arm_lt_f32(1.0, 0.0));
+    }
+
+    #[test]
+    fn arm_le_accepts_ordered_non_greater_and_unordered() {
+        assert!(native_arm_le_f32(-1.0, 0.0));
+        assert!(native_arm_le_f32(0.0, 0.0));
+        assert!(native_arm_le_f32(f32::NAN, 0.0));
+        assert!(!native_arm_le_f32(1.0, 0.0));
     }
 
     #[test]

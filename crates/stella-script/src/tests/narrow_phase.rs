@@ -51,6 +51,29 @@ fn polygon_reference_face_uses_native_relative_and_absolute_tolerance() {
 }
 
 #[test]
+fn polygon_manifold_final_filter_keeps_unordered_separations() {
+    let unordered = [(f64::NAN, 0.0), (f64::NAN, 1.0), (f64::NAN, 2.0)];
+    let finite = [(-1.0, -1.0), (1.0, -1.0), (0.0, 1.0)];
+
+    let manifold = polygon_manifold(&unordered, &finite)
+        .expect("native B.LE/B.GT final filters retain unordered points");
+
+    assert!(manifold.penetration.is_nan());
+    assert_eq!(manifold.position.point_count, 2);
+}
+
+#[test]
+fn edge_polygon_final_manifold_filter_keeps_unordered_separations() {
+    let unordered = [(f64::NAN, 0.0), (f64::NAN, 1.0), (f64::NAN, 2.0)];
+
+    let manifold = polygon_segment_manifold(&unordered, ((-1.0, 0.0), (1.0, 0.0)), true)
+        .expect("native B.LE/B.GT edge-polygon filters retain unordered points");
+
+    assert!(manifold.penetration.is_nan());
+    assert_eq!(manifold.position.point_count, 2);
+}
+
+#[test]
 fn rotated_polygon_pair_keeps_native_reference_and_incident_local_points() {
     let first = [
         (-1.0_f32, -0.5_f32),

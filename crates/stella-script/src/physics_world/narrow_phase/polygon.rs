@@ -3,7 +3,7 @@
 mod clipping;
 mod separation;
 
-use super::geometry::native_normalize_or_preserve_f32;
+use super::geometry::{native_arm_le_f32, native_normalize_or_preserve_f32};
 #[cfg(test)]
 use crate::NativePolygon;
 use crate::{
@@ -164,7 +164,7 @@ pub(crate) fn polygon_manifold_at_transforms(
                 .0
                 .mul_add(point.0, reference_normal.1 * point.1)
                 - front_offset;
-            (separation <= total_radius).then_some((
+            native_arm_le_f32(separation, total_radius).then_some((
                 ContactPoint {
                     penetration: f64::from(total_radius - separation),
                     point_x: f64::from(

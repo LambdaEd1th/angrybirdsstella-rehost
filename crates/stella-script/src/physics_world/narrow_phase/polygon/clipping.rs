@@ -1,6 +1,6 @@
 //! b2ClipSegmentToLine (`sub_100860148`).
 
-use super::super::geometry::native_arm_lt_f32;
+use super::super::geometry::{native_arm_le_f32, native_arm_lt_f32};
 use crate::contact_feature_id;
 use smallvec::SmallVec;
 
@@ -23,10 +23,10 @@ pub(in crate::physics_world::narrow_phase) fn clip_segment_to_line(
     let first_distance = first_dot - offset;
     let second_distance = second_dot - offset;
     let mut output = SmallVec::new();
-    if native_arm_le_zero(first_distance) {
+    if native_arm_le_f32(first_distance, 0.0_f32) {
         output.push(segment[0]);
     }
-    if native_arm_le_zero(second_distance) {
+    if native_arm_le_f32(second_distance, 0.0_f32) {
         output.push(segment[1]);
     }
     if native_arm_lt_f32(first_distance * second_distance, 0.0_f32) {
@@ -43,13 +43,6 @@ pub(in crate::physics_world::narrow_phase) fn clip_segment_to_line(
         });
     }
     output
-}
-
-fn native_arm_le_zero(value: f32) -> bool {
-    !matches!(
-        value.partial_cmp(&0.0_f32),
-        Some(std::cmp::Ordering::Greater)
-    )
 }
 
 #[cfg(test)]
