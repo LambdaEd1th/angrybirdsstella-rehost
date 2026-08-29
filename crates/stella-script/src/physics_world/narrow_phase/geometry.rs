@@ -47,9 +47,79 @@ pub(crate) fn native_normalize_or_preserve_f32(axis: (f32, f32)) -> (f32, f32) {
     }
 }
 
+/// AArch64 `FCMP` followed by `B.LT`/`CSEL LT`: ordered less-than and
+/// unordered both satisfy the condition because unordered sets NZCV=0011.
+pub(crate) fn native_arm_lt_f32(left: f32, right: f32) -> bool {
+    matches!(
+        left.partial_cmp(&right),
+        None | Some(std::cmp::Ordering::Less)
+    )
+}
+
+/// AArch64 `FMIN`: propagate and quiet the first NaN operand, retain negative
+/// zero, otherwise return the smaller ordered operand.
+pub(crate) fn native_fmin_f32(left: f32, right: f32) -> f32 {
+    if left.is_nan() {
+        return f32::from_bits(left.to_bits() | 0x0040_0000);
+    }
+    if right.is_nan() {
+        return f32::from_bits(right.to_bits() | 0x0040_0000);
+    }
+    if left == right {
+        if left == 0.0_f32 && (left.is_sign_negative() || right.is_sign_negative()) {
+            return -0.0_f32;
+        }
+        return left;
+    }
+    if left < right { left } else { right }
+}
+
+/// AArch64 `FMAX`: propagate and quiet the first NaN operand, retain positive
+/// zero, otherwise return the larger ordered operand.
+pub(crate) fn native_fmax_f32(left: f32, right: f32) -> f32 {
+    if left.is_nan() {
+        return f32::from_bits(left.to_bits() | 0x0040_0000);
+    }
+    if right.is_nan() {
+        return f32::from_bits(right.to_bits() | 0x0040_0000);
+    }
+    if left == right {
+        if left == 0.0_f32 && (!left.is_sign_negative() || !right.is_sign_negative()) {
+            return 0.0_f32;
+        }
+        return left;
+    }
+    if left > right { left } else { right }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::native_normalize_or_preserve_f32;
+    use super::{
+        native_arm_lt_f32, native_fmax_f32, native_fmin_f32, native_normalize_or_preserve_f32,
+    };
+
+    #[test]
+    fn arm_lt_accepts_ordered_less_and_unordered_only() {
+        assert!(native_arm_lt_f32(-1.0, 0.0));
+        assert!(native_arm_lt_f32(f32::NAN, 0.0));
+        assert!(!native_arm_lt_f32(0.0, 0.0));
+        assert!(!native_arm_lt_f32(1.0, 0.0));
+    }
+
+    #[test]
+    fn native_minmax_propagate_payloads_and_choose_signed_zero() {
+        let first_nan = f32::from_bits(0x7F81_2345);
+        let second_nan = f32::from_bits(0xFFC5_4321);
+
+        assert_eq!(native_fmin_f32(first_nan, 5.0).to_bits(), 0x7FC1_2345);
+        assert_eq!(native_fmax_f32(5.0, second_nan).to_bits(), 0xFFC5_4321);
+        assert_eq!(
+            native_fmin_f32(first_nan, second_nan).to_bits(),
+            0x7FC1_2345
+        );
+        assert_eq!(native_fmin_f32(0.0, -0.0).to_bits(), (-0.0_f32).to_bits());
+        assert_eq!(native_fmax_f32(-0.0, 0.0).to_bits(), 0.0_f32.to_bits());
+    }
 
     #[test]
     fn native_normalize_preserves_zero_and_sub_epsilon_vectors() {

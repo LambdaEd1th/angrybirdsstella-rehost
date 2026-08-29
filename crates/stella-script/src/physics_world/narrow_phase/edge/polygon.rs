@@ -2,7 +2,7 @@
 
 use super::super::{
     NativePolygon,
-    geometry::native_normalize_or_preserve_f32,
+    geometry::{native_arm_lt_f32, native_fmin_f32, native_normalize_or_preserve_f32},
     polygon::{ClipVertex, clip_segment_to_line, polygon_normals_f32},
 };
 use crate::{
@@ -79,7 +79,10 @@ pub(crate) fn polygon_segment_manifold_at_transforms(
     };
     let edge_separation = polygon.iter().fold(f32::MAX, |separation, &point| {
         let delta = (point.0 - edge_start.0, point.1 - edge_start.1);
-        separation.min(edge_normal.0 * delta.0 + edge_normal.1 * delta.1)
+        native_fmin_f32(
+            separation,
+            edge_normal.0 * delta.0 + edge_normal.1 * delta.1,
+        )
     });
     let total_radius = (2.0 * BOX2D_POLYGON_RADIUS) as f32;
     if edge_separation > total_radius {
@@ -95,8 +98,10 @@ pub(crate) fn polygon_segment_manifold_at_transforms(
         let vertex = polygon[index];
         let start_delta = (edge_start.0 - vertex.0, edge_start.1 - vertex.1);
         let end_delta = (edge_end.0 - vertex.0, edge_end.1 - vertex.1);
-        let separation = (normal.0 * start_delta.0 + normal.1 * start_delta.1)
-            .min(normal.0 * end_delta.0 + normal.1 * end_delta.1);
+        let separation = native_fmin_f32(
+            normal.0 * start_delta.0 + normal.1 * start_delta.1,
+            normal.0 * end_delta.0 + normal.1 * end_delta.1,
+        );
         if separation > total_radius {
             return None;
         }
@@ -164,8 +169,9 @@ pub(crate) fn polygon_segment_manifold_at_transforms(
         let mut incident_alignment = f32::MAX;
         for &(index, normal) in &polygon_normals {
             let alignment = normal.0.mul_add(edge_normal.0, normal.1 * edge_normal.1);
-            if alignment < incident_alignment {
-                incident_alignment = alignment;
+            let replaces_index = native_arm_lt_f32(alignment, incident_alignment);
+            incident_alignment = native_fmin_f32(alignment, incident_alignment);
+            if replaces_index {
                 incident_index = index;
             }
         }

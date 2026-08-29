@@ -1,5 +1,6 @@
 //! b2ClipSegmentToLine (`sub_100860148`).
 
+use super::super::geometry::native_arm_lt_f32;
 use crate::contact_feature_id;
 use smallvec::SmallVec;
 
@@ -28,7 +29,7 @@ pub(in crate::physics_world::narrow_phase) fn clip_segment_to_line(
     if native_arm_le_zero(second_distance) {
         output.push(segment[1]);
     }
-    if native_arm_lt_zero(first_distance * second_distance) {
+    if native_arm_lt_f32(first_distance * second_distance, 0.0_f32) {
         // sub_1008601C8 subtracts the two un-offset dot products. Reusing
         // distance1-distance2 introduces two extra f32 rounding boundaries.
         let fraction = first_distance / (first_dot - second_dot);
@@ -48,13 +49,6 @@ fn native_arm_le_zero(value: f32) -> bool {
     !matches!(
         value.partial_cmp(&0.0_f32),
         Some(std::cmp::Ordering::Greater)
-    )
-}
-
-fn native_arm_lt_zero(value: f32) -> bool {
-    matches!(
-        value.partial_cmp(&0.0_f32),
-        None | Some(std::cmp::Ordering::Less)
     )
 }
 

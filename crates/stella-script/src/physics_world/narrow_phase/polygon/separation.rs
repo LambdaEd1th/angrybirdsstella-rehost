@@ -1,6 +1,9 @@
-//! b2FindMaxSeparation and b2EdgeSeparation (`sub_10085FB84`/`sub_10085FD74`).
+//! `b2FindMaxSeparation`/`b2EdgeSeparation` (`0x10085FB84`/`0x10085FD74`).
 
-use super::super::NativePolygon;
+use super::super::{
+    NativePolygon,
+    geometry::{native_arm_lt_f32, native_fmax_f32, native_fmin_f32},
+};
 use crate::{NativeToiTransform, native_polygon_centroid_f32, native_polygon_normals};
 
 #[cfg(test)]
@@ -27,7 +30,7 @@ pub(crate) fn polygon_max_separation(
         incident_centroid.1 - reference_centroid.1,
     );
 
-    // sub_10085FB84 first picks the normal most aligned with the centroid
+    // b2FindMaxSeparation first picks the normal most aligned with the centroid
     // direction. It then compares the two neighbours and climbs strictly in
     // just one direction. This tie/order behavior is observable in feature IDs
     // and is not equivalent to scanning every separation.
@@ -37,8 +40,9 @@ pub(crate) fn polygon_max_separation(
         let alignment = normal
             .0
             .mul_add(centroid_delta.0, normal.1 * centroid_delta.1);
-        if alignment > best_alignment {
-            best_alignment = alignment;
+        let replaces_index = alignment > best_alignment;
+        best_alignment = native_fmax_f32(alignment, best_alignment);
+        if replaces_index {
             current_index = index;
         }
     }
@@ -56,7 +60,7 @@ pub(crate) fn polygon_max_separation(
     if previous > current && previous > next {
         while previous_index != current_index {
             let candidate = edge_separation(reference, incident, &normals, previous_index);
-            if candidate <= current {
+            if candidate.partial_cmp(&current) != Some(std::cmp::Ordering::Greater) {
                 break;
             }
             current = candidate;
@@ -66,7 +70,7 @@ pub(crate) fn polygon_max_separation(
     } else {
         while next_index != current_index {
             let candidate = edge_separation(reference, incident, &normals, next_index);
-            if candidate <= current {
+            if candidate.partial_cmp(&current) != Some(std::cmp::Ordering::Greater) {
                 break;
             }
             current = candidate;
@@ -106,7 +110,7 @@ pub(super) fn polygon_max_separation_at_transforms(
         incident_world_centroid.1 - reference_world_centroid.1,
     ));
 
-    // sub_10085FB84 chooses the centroid-facing normal first, then walks only
+    // b2FindMaxSeparation chooses the centroid-facing normal first, then walks only
     // one neighbouring direction. Keep its strict comparisons: equal values
     // retain the lower/earlier feature selected by the native loop.
     let mut current_index = 0;
@@ -115,8 +119,9 @@ pub(super) fn polygon_max_separation_at_transforms(
         let alignment = normal
             .0
             .mul_add(centroid_delta.0, normal.1 * centroid_delta.1);
-        if alignment > best_alignment {
-            best_alignment = alignment;
+        let replaces_index = alignment > best_alignment;
+        best_alignment = native_fmax_f32(alignment, best_alignment);
+        if replaces_index {
             current_index = index;
         }
     }
@@ -144,7 +149,7 @@ pub(super) fn polygon_max_separation_at_transforms(
     if previous > current && previous > next {
         while previous_index != current_index {
             let candidate = separation(previous_index);
-            if candidate <= current {
+            if candidate.partial_cmp(&current) != Some(std::cmp::Ordering::Greater) {
                 break;
             }
             current = candidate;
@@ -154,7 +159,7 @@ pub(super) fn polygon_max_separation_at_transforms(
     } else {
         while next_index != current_index {
             let candidate = separation(next_index);
-            if candidate <= current {
+            if candidate.partial_cmp(&current) != Some(std::cmp::Ordering::Greater) {
                 break;
             }
             current = candidate;
@@ -188,8 +193,9 @@ fn polygon_edge_separation_at_transforms(
         let projection = incident_normal
             .0
             .mul_add(point.0, incident_normal.1 * point.1);
-        if projection < support_projection {
-            support_projection = projection;
+        let replaces_support = native_arm_lt_f32(projection, support_projection);
+        support_projection = native_fmin_f32(projection, support_projection);
+        if replaces_support {
             support = point;
         }
     }
@@ -214,8 +220,9 @@ fn edge_separation(
     for &(x, y) in &incident[1..] {
         let point = (x as f32, y as f32);
         let projection = normal.0.mul_add(point.0, normal.1 * point.1);
-        if projection < support_projection {
-            support_projection = projection;
+        let replaces_support = native_arm_lt_f32(projection, support_projection);
+        support_projection = native_fmin_f32(projection, support_projection);
+        if replaces_support {
             support = point;
         }
     }
@@ -258,8 +265,9 @@ pub(super) fn polygon_incident_edge_at_transforms(
             incident_reference_normal.0,
             normal.1 * incident_reference_normal.1,
         );
-        if alignment < best_alignment {
-            best_alignment = alignment;
+        let replaces_index = native_arm_lt_f32(alignment, best_alignment);
+        best_alignment = native_fmin_f32(alignment, best_alignment);
+        if replaces_index {
             best_index = index;
         }
     }
@@ -270,4 +278,27 @@ pub(super) fn polygon_incident_edge_at_transforms(
             polygon_transform.point(polygon[(best_index + 1) % polygon.len()]),
         ),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unordered_support_projection_advances_index_while_fmin_stays_nan() {
+        let reference = [(-1.0_f32, -1.0_f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)];
+        let normals = native_polygon_normals(&reference);
+        let incident = [(0.0_f32, 10.0_f32), (f32::NAN, 0.0), (0.0, 0.0)];
+
+        let separation = polygon_edge_separation_at_transforms(
+            &reference,
+            &normals,
+            NativeToiTransform::IDENTITY,
+            0,
+            &incident,
+            NativeToiTransform::IDENTITY,
+        );
+
+        assert_eq!(separation.to_bits(), (-1.0_f32).to_bits());
+    }
 }

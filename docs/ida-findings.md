@@ -17514,3 +17514,44 @@ fresh isolated-AppData 120-frame release-wgpu upload/render/readback reports
 bindings. `build/audit-native-clip-unordered-20260829.png` is a 1024x768 RGBA
 PNG with SHA-256
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
+## Native separation-axis FMIN/FMAX data and index flow
+
+IDA and Hopper now name `b2FindMaxSeparation` at `0x10085FB84` and
+`b2EdgeSeparation` at `0x10085FD74`. The centroid-facing seed scan compares
+each alignment with the running value at `0x10085FC48`, then performs two
+independent operations: `FMAX` updates the float lane at `0x10085FC4C`, while
+`CSEL GT` updates the edge index at `0x10085FC50`. An unordered comparison
+therefore leaves the prior index in place but propagates and quiets the NaN
+through the running maximum. The previous/next direction gate at
+`0x10085FCD0..0x10085FCD8` selects the previous walk only when that neighbour
+is ordered greater than both the seed and next neighbour. Both hill-climb
+loops continue through `B.GT` at `0x10085FD10`/`0x10085FD48`, so a tie or
+unordered candidate stops without replacing the current edge.
+
+The incident support scan has the complementary split. `FCMP` at
+`0x10085FDD8` feeds `CSEL LT` at `0x10085FDE0`, which selects the current
+support index for ordered-less or unordered projection. `FMIN` at
+`0x10085FDDC` updates the projection lane independently and propagates NaN.
+The same instruction pattern appears in polygon incident-edge selection and
+the edge-polygon collider's support/axis loops. Both disassemblers carry
+comments on these data-versus-index boundaries and the IDB is saved.
+
+An arm64 instruction probe additionally pins `FMIN/FMAX` details that Rust's
+ordinary `min`/`max` do not provide: either instruction propagates and quiets
+the first NaN operand (retaining sign and payload), `FMIN` chooses negative
+zero, and `FMAX` chooses positive zero. Stable Rust helpers now reproduce
+those bit rules on every target. Separation scans update the float lane and
+index separately, and only ordered-greater candidates advance either
+directional climb. Regressions cover NaN payloads, signed zero, unordered
+`LT`, and a support sequence where unordered projection advances the support
+index while the FMIN lane remains NaN.
+
+The complete workspace passes 807 tests with only the deliberate long-
+duration BirdRun audit ignored. Formatting, whitespace validation, strict
+all-target/all-feature Clippy and the release workspace build are clean. A
+fresh isolated-AppData 120-frame release-wgpu upload/render/readback reports
+20 optional probes, zero invoked fallbacks and zero remaining compatibility
+bindings. `build/audit-native-separation-minmax-20260829.png` is a 1024x768
+RGBA PNG with SHA-256
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
