@@ -145,6 +145,47 @@ fn body_type_changes_flag_every_attached_contact_for_native_refiltering() {
 }
 
 #[test]
+fn static_to_dynamic_body_type_change_requeues_fixture_proxies() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createBox("static_a", "", 0, 0, 2, 2, 0, 0, 0, true, false, 1)
+                createBox("static_b", "", 0, 0, 2, 2, 0, 0, 0, true, false, 1)
+                "#,
+        )
+        .unwrap();
+
+    {
+        let mut bridge = runtime.render.lock().unwrap();
+        // Two static bodies can share fat-AABB space but never create a
+        // contact because UpdatePairs requires at least one dynamic body.
+        assert!(bridge.refresh_contacts().is_empty());
+        assert!(bridge.broad_phase_contacts.is_empty());
+    }
+
+    runtime
+        .execute_source(r#"setObjectParameter("static_a", 39, 2)"#)
+        .unwrap();
+    let mut bridge = runtime.render.lock().unwrap();
+    // Native SetType -> b2Fixture::Refilter queues every fixture proxy in the
+    // move buffer. The transition therefore discovers the overlapping static_b
+    // fixture on the very next Collide pass.
+    let events = bridge.refresh_contacts();
+    assert!(events.iter().any(|event| {
+        event.began
+            && ((event.first == "static_a" && event.second == "static_b")
+                || (event.first == "static_b" && event.second == "static_a"))
+    }));
+    assert!(bridge.broad_phase_contacts.contains(&(
+        "static_a".to_owned(),
+        "static_b".to_owned(),
+        0,
+        0
+    )));
+}
+
+#[test]
 fn sensor_parameter_wakes_contact_neighbor_and_only_reactivates_body() {
     let runtime = unlocked_test_runtime();
     runtime

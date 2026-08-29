@@ -64,5 +64,14 @@ impl RenderBridge {
                 .filter(|(first, second, _, _)| first == body || second == body)
                 .cloned(),
         );
+        // SetType finishes by calling b2Fixture::Refilter on every fixture
+        // (`sub_10086CC90`). Besides setting e_filterFlag on attached
+        // contacts, that path pushes every child proxy into the world's
+        // broad-phase move buffer. This is required for a static-to-dynamic
+        // transition to discover a newly-overlapping contact.
+        if let Some(object) = self.scene.get(body) {
+            self.moved_proxy_ids
+                .extend(object.fixture_proxy_ids.iter().flatten().copied());
+        }
     }
 }

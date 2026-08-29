@@ -6503,6 +6503,30 @@ compatibility bindings. It emitted
 `build/audit-system-font-smoke-20260820.png`, SHA-256
 `a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
 
+## SetType fixture refilter and move-buffer requeue
+
+IDA/Hopper show `sub_10086B0CC` invoking `sub_10086CC90` once for every fixture
+after the body type and mass state are updated. The refilter helper first marks
+attached contacts with `e_filterFlag` at `0x10086CCD0`, then pushes every child
+proxy id into the world's broad-phase move buffer at `0x10086CD10`. Marking
+only existing contacts is insufficient: a static-to-dynamic transition must
+also rediscover pairs that overlapped while both bodies were non-dynamic.
+
+`RenderBridge::flag_contacts_for_filtering_for_body` now mirrors both effects
+by retaining the existing dirty-contact pass and re-queuing all live fixture
+proxy ids. The regression creates two overlapping static boxes, confirms that
+no contact exists, changes one to dynamic, and verifies that the next
+`Collide`/`UpdatePairs` pass creates the touching contact. The decisive SetType
+and refilter sites are commented in both IDA and Hopper, and the IDB is saved.
+
+The complete workspace passes 845 tests with one deliberate long-duration
+BirdRun audit ignored. Strict all-target/all-feature Clippy and the release
+workspace build are clean. A fresh isolated-AppData release-wgpu launch and
+120-frame readback exits with empty stderr, 20 optional probes, zero invoked
+fallbacks and zero compatibility bindings; the visually checked 1024x768 RGBA
+output is `build/audit-settype-refilter-20260829.png` with SHA-256
+`a318b4699df2a40259eaaccd415e171ff978a9468e5621e1bd05a50900f930c7`.
+
 ## Non-dynamic ResetMassData fixture-cache behavior
 
 The native `b2Body::ResetMassData` path at `0x10086B1F4` clears the body mass,
