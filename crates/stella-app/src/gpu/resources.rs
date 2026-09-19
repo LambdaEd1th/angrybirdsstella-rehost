@@ -82,7 +82,9 @@ pub(super) fn create_capture_texture(
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: GAME_FORMAT,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::RENDER_ATTACHMENT
+            | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],
     });
     GpuTexture {
@@ -102,7 +104,7 @@ pub(super) fn create_sprite_pipeline(
         0 => Float32x2,
         1 => Float32x2,
         2 => Float32x2,
-        4 => Float32x2,
+        4 => Float32x4,
         3 => Uint32
     ];
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {

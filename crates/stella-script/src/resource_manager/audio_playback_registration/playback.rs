@@ -133,10 +133,15 @@ pub(super) fn install(
             let mut runtime = stop_audio.lock().expect("audio runtime lock poisoned");
             match selector {
                 NativeAudioSelector::Handle(handle) => {
-                    runtime.clips.remove(&AudioRuntime::native_handle(handle));
+                    if let Some(clip) = runtime.clips.get_mut(&AudioRuntime::native_handle(handle))
+                    {
+                        clip.finished = true;
+                    }
                 }
                 NativeAudioSelector::Name(name) => {
-                    runtime.clips.retain(|_, clip| clip.name != name);
+                    for clip in runtime.clips.values_mut().filter(|clip| clip.name == name) {
+                        clip.finished = true;
+                    }
                 }
                 NativeAudioSelector::Other => unreachable!("other selectors returned above"),
             }
@@ -150,11 +155,14 @@ pub(super) fn install(
         "stopAllAudio",
         lua.create_function(move |_, ()| {
             require_audio_output(&stop_all_resources, "stop all audio clips")?;
-            stop_all_audio
+            for clip in stop_all_audio
                 .lock()
                 .expect("audio runtime lock poisoned")
                 .clips
-                .clear();
+                .values_mut()
+            {
+                clip.finished = true;
+            }
             Ok(())
         })?,
     )?;
@@ -174,10 +182,12 @@ pub(super) fn install(
             Ok(match selector {
                 NativeAudioSelector::Handle(handle) => runtime
                     .clips
-                    .contains_key(&AudioRuntime::native_handle(handle)),
-                NativeAudioSelector::Name(name) => {
-                    runtime.clips.values().any(|clip| clip.name == name)
-                }
+                    .get(&AudioRuntime::native_handle(handle))
+                    .is_some_and(|clip| !clip.finished),
+                NativeAudioSelector::Name(name) => runtime
+                    .clips
+                    .values()
+                    .any(|clip| clip.name == name && !clip.finished),
                 NativeAudioSelector::Other => false,
             })
         })?,

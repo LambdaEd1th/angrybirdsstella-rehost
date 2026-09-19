@@ -109,6 +109,7 @@ impl RenderBridge {
             && !object.sprite.is_empty()
             && object.sprite_bound)
             .then(|| RenderCommand {
+                projection_3d: None,
                 order: 0,
                 sprite: object.sprite.clone().into(),
                 texture: object.texture.clone(),
@@ -188,6 +189,7 @@ impl RenderBridge {
             // the dispatcher on every draw.
             let dirt = object.dirt.as_deref().map(DirtComponent::render_command);
             let command = RenderCommand {
+                projection_3d: None,
                 order: 0,
                 // The compact draw snapshot already retained every native
                 // resource pointer while the scene lock was released for Lua.
@@ -243,6 +245,7 @@ impl RenderBridge {
                 0.0,
             );
             let decoration_state = RenderState {
+                custom_model: self.state.custom_model,
                 translate_x: f64::from(-(self.top_left_x as f32) / scale_x),
                 translate_y: f64::from(-(self.top_left_y as f32) / scale_y),
                 scale_x: f64::from(world_scale * scale_x),

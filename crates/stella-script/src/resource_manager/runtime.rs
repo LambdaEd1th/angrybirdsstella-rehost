@@ -15,6 +15,7 @@ use crate::{
     TextFontBinding, resolve_data_file,
 };
 
+mod sprite_capture;
 mod sprite_catalog;
 mod sprite_lifecycle;
 
@@ -35,6 +36,7 @@ pub(crate) struct AudioClipState {
     pub(crate) volume: f32,
     pub(crate) looping: bool,
     pub(crate) channel: i32,
+    pub(crate) finished: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,7 +75,7 @@ impl AudioRuntime {
         let active_count = self
             .clips
             .values()
-            .filter(|clip| clip.channel == channel)
+            .filter(|clip| clip.channel == channel && !clip.finished)
             .count() as u32;
         if active_count >= *limit as u32 {
             return -1;
@@ -91,6 +93,7 @@ impl AudioRuntime {
                 volume,
                 looping,
                 channel,
+                finished: false,
             },
         );
         lua_handle
@@ -113,7 +116,9 @@ impl AudioRuntime {
     /// child pointers and are therefore unaffected.
     pub(crate) fn replace_asset(&mut self, name: String, asset: Option<AudioAssetState>) {
         if self.assets.contains_key(&name) {
-            self.clips.retain(|_, clip| clip.name != name);
+            for clip in self.clips.values_mut().filter(|clip| clip.name == name) {
+                clip.finished = true;
+            }
         }
         if let Some(asset) = asset {
             self.assets.insert(name, asset);
@@ -176,11 +181,19 @@ pub(crate) struct ResourceRuntime {
     /// Concrete descriptor used to resolve the sheet-owned texture sources.
     pub(crate) sprite_sheet_descriptor_paths: BTreeMap<String, PathBuf>,
     pub(crate) sprite_sheet_values: BTreeMap<String, SpriteSheet>,
+    pub(crate) sprite_sheet_decoded_images:
+        BTreeMap<String, Arc<stella_assets::native_image::DecodedNativeImage>>,
+    /// Extent of the sheet's retained Image (+0x20), independent of sprite
+    /// geometry and subsequent framebuffer resizes.
+    pub(crate) sprite_sheet_image_dimensions: BTreeMap<String, [u32; 2]>,
+    pub(crate) next_capture_image_identity: u64,
     /// Host bindings constructed with the native SpriteSheet resource.  Draw
     /// submission is intentionally lookup-only: resolving and canonicalizing
     /// a texture path for every sprite would turn Poppy's drill burst into
     /// hundreds of filesystem calls in one display-link frame.
-    pub(crate) sprite_sheet_texture_sources: BTreeMap<String, BTreeMap<String, String>>,
+    /// Indexed by native texture-record ordinal, never by filename: repeated
+    /// SPRT records each allocate independent Image/Texture pairs.
+    pub(crate) sprite_sheet_texture_sources: BTreeMap<String, Vec<String>>,
     pub(crate) sprite_sheet_catalog_regions:
         BTreeMap<String, BTreeMap<String, Arc<SpriteCatalogRegion>>>,
     /// Address-order stand-in for native `SpriteSheet*` allocations. Draw
@@ -277,6 +290,9 @@ impl ResourceRuntime {
             sprite_sheet_paths: BTreeMap::new(),
             sprite_sheet_descriptor_paths: BTreeMap::new(),
             sprite_sheet_values: BTreeMap::new(),
+            sprite_sheet_decoded_images: BTreeMap::new(),
+            sprite_sheet_image_dimensions: BTreeMap::new(),
+            next_capture_image_identity: 1,
             sprite_sheet_texture_sources: BTreeMap::new(),
             sprite_sheet_catalog_regions: BTreeMap::new(),
             sprite_sheet_identities: BTreeMap::new(),

@@ -2,7 +2,7 @@
 
 use std::{path::Path, sync::Arc};
 
-use stella_assets::ka3d::{CompositeSpriteSet, SpriteSheet};
+use stella_assets::ka3d::{CompositeSpriteSet, SpriteRegion, SpriteSheet};
 
 use super::{ResourceRuntime, SpriteResourceEntry, SpriteResourceKind};
 use crate::{
@@ -11,6 +11,57 @@ use crate::{
 };
 
 impl ResourceRuntime {
+    pub(crate) fn replace_downloaded_avatar_sprite(
+        &mut self,
+        owner: &str,
+        sprite: SpriteRegion,
+        texture_source: String,
+        image: Arc<stella_assets::native_image::DecodedNativeImage>,
+        data_root: &Path,
+    ) {
+        self.replace_sprite_sheet_value(
+            owner,
+            SpriteSheet {
+                textures: vec![texture_source],
+                sprites: vec![sprite],
+                sprite_texture_indices: vec![0],
+            },
+        );
+        self.sprite_sheet_image_dimensions
+            .insert(owner.to_owned(), [image.width, image.height]);
+        self.sprite_sheet_decoded_images
+            .insert(owner.to_owned(), image);
+        self.cache_sprite_sheet_host_bindings(owner, data_root);
+    }
+    /// Publish a single image-backed sprite directly into the active resource
+    /// stack. Purple's SocialManager owns downloaded avatar images outside the
+    /// normal LuaResources SpriteSheet map, but registers their generated
+    /// `AVATAR_<accountId>` sprite through the same global name tree.
+    pub(crate) fn replace_dynamic_atlas_sprite(
+        &mut self,
+        owner: &str,
+        sprite: SpriteRegion,
+        texture_source: String,
+        data_root: &Path,
+    ) {
+        self.replace_sprite_sheet_value(
+            owner,
+            SpriteSheet {
+                textures: vec![texture_source],
+                sprites: vec![sprite],
+                sprite_texture_indices: vec![0],
+            },
+        );
+        self.cache_sprite_sheet_host_bindings(owner, data_root);
+    }
+
+    /// Remove a dynamically owned sprite while leaving its provider-side
+    /// cached image alive. A later load can therefore republish it without a
+    /// second download, matching SocialManager's state 3 -> state 2 path.
+    pub(crate) fn remove_dynamic_atlas_sprite(&mut self, owner: &str) {
+        self.remove_sprite_sheet_value(owner);
+    }
+
     pub(crate) fn register_sprite_aliases(&mut self, aliases: &[(&str, &str)]) {
         let mut changed = false;
         for &(alias, target) in aliases {
@@ -88,6 +139,8 @@ impl ResourceRuntime {
     }
 
     pub(crate) fn replace_sprite_sheet_value(&mut self, owner: &str, mut sheet: SpriteSheet) {
+        self.sprite_sheet_decoded_images.remove(owner);
+        self.sprite_sheet_image_dimensions.remove(owner);
         let existing = sheet
             .sprites
             .iter()
@@ -152,6 +205,8 @@ impl ResourceRuntime {
     }
 
     pub(crate) fn remove_sprite_sheet_value(&mut self, owner: &str) {
+        self.sprite_sheet_decoded_images.remove(owner);
+        self.sprite_sheet_image_dimensions.remove(owner);
         self.sprite_sheet_identities.remove(owner);
         self.sprite_sheet_texture_sources.remove(owner);
         self.sprite_sheet_catalog_regions.remove(owner);
@@ -171,6 +226,7 @@ impl ResourceRuntime {
     /// `sub_1004578BC` + `sub_10046AF40` path selected by
     /// `releaseSpriteSheet(path, true)`.
     pub(crate) fn deactivate_sprite_sheet_value(&mut self, owner: &str) {
+        self.sprite_sheet_image_dimensions.remove(owner);
         self.sprite_sheet_texture_sources.remove(owner);
         self.sprite_sheet_catalog_regions.remove(owner);
         if let Some(sheet) = self.sprite_sheet_values.get(owner) {

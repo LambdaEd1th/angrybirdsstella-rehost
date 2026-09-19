@@ -94,7 +94,7 @@ pub(crate) fn native_queue_dead_block(lua: &Lua, name: &str, strength: f64) -> L
     let Value::Table(entry) = world.raw_get::<Value>(name)? else {
         return Ok(false);
     };
-    entry.set("strength", strength)?;
+    entry.raw_set("strength", strength)?;
     let dead_blocks = match native_lua_object(lua, NativeLuaObject::DeadBlocks)? {
         Some(table) => table,
         None => {
@@ -123,11 +123,23 @@ pub(crate) fn native_apply_collision_damage(
     target: &str,
     collision_force: f64,
 ) -> LuaResult<NativeDamageResult> {
+    native_apply_scaled_collision_damage(lua, target, collision_force as f32, 1.0)
+}
+
+pub(crate) fn native_apply_scaled_collision_damage(
+    lua: &Lua,
+    target: &str,
+    base_force: f32,
+    damage_multiplier: f32,
+) -> LuaResult<NativeDamageResult> {
     let world = object_world(lua)?;
     let Value::Table(entry) = world.raw_get::<Value>(target)? else {
         return Ok(NativeDamageResult::default());
     };
-    let ignore_all_damage = value_bool(&entry.get::<Value>("ignoreAllDamage")?).unwrap_or(false);
+    let ignore_all_damage = matches!(
+        entry.raw_get::<Value>("ignoreAllDamage")?,
+        Value::Boolean(true)
+    );
     if ignore_all_damage {
         // sub_100062520 treats an ignored hit as having entered the damage
         // branch, while preserving strength and reporting zero damage.
@@ -137,28 +149,44 @@ pub(crate) fn native_apply_collision_damage(
         });
     }
 
-    let defence = value_number(&entry.get::<Value>("defence")?).unwrap_or(0.0) as f32;
-    let collision_force = collision_force as f32;
-    if collision_force < defence {
+    // The threshold uses a separately rounded FMUL, but the eventual raw
+    // damage uses FNMSUB at 0x100064938/B64: multiplier*base - defence.
+    let collision_force = damage_multiplier * base_force;
+    let defence =
+        native_lua51_number(&entry.raw_get::<Value>("defence")?).map(|value| value as f32);
+    // With a numeric defence, the native FCMP/B.GE only takes the damage
+    // branch for an ordered >= comparison. An absent defence skips this
+    // comparison entirely and contributes zero to the subtraction.
+    if defence.is_some_and(|defence| {
+        !matches!(
+            collision_force.partial_cmp(&defence),
+            Some(std::cmp::Ordering::Equal | std::cmp::Ordering::Greater)
+        )
+    }) {
         return Ok(NativeDamageResult::default());
     }
-    let reported_damage = (collision_force - defence).floor();
+    let damage = damage_multiplier.mul_add(base_force, -defence.unwrap_or(0.0));
+    let reported_damage = damage.floor();
     let mut result = NativeDamageResult {
         attempted: true,
         reported_damage: f64::from(reported_damage),
         applied_damage: 0.0,
         ..NativeDamageResult::default()
     };
-    if reported_damage <= 0.0 {
-        return Ok(result);
-    }
-
-    let old_strength = value_number(&entry.get::<Value>("strength")?).unwrap_or(0.0) as f32;
+    let old_strength =
+        native_lua51_number(&entry.raw_get::<Value>("strength")?).unwrap_or(0.0) as f32;
     let new_strength = old_strength - reported_damage;
-    entry.set("strength", f64::from(new_strength))?;
+    entry.raw_set("strength", f64::from(new_strength))?;
     result.previous_strength = f64::from(old_strength);
     result.remaining_strength = f64::from(new_strength);
     result.destroyed = new_strength <= 0.0;
+    // sub_100062520 floors only the strength deduction. Its block-score
+    // accumulator receives the full fractional damage while the block lives.
+    result.score_damage = Some(if new_strength > 0.0 {
+        damage
+    } else {
+        old_strength
+    });
     result.applied_damage = f64::from(if new_strength > 0.0 {
         reported_damage
     } else {
@@ -168,33 +196,4 @@ pub(crate) fn native_apply_collision_damage(
         native_queue_dead_block(lua, target, f64::from(new_strength))?;
     }
     Ok(result)
-}
-
-pub(crate) fn native_add_block_collision_score(lua: &Lua, score_damage: f64) -> LuaResult<()> {
-    let score_damage = score_damage as f32;
-    if score_damage <= 0.0 {
-        return Ok(());
-    }
-    let environment = game_environment(lua)?;
-    let multiplier = match native_lua_object(lua, NativeLuaObject::WorldAttributes)? {
-        Some(attributes) => {
-            value_number(&attributes.get::<Value>("scoreDamageMultiplier")?).unwrap_or(1.0)
-        }
-        _ => value_number(&environment.get::<Value>("scoreDamageMultiplier")?).unwrap_or(1.0),
-    } as f32;
-    let score = score_damage.floor() * (multiplier as i32) as f32;
-    if score == 0.0 {
-        return Ok(());
-    }
-
-    if let Value::Table(score_table) = environment.get::<Value>("scoreTable")?
-        && let Value::Table(blocks) = score_table.get::<Value>("blocks")?
-    {
-        let old_score = value_number(&blocks.get::<Value>("score")?).unwrap_or(0.0) as f32;
-        blocks.set("score", f64::from(old_score + score))?;
-    }
-    if let Value::Function(function) = environment.get::<Value>("addScoreToBird")? {
-        function.call::<()>(f64::from(score))?;
-    }
-    Ok(())
 }

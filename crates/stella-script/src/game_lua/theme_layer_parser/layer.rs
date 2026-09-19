@@ -142,6 +142,8 @@ pub(super) fn parse_theme_layer(
         resolved_offset_y: None,
         scale_x: f64::from(scale_x),
         scale_y: f64::from(scale_y),
+        cached_draw_world_x: 0.0,
+        cached_draw_world_y: 0.0,
         // sub_10006855C stores these authored values in float32 slots. The
         // native defaults are parallaxSpeed=1, zDistance=0, scaleSpeed=1,
         // angleMult=0, xMult=0, and yMult=1.
@@ -167,7 +169,6 @@ pub(super) fn parse_theme_layer(
         world_height: world_height.map(f64::from),
         velocity_x: f64::from(velocity_x),
         velocity_y: f64::from(velocity_y),
-        motion_y: 0.0,
     }))
 }
 

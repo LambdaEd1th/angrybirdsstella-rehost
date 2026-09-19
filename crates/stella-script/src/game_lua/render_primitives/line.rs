@@ -57,6 +57,7 @@ pub(crate) fn native_line_command(
         ColorProgram::PlainAlpha
     };
     Some(RectRenderCommand {
+        projection_3d: None,
         order: 0,
         red: f64::from(color[0] as f32),
         green: f64::from(color[1] as f32),

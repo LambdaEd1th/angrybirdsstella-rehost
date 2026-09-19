@@ -103,6 +103,15 @@ impl RenderBridge {
                         has_moving_objects = true;
                     }
                 }
+                // P_GFX_ENABLE_FLIP (+0x13A) is consumed by the same native
+                // body-reporting pass. At 0x10005F53C..0x10005F5E4 Purple
+                // changes +0x139 only when |linearVelocity.x| is strictly
+                // greater than 3: leftward motion writes zero, while
+                // rightward motion writes one. The previous flip is retained
+                // inside the threshold (and for bodies skipped by this pass).
+                if object.graphics_flip_enabled && velocity_x.abs() > 3.0_f32 {
+                    object.horizontal_flip = velocity_x >= 0.0_f32;
+                }
             }
             object.native_was_awake = awake;
         }

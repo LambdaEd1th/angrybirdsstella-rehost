@@ -105,30 +105,41 @@ pub(super) fn install_stop_all(
             let mut runtime = animation_runtime
                 .lock()
                 .expect("animation runtime lock poisoned");
-            let tags = runtime.playback.keys().cloned().collect::<Vec<_>>();
-            for tag in tags {
-                let control_count = runtime.playback[&tag].controls.len();
-                for index in 0..control_count {
-                    let control = &mut runtime
-                        .playback
-                        .get_mut(&tag)
-                        .expect("animation playback disappeared")
-                        .controls[index];
-                    control.elapsed = 0.0;
-                    control.previous_elapsed = 0.0;
-                    control.playing = false;
-                    control.paused = false;
-                    control.finished_pending_removal = false;
-                    apply_targets(
-                        &mut runtime,
-                        resources.as_deref(),
-                        data_root.as_deref().map(std::path::PathBuf::as_path),
-                        &tag,
-                        2,
-                    );
-                }
-            }
+            stop_all_native(
+                &mut runtime,
+                resources.as_deref(),
+                data_root.as_deref().map(std::path::PathBuf::as_path),
+            );
             Ok(())
         })?,
     )
+}
+
+pub(in crate::animation_wrapper::registration) fn stop_all_native(
+    runtime: &mut AnimationRuntime,
+    resources: Option<&ResourceRuntime>,
+    data_root: Option<&std::path::Path>,
+) {
+    // sub_100012910 walks live entities, not the wrapper's retained-control
+    // map: orphan controls surviving a root flush are not stopped again.
+    let tags = runtime.definitions.keys().cloned().collect::<Vec<_>>();
+    for tag in tags {
+        let control_count = runtime
+            .playback
+            .get(&tag)
+            .map_or(0, |playback| playback.controls.len());
+        for index in 0..control_count {
+            let control = &mut runtime
+                .playback
+                .get_mut(&tag)
+                .expect("animation playback disappeared")
+                .controls[index];
+            control.elapsed = 0.0;
+            control.previous_elapsed = 0.0;
+            control.playing = false;
+            control.paused = false;
+            control.finished_pending_removal = false;
+            apply_targets(runtime, resources, data_root, &tag, 2);
+        }
+    }
 }

@@ -65,6 +65,7 @@ fn native_polygon_commands_inner(
             .map(|point| point[1])
             .fold(f64::NEG_INFINITY, f64::max);
         commands.push(RectRenderCommand {
+            projection_3d: None,
             order: 0,
             red: color[0],
             green: color[1],

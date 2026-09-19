@@ -17,6 +17,9 @@ mod program;
 mod renderer;
 mod resources;
 
+#[cfg(test)]
+mod reference;
+
 use program::{NativeProgram, native_sprite_program};
 
 const GAME_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -27,7 +30,7 @@ struct GpuVertex {
     position: [f32; 2],
     uv: [f32; 2],
     source: [f32; 2],
-    clip_position: [f32; 2],
+    clip_position: [f32; 4],
     draw_index: u32,
     padding: u32,
 }
@@ -68,10 +71,14 @@ pub(crate) struct PreparedFrame {
     draws: Vec<PreparedDraw>,
     texture_pairs: Vec<(String, String)>,
     operations: Vec<PreparedOperation>,
+    capture_formats: HashMap<String, SurfaceFormat>,
     required_textures: HashSet<String>,
     transient_textures: HashMap<String, Arc<TextureAsset>>,
     retired_textures: HashSet<String>,
     current_clip: Option<[i32; 4]>,
+    current_projection: Option<TextProjection3D>,
+    current_raw_vertices: bool,
+    current_vertex_depth: f32,
 }
 
 #[cfg(test)]
@@ -96,6 +103,9 @@ pub(crate) struct GpuRenderer {
     resolution: GameResolution,
     game_texture: wgpu::Texture,
     game_view: wgpu::TextureView,
+    capture_pipeline: wgpu::RenderPipeline,
+    capture_layout: wgpu::BindGroupLayout,
+    capture_bind_group: wgpu::BindGroup,
     sprite_storage_layout: wgpu::BindGroupLayout,
     sprite_texture_layout: wgpu::BindGroupLayout,
     draw_storage_buffer: wgpu::Buffer,
@@ -117,6 +127,7 @@ pub(crate) struct GpuRenderer {
     blit_bind_group: Option<wgpu::BindGroup>,
     blit_layout: Option<wgpu::BindGroupLayout>,
     blit_sampler: Option<wgpu::Sampler>,
+    window_overlay: Option<renderer::window_overlay::WindowOverlay>,
 }
 
 #[cfg(test)]

@@ -1,0 +1,82 @@
+[
+  {
+    "decoded" : "",
+    "input" : ""
+  },
+  {
+    "decoded" : null,
+    "input" : "%"
+  },
+  {
+    "decoded" : null,
+    "input" : "%0"
+  },
+  {
+    "decoded" : null,
+    "input" : "%XX"
+  },
+  {
+    "decoded" : null,
+    "input" : "%FF"
+  },
+  {
+    "decoded" : null,
+    "input" : "%E4%B8"
+  },
+  {
+    "decoded" : null,
+    "input" : "%ED%A0%80"
+  },
+  {
+    "decoded" : null,
+    "input" : "%C0%AF"
+  },
+  {
+    "decoded" : null,
+    "input" : "%F4%90%80%80"
+  },
+  {
+    "decoded" : null,
+    "input" : "%41%"
+  },
+  {
+    "decoded" : "a+b",
+    "input" : "a+b"
+  },
+  {
+    "decoded" : "a+b",
+    "input" : "a%2Bb"
+  },
+  {
+    "decoded" : "a b",
+    "input" : "a%20b"
+  },
+  {
+    "decoded" : "中",
+    "input" : "%E4%B8%AD"
+  },
+  {
+    "decoded" : "😀",
+    "input" : "%F0%9F%98%80"
+  },
+  {
+    "decoded" : "A中",
+    "input" : "%41中"
+  },
+  {
+    "decoded" : "\u0000",
+    "input" : "%00"
+  },
+  {
+    "decoded" : "%20",
+    "input" : "%2520"
+  },
+  {
+    "decoded" : "/",
+    "input" : "%2f"
+  },
+  {
+    "decoded" : "a=b",
+    "input" : "a=b"
+  }
+]

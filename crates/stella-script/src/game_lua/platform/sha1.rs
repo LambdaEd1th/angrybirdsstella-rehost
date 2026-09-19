@@ -1,6 +1,10 @@
 //! Recovered SHA-1 implementation and uppercase Base16 rendering.
 
 pub(crate) fn sha1_upper_hex(input: &[u8]) -> String {
+    upper_hex(&sha1_digest(input))
+}
+
+pub(crate) fn sha1_digest(input: &[u8]) -> [u8; 20] {
     let bit_len = (input.len() as u64) * 8;
     let mut padded = input.to_vec();
     padded.push(0x80);
@@ -52,10 +56,39 @@ pub(crate) fn sha1_upper_hex(input: &[u8]) -> String {
         }
     }
 
-    let mut encoded = String::with_capacity(40);
-    for word in hash {
+    let mut digest = [0; 20];
+    for (bytes, word) in digest.as_chunks_mut::<4>().0.iter_mut().zip(hash) {
+        bytes.copy_from_slice(&word.to_be_bytes());
+    }
+    digest
+}
+
+pub(crate) fn upper_hex(bytes: &[u8]) -> String {
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
         use std::fmt::Write as _;
-        write!(&mut encoded, "{word:08X}").expect("writing SHA-1 to String cannot fail");
+        write!(&mut encoded, "{byte:02X}").expect("writing hexadecimal to String cannot fail");
     }
     encoded
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sha1_digest_preserves_padding_boundaries_and_multiple_blocks() {
+        // Independent hashlib.sha1 vectors for repetitions of byte 0x61.
+        for (length, expected) in [
+            (0, "DA39A3EE5E6B4B0D3255BFEF95601890AFD80709"),
+            (55, "C1C8BBDC22796E28C0E15163D20899B65621D65A"),
+            (56, "C2DB330F6083854C99D4B5BFB6E8F29F201BE699"),
+            (63, "03F09F5B158A7A8CDAD920BDDC29B81C18A551F5"),
+            (64, "0098BA824B5C16427BD7A1122A5A442A25EC644D"),
+            (65, "11655326C708D70319BE2610E8A57D9A5B959D3B"),
+            (1000, "291E9A6C66994949B57BA5E650361E98FC36B1BA"),
+        ] {
+            assert_eq!(sha1_upper_hex(&vec![b'a'; length]), expected);
+        }
+    }
 }

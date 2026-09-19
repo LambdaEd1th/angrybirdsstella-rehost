@@ -1,6 +1,12 @@
 use super::*;
 use std::path::Path;
 
+pub(super) fn load_jpeg(path: &Path, bytes: &[u8]) -> Result<TextureAsset> {
+    let layout = stella_assets::native_image::jpeg_surface_layout(bytes)
+        .with_context(|| format!("probe JPEG {}", path.display()))?;
+    decode(path, bytes, image::ImageFormat::Jpeg, layout)
+}
+
 pub(super) fn load_png(path: &Path, bytes: &[u8]) -> Result<TextureAsset> {
     let layout = stella_assets::native_image::png_surface_layout(bytes)
         .with_context(|| format!("probe native PNG layout for {}", path.display()))?;

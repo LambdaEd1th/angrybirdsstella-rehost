@@ -6,8 +6,8 @@ pub(crate) fn current_time_table(lua: &Lua) -> LuaResult<mlua::Table> {
     date_table(lua, "*t")
 }
 
-pub(crate) fn current_utc_time_table(lua: &Lua) -> LuaResult<mlua::Table> {
-    date_table(lua, "!*t")
+pub(crate) fn utc_time_table_from_seconds(lua: &Lua, seconds: f64) -> LuaResult<mlua::Table> {
+    date_table_from_seconds(lua, "!*t", seconds)
 }
 
 fn date_table(lua: &Lua, format: &str) -> LuaResult<mlua::Table> {
@@ -75,9 +75,13 @@ fn os_time(lua: &Lua, source: mlua::Table) -> LuaResult<f64> {
 }
 
 pub(crate) fn time_table_from_seconds(lua: &Lua, seconds: f64) -> LuaResult<mlua::Table> {
+    date_table_from_seconds(lua, "*t", seconds)
+}
+
+fn date_table_from_seconds(lua: &Lua, format: &str, seconds: f64) -> LuaResult<mlua::Table> {
     let os: mlua::Table = lua.globals().get("os")?;
     let date: Function = os.get("date")?;
-    let source: mlua::Table = date.call(("*t", seconds))?;
+    let source: mlua::Table = date.call((format, seconds))?;
     let result = lua.create_table()?;
     copy_date_fields_as_native_floats(&source, &result)?;
     Ok(result)

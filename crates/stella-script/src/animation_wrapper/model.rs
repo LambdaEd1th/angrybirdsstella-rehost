@@ -51,6 +51,10 @@ pub(crate) struct AnimationPlayback {
     /// A named stop removes the current control from the active vector, while
     /// the wrapper's retained pointer can still be paused/resumed/queried.
     pub(crate) detached_current: Option<AnimationControl>,
+    /// Wrapper +0x30 map ownership is separate from the scene's active
+    /// controls. close erases this pointer before the entity-removal event;
+    /// closeAll erases it only after both scheduler drains.
+    pub(crate) wrapper_control_present: bool,
 }
 
 impl AnimationPlayback {
@@ -61,6 +65,7 @@ impl AnimationPlayback {
             current_action: String::new(),
             mode: String::new(),
             detached_current: None,
+            wrapper_control_present: false,
         };
         // Loading constructs every SpriteComponentCustom, but its retained
         // AtlasSprite pointer remains null until an EntityTarget applies a
@@ -97,6 +102,7 @@ impl AnimationPlayback {
             current_action: action,
             mode,
             detached_current: None,
+            wrapper_control_present: true,
         }
     }
 
@@ -117,6 +123,7 @@ impl AnimationPlayback {
                 callback_installed: false,
                 finished_pending_removal: false,
             }),
+            wrapper_control_present: true,
         }
     }
 
@@ -127,12 +134,18 @@ impl AnimationPlayback {
     }
 
     pub(crate) fn current_control(&self) -> Option<&AnimationControl> {
+        if !self.wrapper_control_present {
+            return None;
+        }
         self.active_control_index(&self.current_action)
             .map(|index| &self.controls[index])
             .or(self.detached_current.as_ref())
     }
 
     pub(crate) fn current_control_mut(&mut self) -> Option<&mut AnimationControl> {
+        if !self.wrapper_control_present {
+            return None;
+        }
         if let Some(index) = self.active_control_index(&self.current_action) {
             return self.controls.get_mut(index);
         }
@@ -287,6 +300,16 @@ pub(crate) enum AnimationSpriteTrackKind {
 
 #[derive(Debug, Default)]
 pub(crate) struct AnimationRuntime {
+    pub(crate) root_present: bool,
+    pub(crate) root_generation: u64,
+    pub(crate) pending_scene_attachments: BTreeMap<u64, PendingAnimationScene>,
+    /// Entity::setParent appends children. Nested loads can attach two roots
+    /// with one tag; findScene sees the first until that identity is removed.
+    pub(crate) shadow_scenes: BTreeMap<String, std::collections::VecDeque<PendingAnimationScene>>,
+    /// Concrete scene identity retained by asynchronous Entity::remove.
+    /// Reloading a tag cannot let a queued old deletion erase its replacement.
+    pub(crate) scene_generations: BTreeMap<String, u64>,
+    pub(crate) next_scene_generation: u64,
     pub(crate) actions: BTreeMap<String, BTreeMap<String, f64>>,
     pub(crate) definitions: BTreeMap<String, AnimationDefinition>,
     /// Scalar compatibility state retained for draw metadata and diagnostics.
@@ -301,12 +324,20 @@ pub(crate) struct AnimationRuntime {
     pub(crate) descendant_reflections: BTreeMap<String, bool>,
     pub(crate) playback: BTreeMap<String, AnimationPlayback>,
     pub(crate) skins: BTreeMap<String, String>,
+    pub(crate) skin_sets: BTreeMap<String, BTreeMap<String, AnimationSkin>>,
     pub(crate) shaders: BTreeMap<String, SpriteShader>,
     /// Native AnimationWrapper groups queued events by component/tag and
     /// drains a snapshot after every scene has updated. Events queued by a Lua
     /// callback therefore wait for the next update.
     pub(crate) pending_event_tags: Vec<String>,
     pub(crate) pending_events: BTreeMap<String, Vec<AnimationTimelineEvent>>,
+    /// `AnimationWrapper::update` marks the callback-dispatch phase with the
+    /// byte at native wrapper offset `+0xE9`. `close` requests made while that
+    /// byte is set are retained until the current event snapshot has drained.
+    pub(crate) dispatching_events: bool,
+    /// Native `+0xD8` is an insertion-ordered list with linear duplicate
+    /// suppression, not a tag-sorted set.
+    pub(crate) deferred_close_tags: Vec<String>,
     /// AtlasSprite values captured while decoding a native `DiscreteSprite`
     /// timeline. Shipped `DiscreteString` skin attachments bind later and
     /// retain their concrete region in `AnimationLatchedTarget` instead.
@@ -315,10 +346,23 @@ pub(crate) struct AnimationRuntime {
     pub(crate) sprite_regions: BTreeMap<String, BTreeMap<String, crate::SpriteCatalogRegion>>,
     pub(crate) bundle_cache: BTreeMap<String, AnimationAsset>,
     pub(crate) app_data_cache: BTreeMap<String, AnimationAsset>,
+    pub(crate) bundle_json_cache: BTreeMap<String, serde_json::Value>,
+    pub(crate) app_data_json_cache: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct AnimationAsset {
     pub(crate) actions: BTreeMap<String, f64>,
     pub(crate) definition: AnimationDefinition,
+}
+
+#[derive(Debug)]
+pub(crate) struct PendingAnimationScene {
+    pub(crate) tag: String,
+    pub(crate) generation: u64,
+    pub(crate) root_generation: u64,
+    pub(crate) asset: AnimationAsset,
+    pub(crate) sprite_geometry: BTreeMap<String, SpriteGeometry>,
+    pub(crate) sprite_metrics: BTreeMap<String, crate::NativeSpriteMetrics>,
+    pub(crate) sprite_regions: BTreeMap<String, crate::SpriteCatalogRegion>,
 }

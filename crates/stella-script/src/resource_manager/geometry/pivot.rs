@@ -116,6 +116,7 @@ mod tests {
         pivot_y: i16,
     ) -> SpriteCatalogRegion {
         SpriteCatalogRegion {
+            decoded_image: None,
             native_sheet_id: 7,
             texture_source: format!("{name}.pvr"),
             sprite: SpriteRegion {

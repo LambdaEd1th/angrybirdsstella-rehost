@@ -1,5 +1,14 @@
 use super::*;
 
+mod cloud_payload;
+mod iap_session;
+mod identity_interactive;
+mod identity_persistence;
+mod identity_routes;
+mod locale;
+mod qr_scanner;
+mod storage_session;
+
 use std::{
     io::{Read, Write},
     net::TcpListener,
@@ -80,6 +89,123 @@ fn spawn_game_server_response(
     (format!("http://{address}/api/v1"), request_rx, worker)
 }
 
+fn spawn_sequence_responses(
+    responses: Vec<(u16, Vec<u8>)>,
+) -> (String, mpsc::Receiver<Vec<u8>>, thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let (request_tx, request_rx) = mpsc::channel();
+    let worker = thread::spawn(move || {
+        for (status, body) in responses {
+            let (mut stream, request) = loop {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut request = Vec::new();
+                let mut header_end = None;
+                let mut content_length = 0_usize;
+                loop {
+                    let mut chunk = [0_u8; 2048];
+                    let read = stream.read(&mut chunk).unwrap();
+                    if read == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&chunk[..read]);
+                    if header_end.is_none()
+                        && let Some(offset) =
+                            request.windows(4).position(|bytes| bytes == b"\r\n\r\n")
+                    {
+                        let end = offset + 4;
+                        let headers = String::from_utf8_lossy(&request[..end]);
+                        content_length = headers
+                            .lines()
+                            .find_map(|line| {
+                                let (name, value) = line.split_once(':')?;
+                                name.eq_ignore_ascii_case("content-length")
+                                    .then(|| value.trim().parse::<usize>().ok())
+                                    .flatten()
+                            })
+                            .unwrap_or(0);
+                        header_end = Some(end);
+                    }
+                    if header_end.is_some_and(|end| request.len() >= end + content_length) {
+                        break;
+                    }
+                }
+                if identity_routes::unavailable_friends_fixture(&mut stream, &request) {
+                    continue;
+                }
+                break (stream, request);
+            };
+            request_tx.send(request).unwrap();
+            write!(
+                stream,
+                "HTTP/1.1 {status} Stella\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            )
+            .unwrap();
+            stream.write_all(&body).unwrap();
+        }
+    });
+    (format!("http://{address}/identity/2.0"), request_rx, worker)
+}
+
+fn spawn_assets_response(
+    name: &str,
+    hash: &str,
+    asset: Vec<u8>,
+) -> (String, mpsc::Receiver<Vec<u8>>, thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let endpoint = format!("http://{address}/apdrive/1/apps/purple/assets");
+    let download_url = format!("http://{address}/cdn/{name}");
+    let manifest = serde_json::to_vec(&serde_json::json!({
+        "assets": [{
+            "name": name,
+            "cdnURL": download_url,
+            "url": "http://invalid.example/legacy-fallback",
+            "hash": hash,
+            "size": asset.len(),
+            "os": "ios",
+            "distributionChannel": "appstore",
+            "clientVersion": "1.1.6"
+        }],
+        "failedAssets": []
+    }))
+    .unwrap();
+    let (request_tx, request_rx) = mpsc::channel();
+    let worker = thread::spawn(move || {
+        for body in [manifest, asset] {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut request = Vec::new();
+            loop {
+                let mut chunk = [0_u8; 2048];
+                let read = stream.read(&mut chunk).unwrap();
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&chunk[..read]);
+                if request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            request_tx.send(request).unwrap();
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            )
+            .unwrap();
+            stream.write_all(&body).unwrap();
+        }
+    });
+    (endpoint, request_rx, worker)
+}
+
 #[test]
 fn native_gamer_services_deliver_exact_events_before_lua_update() {
     let runtime = StellaLua::new("/tmp").unwrap();
@@ -117,18 +243,10 @@ fn native_gamer_services_deliver_exact_events_before_lua_update() {
         3
     );
 
-    let authentication: mlua::Table = events.raw_get(1).unwrap();
-    assert_eq!(
-        authentication.get::<String>("name").unwrap(),
-        "EID_GS_AUTHENTICATION_STATUS_CHANGED"
-    );
-    assert!(!authentication.get::<bool>("isSignedIn").unwrap());
-    assert!(matches!(
-        authentication.get::<Value>("success").unwrap(),
-        Value::Nil
-    ));
-
-    let achievement: mlua::Table = events.raw_get(2).unwrap();
+    // GameKit completion blocks are independent main-thread callbacks. The
+    // portable host delivers callbacks already queued at the display-link
+    // boundary before entering Purple's application scheduler.
+    let achievement: mlua::Table = events.raw_get(1).unwrap();
     assert_eq!(
         achievement.get::<String>("name").unwrap(),
         "EID_GS_POST_ACHIEVEMENT_FINISHED"
@@ -139,13 +257,24 @@ fn native_gamer_services_deliver_exact_events_before_lua_update() {
     );
     assert!(achievement.get::<bool>("success").unwrap());
 
-    let score: mlua::Table = events.raw_get(3).unwrap();
+    let score: mlua::Table = events.raw_get(2).unwrap();
     assert_eq!(
         score.get::<String>("name").unwrap(),
         "EID_GS_POST_SCORE_FINISHED"
     );
     assert_eq!(score.get::<String>("leaderboardId").unwrap(), "SCORE_TEST");
     assert!(score.get::<bool>("success").unwrap());
+
+    let authentication: mlua::Table = events.raw_get(3).unwrap();
+    assert_eq!(
+        authentication.get::<String>("name").unwrap(),
+        "EID_GS_AUTHENTICATION_STATUS_CHANGED"
+    );
+    assert!(!authentication.get::<bool>("isSignedIn").unwrap());
+    assert!(matches!(
+        authentication.get::<Value>("success").unwrap(),
+        Value::Nil
+    ));
 
     assert!(runtime.update(1.0 / 60.0).unwrap());
     assert_eq!(events.raw_len(), 3, "native completions must be one-shot");
@@ -200,6 +329,161 @@ fn native_gamer_authentication_waits_for_game_event_bridge() {
         1,
         "authentication completion must be consumed exactly once"
     );
+}
+
+#[test]
+fn gamer_direct_completion_created_during_scheduler_waits_for_next_boundary() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .execute_source(
+            r#"
+                gamer_events = {}
+                notifyEventManager = function(name)
+                    table.insert(gamer_events, name)
+                end
+                update = function() end
+            "#,
+        )
+        .unwrap();
+    // Consume the constructor-time authentication callback first.
+    runtime.update(0.0).unwrap();
+    runtime
+        .execute_source(
+            r#"
+                gamer_events = {}
+                _G.SkynestStorage.native_setKey("post-achievement", "value", function()
+                    FusionGamerServices.postAchievement("ACH_FROM_SCHEDULER")
+                end)
+            "#,
+        )
+        .unwrap();
+
+    runtime.update(0.0).unwrap();
+    let events: mlua::Table = game_environment(runtime.lua())
+        .unwrap()
+        .get("gamer_events")
+        .unwrap();
+    assert_eq!(events.raw_len(), 0);
+
+    runtime.update(0.0).unwrap();
+    assert_eq!(events.raw_len(), 1);
+    assert_eq!(
+        events.get::<String>(1).unwrap(),
+        "EID_GS_POST_ACHIEVEMENT_FINISHED"
+    );
+}
+
+#[test]
+fn local_gamer_services_authenticate_and_persist_achievements_and_high_scores() {
+    let sandbox = ShippedDataSandbox::new("local-gamer-services");
+    let runtime = StellaLua::new(&sandbox.data_root).unwrap();
+    runtime.enable_local_services().unwrap();
+    runtime
+        .execute_source(
+            r##"
+                local_gamer_events = {}
+                notifyEventManager = function(name, event)
+                    local_gamer_events[#local_gamer_events + 1] = {
+                        name = name,
+                        signedIn = event.isSignedIn,
+                        achievementId = event.achievementId,
+                        leaderboardId = event.leaderboardId,
+                        success = event.success
+                    }
+                end
+                update = function() end
+                local_gamer_authenticated =
+                    FusionGamerServices.isLocalPlayerAuthenticated()
+                FusionGamerServices.postAchievement("ACH_LOCAL")
+                FusionGamerServices.postScore("LEVEL_LOCAL", 100.25)
+                FusionGamerServices.postScore("LEVEL_LOCAL", 90.5)
+                FusionGamerServices.postScore("LEVEL_LOCAL", 140.75)
+            "##,
+        )
+        .unwrap();
+    assert!(
+        game_environment(runtime.lua())
+            .unwrap()
+            .get::<bool>("local_gamer_authenticated")
+            .unwrap()
+    );
+    runtime.update(1.0 / 60.0).unwrap();
+    let environment = game_environment(runtime.lua()).unwrap();
+    let events = environment
+        .get::<mlua::Table>("local_gamer_events")
+        .unwrap();
+    assert_eq!(events.raw_len(), 5);
+    let achievement = events.raw_get::<mlua::Table>(1).unwrap();
+    assert_eq!(
+        achievement.get::<String>("achievementId").unwrap(),
+        "ACH_LOCAL"
+    );
+    assert!(achievement.get::<bool>("success").unwrap());
+    let authentication = events.raw_get::<mlua::Table>(5).unwrap();
+    assert_eq!(
+        authentication.get::<String>("name").unwrap(),
+        "EID_GS_AUTHENTICATION_STATUS_CHANGED"
+    );
+    assert!(authentication.get::<bool>("signedIn").unwrap());
+
+    let document =
+        fs::read_to_string(sandbox.root.join("appdata/stella-gamer-services.json")).unwrap();
+    assert!(document.contains("ACH_LOCAL"));
+    assert!(document.contains("140.75"));
+    assert!(!document.contains("100.25"));
+
+    let reopened = StellaLua::new(&sandbox.data_root).unwrap();
+    reopened.enable_local_services().unwrap();
+    assert!(
+        reopened
+            .lua()
+            .globals()
+            .get::<mlua::Table>("FusionGamerServices")
+            .unwrap()
+            .get::<Function>("isLocalPlayerAuthenticated")
+            .unwrap()
+            .call::<bool>(())
+            .unwrap()
+    );
+}
+
+#[test]
+fn local_gamer_services_publish_platform_views_from_persisted_state() {
+    let sandbox = ShippedDataSandbox::new("local-gamer-views");
+    let runtime = StellaLua::new(&sandbox.data_root).unwrap();
+    runtime.enable_local_services().unwrap();
+    runtime
+        .execute_source(
+            r##"
+                FusionGamerServices.postAchievement("ACH_VIEW")
+                FusionGamerServices.postScore("LEVEL_VIEW", 902.5)
+                FusionGamerServices.showAchievements("ignored")
+                FusionGamerServices.showLeaderboards("ignored")
+            "##,
+        )
+        .unwrap();
+
+    assert_eq!(
+        runtime.take_platform_action_requests(),
+        vec![
+            PlatformActionRequest::ShowGamerServices {
+                view: GamerServicesView::Achievements,
+                entries: vec![("ACH_VIEW".to_owned(), "Unlocked".to_owned())],
+            },
+            PlatformActionRequest::ShowGamerServices {
+                view: GamerServicesView::Leaderboards,
+                entries: vec![("LEVEL_VIEW".to_owned(), "902.5".to_owned())],
+            },
+        ]
+    );
+
+    let disconnected = StellaLua::new(&sandbox.data_root).unwrap();
+    disconnected
+        .execute_source(
+            "FusionGamerServices.showAchievements(); FusionGamerServices.showLeaderboards()",
+        )
+        .unwrap();
+    assert!(disconnected.take_platform_action_requests().is_empty());
 }
 
 #[test]
@@ -349,7 +633,7 @@ fn native_game_server_post_serializes_json_and_reports_non_success_status() {
     runtime.game_server.set_base_url_for_test(base_url);
     runtime
         .execute_source(
-            r#"
+            r##"
                 g_currentLocale = "en_EN"
                 GameServerConnection.onAsyncRequestCompleted = function(id, status, response)
                     game_server_post_id = id
@@ -362,7 +646,7 @@ fn native_game_server_post_serializes_json_and_reports_non_success_status() {
                 GameServerConnection.native_postAsync(
                     11, "/competition/player", false, "unused", { z = 2, a = "x" }
                 )
-            "#,
+            "##,
         )
         .unwrap();
 
@@ -718,6 +1002,84 @@ fn asynchronous_platform_service_installed_apps_delivers_native_three_arguments(
 }
 
 #[test]
+fn installed_app_scheme_registry_preserves_native_order_and_shared_can_open_url_behavior() {
+    let unique = NEXT_TEST_SPRITE_SHEET_ID.fetch_add(1, Ordering::Relaxed);
+    let root = std::env::temp_dir().join(format!(
+        "stella-installed-url-schemes-{}-{unique}",
+        std::process::id()
+    ));
+    let data_root = root.join("data");
+    let app_root = root.join("appdata");
+    fs::create_dir_all(&data_root).unwrap();
+    fs::create_dir_all(&app_root).unwrap();
+    fs::write(
+        app_root.join("promotion.json"),
+        br#"{"launchId":"angrybirds://cross-promotion","storeId":"123456789"}"#,
+    )
+    .unwrap();
+
+    let runtime = StellaLua::new(&data_root).unwrap();
+    runtime
+        .set_installed_url_schemes(["BADPIGGIES", "angrybirds://ignored", "ANGRYBIRDS"])
+        .unwrap();
+    runtime
+        .execute_source(
+            r##"
+                setInstalledAppsOffline = function(names)
+                    installed_names = names
+                end
+                checkInstalledAppsOffline(
+                    '{"ttl":60,"gameCount":3,' ..
+                    '"game_0":{"name":"Angry Birds","scheme":"angrybirds"},' ..
+                    '"game_1":{"name":"Unknown","scheme":"unknown"},' ..
+                    '"game_2":{"name":"Bad Piggies","scheme":"badpiggies"}}')
+                AppStoreLauncher.updateGameData("promotion.json")
+                AppStoreLauncher.launchAppStore()
+            "##,
+        )
+        .unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert_eq!(
+        environment.get::<String>("installed_names").unwrap(),
+        "Angry Birds,Bad Piggies"
+    );
+    let bridge = runtime.render.lock().unwrap();
+    assert_eq!(
+        bridge.requested_url.as_deref(),
+        Some("angrybirds://cross-promotion")
+    );
+    assert_eq!(bridge.requested_app_store_product, None);
+    assert!(matches!(
+        bridge.platform_action_requests.last(),
+        Some(PlatformActionRequest::OpenUrl { url })
+            if url == "angrybirds://cross-promotion"
+    ));
+}
+
+#[test]
+fn installed_app_scheme_registry_rejects_invalid_input_atomically() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime.set_installed_url_schemes(["angrybirds"]).unwrap();
+    let error = runtime
+        .set_installed_url_schemes(["badpiggies", "not a scheme"])
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("invalid installed URL scheme"), "{error}");
+    assert_eq!(
+        runtime
+            .render
+            .lock()
+            .unwrap()
+            .installed_url_schemes
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>(),
+        ["angrybirds"]
+    );
+}
+
+#[test]
 fn asynchronous_platform_service_installed_apps_retains_malformed_completion() {
     let (url, server) = spawn_url_response(b"{".to_vec());
     let runtime = StellaLua::new("/tmp").unwrap();
@@ -793,6 +1155,177 @@ fn external_url_and_store_members_queue_host_actions_in_native_call_order() {
         ]
     );
     assert!(runtime.take_platform_action_requests().is_empty());
+}
+
+#[test]
+fn forced_update_reads_appdata_and_invokes_the_required_callback_synchronously() {
+    let sandbox = ShippedDataSandbox::new("force-update");
+    let config = sandbox
+        .root
+        .join("appdata/assets_service/cloud_configuration.dat");
+    fs::create_dir_all(config.parent().unwrap()).unwrap();
+    fs::write(
+        &config,
+        r#"{
+            "isEnabled": true,
+            "minimumIOSVersionRequired": "6.0",
+            "requiredVersion": "1.1.7"
+        }"#,
+    )
+    .unwrap();
+
+    let runtime = StellaLua::new(&sandbox.data_root).unwrap();
+    runtime
+        .execute_source(
+            r##"
+                force_update_order = { "before" }
+                force_update_results = select("#",
+                    ForceUpdate.native_checkForcedUpdate(
+                        "assets_service/cloud_configuration.dat",
+                        function()
+                            table.insert(force_update_order, "callback")
+                        end,
+                        "ignored tail"
+                    ))
+                table.insert(force_update_order, "after")
+            "##,
+        )
+        .unwrap();
+    let environment = game_environment(runtime.lua()).unwrap();
+    let order = environment
+        .get::<mlua::Table>("force_update_order")
+        .unwrap();
+    assert_eq!(order.get::<String>(1).unwrap(), "before");
+    assert_eq!(order.get::<String>(2).unwrap(), "callback");
+    assert_eq!(order.get::<String>(3).unwrap(), "after");
+    assert_eq!(environment.get::<i64>("force_update_results").unwrap(), 0);
+
+    fs::write(&config, r#"{"isEnabled":true,"requiredVersion":"1.1.6"}"#).unwrap();
+    runtime
+        .execute_source(
+            r#"
+                force_update_current_count = 0
+                ForceUpdate.native_checkForcedUpdate(
+                    "assets_service/cloud_configuration.dat",
+                    function()
+                        force_update_current_count = force_update_current_count + 1
+                    end)
+            "#,
+        )
+        .unwrap();
+    assert_eq!(
+        environment
+            .get::<i64>("force_update_current_count")
+            .unwrap(),
+        0
+    );
+
+    fs::write(&config, r#"{"isEnabled":true,"requiredVersion":"1.1.6.0"}"#).unwrap();
+    runtime
+        .execute_source(
+            r#"
+                force_update_component_count = 0
+                ForceUpdate.native_checkForcedUpdate(
+                    "assets_service/cloud_configuration.dat",
+                    function()
+                        force_update_component_count = force_update_component_count + 1
+                    end)
+            "#,
+        )
+        .unwrap();
+    assert_eq!(
+        environment
+            .get::<i64>("force_update_component_count")
+            .unwrap(),
+        1,
+        "Purple treats an equal prefix with more required components as newer"
+    );
+
+    fs::write(&config, r#"{"isEnabled":false,"requiredVersion":"99.0"}"#).unwrap();
+    runtime
+        .execute_source(
+            r#"
+                force_update_disabled_count = 0
+                ForceUpdate.native_checkForcedUpdate(
+                    "assets_service/cloud_configuration.dat",
+                    function()
+                        force_update_disabled_count = force_update_disabled_count + 1
+                    end)
+            "#,
+        )
+        .unwrap();
+    assert_eq!(
+        environment
+            .get::<i64>("force_update_disabled_count")
+            .unwrap(),
+        0
+    );
+}
+
+#[test]
+fn analytics_normalizes_names_filters_string_maps_and_retains_provider_events() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .execute_source(
+            r##"
+                analytics_plain_results = select("#",
+                    Analytics.logEvent("plain event", "ignored"))
+                analytics_single_results = select("#",
+                    Analytics.logEventWithParam(
+                        "single event", "key", "value", false))
+                Analytics.batch = {
+                    z = "last",
+                    a = "first",
+                    numericValue = 7,
+                    booleanValue = false,
+                    [9] = "numeric key"
+                }
+                analytics_batch_results = select("#",
+                    Analytics.logEventWithParams("batch event", "batch"))
+                analytics_timer_results = select("#",
+                    Analytics.logTimerEvent("timer event"))
+                analytics_missing_table_fails = not pcall(
+                    Analytics.logEventWithParams,
+                    "missing event", "missing")
+            "##,
+        )
+        .unwrap();
+    let environment = game_environment(runtime.lua()).unwrap();
+    for name in [
+        "analytics_plain_results",
+        "analytics_single_results",
+        "analytics_batch_results",
+        "analytics_timer_results",
+    ] {
+        assert_eq!(environment.get::<i64>(name).unwrap(), 0);
+    }
+    assert!(
+        environment
+            .get::<bool>("analytics_missing_table_fails")
+            .unwrap()
+    );
+
+    let events = runtime.take_analytics_events();
+    assert_eq!(events.len(), 4);
+    assert_eq!(events[0].name, "plain_event");
+    assert!(events[0].parameters.is_empty());
+    assert_eq!(events[1].name, "single_event");
+    assert_eq!(
+        events[1].parameters,
+        BTreeMap::from([("key".to_owned(), "value".to_owned())])
+    );
+    assert_eq!(events[2].name, "batch_event");
+    assert_eq!(
+        events[2].parameters,
+        BTreeMap::from([
+            ("a".to_owned(), "first".to_owned()),
+            ("z".to_owned(), "last".to_owned()),
+        ])
+    );
+    assert_eq!(events[3].name, "timer_event");
+    assert_eq!(events[3].parameters.get("seconds").unwrap(), "0");
+    assert!(events.iter().all(|event| event.timestamp_ms > 0));
+    assert!(runtime.take_analytics_events().is_empty());
 }
 
 #[test]
@@ -1058,6 +1591,19 @@ fn offline_server_time_exposes_complete_native_utc_local_and_status_contract() {
     runtime
         .execute_source(
             r##"
+                server_sync_events = 0
+                events = {
+                    EID_SERVER_TIME_SYNCHRONIZED =
+                        "EID_SERVER_TIME_SYNCHRONIZED"
+                }
+                eventManager = {
+                    notify = function(self, event)
+                        assert(self == eventManager)
+                        assert(event.id ==
+                            events.EID_SERVER_TIME_SYNCHRONIZED)
+                        server_sync_events = server_sync_events + 1
+                    end
+                }
                 local function same_calendar(left, right)
                     return left.year == right.year and
                         left.month == right.month and
@@ -1098,7 +1644,10 @@ fn offline_server_time_exposes_complete_native_utc_local_and_status_contract() {
         environment.get::<String>("server_status_after").unwrap(),
         "STATUS_OK"
     );
+    assert_eq!(environment.get::<i64>("server_sync_events").unwrap(), 0);
     assert_eq!(environment.get::<i64>("server_sync_results").unwrap(), 0);
+    runtime.update(0.0).unwrap();
+    assert_eq!(environment.get::<i64>("server_sync_events").unwrap(), 1);
     for table_name in ["server_utc", "server_local"] {
         let table: mlua::Table = environment.get(table_name).unwrap();
         for field in ["year", "month", "day", "hour", "minutes", "seconds"] {
@@ -1111,6 +1660,149 @@ fn offline_server_time_exposes_complete_native_utc_local_and_status_contract() {
 }
 
 #[test]
+fn compatible_server_time_applies_native_offset_and_posts_success_on_the_app_thread() {
+    const SERVER_EPOCH: i64 = 1_700_000_000;
+    let response = format!(r#"{{"time":{SERVER_EPOCH}}}"#).into_bytes();
+    let (base_url, request_rx, server) = spawn_game_server_response(200, response);
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .set_server_time_url(&format!("{base_url}/time"))
+        .unwrap();
+    runtime
+        .execute_source(
+            r##"
+                server_sync_events = 0
+                events = {
+                    EID_SERVER_TIME_SYNCHRONIZED =
+                        "EID_SERVER_TIME_SYNCHRONIZED"
+                }
+                eventManager = {
+                    notify = function(self, event)
+                        assert(self == eventManager)
+                        assert(event.id ==
+                            events.EID_SERVER_TIME_SYNCHRONIZED)
+                        server_sync_events = server_sync_events + 1
+                    end
+                }
+                update = function() end
+                ServerTime.synchronizeServerTime()
+            "##,
+        )
+        .unwrap();
+
+    let request = request_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert!(String::from_utf8_lossy(&request).starts_with("GET /api/v1/time HTTP/1.1\r\n"));
+    server.join().unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    for _ in 0..200 {
+        runtime.update(1.0 / 60.0).unwrap();
+        if environment.get::<i64>("server_sync_events").unwrap() == 1 {
+            break;
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(environment.get::<i64>("server_sync_events").unwrap(), 1);
+    assert!(
+        runtime
+            .lua()
+            .load(format!(
+                r##"
+                    local actual = ServerTime.getServerTimeInUTC()
+                    local expected = os.date("!*t", {SERVER_EPOCH})
+                    return actual.year == expected.year and
+                        actual.month == expected.month and
+                        actual.day == expected.day and
+                        actual.hour == expected.hour and
+                        actual.minutes == expected.min and
+                        math.abs(actual.seconds - expected.sec) <= 1
+                "##
+            ))
+            .eval::<bool>()
+            .unwrap()
+    );
+    assert_eq!(
+        runtime
+            .lua()
+            .globals()
+            .get::<mlua::Table>("ServerTime")
+            .unwrap()
+            .get::<Function>("getStatus")
+            .unwrap()
+            .call::<String>(())
+            .unwrap(),
+        "STATUS_OK"
+    );
+
+    let invalid = StellaLua::new("/tmp").unwrap();
+    let error = invalid
+        .set_server_time_url("file:///retired-identity/time")
+        .unwrap_err();
+    assert!(error.to_string().contains("http or https"));
+}
+
+#[test]
+fn compatible_server_time_failure_sets_error_without_a_false_success_event() {
+    let (base_url, request_rx, server) =
+        spawn_game_server_response(503, br#"{"time":1700000000}"#.to_vec());
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .set_server_time_url(&format!("{base_url}/time"))
+        .unwrap();
+    runtime
+        .execute_source(
+            r##"
+                server_sync_events = 0
+                events = {
+                    EID_SERVER_TIME_SYNCHRONIZED =
+                        "EID_SERVER_TIME_SYNCHRONIZED"
+                }
+                eventManager = {
+                    notify = function()
+                        server_sync_events = server_sync_events + 1
+                    end
+                }
+                update = function() end
+                ServerTime.synchronizeServerTime()
+            "##,
+        )
+        .unwrap();
+    request_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    server.join().unwrap();
+
+    for _ in 0..200 {
+        runtime.update(1.0 / 60.0).unwrap();
+        let status = runtime
+            .lua()
+            .globals()
+            .get::<mlua::Table>("ServerTime")
+            .unwrap()
+            .get::<Function>("getStatus")
+            .unwrap()
+            .call::<String>(())
+            .unwrap();
+        if status == "STATUS_ERROR" {
+            break;
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert_eq!(environment.get::<i64>("server_sync_events").unwrap(), 0);
+    assert_eq!(
+        runtime
+            .lua()
+            .globals()
+            .get::<mlua::Table>("ServerTime")
+            .unwrap()
+            .get::<Function>("getStatus")
+            .unwrap()
+            .call::<String>(())
+            .unwrap(),
+        "STATUS_ERROR"
+    );
+}
+
+#[test]
 fn native_bitwise_helpers_use_signed_fcvtzs_and_float32_results() {
     let runtime = StellaLua::new("/tmp").unwrap();
     runtime
@@ -1119,7 +1811,19 @@ fn native_bitwise_helpers_use_signed_fcvtzs_and_float32_results() {
                 fractional_and = performBitwiseAnd(6.9, 3.2)
                 signed_or = performBitwiseOr(-8.9, 3.9)
                 rounded_or = performBitwiseOr(16777216, 1)
-                indefinite_or = performBitwiseOr(2147483648, 0)
+                saturated_or = performBitwiseOr(2147483648, 0)
+                bitwise_boundaries = {}
+                for _, value in ipairs({
+                    0/0, 1/0, -1/0, 2147483648, -2147483904,
+                    2147483520, 1.9, -1.9
+                }) do
+                    bitwise_boundaries[#bitwise_boundaries + 1] = {
+                        performBitwiseOr(value, 0),
+                        performBitwiseAnd(value, 255),
+                        performBitwiseOr(0, value),
+                        performBitwiseAnd(255, value)
+                    }
+                end
                 and_missing_fails = not pcall(performBitwiseAnd, 1)
                 or_missing_fails = not pcall(performBitwiseOr, 1)
                 and_type_fails = not pcall(performBitwiseAnd, false, 1)
@@ -1133,9 +1837,34 @@ fn native_bitwise_helpers_use_signed_fcvtzs_and_float32_results() {
     assert_eq!(environment.get::<f64>("signed_or").unwrap(), -5.0);
     assert_eq!(environment.get::<f64>("rounded_or").unwrap(), 16_777_216.0);
     assert_eq!(
-        environment.get::<f64>("indefinite_or").unwrap(),
-        -2_147_483_648.0
+        environment.get::<f64>("saturated_or").unwrap(),
+        2_147_483_648.0
     );
+    let boundaries = environment
+        .get::<mlua::Table>("bitwise_boundaries")
+        .unwrap();
+    assert_eq!(boundaries.raw_len(), 8);
+    // Both operands use FCVTZS W,S at 100056964/978. The result goes
+    // through SCVTF S,W: i32::MAX is rounded up again to float32 2^31.
+    for (index, (expected_or, expected_and)) in [
+        (0.0, 0.0),
+        (2_147_483_648.0, 255.0),
+        (-2_147_483_648.0, 0.0),
+        (2_147_483_648.0, 255.0),
+        (-2_147_483_648.0, 0.0),
+        (2_147_483_520.0, 128.0),
+        (1.0, 1.0),
+        (-1.0, 255.0),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let values = boundaries.get::<mlua::Table>(index + 1).unwrap();
+        assert_eq!(values.get::<f64>(1).unwrap(), expected_or);
+        assert_eq!(values.get::<f64>(2).unwrap(), expected_and);
+        assert_eq!(values.get::<f64>(3).unwrap(), expected_or);
+        assert_eq!(values.get::<f64>(4).unwrap(), expected_and);
+    }
     for field in [
         "and_missing_fails",
         "or_missing_fails",
@@ -1276,6 +2005,12 @@ fn offline_video_member_preserves_native_string_void_request_boundary() {
     assert_eq!(
         runtime.render.lock().unwrap().requested_video.as_deref(),
         Some("movies/intro.mp4")
+    );
+    assert_eq!(
+        runtime.take_platform_action_requests(),
+        vec![PlatformActionRequest::PlayVideo {
+            path: "movies/intro.mp4".to_owned(),
+        }]
     );
 }
 
@@ -1527,7 +2262,11 @@ fn recovered_platform_and_render_utilities_preserve_native_contracts() {
         .execute_source(
             r##"
                 orientation = native_getDeviceOrientation()
-                device_id = uniqueDeviceId()
+                device_id_type = type(uniqueDeviceId)
+                device_id_call_fails = not pcall(function()
+                    return uniqueDeviceId()
+                end)
+                device_id = uniqueDeviceId
                 first_shaders = createUniqueShaders("FX_", 2)
                 destroy_shader_results = select("#", destroyUniqueShaders(
                     { first_shaders[1], first_shaders[2] }, "ignored"
@@ -1542,7 +2281,11 @@ fn recovered_platform_and_render_utilities_preserve_native_contracts() {
                 fractional_shaders = createUniqueShaders("FRAC_", 2.9, false)
                 negative_shaders = createUniqueShaders("NEG_", -1)
                 nan_shaders = createUniqueShaders("NAN_", 0 / 0)
-                infinite_shaders = createUniqueShaders("INF_", math.huge)
+                -- Positive infinity saturates to INT_MAX at 10004E798,
+                -- requesting billions of allocations, not an empty set.
+                -- Its conversion is covered by the instruction oracle and
+                -- bitwise test without executing that unbounded workload.
+                negative_infinite_shaders = createUniqueShaders("NEG_INF_", -math.huge)
                 shader_base_tag_fails = not pcall(
                     createUniqueShaders, 7, 1
                 )
@@ -1564,6 +2307,7 @@ fn recovered_platform_and_render_utilities_preserve_native_contracts() {
                     Analytics.logEvent("event"))
                 analytics_param_results = select("#",
                     Analytics.logEventWithParam("event", "key", "value"))
+                Analytics.json = {}
                 analytics_params_results = select("#",
                     Analytics.logEventWithParams("event", "json"))
                 analytics_short_fails = not pcall(
@@ -1616,9 +2360,11 @@ fn recovered_platform_and_render_utilities_preserve_native_contracts() {
     let environment = game_environment(runtime.lua()).unwrap();
     assert_eq!(environment.get::<i32>("orientation").unwrap(), 90);
     assert_eq!(
-        environment.get::<String>("device_id").unwrap(),
-        "unavailable"
+        environment.get::<String>("device_id_type").unwrap(),
+        "string"
     );
+    assert!(environment.get::<bool>("device_id_call_fails").unwrap());
+    assert!(!environment.get::<String>("device_id").unwrap().is_empty());
     let shader_suffix =
         |name: &str, prefix: &str| name.strip_prefix(prefix).unwrap().parse::<i32>().unwrap();
     let first: mlua::Table = environment.get("first_shaders").unwrap();
@@ -1638,7 +2384,11 @@ fn recovered_platform_and_render_utilities_preserve_native_contracts() {
     let fractional_second_suffix = shader_suffix(&fractional_second_name, "FRAC_");
     assert!(fractional_suffix > second_suffix);
     assert_eq!(fractional_second_suffix, fractional_suffix.wrapping_add(1));
-    for name in ["negative_shaders", "nan_shaders", "infinite_shaders"] {
+    for name in [
+        "negative_shaders",
+        "nan_shaders",
+        "negative_infinite_shaders",
+    ] {
         assert_eq!(
             environment.get::<mlua::Table>(name).unwrap().raw_len(),
             0,
@@ -1765,6 +2515,125 @@ fn recovered_platform_and_render_utilities_preserve_native_contracts() {
 }
 
 #[test]
+fn unique_device_id_is_stable_string_data_and_keys_shipped_local_state() {
+    let sandbox = ShippedDataSandbox::new("unique-device-id-stable");
+    let first = StellaLua::new(&sandbox.data_root).unwrap();
+    let first_id = first
+        .lua()
+        .globals()
+        .raw_get::<String>("uniqueDeviceId")
+        .unwrap();
+    let source = fs::read_to_string(sandbox.root.join("appdata/stella-device-id")).unwrap();
+    assert_eq!(source.len(), 36);
+    assert_eq!(first_id, crate::sha1_upper_hex(source.as_bytes()));
+    assert_eq!(first_id.len(), 40);
+    assert!(
+        !first
+            .lua()
+            .load("return pcall(function() uniqueDeviceId() end)")
+            .eval::<bool>()
+            .unwrap()
+    );
+    drop(first);
+
+    let reopened = StellaLua::new(&sandbox.data_root).unwrap();
+    assert_eq!(
+        reopened
+            .lua()
+            .globals()
+            .raw_get::<String>("uniqueDeviceId")
+            .unwrap(),
+        first_id
+    );
+    reopened.boot("scripts/game.lua").unwrap();
+    assert_eq!(
+        game_environment(reopened.lua())
+            .unwrap()
+            .get::<String>("localDevice")
+            .unwrap(),
+        format!("device_{first_id}")
+    );
+    assert_eq!(
+        fs::read_to_string(sandbox.root.join("appdata/stella-device-id")).unwrap(),
+        source
+    );
+
+    let other_sandbox = ShippedDataSandbox::new("unique-device-id-other-install");
+    let other = StellaLua::new(&other_sandbox.data_root).unwrap();
+    assert_ne!(
+        other
+            .lua()
+            .globals()
+            .raw_get::<String>("uniqueDeviceId")
+            .unwrap(),
+        first_id
+    );
+}
+
+#[test]
+fn native_device_hash_keeps_legacy_counter_buckets_without_copying_or_double_counting() {
+    let sandbox = ShippedDataSandbox::new("device-hash-legacy-counters");
+    let source = "00112233-4455-4677-8899-AABBCCDDEEFF";
+    let appdata = sandbox.root.join("appdata");
+    fs::create_dir_all(&appdata).unwrap();
+    fs::write(appdata.join("stella-device-id"), source).unwrap();
+    let legacy_key = format!("device_{source}");
+    let first = StellaLua::new(&sandbox.data_root).unwrap();
+    first.boot("scripts/game.lua").unwrap();
+    game_environment(first.lua())
+        .unwrap()
+        .set("legacy_device_key", legacy_key.clone())
+        .unwrap();
+    first.execute_source(r#"
+        settings.root.playtime = {[legacy_device_key]=73, device_other=5}
+        settings.root.birdsShot = {[legacy_device_key]=8, device_other=4}
+        settings.root.legacy_custom_data = {unchanged="retained"}
+        if localDevice == legacy_device_key then error("native hash was not published") end
+        if SettingsWrapper:getPlaytime() ~= 78 or SettingsWrapper:getBirdsShot() ~= 12 then
+            error("legacy or other-device totals disappeared")
+        end
+        if SettingsWrapper:getLocalAmount("playtime") ~= 0 then error("copied legacy counter") end
+        SettingsWrapper:setPlaytime(2.9)
+        SettingsWrapper:birdShot()
+        if SettingsWrapper:getPlaytime() ~= 80 or SettingsWrapper:getBirdsShot() ~= 13 then
+            error("new hashed bucket duplicated or discarded legacy counters")
+        end
+        if settings.root.playtime[legacy_device_key] ~= 73 or settings.root.birdsShot[legacy_device_key] ~= 8 then
+            error("legacy keys were rewritten")
+        end
+        savePersistentLuaFile("settings.lua", "settings")
+    "#).unwrap();
+    drop(first);
+
+    let reopened = StellaLua::new(&sandbox.data_root).unwrap();
+    reopened.boot("scripts/game.lua").unwrap();
+    game_environment(reopened.lua())
+        .unwrap()
+        .set("legacy_device_key", legacy_key)
+        .unwrap();
+    reopened.execute_source(r#"
+        if SettingsWrapper:getPlaytime() ~= 80 or SettingsWrapper:getBirdsShot() ~= 13 then
+            error("restart lost or duplicated device contributions")
+        end
+        if SettingsWrapper:getLocalAmount("playtime") ~= 2 then error("hashed counter was not reused") end
+        SettingsWrapper:setPlaytime(4.1)
+        SettingsWrapper:birdShot()
+        if SettingsWrapper:getPlaytime() ~= 84 or SettingsWrapper:getBirdsShot() ~= 14 then
+            error("restart increments used the wrong device bucket")
+        end
+        if settings.root.playtime[legacy_device_key] ~= 73 or settings.root.birdsShot[legacy_device_key] ~= 8
+            or settings.root.playtime.device_other ~= 5 or settings.root.birdsShot.device_other ~= 4
+            or settings.root.legacy_custom_data.unchanged ~= "retained" then
+            error("unrelated or legacy save state changed")
+        end
+    "#).unwrap();
+    assert_eq!(
+        fs::read_to_string(appdata.join("stella-device-id")).unwrap(),
+        source
+    );
+}
+
+#[test]
 fn qr_scanner_and_app_store_launcher_follow_unsupported_device_branches() {
     let unique = NEXT_TEST_SPRITE_SHEET_ID.fetch_add(1, Ordering::Relaxed);
     let root =
@@ -1878,7 +2747,7 @@ fn shipped_telepods_ui_snapshots_a_preboot_scanner_capability() {
     runtime.set_qr_scanner_available(true).unwrap();
     runtime.boot("scripts/game.lua").unwrap();
     runtime
-        .execute_source(
+        .execute_diagnostic_source(
             r##"
                 assert(Telepods.areSupported())
                 assert(g_showTelepodButtons)
@@ -1928,7 +2797,7 @@ fn shipped_telepods_in_game_and_reward_wheel_entries_use_the_preboot_capability(
     runtime.boot("scripts/game.lua").unwrap();
     runtime.execute_source("initializeEventSystem()").unwrap();
     runtime
-        .execute_source(
+        .execute_diagnostic_source(
             r##"
                 SpriteSheetManager.useGroupSet("INGAME")
                 currentFolder = "Chapter02"
@@ -1960,26 +2829,31 @@ fn shipped_telepods_page_consumes_a_code_queued_before_boot() {
     runtime.set_qr_scanner_available(true).unwrap();
     assert!(!runtime.submit_qr_code("hasbro.telepod.020").unwrap());
     runtime.boot("scripts/game.lua").unwrap();
+    // Boot posts IAP initialization to the native scheduler. An actual user
+    // reaches the scan page after startup updates; opening it synchronously
+    // from boot instead takes TelepodPage's PAYMENT_NOT_INITIALIZED branch.
+    runtime.update(1.0 / 60.0).unwrap();
+    runtime.update(1.0 / 60.0).unwrap();
     runtime
-        .execute_source(
+        .execute_diagnostic_source(
             r##"
                 assert(g_showTelepodButtons)
+                assert(IAP.isPaymentInitialized())
+                assert(not SettingsWrapper:isBirdSkinUnlocked("Piano Willow"))
 
                 -- TelepodPage's shipped success path only adds an extra bird
                 -- outside Scrapbook/result screens. Keep this deterministic
                 -- UI probe in its original Scrapbook branch.
-                local root = menuManager:getRoot()
-                local originalGetChild = root.getChild
-                root.getChild = function(self, name)
+                telepodTestRoot = menuManager:getRoot()
+                telepodTestOriginalGetChild = telepodTestRoot.getChild
+                local originalGetChild = telepodTestOriginalGetChild
+                telepodTestRoot.getChild = function(self, name)
                     if name == "Scrapbook" then
                         return true
                     end
                     return originalGetChild(self, name)
                 end
                 notificationsFrame:addChild(ui.TelepodPage:new())
-                root.getChild = originalGetChild
-
-                assert(SettingsWrapper:isBirdSkinUnlocked("Piano Willow"))
             "##,
         )
         .unwrap();
@@ -1988,7 +2862,17 @@ fn shipped_telepods_page_consumes_a_code_queued_before_boot() {
         runtime.update(1.0 / 60.0).unwrap();
     }
     runtime
-        .execute_source("assert(not ui.TelepodPage.isShown)")
+        .execute_diagnostic_source(
+            r#"
+                -- Redemption and wallet delivery are deferred, not part of
+                -- the page constructor/entry call itself.
+                assert(SettingsWrapper:isBirdSkinUnlocked("Piano Willow"))
+                telepodTestRoot.getChild = telepodTestOriginalGetChild
+                telepodTestRoot = nil
+                telepodTestOriginalGetChild = nil
+                assert(not ui.TelepodPage.isShown)
+            "#,
+        )
         .unwrap();
 }
 
@@ -1996,40 +2880,81 @@ fn shipped_telepods_page_consumes_a_code_queued_before_boot() {
 fn shipped_telepods_page_adds_the_scanned_bird_during_live_gameplay() {
     let sandbox = ShippedDataSandbox::new("telepods-live-gameplay");
     let runtime = StellaLua::new(&sandbox.data_root).unwrap();
+    runtime.enable_local_services().unwrap();
     runtime.set_qr_scanner_available(true).unwrap();
     assert!(!runtime.submit_qr_code("hasbro.telepod.020").unwrap());
     runtime.boot("scripts/game.lua").unwrap();
-    runtime.execute_source("initializeEventSystem()").unwrap();
-    runtime
-        .execute_source(
-            r##"
-                SpriteSheetManager.useGroupSet("INGAME")
-                currentFolder = "Chapter02"
-                currentPack = "Chapter02"
-                currentLevel = 11
-                levelFolder = "levels/Chapter02/"
-                levelName = "Chapter02_L11"
-                loadLevelInternal(levelFolder .. levelName)
-                blocks.BlockComponentManager.triggerGlobalEvent(blocks.events.EID_START)
-            "##,
-        )
-        .unwrap();
-
-    for _ in 0..60 {
+    // The original extra-bird animation uses GameScene/slingshot updates.
+    // A direct loadLevelInternal fixture creates a level container but leaves
+    // the menu root active, so it cannot prove completion of that animation.
+    for _ in 0..600 {
         runtime.update(1.0 / 60.0).unwrap();
         runtime.draw().unwrap();
     }
     runtime
-        .execute_source(
+        .execute_diagnostic_source(
             r##"
-                telepodBirdCountBefore = birdsCounter
+                local ordinal
+                for index, name in ipairs(actions.myLevels.Chapter02) do
+                    if name == "Chapter02_L11" then ordinal = index end
+                end
+                assert(ordinal, "Chapter02_L11 must be in the shipped level order")
+                LevelLoad.transitionToLevel("Chapter02", ordinal)
+            "##,
+        )
+        .unwrap();
+
+    for _ in 0..360 {
+        runtime.update(1.0 / 60.0).unwrap();
+        runtime.draw().unwrap();
+    }
+    runtime
+        .execute_diagnostic_source(
+            r##"
+                assert(menuManager:getRoot().name == "GameScene")
+                assert(levelName == "Chapter02_L11")
+                assert(notificationsFrame:getChild("levelLoadTransition") == nil)
+                assert(IAP.isPaymentInitialized())
+                assert(g_slingshot:isReadyToSwitch())
+                local config = g_telepodConfiguration["Piano Willow"]
+                local parameters = config.levels[tostring(SettingsWrapper:getTelepodLevel("Piano Willow"))]
+                assert(config.preSpawnEffect == "notesFallFromSky")
+                assert(config.spawnEffect == "selfieSnapshot")
+                local pigs = 0
+                for name in pairs(levelGoals) do
+                    if not getObjectDefinition(name).disablePigCostumeTransformation then
+                        pigs = pigs + 1
+                    end
+                end
+                local notes = parameters.preSpawnEffectParameters
+                local snapshot = parameters.spawnEffectParameters
+                -- Two camera moves each take at most one second. Notes wait
+                -- (pig count + 1) intervals plus birdSpawnDelay before starting
+                -- the snapshot. Its final flight is distance / scaled speed;
+                -- the on-screen slingshot is at most a viewport diagonal away.
+                -- One second covers deferred-event and frame-boundary overhead.
+                telepodWaitSeconds = 3 + (pigs + 1) * notes.notes.spawnInterval +
+                    notes.birdSpawnDelay + snapshot.appearDuration + snapshot.pauseDuration +
+                    vLength(screenWidth, screenHeight) / (snapshot.flyingSpeed * worldScale / 4)
+                telepodInitialLevelBirdCounter = birdsCounter
+                telepodBirdCountBefore = 0
+                for _ in pairs(birds) do telepodBirdCountBefore = telepodBirdCountBefore + 1 end
                 telepodBirdAddFinished = false
                 telepodBirdAddListener = {
                     eventTriggered = function(self, event)
-                        telepodBirdAddFinished = true
-                        telepodBirdAdded = event.bird
+                        if event.id == events.EID_WILL_ADD_EXTRA_BIRD then
+                            telepodBirdAdded = event.bird
+                        else
+                            -- The shipped FINISHED event has only its id;
+                            -- the bird name belongs to the preceding WILL event.
+                            telepodBirdAddFinished = true
+                        end
                     end,
                 }
+                eventManager:addEventListener(
+                    events.EID_WILL_ADD_EXTRA_BIRD,
+                    telepodBirdAddListener
+                )
                 eventManager:addEventListener(
                     events.EID_TELEPOD_BIRD_ADD_FINISHED,
                     telepodBirdAddListener
@@ -2039,20 +2964,46 @@ fn shipped_telepods_page_adds_the_scanned_bird_during_live_gameplay() {
         )
         .unwrap();
 
-    for _ in 0..180 {
+    let environment = game_environment(runtime.lua()).unwrap();
+    let wait_seconds = environment.get::<f64>("telepodWaitSeconds").unwrap();
+    assert!(wait_seconds.is_finite() && wait_seconds > 3.0);
+    let maximum_frames = (wait_seconds * 60.0).ceil() as usize;
+    let mut completed_frame = None;
+    for frame in 1..=maximum_frames {
         runtime.update(1.0 / 60.0).unwrap();
         runtime.draw().unwrap();
+        if environment.get::<bool>("telepodBirdAddFinished").unwrap() {
+            completed_frame = Some(frame);
+            break;
+        }
     }
     runtime
-        .execute_source(
+        .execute_diagnostic_source(
             r##"
-                assert(SettingsWrapper:isBirdSkinUnlocked("Piano Willow"))
-                assert(telepodBirdAddFinished)
-                assert(telepodBirdAdded == "Piano Willow")
-                assert(birdsCounter == telepodBirdCountBefore + 1)
+                assert(SettingsWrapper:isBirdSkinUnlocked("Piano Willow"), "scan must unlock its skin")
+                assert(telepodBirdAddFinished, "extra-bird animation must finish; pending=" ..
+                    tostring(Telepods.birdToGive) .. "; will=" .. tostring(telepodBirdAdded) ..
+                    "; ready=" .. tostring(g_slingshot:isReadyToSwitch()) ..
+                    "; current=" .. tostring(currentBirdName) ..
+                    "; extra=" .. tostring(objects.world[currentBirdName] and objects.world[currentBirdName].isExtraBird))
+                assert(telepodBirdAdded == "Piano Willow", "WILL_ADD must identify the scanned bird")
+                local birdCount = 0
+                for _ in pairs(birds) do birdCount = birdCount + 1 end
+                assert(birdCount == telepodBirdCountBefore + 1, "one extra bird must be created")
+                -- birdsCounter is filled by initializeObject at level load.
+                -- Slingshot.createNewBirdToSlingshot writes the live birds
+                -- table directly without increasing that initial level count.
+                assert(birdsCounter == telepodInitialLevelBirdCounter)
+                assert(objects.world[currentBirdName].isExtraBird, "the slingshot bird must be extra")
+                assert(objects.world[currentBirdName].definition == "Willow")
             "##,
         )
         .unwrap();
+    eprintln!(
+        "Piano Willow scan completed at frame {} within the script-derived {}-frame bound",
+        completed_frame.unwrap(),
+        maximum_frames
+    );
 }
 
 #[test]
@@ -2062,7 +3013,7 @@ fn shipped_telepods_scanner_and_iap_wallet_complete_all_configured_products() {
     runtime.boot("scripts/game.lua").unwrap();
 
     runtime
-        .execute_source(
+        .execute_diagnostic_source(
             r##"
                 assert(not IAP.isPaymentInitialized())
                 assert(not _G.IAP.native_isPaymentInitialized())
@@ -2075,7 +3026,7 @@ fn shipped_telepods_scanner_and_iap_wallet_complete_all_configured_products() {
     assert!(!runtime.submit_qr_code("hasbro.telepod.020").unwrap());
     runtime.set_qr_scanner_available(true).unwrap();
     runtime
-        .execute_source(
+        .execute_diagnostic_source(
             r##"
                 assert(IAP.isPaymentInitialized())
                 assert(_G.IAP.native_isPaymentInitialized())
@@ -2108,6 +3059,23 @@ fn shipped_telepods_scanner_and_iap_wallet_complete_all_configured_products() {
         .unwrap();
 
     let environment = game_environment(runtime.lua()).unwrap();
+    assert!(
+        environment
+            .get::<Value>("scanner_recognized")
+            .unwrap()
+            .is_nil()
+    );
+    assert!(
+        environment
+            .get::<Value>("scanner_product")
+            .unwrap()
+            .is_nil()
+    );
+
+    // Recognition itself is an application event. Its redeem post is reached
+    // by the nested animation scheduler later in the first update; the wallet
+    // requested by that completion needs the following scheduler boundary.
+    runtime.update(1.0 / 60.0).unwrap();
     assert_eq!(
         environment.get::<String>("scanner_recognized").unwrap(),
         "hasbro.telepod.020"
@@ -2119,13 +3087,6 @@ fn shipped_telepods_scanner_and_iap_wallet_complete_all_configured_products() {
             .is_nil()
     );
 
-    runtime.update(1.0 / 60.0).unwrap();
-    assert!(
-        environment
-            .get::<Value>("scanner_product")
-            .unwrap()
-            .is_nil()
-    );
     runtime.update(1.0 / 60.0).unwrap();
     assert_eq!(
         environment.get::<String>("scanner_product").unwrap(),
@@ -2185,19 +3146,10 @@ fn shipped_telepods_scanner_and_iap_wallet_complete_all_configured_products() {
     assert!(environment.get::<Value>("unknown_code").unwrap().is_nil());
 
     // The provider redeem functors return at the following frame head. Their
-    // shipped Lua callbacks request one coalesced wallet fetch, which must not
-    // be delivered re-entrantly in the same queue snapshot.
-    runtime.update(1.0 / 60.0).unwrap();
-    assert_eq!(environment.get::<i64>("telepod_success_count").unwrap(), 0);
-    assert_eq!(
-        environment.get::<String>("unknown_code").unwrap(),
-        "not-a-shipped-telepod"
-    );
-    assert_eq!(
-        environment.get::<String>("unknown_status").unwrap(),
-        "CODE_NOT_FOUND"
-    );
-
+    // shipped callbacks request one coalesced wallet fetch. That post is not
+    // part of the frame-head scheduler snapshot, but the unconditional
+    // FlashAnimationWrapper.updateAnimations call reaches the native
+    // scheduler again later in the same GameLua update.
     runtime.update(1.0 / 60.0).unwrap();
     assert_eq!(environment.get::<i64>("telepod_product_count").unwrap(), 24);
     assert_eq!(environment.get::<i64>("telepod_mapping_count").unwrap(), 24);
@@ -2209,6 +3161,141 @@ fn shipped_telepods_scanner_and_iap_wallet_complete_all_configured_products() {
     assert_eq!(
         environment.get::<String>("unknown_status").unwrap(),
         "CODE_NOT_FOUND"
+    );
+}
+
+#[test]
+fn local_iap_catalog_purchase_and_wallet_follow_native_reentrant_drain() {
+    let sandbox = ShippedDataSandbox::new("local-iap-catalog");
+    let runtime = StellaLua::new(&sandbox.data_root).unwrap();
+    runtime.enable_local_services().unwrap();
+    runtime.boot("scripts/game.lua").unwrap();
+    runtime.update(1.0 / 60.0).unwrap();
+    runtime.update(1.0 / 60.0).unwrap();
+
+    runtime
+        .execute_source(
+            r##"
+                local catalog = IAP.getAvailableItems()
+                local nativeCatalog = _G.IAP.native_getAvailableItems()
+                local_iap_catalog_count = #catalog
+                local_iap_native_catalog_count = #nativeCatalog
+                local_iap_catalog_order = {}
+                local_iap_catalog_amounts = {}
+                for index, item in ipairs(catalog) do
+                    local_iap_catalog_order[index] = item.id
+                    local_iap_catalog_amounts[index] = item.clientData.coins
+                    if item.type ~= "CONSUMABLE" or item.price ~= "0" or
+                       item.clientData.type ~= "coins" then
+                        error("invalid local catalog entry " .. item.id)
+                    end
+                end
+                local selected = IAP.getItem("coins.1")
+                local_iap_selected_id = selected and selected.id
+
+                local_iap_purchase_callback_count = 0
+                local_iap_purchase_product = nil
+                local_iap_purchase_status = nil
+                local_iap_buy_results = select("#", IAP.buy("coins.1", {
+                    onPurchaseDone = function(self, product, status)
+                        local_iap_purchase_callback_count =
+                            local_iap_purchase_callback_count + 1
+                        local_iap_purchase_product = product
+                        local_iap_purchase_status = status
+                    end,
+                }))
+                local_iap_unknown_results = select("#", IAP.buy("missing", {
+                    onPurchaseDone = function(self, product, status)
+                        local_iap_unknown_product = product
+                        local_iap_unknown_status = status
+                    end,
+                }))
+                local_iap_native_unknown = _G.IAP.native_buyItem("missing")
+                local_iap_restore_results = select("#", IAP.restore())
+                local_iap_refresh_results = select("#",
+                    _G.IAP.native_refreshCatalog())
+            "##,
+        )
+        .unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert_eq!(
+        environment.get::<i64>("local_iap_catalog_count").unwrap(),
+        6
+    );
+    assert_eq!(
+        environment
+            .get::<i64>("local_iap_native_catalog_count")
+            .unwrap(),
+        6
+    );
+    let order: mlua::Table = environment.get("local_iap_catalog_order").unwrap();
+    let amounts: mlua::Table = environment.get("local_iap_catalog_amounts").unwrap();
+    for (index, amount) in [150, 400, 900, 2000, 4500, 7500].into_iter().enumerate() {
+        assert_eq!(
+            order.raw_get::<String>(index + 1).unwrap(),
+            format!("coins.{}", index + 1)
+        );
+        assert_eq!(
+            amounts.raw_get::<String>(index + 1).unwrap(),
+            amount.to_string()
+        );
+    }
+    assert_eq!(
+        environment.get::<String>("local_iap_selected_id").unwrap(),
+        "coins.1"
+    );
+    assert_eq!(
+        environment
+            .get::<i64>("local_iap_purchase_callback_count")
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        environment
+            .get::<String>("local_iap_native_unknown")
+            .unwrap(),
+        ""
+    );
+    assert_eq!(
+        environment
+            .get::<String>("local_iap_unknown_product")
+            .unwrap(),
+        "missing"
+    );
+    assert_eq!(
+        environment
+            .get::<String>("local_iap_unknown_status")
+            .unwrap(),
+        "PURCHASE_FAILED"
+    );
+
+    // Purchase status arrives at the frame head. Shipped iap.lua keeps the
+    // listener pending and asks native_fetchWallet. The wallet post is outside
+    // that first scheduler snapshot, then the same frame's unconditional
+    // AnimationWrapper update drains it through 0x100014214.
+    runtime.update(1.0 / 60.0).unwrap();
+    assert_eq!(
+        environment
+            .get::<i64>("local_iap_purchase_callback_count")
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        environment
+            .get::<String>("local_iap_purchase_product")
+            .unwrap(),
+        "coins.1"
+    );
+    assert_eq!(
+        environment
+            .get::<String>("local_iap_purchase_status")
+            .unwrap(),
+        "PURCHASE_SUCCEEDED"
+    );
+    assert_eq!(
+        environment.get::<i64>("local_iap_refresh_results").unwrap(),
+        0
     );
 }
 
@@ -2398,6 +3485,89 @@ fn rovio_channel_preserves_the_seven_member_native_abi_before_service_enable() {
 }
 
 #[test]
+fn rovio_channel_retains_catalog_results_and_launch_notifications() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .execute_source(
+            r#"
+                channel_remote_paths = {}
+                channel_content_counts = {}
+                function RovioChannel.onRemoteNotificationReceived(path)
+                    channel_remote_paths[#channel_remote_paths + 1] = path
+                end
+                function RovioChannel.onNewChannelContentUpdated(count)
+                    channel_content_counts[#channel_content_counts + 1] = count
+                end
+                function update() end
+            "#,
+        )
+        .unwrap();
+
+    runtime.submit_channel_launch_notification("content/videos/stella");
+    runtime
+        .execute_source("RovioChannel.onMenuInitialised()")
+        .unwrap();
+    let environment = game_environment(runtime.lua()).unwrap();
+    let remote_paths: mlua::Table = environment.get("channel_remote_paths").unwrap();
+    assert_eq!(
+        remote_paths.raw_len(),
+        0,
+        "null SDK pointer suppresses launch data"
+    );
+
+    runtime
+        .lua()
+        .set_named_registry_value("stella.rovio_channel.sdk_enabled", true)
+        .unwrap();
+    runtime
+        .execute_source(
+            r#"
+                RovioChannel.onMenuInitialised()
+                RovioChannel.onMenuInitialised()
+            "#,
+        )
+        .unwrap();
+    assert_eq!(remote_paths.raw_len(), 1);
+    assert_eq!(
+        remote_paths.get::<String>(1).unwrap(),
+        "content/videos/stella"
+    );
+
+    runtime.submit_channel_content_update(7);
+    runtime
+        .execute_source("channel_count_before_dispatch = RovioChannel.numOfNewContent()")
+        .unwrap();
+    assert_eq!(
+        environment
+            .get::<f64>("channel_count_before_dispatch")
+            .unwrap(),
+        0.0
+    );
+    let content_counts: mlua::Table = environment.get("channel_content_counts").unwrap();
+    assert_eq!(content_counts.raw_len(), 0);
+
+    runtime.update(0.0).unwrap();
+    runtime
+        .execute_source("channel_count_after_dispatch = RovioChannel.numOfNewContent()")
+        .unwrap();
+    assert_eq!(content_counts.raw_len(), 1);
+    assert_eq!(content_counts.get::<i32>(1).unwrap(), 7);
+    assert_eq!(
+        environment
+            .get::<f64>("channel_count_after_dispatch")
+            .unwrap(),
+        7.0
+    );
+
+    runtime.update(0.0).unwrap();
+    assert_eq!(
+        content_counts.raw_len(),
+        1,
+        "provider completion is one-shot"
+    );
+}
+
+#[test]
 fn retired_channel_sprite_names_fall_back_to_bundled_toons_art() {
     let runtime = StellaLua::new("/tmp").unwrap();
     register_test_sprite_sheet_with_sizes(
@@ -2538,6 +3708,623 @@ fn social_manager_preserves_native_table_and_disconnected_abi() {
 }
 
 #[test]
+fn local_social_provider_dispatches_native_callbacks_and_persists_scores() {
+    let sandbox = ShippedDataSandbox::new("local-social-provider");
+    let runtime = StellaLua::new(&sandbox.data_root).unwrap();
+    runtime.enable_local_services().unwrap();
+    runtime
+        .execute_source(
+            r##"
+                update = function() end
+                local social = _G.SocialManager
+                social.onSocialNetworkConnected = function(network)
+                    local_social_connected_callback = network
+                end
+                social.onFriendsProgressUpdated = function(success, friends)
+                    local_social_friends_success = success
+                    local_social_friend_count = #friends
+                end
+                social.onScorePosted = function(success, level, requestId)
+                    local_social_score_success = success
+                    local_social_score_level = level
+                    local_social_score_request = requestId
+                end
+                social.onLeaderboardFetched = function(success, level, leaderboard, requestId)
+                    local_social_leaderboard_success = success
+                    local_social_leaderboard_level = level
+                    local_social_leaderboard_request = requestId
+                    local_social_leaderboard_points = leaderboard[1].points
+                    local_social_leaderboard_rank = leaderboard[1].rank
+                    local_social_leaderboard_local = leaderboard[1].localPlayer
+                    local_social_leaderboard_id = leaderboard[1].accountId
+                end
+                local_social_connected_before =
+                    social.native_isConnectedToSocialNetwork()
+                social.native_connectToSocialNetwork()
+                local_social_connected_after =
+                    social.native_isConnectedToSocialNetwork()
+                local_social_local_id = social.native_getLocalUserAccountId()
+                social.native_getFriendsProgress()
+                social.native_postScores("Level_Local", 902.5, "score-request")
+                social.native_fetchLeaderboard(
+                    "Level_Local", "leaderboard-request")
+                social.native_setProgress("chapter=2")
+            "##,
+        )
+        .unwrap();
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert!(
+        !environment
+            .get::<bool>("local_social_connected_before")
+            .unwrap()
+    );
+    assert!(
+        environment
+            .get::<bool>("local_social_connected_after")
+            .unwrap()
+    );
+    assert_eq!(
+        environment.get::<String>("local_social_local_id").unwrap(),
+        "local-player"
+    );
+    for name in [
+        "local_social_connected_callback",
+        "local_social_friends_success",
+        "local_social_score_success",
+        "local_social_leaderboard_success",
+    ] {
+        assert!(environment.get::<Value>(name).unwrap().is_nil(), "{name}");
+    }
+    runtime.update(1.0 / 60.0).unwrap();
+    assert_eq!(
+        environment
+            .get::<String>("local_social_connected_callback")
+            .unwrap(),
+        "facebook"
+    );
+    assert!(
+        environment
+            .get::<bool>("local_social_friends_success")
+            .unwrap()
+    );
+    assert_eq!(
+        environment.get::<i64>("local_social_friend_count").unwrap(),
+        0
+    );
+    assert!(
+        environment
+            .get::<bool>("local_social_score_success")
+            .unwrap()
+    );
+    assert_eq!(
+        environment
+            .get::<String>("local_social_score_level")
+            .unwrap(),
+        "Level_Local"
+    );
+    assert_eq!(
+        environment
+            .get::<String>("local_social_score_request")
+            .unwrap(),
+        "score-request"
+    );
+    assert!(
+        environment
+            .get::<bool>("local_social_leaderboard_success")
+            .unwrap()
+    );
+    assert_eq!(
+        environment
+            .get::<f64>("local_social_leaderboard_points")
+            .unwrap(),
+        902.5
+    );
+    assert_eq!(
+        environment
+            .get::<i64>("local_social_leaderboard_rank")
+            .unwrap(),
+        1
+    );
+    assert!(
+        environment
+            .get::<bool>("local_social_leaderboard_local")
+            .unwrap()
+    );
+    assert_eq!(
+        environment
+            .get::<String>("local_social_leaderboard_id")
+            .unwrap(),
+        "local-player"
+    );
+
+    let document = fs::read_to_string(sandbox.root.join("appdata/stella-social.json")).unwrap();
+    assert!(document.contains("Level_Local"));
+    assert!(document.contains("902.5"));
+    assert!(document.contains("chapter=2"));
+
+    let reopened = StellaLua::new(&sandbox.data_root).unwrap();
+    reopened.enable_local_services().unwrap();
+    reopened
+        .execute_source(
+            r##"
+                update = function() end
+                _G.SocialManager.onSocialNetworkConnected = function() end
+                _G.SocialManager.onLeaderboardFetched = function(
+                    success, level, leaderboard
+                )
+                    reopened_social_points = leaderboard[1].points
+                end
+                _G.SocialManager.native_connectToSocialNetwork()
+                _G.SocialManager.native_fetchLeaderboard("Level_Local", "reopen")
+            "##,
+        )
+        .unwrap();
+    reopened.update(1.0 / 60.0).unwrap();
+    assert_eq!(
+        game_environment(reopened.lua())
+            .unwrap()
+            .get::<f64>("reopened_social_points")
+            .unwrap(),
+        902.5
+    );
+}
+
+#[test]
+fn local_social_document_exposes_friends_progress_search_and_ranked_scores() {
+    let sandbox = ShippedDataSandbox::new("local-social-friends");
+    let appdata = sandbox.root.join("appdata");
+    fs::create_dir_all(&appdata).unwrap();
+    fs::write(
+        appdata.join("stella-social.json"),
+        br#"{
+            "scores": {"Level_Friends": 900},
+            "progress": "chapter=2",
+            "friends": [
+                {
+                    "accountId": "friend-zoe",
+                    "name": "Zoe Example",
+                    "nickname": "Zoe",
+                    "progress": "chapter=4",
+                    "scores": {"Level_Friends": 1200}
+                },
+                {
+                    "accountId": "friend-amy",
+                    "name": "Amy Example",
+                    "nickname": "Amy",
+                    "progress": "chapter=1",
+                    "scores": {"Level_Friends": 500}
+                }
+            ]
+        }"#,
+    )
+    .unwrap();
+
+    let runtime = StellaLua::new(&sandbox.data_root).unwrap();
+    runtime.enable_local_services().unwrap();
+    runtime
+        .execute_source(
+            r##"
+                update = function() end
+                local social = _G.SocialManager
+                social.onSocialNetworkConnected = function() end
+                social.onFriendsProgressUpdated = function(success, friends)
+                    rich_friends_success = success
+                    rich_progress_count = #friends
+                    rich_progress_first_id = friends[1].accountId
+                    rich_progress_first_name = friends[1].nickname
+                    rich_progress_first_value = friends[1].progress
+                end
+                social.onLeaderboardFetched = function(success, level, entries, requestId)
+                    rich_board_success = success
+                    rich_board_level = level
+                    rich_board_request = requestId
+                    rich_board_count = #entries
+                    rich_board_first_id = entries[1].accountId
+                    rich_board_first_rank = entries[1].rank
+                    rich_board_first_local = entries[1].localPlayer
+                    rich_board_second_id = entries[2].accountId
+                    rich_board_second_rank = entries[2].rank
+                    rich_board_second_local = entries[2].localPlayer
+                    rich_board_third_id = entries[3].accountId
+                end
+                social.native_connectToSocialNetwork()
+                rich_friends = social.native_getFriends()
+                rich_friend_lookup = social.native_getFriendAccountId("zOe")
+                social.native_getFriendsProgress()
+                social.native_fetchLeaderboard("Level_Friends", "rank-request")
+            "##,
+        )
+        .unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    let friends = environment.get::<mlua::Table>("rich_friends").unwrap();
+    assert_eq!(friends.raw_len(), 2);
+    assert_eq!(
+        friends
+            .raw_get::<mlua::Table>(1)
+            .unwrap()
+            .get::<String>("accountId")
+            .unwrap(),
+        "friend-zoe"
+    );
+    assert_eq!(
+        environment.get::<String>("rich_friend_lookup").unwrap(),
+        "friend-zoe"
+    );
+    runtime.update(1.0 / 60.0).unwrap();
+    assert!(environment.get::<bool>("rich_friends_success").unwrap());
+    assert_eq!(environment.get::<i64>("rich_progress_count").unwrap(), 2);
+    assert_eq!(
+        environment.get::<String>("rich_progress_first_id").unwrap(),
+        "friend-zoe"
+    );
+    assert_eq!(
+        environment
+            .get::<String>("rich_progress_first_name")
+            .unwrap(),
+        "Zoe"
+    );
+    assert_eq!(
+        environment
+            .get::<String>("rich_progress_first_value")
+            .unwrap(),
+        "chapter=4"
+    );
+    assert!(environment.get::<bool>("rich_board_success").unwrap());
+    assert_eq!(environment.get::<i64>("rich_board_count").unwrap(), 3);
+    assert_eq!(
+        environment.get::<String>("rich_board_first_id").unwrap(),
+        "friend-zoe"
+    );
+    assert_eq!(environment.get::<i64>("rich_board_first_rank").unwrap(), 1);
+    assert!(!environment.get::<bool>("rich_board_first_local").unwrap());
+    assert_eq!(
+        environment.get::<String>("rich_board_second_id").unwrap(),
+        "local-player"
+    );
+    assert_eq!(environment.get::<i64>("rich_board_second_rank").unwrap(), 2);
+    assert!(environment.get::<bool>("rich_board_second_local").unwrap());
+    assert_eq!(
+        environment.get::<String>("rich_board_third_id").unwrap(),
+        "friend-amy"
+    );
+}
+
+#[test]
+fn compatible_social_endpoint_preserves_operations_and_native_callback_shapes() {
+    let responses = vec![
+        (
+            200,
+            serde_json::to_vec(&serde_json::json!({
+                "network": "facebook",
+                "localPlayer": {"accountId": "remote-player", "name": "Remote Stella"},
+                "friends": [{
+                    "accountId": "friend-initial",
+                    "name": "Initial Friend",
+                    "nickname": "Initial",
+                    "progress": "chapter=2"
+                }]
+            }))
+            .unwrap(),
+        ),
+        (
+            200,
+            serde_json::to_vec(&serde_json::json!({
+                "friends": [{
+                    "accountId": "friend-online",
+                    "name": "Online Friend",
+                    "nickname": "Online",
+                    "progress": "chapter=5"
+                }]
+            }))
+            .unwrap(),
+        ),
+        (200, b"{}".to_vec()),
+        (
+            200,
+            serde_json::to_vec(&serde_json::json!({
+                "entries": [{
+                    "points": 4242.5,
+                    "rank": 3,
+                    "nickname": "Online",
+                    "accountId": "friend-online",
+                    "localPlayer": false
+                }]
+            }))
+            .unwrap(),
+        ),
+        (200, b"{}".to_vec()),
+    ];
+    let (url, request_rx, worker) = spawn_sequence_responses(responses);
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime.set_social_url(&url).unwrap();
+    runtime
+        .execute_source(
+            r##"
+                update = function() end
+                local social = _G.SocialManager
+                social.onSocialNetworkConnected = function(network)
+                    online_social_network = network
+                end
+                social.onFriendsProgressUpdated = function(success, friends)
+                    online_friends_success = success
+                    online_friend_id = friends[1].accountId
+                    online_friend_name = friends[1].nickname
+                    online_friend_progress = friends[1].progress
+                end
+                social.onScorePosted = function(success, level, requestId)
+                    online_score_success = success
+                    online_score_level = level
+                    online_score_request = requestId
+                end
+                social.onLeaderboardFetched = function(success, level, entries, requestId)
+                    online_board_success = success
+                    online_board_level = level
+                    online_board_request = requestId
+                    online_board_points = entries[1].points
+                    online_board_rank = entries[1].rank
+                    online_board_id = entries[1].accountId
+                end
+                social.native_connectToSocialNetwork()
+            "##,
+        )
+        .unwrap();
+    let environment = game_environment(runtime.lua()).unwrap();
+
+    let connect_request = request_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    for _ in 0..200 {
+        runtime.update(1.0 / 60.0).unwrap();
+        if !environment
+            .get::<Value>("online_social_network")
+            .unwrap()
+            .is_nil()
+        {
+            break;
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(
+        environment.get::<String>("online_social_network").unwrap(),
+        "facebook"
+    );
+    assert_eq!(
+        runtime
+            .lua()
+            .globals()
+            .get::<mlua::Table>("SocialManager")
+            .unwrap()
+            .get::<Function>("native_getLocalUserAccountId")
+            .unwrap()
+            .call::<String>(())
+            .unwrap(),
+        "remote-player"
+    );
+    runtime
+        .execute_source("_G.SocialManager.native_getFriendsProgress()")
+        .unwrap();
+    let friends_request = request_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    for _ in 0..200 {
+        runtime.update(1.0 / 60.0).unwrap();
+        if !environment
+            .get::<Value>("online_friends_success")
+            .unwrap()
+            .is_nil()
+        {
+            break;
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert!(environment.get::<bool>("online_friends_success").unwrap());
+    assert_eq!(
+        environment.get::<String>("online_friend_id").unwrap(),
+        "friend-online"
+    );
+    assert_eq!(
+        environment.get::<String>("online_friend_name").unwrap(),
+        "Online"
+    );
+    assert_eq!(
+        environment.get::<String>("online_friend_progress").unwrap(),
+        "chapter=5"
+    );
+
+    runtime
+        .execute_source(
+            "_G.SocialManager.native_postScores('Level_Online', 321.25, 'score-online')",
+        )
+        .unwrap();
+    let score_request = request_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    for _ in 0..200 {
+        runtime.update(1.0 / 60.0).unwrap();
+        if !environment
+            .get::<Value>("online_score_success")
+            .unwrap()
+            .is_nil()
+        {
+            break;
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert!(environment.get::<bool>("online_score_success").unwrap());
+    runtime
+        .execute_source("_G.SocialManager.native_fetchLeaderboard('Level_Online', 'board-online')")
+        .unwrap();
+    let board_request = request_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    for _ in 0..200 {
+        runtime.update(1.0 / 60.0).unwrap();
+        if !environment
+            .get::<Value>("online_board_success")
+            .unwrap()
+            .is_nil()
+        {
+            break;
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert!(environment.get::<bool>("online_board_success").unwrap());
+    assert_eq!(
+        environment.get::<f64>("online_board_points").unwrap(),
+        4242.5
+    );
+    assert_eq!(environment.get::<i64>("online_board_rank").unwrap(), 3);
+    assert_eq!(
+        environment.get::<String>("online_board_id").unwrap(),
+        "friend-online"
+    );
+
+    runtime
+        .execute_source("_G.SocialManager.native_setProgress('chapter=6')")
+        .unwrap();
+    let progress_request = request_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    worker.join().unwrap();
+
+    let operation = |request: &[u8]| {
+        let body = request
+            .windows(4)
+            .position(|bytes| bytes == b"\r\n\r\n")
+            .map(|offset| &request[offset + 4..])
+            .unwrap();
+        serde_json::from_slice::<serde_json::Value>(body).unwrap()["operation"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    assert_eq!(operation(&connect_request), "connect");
+    assert_eq!(operation(&friends_request), "getFriendsProgress");
+    assert_eq!(operation(&score_request), "postScore");
+    assert_eq!(operation(&board_request), "fetchLeaderboard");
+    assert_eq!(operation(&progress_request), "setProgress");
+    let score_body = score_request
+        .windows(4)
+        .position(|bytes| bytes == b"\r\n\r\n")
+        .map(|offset| &score_request[offset + 4..])
+        .unwrap();
+    let score_json: serde_json::Value = serde_json::from_slice(score_body).unwrap();
+    assert_eq!(score_json["level"], "Level_Online");
+    assert_eq!(score_json["points"], 321.25);
+    assert_eq!(score_json["requestId"], "score-online");
+}
+
+#[test]
+fn local_social_avatar_uses_native_download_cache_and_graphics_memory_stages() {
+    let sandbox = ShippedDataSandbox::new("local-social-avatar");
+    let runtime = StellaLua::new(&sandbox.data_root).unwrap();
+    runtime.enable_local_services().unwrap();
+    runtime
+        .execute_source(
+            r##"
+                update = function() end
+                local social = _G.SocialManager
+                local_avatar_callbacks = {}
+                social.onSocialNetworkConnected = function() end
+                social.onAvatarDownloadedToCache = function(accountId)
+                    local_avatar_callbacks[#local_avatar_callbacks + 1] =
+                        "cached:" .. accountId
+                    -- SocialManager.lua performs this same second native
+                    -- call when the account remains in avatarsToLoad.
+                    social.native_loadAvatar(accountId)
+                end
+                social.onAvatarImageLoaded = function(accountId)
+                    local_avatar_callbacks[#local_avatar_callbacks + 1] =
+                        "loaded:" .. accountId
+                end
+                social.native_connectToSocialNetwork()
+                social.native_loadAvatar("local-player")
+            "##,
+        )
+        .unwrap();
+
+    assert!(
+        runtime
+            .resource_runtime
+            .lock()
+            .unwrap()
+            .active_native_sprite_metrics("AVATAR_local-player")
+            .is_none(),
+        "first native call only starts the 64x64 provider request"
+    );
+
+    runtime.update(1.0 / 60.0).unwrap();
+    let environment = game_environment(runtime.lua()).unwrap();
+    let callbacks = environment
+        .get::<mlua::Table>("local_avatar_callbacks")
+        .unwrap();
+    assert_eq!(callbacks.raw_len(), 2);
+    assert_eq!(
+        callbacks.raw_get::<String>(1).unwrap(),
+        "cached:local-player"
+    );
+    assert_eq!(
+        callbacks.raw_get::<String>(2).unwrap(),
+        "loaded:local-player"
+    );
+    assert_eq!(
+        runtime
+            .resource_runtime
+            .lock()
+            .unwrap()
+            .active_native_sprite_metrics("AVATAR_local-player")
+            .unwrap(),
+        NativeSpriteMetrics {
+            width: 64,
+            height: 64,
+            pivot_x: 32,
+            pivot_y: 32,
+        }
+    );
+
+    runtime
+        .execute_source("_G.SocialManager.native_unloadAvatar('local-player')")
+        .unwrap();
+    assert!(
+        runtime
+            .resource_runtime
+            .lock()
+            .unwrap()
+            .active_native_sprite_metrics("AVATAR_local-player")
+            .is_none()
+    );
+
+    // State 2 keeps the provider cache: reloading publishes the resource and
+    // calls onAvatarImageLoaded synchronously, without another completion.
+    runtime
+        .execute_source("_G.SocialManager.native_loadAvatar('local-player')")
+        .unwrap();
+    assert_eq!(callbacks.raw_len(), 3);
+    assert_eq!(
+        callbacks.raw_get::<String>(3).unwrap(),
+        "loaded:local-player"
+    );
+    assert!(
+        runtime
+            .resource_runtime
+            .lock()
+            .unwrap()
+            .active_atlas_catalog_region("AVATAR_local-player", runtime.data_root())
+            .is_some()
+    );
+
+    runtime
+        .execute_source(
+            r##"
+                _G.SocialManager.native_unloadAllAvatars()
+                _G.SocialManager.native_loadAvatar("unknown-account")
+            "##,
+        )
+        .unwrap();
+    assert!(
+        runtime
+            .resource_runtime
+            .lock()
+            .unwrap()
+            .active_native_sprite_metrics("AVATAR_local-player")
+            .is_none()
+    );
+    runtime.update(1.0 / 60.0).unwrap();
+    assert_eq!(callbacks.raw_len(), 3, "unknown provider IDs stay pending");
+}
+
+#[test]
 fn skynest_native_account_and_storage_complete_retired_backend_calls_locally() {
     let runtime = StellaLua::new("/tmp").unwrap();
     runtime
@@ -2605,7 +4392,7 @@ fn skynest_native_account_and_storage_complete_retired_backend_calls_locally() {
                     skynest_login_failure_code, skynest_login_failure_message = ...
                 end
                 skynest_login_results = select("#",
-                    account.native_login(true, false, true, "ignored"))
+                    account.native_login(false, false, true, "ignored"))
                 skynest_login_in_progress_after =
                     account.native_isLoginInProgress()
                 skynest_login_argument_tags_strict =
@@ -2804,6 +4591,747 @@ fn skynest_native_account_and_storage_complete_retired_backend_calls_locally() {
 }
 
 #[test]
+fn local_identity_and_cloud_provider_persist_the_recovered_async_contract() {
+    let sandbox = ShippedDataSandbox::new("local-account-cloud-provider");
+    let runtime = StellaLua::new(&sandbox.data_root).unwrap();
+    runtime.enable_local_services().unwrap();
+    runtime
+        .execute_source(
+            r##"
+                update = function() end
+                local account = _G.SkynestAccount
+                local storage = _G.SkynestStorage
+                local_events = {}
+                notifyEventManager = function(name)
+                    local_events[#local_events + 1] = name
+                end
+                account.onLoginSuccess = function(isGuest, details)
+                    local_login_count = (local_login_count or 0) + 1
+                    local_login_guest = isGuest
+                    local_login_id = details.id
+                    local_login_name = details.name
+                    local_login_social = details.isConnectedToSocialNetwork
+                end
+                storage.cloudDataFirstSync = function()
+                    local_first_sync_count = (local_first_sync_count or 0) + 1
+                end
+                storage.cloudDataSync = function(document)
+                    local_sync_count = (local_sync_count or 0) + 1
+                    local_sync_coins = document.coins
+                    local_sync_nested = document.progress and document.progress.chapter
+                end
+                local_login_results = select("#",
+                    account.native_login(false, false, false))
+                local_login_deferred =
+                    not account.native_isLoggedIn() and
+                    account.native_isLoginInProgress()
+            "##,
+        )
+        .unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert!(environment.get::<bool>("local_login_deferred").unwrap());
+    assert_eq!(environment.get::<i64>("local_login_results").unwrap(), 0);
+    runtime.update(1.0 / 60.0).unwrap();
+    assert_eq!(environment.get::<i64>("local_login_count").unwrap(), 1);
+    assert!(environment.get::<bool>("local_login_guest").unwrap());
+    assert_eq!(
+        environment.get::<String>("local_login_id").unwrap(),
+        "local-player"
+    );
+    assert_eq!(
+        environment.get::<String>("local_login_name").unwrap(),
+        "Stella Player"
+    );
+    assert!(!environment.get::<bool>("local_login_social").unwrap());
+
+    runtime
+        .execute_source(
+            r##"
+                local storage = _G.SkynestStorage
+                local_first_load_started = storage.native_loadCloudSettings()
+                local_first_load_busy = storage.native_isTransactionInProcess()
+                local_parallel_save_rejected = not storage.native_saveCloudSettings({})
+            "##,
+        )
+        .unwrap();
+    assert!(environment.get::<bool>("local_first_load_started").unwrap());
+    assert!(environment.get::<bool>("local_first_load_busy").unwrap());
+    assert!(
+        environment
+            .get::<bool>("local_parallel_save_rejected")
+            .unwrap()
+    );
+    runtime.update(1.0 / 60.0).unwrap();
+    assert_eq!(environment.get::<i64>("local_first_sync_count").unwrap(), 1);
+    let events = environment.get::<mlua::Table>("local_events").unwrap();
+    assert_eq!(
+        events.raw_get::<String>(events.raw_len()).unwrap(),
+        "EID_SYNC_CLOUD_LOAD_FAILED"
+    );
+
+    runtime
+        .execute_source(
+            r##"
+                local storage = _G.SkynestStorage
+                local_save_started = storage.native_saveCloudSettings({
+                    coins = 471,
+                    progress = { chapter = 2 }
+                })
+            "##,
+        )
+        .unwrap();
+    assert!(environment.get::<bool>("local_save_started").unwrap());
+    runtime.update(1.0 / 60.0).unwrap();
+    assert_eq!(
+        events.raw_get::<String>(events.raw_len()).unwrap(),
+        "EID_SYNC_CLOUD_COMPLETED"
+    );
+
+    runtime
+        .execute_source(
+            r##"
+                local storage = _G.SkynestStorage
+                local_reload_started = storage.native_loadCloudSettings()
+                storage.native_setKey("nickname", "local-stella", function()
+                    local_set_finished = true
+                end)
+                storage.native_getKey("nickname", function(value)
+                    local_key_value = value
+                end)
+                storage.native_getKeyForAccountIds(
+                    "nickname", { "friend", "local-player" }, function(values)
+                        local_batch_value = values["local-player"]
+                    end
+                )
+            "##,
+        )
+        .unwrap();
+    assert!(environment.get::<bool>("local_reload_started").unwrap());
+    runtime.update(1.0 / 60.0).unwrap();
+    assert_eq!(environment.get::<i64>("local_sync_count").unwrap(), 1);
+    assert_eq!(environment.get::<i64>("local_sync_coins").unwrap(), 471);
+    assert_eq!(environment.get::<i64>("local_sync_nested").unwrap(), 2);
+    assert!(environment.get::<bool>("local_set_finished").unwrap());
+    assert_eq!(
+        environment.get::<String>("local_key_value").unwrap(),
+        "local-stella"
+    );
+    assert_eq!(
+        environment.get::<String>("local_batch_value").unwrap(),
+        "local-stella"
+    );
+    drop(runtime);
+
+    let persisted = fs::read_to_string(sandbox.root.join("appdata/stella-services.json")).unwrap();
+    assert!(persisted.contains("local-stella"));
+    assert!(persisted.contains("\"coins\": 471"));
+
+    let reopened = StellaLua::new(&sandbox.data_root).unwrap();
+    reopened.enable_local_services().unwrap();
+    reopened
+        .execute_source(
+            r##"
+                update = function() end
+                _G.SkynestAccount.onLoginSuccess = function() end
+                _G.SkynestAccount.native_login(false, false, false)
+            "##,
+        )
+        .unwrap();
+    reopened.update(1.0 / 60.0).unwrap();
+    reopened
+        .execute_source(
+            r##"
+                _G.SkynestStorage.native_getKey("nickname", function(value)
+                    reopened_local_key = value
+                end)
+                _G.SkynestStorage.cloudDataSync = function(document)
+                    reopened_local_coins = document.coins
+                end
+                reopened_load_started =
+                    _G.SkynestStorage.native_loadCloudSettings()
+            "##,
+        )
+        .unwrap();
+    reopened.update(1.0 / 60.0).unwrap();
+    let reopened_environment = game_environment(reopened.lua()).unwrap();
+    assert_eq!(
+        reopened_environment
+            .get::<String>("reopened_local_key")
+            .unwrap(),
+        "local-stella"
+    );
+    assert_eq!(
+        reopened_environment
+            .get::<i64>("reopened_local_coins")
+            .unwrap(),
+        471
+    );
+    assert!(
+        reopened_environment
+            .get::<bool>("reopened_load_started")
+            .unwrap()
+    );
+}
+
+#[test]
+fn compatible_identity_preserves_session_profile_nickname_and_callback_contracts() {
+    let access = serde_json::to_vec(&serde_json::json!({
+        "userAuth": {"accessToken": "identity-token", "refreshToken": "refresh-token", "expiresIn": 3600},
+        "segments": [3, 7],
+        "config": {},
+        "profile": {
+            "publicAccountId": "online-player",
+            "personal": { "nickName": "Online Stella" },
+            "socialNetworks": [{ "provider": "facebook", "id": "synthetic-social-id", "socialAttributes": {"name": "Online Stella"} }],
+            "externalNetworks": [{ "provider": "facebook", "id": "synthetic-social-id" }]
+        }
+    }))
+    .unwrap();
+    let nickname = serde_json::to_vec(&serde_json::json!({
+        "isValid": true,
+        "validationMsg": ""
+    }))
+    .unwrap();
+    let (identity_url, request_rx, server) = spawn_sequence_responses(vec![
+        (200, access),
+        (200, nickname),
+        (200, br#"[{"hash":"identity-storage-hash"}]"#.to_vec()),
+    ]);
+
+    let sandbox = ShippedDataSandbox::new("identity-session-callbacks");
+    let runtime = StellaLua::new(&sandbox.data_root).unwrap();
+    runtime.set_identity_url(&identity_url).unwrap();
+    runtime
+        .set_identity_client(Some("purple test"), Some("sig+value"), Some("salt/one"))
+        .unwrap();
+    runtime
+        .execute_source(
+            r##"
+                identity_update_saw_login = false
+                -- Native identity initialization fixes its own locale at en_EN.
+                g_currentLocale = "fi_FI"
+                update = function()
+                    identity_update_saw_login = identity_login_count == 1
+                end
+                local account = _G.SkynestAccount
+                account.onLoginSuccess = function(isGuest, details)
+                    identity_login_count = (identity_login_count or 0) + 1
+                    identity_login_guest = isGuest
+                    identity_login_id = details.id
+                    identity_login_name = details.name
+                    identity_login_social = details.isConnectedToSocialNetwork
+                end
+                account.onLoginFailure = function(...)
+                    identity_login_failure_count = select("#", ...)
+                end
+                identity_login_results = select("#",
+                    account.native_login(false, false, false))
+                identity_login_deferred =
+                    not account.native_isLoggedIn() and
+                    account.native_isLoginInProgress()
+            "##,
+        )
+        .unwrap();
+
+    let access_request = request_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    let access_request = String::from_utf8(access_request).unwrap();
+    assert!(
+        access_request.starts_with("POST /session/1/apps/purple%20test/sessions HTTP/1.1\r\n"),
+        "{access_request}"
+    );
+    let access_lower = access_request.to_ascii_lowercase();
+    assert!(access_lower.contains("content-type: application/json"));
+    assert!(!access_lower.contains("x-access-token:"));
+    assert!(!access_lower.contains("rovio-sgs:"));
+    let access_body = access_request.split_once("\r\n\r\n").unwrap().1;
+    let request_json: serde_json::Value = serde_json::from_str(access_body).unwrap();
+    assert!(request_json["refresh"].is_null());
+    let fields = request_json["access"].as_object().unwrap();
+    assert_eq!(fields.len(), 14);
+    assert!(!fields.contains_key("definition"));
+    assert!(!fields.contains_key("buildId"));
+    let device_guid: String = runtime.lua().globals().get("uniqueDeviceId").unwrap();
+    assert_eq!(fields["persistentGuid"], device_guid);
+    let device_model: String = runtime.lua().globals().get("deviceInfoModel").unwrap();
+    assert_eq!(fields["deviceType"], device_model);
+    assert!(!fields["osVersion"].as_str().unwrap().is_empty());
+    let installation = fields["installationId"].as_str().unwrap();
+    assert_eq!(installation.len(), 36);
+    assert_ne!(installation, device_guid);
+    for (key, value) in [
+        ("clientId", "purple test"),
+        ("clientSignature", "sig+value"),
+        ("clientSalt", "salt/one"),
+        ("clientVersion", "1.1.6"),
+        ("os", std::env::consts::OS),
+        ("sdkVersion", "1130200"),
+        ("fusionVersion", "66595"),
+        ("distributionChannel", "apple"),
+        ("locale", "en_EN"),
+    ] {
+        assert_eq!(fields[key], value);
+    }
+    let offset = fields["utcOffset"]
+        .as_str()
+        .unwrap()
+        .parse::<i64>()
+        .unwrap();
+    assert!((-86400..=86400).contains(&offset));
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        let seconds = unsafe { libc::time(std::ptr::null_mut()) };
+        let mut local = std::mem::MaybeUninit::<libc::tm>::uninit();
+        assert!(!unsafe { libc::localtime_r(&seconds, local.as_mut_ptr()) }.is_null());
+        let local = unsafe { local.assume_init() };
+        assert_eq!(
+            offset,
+            local.tm_gmtoff - if local.tm_isdst != 0 { 3600 } else { 0 }
+        );
+    }
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert!(environment.get::<bool>("identity_login_deferred").unwrap());
+    assert_eq!(environment.get::<i64>("identity_login_results").unwrap(), 0);
+    for _ in 0..200 {
+        runtime.update(1.0 / 60.0).unwrap();
+        if environment.get::<i64>("identity_login_count").unwrap_or(0) == 1 {
+            break;
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert!(
+        environment
+            .get::<bool>("identity_update_saw_login")
+            .unwrap()
+    );
+    assert!(!environment.get::<bool>("identity_login_guest").unwrap());
+    assert!(environment.get::<bool>("identity_login_social").unwrap());
+    assert_eq!(
+        environment.get::<String>("identity_login_id").unwrap(),
+        "online-player"
+    );
+    assert_eq!(
+        environment.get::<String>("identity_login_name").unwrap(),
+        "Online Stella"
+    );
+    assert!(
+        environment
+            .get::<Value>("identity_login_failure_count")
+            .unwrap()
+            .is_nil()
+    );
+
+    runtime
+        .execute_source(
+            r##"
+                identity_validate_results = select("#",
+                    _G.SkynestAccount.native_validateNickname(
+                        "Online Stella", function(...)
+                            identity_validate_count = select("#", ...)
+                            identity_validate_ok, identity_validate_value = ...
+                        end))
+            "##,
+        )
+        .unwrap();
+    let nickname_request = request_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    let nickname_request = String::from_utf8(nickname_request).unwrap();
+    assert!(
+        nickname_request.starts_with("POST /identity/2.0/profile/nickname/validate HTTP/1.1\r\n"),
+        "{nickname_request}"
+    );
+    assert!(
+        nickname_request
+            .to_ascii_lowercase()
+            .contains("x-access-token: identity-token")
+    );
+    assert_eq!(
+        nickname_request.split_once("\r\n\r\n").unwrap().1,
+        "nickname=Online+Stella&checkUnique=true"
+    );
+    for _ in 0..200 {
+        runtime.update(1.0 / 60.0).unwrap();
+        if environment
+            .get::<i64>("identity_validate_count")
+            .unwrap_or(0)
+            == 2
+        {
+            break;
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(
+        environment.get::<i64>("identity_validate_results").unwrap(),
+        0
+    );
+    assert!(environment.get::<bool>("identity_validate_ok").unwrap());
+    assert!(environment.get::<bool>("identity_validate_value").unwrap());
+
+    // Storage's inherited header snapshot shares access and server segments,
+    // not the client's signature. Explicit storage credentials remain an override, but a
+    // normal compatible login must be sufficient for authenticated storage.
+    runtime.set_storage_url(&identity_url).unwrap();
+    runtime
+        .execute_source(
+            r##"
+                _G.SkynestStorage.native_setKey(
+                    "nickname", "Online Stella", function()
+                        identity_storage_finished = true
+                    end)
+            "##,
+        )
+        .unwrap();
+    let storage_request = request_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    server.join().unwrap();
+    let storage_request = String::from_utf8(storage_request).unwrap();
+    assert!(
+        storage_request.starts_with("POST /identity/2.0/state HTTP/1.1\r\n"),
+        "{storage_request}"
+    );
+    let storage_lower = storage_request.to_ascii_lowercase();
+    assert!(storage_lower.contains("x-access-token: identity-token"));
+    assert!(storage_lower.contains("rovio-sgs: 3, 7"));
+    assert!(!storage_lower.contains("sig+value"));
+    for _ in 0..200 {
+        runtime.update(1.0 / 60.0).unwrap();
+        if environment
+            .get::<bool>("identity_storage_finished")
+            .unwrap_or(false)
+        {
+            break;
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert!(
+        environment
+            .get::<bool>("identity_storage_finished")
+            .unwrap()
+    );
+
+    let invalid = StellaLua::new("/tmp").unwrap();
+    let error = invalid
+        .set_identity_url("file:///retired-identity/2.0")
+        .unwrap_err();
+    assert!(error.to_string().contains("http or https"));
+}
+
+#[test]
+fn compatible_storage_preserves_routes_encoding_headers_and_callbacks() {
+    let (set_base, set_request_rx, set_server) =
+        spawn_game_server_response(200, br#"[{"hash":"set-hash-1"}]"#.to_vec());
+    let sandbox = ShippedDataSandbox::new("compatible-storage-routes");
+    let runtime = StellaLua::new(&sandbox.data_root).unwrap();
+    runtime.set_storage_url(&set_base).unwrap();
+    runtime
+        .set_storage_credentials(Some("compatible-token"), Some("compatible-signature"))
+        .unwrap();
+    runtime
+        .execute_source(
+            r##"
+                update = function()
+                    storage_callback_seen_by_update = storage_set_finished == true
+                end
+                _G.SkynestStorage.native_setKey(
+                    "nick/name", "remote-stella", function(...)
+                        storage_set_callback_count = select("#", ...)
+                        storage_set_finished = true
+                    end
+                )
+            "##,
+        )
+        .unwrap();
+    let set_request = set_request_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    set_server.join().unwrap();
+    let set_request = String::from_utf8(set_request).unwrap();
+    let set_lower = set_request.to_ascii_lowercase();
+    assert!(
+        set_request.starts_with("POST /api/v1/state HTTP/1.1\r\n"),
+        "{set_request}"
+    );
+    assert!(set_lower.contains("content-type: application/x-www-form-urlencoded"));
+    assert!(set_lower.contains("x-access-token: compatible-token"));
+    assert!(set_lower.contains("rovio-sgs: compatible-signature"));
+    let set_body = set_request.split_once("\r\n\r\n").unwrap().1;
+    let set_fields = storage_session::form_fields(set_body);
+    assert_eq!(set_fields["key"], "[my]/[client]/nick_2Fname");
+    assert_eq!(set_fields["encoding"], "SDKv2");
+    assert_eq!(set_fields["hash"], "");
+    assert_eq!(set_fields["force"], "false");
+    assert_eq!(
+        storage_session::decode_sdkv2(&set_fields["value"]),
+        "remote-stella"
+    );
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert!(matches!(
+        environment.get::<Value>("storage_set_finished").unwrap(),
+        Value::Nil
+    ));
+    for _ in 0..200 {
+        runtime.update(1.0 / 60.0).unwrap();
+        if environment
+            .get::<bool>("storage_set_finished")
+            .unwrap_or(false)
+        {
+            break;
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(
+        environment
+            .get::<i64>("storage_set_callback_count")
+            .unwrap(),
+        0
+    );
+    assert!(
+        environment
+            .get::<bool>("storage_callback_seen_by_update")
+            .unwrap()
+    );
+
+    let get_response = serde_json::to_vec(&serde_json::json!([{
+        "hash": "get-hash-2",
+        "value": "server-value",
+        "encoding": "SDKv1"
+    }]))
+    .unwrap();
+    let (get_base, get_request_rx, get_server) = spawn_game_server_response(200, get_response);
+    runtime.set_storage_url(&get_base).unwrap();
+    runtime
+        .execute_source(
+            r##"
+                _G.SkynestStorage.native_getKey("nick/name", function(...)
+                    storage_get_callback_count = select("#", ...)
+                    storage_get_value = ...
+                end)
+            "##,
+        )
+        .unwrap();
+    let get_request = get_request_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    get_server.join().unwrap();
+    let get_request = String::from_utf8(get_request).unwrap();
+    assert!(
+        get_request.starts_with(
+            "GET /api/v1/state?key=%5Bmy%5D%2F%5Bclient%5D%2Fnick_2Fname HTTP/1.1\r\n"
+        ),
+        "{get_request}"
+    );
+    for _ in 0..200 {
+        runtime.update(1.0 / 60.0).unwrap();
+        if environment
+            .get::<i64>("storage_get_callback_count")
+            .unwrap_or(0)
+            == 1
+        {
+            break;
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(
+        environment.get::<String>("storage_get_value").unwrap(),
+        "server-value"
+    );
+
+    let batch_response = serde_json::to_vec(&serde_json::json!({
+        "result": [
+            {
+                "accountId": "friend-a",
+                "states": [{ "value": "friend-a-value", "encoding": "SDKv1" }]
+            },
+            {
+                "accountId": "friend-b",
+                "states": [{ "value": "friend-b-value", "encoding": "SDKv1" }]
+            }
+        ]
+    }))
+    .unwrap();
+    let (batch_base, batch_request_rx, batch_server) =
+        spawn_game_server_response(200, batch_response);
+    runtime.set_storage_url(&batch_base).unwrap();
+    runtime
+        .execute_source(
+            r##"
+                _G.SkynestStorage.native_getKeyForAccountIds(
+                    "nick/name", { "friend-a", "friend-b", false, "ignored" },
+                    function(...)
+                        storage_batch_count = select("#", ...)
+                        local values = ...
+                        storage_batch_a = values["friend-a"]
+                        storage_batch_b = values["friend-b"]
+                    end
+                )
+            "##,
+        )
+        .unwrap();
+    let batch_request = batch_request_rx
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap();
+    batch_server.join().unwrap();
+    let batch_request = String::from_utf8(batch_request).unwrap();
+    assert!(
+        batch_request.starts_with("POST /api/v1/states/query HTTP/1.1\r\n"),
+        "{batch_request}"
+    );
+    let batch_body: serde_json::Value =
+        serde_json::from_str(batch_request.split_once("\r\n\r\n").unwrap().1).unwrap();
+    assert_eq!(
+        batch_body,
+        serde_json::json!({
+            "keys": ["[my]/[client]/nick_2Fname"],
+            "accountIds": ["friend-a", "friend-b"]
+        })
+    );
+    for _ in 0..200 {
+        runtime.update(1.0 / 60.0).unwrap();
+        if environment.get::<i64>("storage_batch_count").unwrap_or(0) == 1 {
+            break;
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(
+        environment.get::<String>("storage_batch_a").unwrap(),
+        "friend-a-value"
+    );
+    assert_eq!(
+        environment.get::<String>("storage_batch_b").unwrap(),
+        "friend-b-value"
+    );
+
+    let invalid = StellaLua::new(&sandbox.data_root).unwrap();
+    let error = invalid
+        .set_storage_url("file:///retired-storage/1.0")
+        .unwrap_err();
+    assert!(error.to_string().contains("http or https"));
+}
+
+#[test]
+fn compatible_storage_saves_and_loads_cloud_settings_through_purple_state() {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("stella-online-storage-{unique}"));
+    let data_root = root.join("data");
+    fs::create_dir_all(&data_root).unwrap();
+
+    let runtime = StellaLua::new(&data_root).unwrap();
+    runtime.enable_local_services().unwrap();
+    runtime
+        .execute_source(
+            r##"
+                update = function() end
+                notifyEventManager = function(name)
+                    storage_cloud_event = name
+                end
+                _G.SkynestAccount.onLoginSuccess = function() end
+                _G.SkynestAccount.native_login(false, false, false)
+            "##,
+        )
+        .unwrap();
+    runtime.update(1.0 / 60.0).unwrap();
+
+    let (save_base, save_request_rx, save_server) =
+        spawn_game_server_response(200, br#"[{"hash":"cloud-hash-1"}]"#.to_vec());
+    runtime.set_storage_url(&save_base).unwrap();
+    runtime
+        .execute_source(
+            r##"
+                storage_cloud_save_started =
+                    _G.SkynestStorage.native_saveCloudSettings({ coins = 777 })
+            "##,
+        )
+        .unwrap();
+    let save_request = save_request_rx
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap();
+    save_server.join().unwrap();
+    let save_request = String::from_utf8(save_request).unwrap();
+    let save_body = save_request.split_once("\r\n\r\n").unwrap().1;
+    assert!(save_body.contains("key=%5Bmy%5D%2F%5Bclient%5D%2FPurpleState"));
+    let save_fields = storage_session::form_fields(save_body);
+    assert_eq!(save_fields["encoding"], "SDKv2");
+    assert_eq!(
+        storage_session::decode_sdkv2(&save_fields["value"]),
+        "coins = 777\n"
+    );
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert!(
+        environment
+            .get::<bool>("storage_cloud_save_started")
+            .unwrap()
+    );
+    for _ in 0..200 {
+        runtime.update(1.0 / 60.0).unwrap();
+        if environment
+            .get::<String>("storage_cloud_event")
+            .is_ok_and(|event| event == "EID_SYNC_CLOUD_COMPLETED")
+        {
+            break;
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(
+        environment.get::<String>("storage_cloud_event").unwrap(),
+        "EID_SYNC_CLOUD_COMPLETED"
+    );
+
+    let load_response = serde_json::to_vec(&serde_json::json!([{
+        "hash": "cloud-hash-2",
+        "value": "coins = 888\nchapter = 2\n",
+        "encoding": "SDKv1"
+    }]))
+    .unwrap();
+    let (load_base, load_request_rx, load_server) = spawn_game_server_response(200, load_response);
+    runtime.set_storage_url(&load_base).unwrap();
+    runtime
+        .execute_source(
+            r##"
+                _G.SkynestStorage.cloudDataSync = function(document)
+                    storage_cloud_loaded_coins = document.coins
+                    storage_cloud_loaded_chapter = document.chapter
+                end
+                storage_cloud_load_started =
+                    _G.SkynestStorage.native_loadCloudSettings()
+            "##,
+        )
+        .unwrap();
+    let load_request = load_request_rx
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap();
+    load_server.join().unwrap();
+    let load_request = String::from_utf8(load_request).unwrap();
+    assert!(
+        load_request.starts_with(
+            "GET /api/v1/state?key=%5Bmy%5D%2F%5Bclient%5D%2FPurpleState HTTP/1.1\r\n"
+        ),
+        "{load_request}"
+    );
+    assert!(
+        environment
+            .get::<bool>("storage_cloud_load_started")
+            .unwrap()
+    );
+    for _ in 0..200 {
+        runtime.update(1.0 / 60.0).unwrap();
+        if environment
+            .get::<i64>("storage_cloud_loaded_coins")
+            .unwrap_or(0)
+            == 888
+        {
+            break;
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(
+        environment
+            .get::<i64>("storage_cloud_loaded_chapter")
+            .unwrap(),
+        2
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn rovio_ads_native_table_preserves_null_provider_abi() {
     let runtime = StellaLua::new("/tmp").unwrap();
     runtime
@@ -2895,6 +5423,53 @@ fn boot_announces_social_service_and_loads_shipped_facade() {
             .unwrap()
             .call::<bool>("social")
             .unwrap()
+    );
+}
+
+#[test]
+fn shipped_social_facade_reenters_native_avatar_load_after_cache_completion() {
+    let sandbox = ShippedDataSandbox::new("social-avatar-boot");
+    let runtime = StellaLua::new(&sandbox.data_root).unwrap();
+    runtime.enable_local_services().unwrap();
+    runtime.boot("scripts/game.lua").unwrap();
+    runtime
+        .execute_source(
+            r##"
+                SocialManager.connect()
+                SocialManager.addAvatarToLoadList("local-player")
+                shipped_avatar_loaded_before =
+                    SocialManager.isAvatarInGraphicsMemory("local-player")
+            "##,
+        )
+        .unwrap();
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert!(
+        !environment
+            .get::<bool>("shipped_avatar_loaded_before")
+            .unwrap()
+    );
+
+    runtime.update(1.0 / 60.0).unwrap();
+    runtime
+        .execute_source(
+            r##"
+                shipped_avatar_loaded_after =
+                    SocialManager.isAvatarInGraphicsMemory("local-player")
+            "##,
+        )
+        .unwrap();
+    assert!(
+        environment
+            .get::<bool>("shipped_avatar_loaded_after")
+            .unwrap()
+    );
+    assert!(
+        runtime
+            .resource_runtime
+            .lock()
+            .unwrap()
+            .active_atlas_catalog_region("AVATAR_local-player", runtime.data_root())
+            .is_some()
     );
 }
 
@@ -3237,6 +5812,80 @@ fn offline_challenge_replay_preserves_the_shipped_async_result_route() {
 }
 
 #[test]
+fn compatible_game_server_restores_the_shipped_route_and_response_flow() {
+    let response = br#"{"player":{"id":"online-player"}}"#.to_vec();
+    let (base_url, request_rx, server) = spawn_game_server_response(200, response);
+    let sandbox = ShippedDataSandbox::new("compatible-game-server");
+    let runtime = StellaLua::new(&sandbox.data_root).unwrap();
+    runtime
+        .set_game_server_url(&format!("{base_url}/"))
+        .unwrap();
+    runtime.boot("scripts/game.lua").unwrap();
+    runtime
+        .execute_source(
+            r##"
+                compatible_facade_enabled =
+                    GameServerConnection.__stellaCompatibleFacade == true and
+                    GameServerConnection.__stellaOfflineFacade ~= true
+                compatible_player_status_called = false
+                compatible_player_status_failed = false
+                GameServerConnection.getPlayerStatus(
+                    function(response)
+                        compatible_player_status_called = true
+                        compatible_player_id = response.player.id
+                    end,
+                    function()
+                        compatible_player_status_failed = true
+                    end
+                )
+            "##,
+        )
+        .unwrap();
+
+    let request = request_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    let request = String::from_utf8_lossy(&request);
+    assert!(request.starts_with("GET /api/v1/player/status HTTP/1.1\r\n"));
+    server.join().unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert!(
+        environment
+            .get::<bool>("compatible_facade_enabled")
+            .unwrap()
+    );
+    for _ in 0..200 {
+        runtime.update(1.0 / 60.0).unwrap();
+        if environment
+            .get::<bool>("compatible_player_status_called")
+            .unwrap()
+        {
+            break;
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert!(
+        environment
+            .get::<bool>("compatible_player_status_called")
+            .unwrap()
+    );
+    assert!(
+        !environment
+            .get::<bool>("compatible_player_status_failed")
+            .unwrap()
+    );
+    assert_eq!(
+        environment.get::<String>("compatible_player_id").unwrap(),
+        "online-player"
+    );
+
+    let invalid = StellaLua::new("/tmp").unwrap();
+    let error = invalid
+        .set_game_server_url("file:///retired-api")
+        .unwrap_err();
+    assert!(error.to_string().contains("http or https"));
+}
+
+#[test]
 fn game_server_constructor_loads_shipped_facade_without_replacing_native_members() {
     let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data");
     let runtime = StellaLua::new(data_root).unwrap();
@@ -3533,6 +6182,9 @@ fn native_resolution_is_published_before_boot_and_updates_through_script_callbac
 #[test]
 fn native_device_orientation_preserves_context_enum_mapping_and_host_rotation() {
     let runtime = StellaLua::new_with_resolution("/tmp", 1024, 768).unwrap();
+    runtime
+        .execute_source("resolutionChanged = function() end")
+        .unwrap();
     let orientation = runtime
         .lua()
         .globals()
@@ -3654,7 +6306,12 @@ fn safe_to_quit_is_latched_before_the_zoom_callback() {
 fn drawable_resize_preserves_an_explicit_resource_clip() {
     let runtime = StellaLua::new_with_resolution("/tmp", 1024, 768).unwrap();
     runtime
-        .execute_source("res.setClipRect(10, 20, 30, 40)")
+        .execute_source(
+            r#"
+                resolutionChanged = function() end
+                res.setClipRect(10, 20, 30, 40)
+            "#,
+        )
         .unwrap();
     assert!(runtime.set_screen_resolution(1429, 768).unwrap());
     let resources = runtime.lua().globals().get::<mlua::Table>("res").unwrap();
@@ -3666,6 +6323,23 @@ fn drawable_resize_preserves_an_explicit_resource_clip() {
             .unwrap(),
         (10.0, 20.0, 30.0, 40.0)
     );
+}
+
+#[test]
+fn drawable_resize_requires_the_native_resolution_callback_after_publishing_extent() {
+    let runtime = StellaLua::new_with_resolution("/tmp", 1024, 768).unwrap();
+
+    assert!(runtime.set_screen_resolution(1280, 720).is_err());
+    assert_eq!(
+        runtime.lua().globals().get::<f64>("screenWidth").unwrap(),
+        1280.0
+    );
+    assert_eq!(
+        runtime.lua().globals().get::<f64>("screenHeight").unwrap(),
+        720.0
+    );
+    let bridge = runtime.render.lock().unwrap();
+    assert_eq!((bridge.screen_width, bridge.screen_height), (1280, 720));
 }
 
 #[test]
@@ -3793,10 +6467,10 @@ fn downloadable_assets_match_native_load_callbacks_and_sheet_abi() {
         environment.get::<String>("load_failure").unwrap(),
         "missing.dat"
     );
-    assert_eq!(environment.get::<i32>("load_failure_code").unwrap(), 1);
+    assert_eq!(environment.get::<i32>("load_failure_code").unwrap(), -1);
     assert_eq!(
         environment.get::<String>("load_failure_message").unwrap(),
-        "offline asset unavailable"
+        "Assets not found"
     );
     runtime.update(1.0 / 60.0).unwrap();
     assert_eq!(environment.get::<String>("callback_order").unwrap(), "SSES");
@@ -3840,6 +6514,235 @@ fn downloadable_assets_match_native_load_callbacks_and_sheet_abi() {
     );
 
     fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn compatible_assets_download_validate_cache_and_complete_on_the_app_thread() {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("stella-online-assets-{unique}"));
+    let data_root = root.join("data");
+    fs::create_dir_all(&data_root).unwrap();
+    let payload = br#"{"frames":[],"meta":{"app":"test"}}"#.to_vec();
+    let (endpoint, request_rx, server) =
+        spawn_assets_response("dynamic.json", "asset-hash-1", payload.clone());
+    let runtime = StellaLua::new(&data_root).unwrap();
+    runtime.set_assets_url(&endpoint).unwrap();
+    runtime
+        .execute_source(
+            r##"
+                assets_online_callback_count = 0
+                assets_online_preceded_update = false
+                Assets.onLoadSuccess = function(files)
+                    assets_online_callback_count = assets_online_callback_count + 1
+                    assets_online_filename = files["dynamic.json"]
+                end
+                Assets.onLoadError = function(files, code, message)
+                    assets_online_error = files[1] .. ":" .. code .. ":" .. message
+                end
+                Assets.loadFiles({ "dynamic.json" })
+                update = function()
+                    if assets_online_callback_count > 0 then
+                        assets_online_preceded_update = true
+                    end
+                end
+            "##,
+        )
+        .unwrap();
+
+    server.join().unwrap();
+    let manifest_request = String::from_utf8(request_rx.recv().unwrap()).unwrap();
+    let download_request = String::from_utf8(request_rx.recv().unwrap()).unwrap();
+    assert!(
+        manifest_request
+            .starts_with("GET /apdrive/1/apps/purple/assets?name=dynamic.json HTTP/1.1\r\n"),
+        "{manifest_request}"
+    );
+    assert!(
+        download_request.starts_with("GET /cdn/dynamic.json HTTP/1.1\r\n"),
+        "{download_request}"
+    );
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert_eq!(
+        environment
+            .get::<i64>("assets_online_callback_count")
+            .unwrap(),
+        0
+    );
+    for _ in 0..200 {
+        runtime.update(1.0 / 60.0).unwrap();
+        if environment
+            .get::<i64>("assets_online_callback_count")
+            .unwrap()
+            == 1
+        {
+            break;
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(
+        environment.get::<String>("assets_online_filename").unwrap(),
+        "assets_service/dynamic.json"
+    );
+    assert!(
+        environment
+            .get::<bool>("assets_online_preceded_update")
+            .unwrap()
+    );
+    assert!(matches!(
+        environment.get::<Value>("assets_online_error").unwrap(),
+        Value::Nil
+    ));
+    assert_eq!(
+        fs::read(root.join("appdata/assets_service/dynamic.json")).unwrap(),
+        payload
+    );
+    let cache: serde_json::Value = serde_json::from_slice(
+        &fs::read(root.join("appdata/assets_service/.stella-assets.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(cache["assets"]["dynamic.json"]["hash"], "asset-hash-1");
+
+    // A new host still asks the metadata service for the current AssetInfo,
+    // but a matching persisted hash and exact size suppress the CDN request.
+    let cached_manifest = serde_json::to_vec(&serde_json::json!({
+        "assets": [{
+            "name": "dynamic.json",
+            "cdnURL": "http://127.0.0.1:1/must-not-be-requested",
+            "hash": "asset-hash-1",
+            "size": payload.len()
+        }],
+        "failedAssets": []
+    }))
+    .unwrap();
+    let (cache_base_url, cache_request_rx, cache_server) =
+        spawn_game_server_response(200, cached_manifest);
+    let cached_runtime = StellaLua::new(&data_root).unwrap();
+    cached_runtime
+        .set_assets_url(&format!("{cache_base_url}/assets"))
+        .unwrap();
+    cached_runtime
+        .execute_source(
+            r##"
+                Assets.onLoadSuccess = function(files)
+                    cached_asset_filename = files["dynamic.json"]
+                end
+                Assets.onLoadError = function(files, code, message)
+                    cached_asset_error = files[1] .. ":" .. code .. ":" .. message
+                end
+                update = function() end
+                Assets.loadFiles({ "dynamic.json" })
+            "##,
+        )
+        .unwrap();
+    cache_request_rx
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap();
+    cache_server.join().unwrap();
+    let cached_environment = game_environment(cached_runtime.lua()).unwrap();
+    for _ in 0..200 {
+        cached_runtime.update(1.0 / 60.0).unwrap();
+        if !matches!(
+            cached_environment
+                .get::<Value>("cached_asset_filename")
+                .unwrap(),
+            Value::Nil
+        ) {
+            break;
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(
+        cached_environment
+            .get::<String>("cached_asset_filename")
+            .unwrap(),
+        "assets_service/dynamic.json"
+    );
+    assert!(matches!(
+        cached_environment
+            .get::<Value>("cached_asset_error")
+            .unwrap(),
+        Value::Nil
+    ));
+
+    let invalid = StellaLua::new(&data_root).unwrap();
+    let error = invalid
+        .set_assets_url("file:///retired-assets")
+        .unwrap_err();
+    assert!(error.to_string().contains("http or https"));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn compatible_assets_preserve_native_missing_error_tuple() {
+    let response = br#"{
+        "assets": [],
+        "failedAssets": ["missing.bin"]
+    }"#
+    .to_vec();
+    let (base_url, request_rx, server) = spawn_game_server_response(200, response);
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .set_assets_url(&format!("{base_url}/assets"))
+        .unwrap();
+    runtime
+        .execute_source(
+            r##"
+                Assets.onLoadSuccess = function()
+                    assets_missing_unexpected_success = true
+                end
+                Assets.onLoadError = function(files, code, message)
+                    assets_missing_first = files[1]
+                    assets_missing_second = files[2]
+                    assets_missing_code = code
+                    assets_missing_message = message
+                end
+                update = function() end
+                Assets.loadFiles({ "available.bin", "missing.bin" })
+            "##,
+        )
+        .unwrap();
+    let request = request_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    server.join().unwrap();
+    let request = String::from_utf8(request).unwrap();
+    assert!(
+        request.starts_with("GET /api/v1/assets?name=available.bin&name=missing.bin HTTP/1.1\r\n"),
+        "{request}"
+    );
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    for _ in 0..200 {
+        runtime.update(1.0 / 60.0).unwrap();
+        if !matches!(
+            environment.get::<Value>("assets_missing_code").unwrap(),
+            Value::Nil
+        ) {
+            break;
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(
+        environment.get::<String>("assets_missing_first").unwrap(),
+        "available.bin"
+    );
+    assert_eq!(
+        environment.get::<String>("assets_missing_second").unwrap(),
+        "missing.bin"
+    );
+    assert_eq!(environment.get::<i32>("assets_missing_code").unwrap(), -1);
+    assert_eq!(
+        environment.get::<String>("assets_missing_message").unwrap(),
+        "Assets not found"
+    );
+    assert!(matches!(
+        environment
+            .get::<Value>("assets_missing_unexpected_success")
+            .unwrap(),
+        Value::Nil
+    ));
 }
 
 #[test]
@@ -4024,7 +6927,7 @@ fn boot_announces_all_nine_native_cloud_services_before_menu_updates() {
     // desktop boundary must therefore leave both script facades intact.
     announce_cloud_service_registrations(runtime.lua()).unwrap();
     runtime
-        .execute_source(
+        .execute_diagnostic_source(
             r#"
                 assert(RovioCloudManager.isServiceAvailable("social"))
                 assert(RovioCloudManager.isServiceAvailable("analytics"))
@@ -4311,6 +7214,242 @@ fn notification_adapters_enforce_native_types_and_keyed_removal() {
             .get::<bool>("notification_added_while_disabled")
             .unwrap()
     );
+}
+
+#[test]
+fn application_events_preserve_cross_service_fifo_and_defer_nested_posts() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .execute_source(
+            r##"
+                application_event_order = {}
+                _G.SkynestStorage.native_setKey("first", "value", function()
+                    table.insert(application_event_order, "storage")
+                end)
+                _G.SkynestAccount.native_validateNickname("valid", function()
+                    table.insert(application_event_order, "account")
+                    _G.SkynestStorage.native_setKey("nested", "value", function()
+                        table.insert(application_event_order, "nested")
+                    end)
+                end)
+            "##,
+        )
+        .unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    let order: mlua::Table = environment.get("application_event_order").unwrap();
+    runtime.update(0.0).unwrap();
+    assert_eq!(order.raw_len(), 2);
+    assert_eq!(order.get::<String>(1).unwrap(), "storage");
+    assert_eq!(order.get::<String>(2).unwrap(), "account");
+
+    runtime.update(0.0).unwrap();
+    assert_eq!(order.raw_len(), 3);
+    assert_eq!(order.get::<String>(3).unwrap(), "nested");
+}
+
+#[test]
+fn animation_update_reentrantly_drains_active_tail_and_callback_posts() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .execute_source(
+            r#"
+                application_event_order = {}
+                notifyEventManager = function() end
+                _G.SkynestStorage.native_setKey("outer", "value", function()
+                    table.insert(application_event_order, "outer-begin")
+                    _G.SkynestStorage.native_setKey("nested", "value", function()
+                        table.insert(application_event_order, "nested")
+                    end)
+                    AnimationWrapperNative.update(0)
+                    table.insert(application_event_order, "outer-end")
+                end)
+                _G.SkynestAccount.native_validateNickname("tail", function()
+                    table.insert(application_event_order, "active-tail")
+                end)
+            "#,
+        )
+        .unwrap();
+
+    runtime.update(0.0).unwrap();
+    let order: mlua::Table = game_environment(runtime.lua())
+        .unwrap()
+        .get("application_event_order")
+        .unwrap();
+    assert_eq!(order.raw_len(), 4);
+    assert_eq!(order.get::<String>(1).unwrap(), "outer-begin");
+    assert_eq!(order.get::<String>(2).unwrap(), "active-tail");
+    assert_eq!(order.get::<String>(3).unwrap(), "nested");
+    assert_eq!(order.get::<String>(4).unwrap(), "outer-end");
+}
+
+#[test]
+fn animation_update_after_frame_head_drains_new_application_posts_same_frame() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .execute_source(
+            r#"
+                application_event_order = {}
+                notifyEventManager = function() end
+                update = function()
+                    table.insert(application_event_order, "update-begin")
+                    _G.SkynestStorage.native_setKey("during-update", "value", function()
+                        table.insert(application_event_order, "completion")
+                    end)
+                    -- scripts/FlashAnimationWrapper.lua:updateAnimations does
+                    -- this unconditionally once per shipped Lua update.
+                    AnimationWrapperNative.update(0)
+                    table.insert(application_event_order, "update-end")
+                end
+            "#,
+        )
+        .unwrap();
+
+    runtime.update(0.0).unwrap();
+    let order: mlua::Table = game_environment(runtime.lua())
+        .unwrap()
+        .get("application_event_order")
+        .unwrap();
+    assert_eq!(order.raw_len(), 3);
+    assert_eq!(order.get::<String>(1).unwrap(), "update-begin");
+    assert_eq!(order.get::<String>(2).unwrap(), "completion");
+    assert_eq!(order.get::<String>(3).unwrap(), "update-end");
+}
+
+#[test]
+fn caught_nested_scheduler_error_resumes_the_outer_active_cursor() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .execute_source(
+            r#"
+                application_event_order = {}
+                notifyEventManager = function() end
+                _G.SkynestStorage.native_setKey("outer", "value", function()
+                    table.insert(application_event_order, "outer-begin")
+                    _G.SkynestStorage.native_setKey("nested", "value", function()
+                        table.insert(application_event_order, "nested")
+                    end)
+                    local succeeded = pcall(AnimationWrapperNative.update, 0)
+                    table.insert(application_event_order,
+                        succeeded and "unexpected-success" or "caught")
+                end)
+                _G.SkynestAccount.native_validateNickname("failure", function()
+                    table.insert(application_event_order, "failing")
+                    error("nested-scheduler-stop")
+                end)
+                _G.SkynestStorage.native_setKey("tail", "value", function()
+                    table.insert(application_event_order, "active-tail")
+                end)
+            "#,
+        )
+        .unwrap();
+
+    runtime.update(0.0).unwrap();
+    let order: mlua::Table = game_environment(runtime.lua())
+        .unwrap()
+        .get("application_event_order")
+        .unwrap();
+    assert_eq!(order.raw_len(), 5);
+    assert_eq!(order.get::<String>(1).unwrap(), "outer-begin");
+    assert_eq!(order.get::<String>(2).unwrap(), "failing");
+    assert_eq!(order.get::<String>(3).unwrap(), "caught");
+    assert_eq!(order.get::<String>(4).unwrap(), "active-tail");
+    assert_eq!(order.get::<String>(5).unwrap(), "nested");
+}
+
+#[test]
+fn application_event_error_drops_unvisited_batch_but_keeps_new_posts() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .execute_source(
+            r##"
+                application_event_order = {}
+                _G.SkynestStorage.native_setKey("first", "value", function()
+                    table.insert(application_event_order, "failing")
+                    _G.SkynestStorage.native_setKey("nested", "value", function()
+                        table.insert(application_event_order, "nested")
+                    end)
+                    error("application-event-stop")
+                end)
+                _G.SkynestAccount.native_validateNickname("abandoned", function()
+                    table.insert(application_event_order, "abandoned")
+                end)
+            "##,
+        )
+        .unwrap();
+
+    let error = runtime.update(0.0).unwrap_err();
+    assert!(error.to_string().contains("application-event-stop"));
+    let environment = game_environment(runtime.lua()).unwrap();
+    let order: mlua::Table = environment.get("application_event_order").unwrap();
+    assert_eq!(order.raw_len(), 1);
+    assert_eq!(order.get::<String>(1).unwrap(), "failing");
+
+    runtime.update(0.0).unwrap();
+    assert_eq!(order.raw_len(), 2);
+    assert_eq!(order.get::<String>(2).unwrap(), "nested");
+
+    // The abandoned account token and its captured callback payload are one
+    // scheduler item. Dropping the detached tail after an exception must not
+    // leave that payload at the head of the service queue, where a later
+    // account post could consume it instead of its own callback.
+    runtime
+        .execute_source(
+            r#"
+                _G.SkynestAccount.native_validateNickname("fresh", function()
+                    table.insert(application_event_order, "fresh")
+                end)
+            "#,
+        )
+        .unwrap();
+    runtime.update(0.0).unwrap();
+    assert_eq!(order.raw_len(), 3);
+    assert_eq!(order.get::<String>(3).unwrap(), "fresh");
+}
+
+#[test]
+fn local_notifications_use_wall_time_and_saved_callback_at_the_frame_boundary() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .execute_source(
+            r#"
+                received_notifications = {}
+                function receiveLocalNotification(name)
+                    table.insert(received_notifications, name)
+                    if name == "first" then
+                        addNotificationAfter("nested", 0, "nested message")
+                    end
+                end
+                setNotificationCallback("receiveLocalNotification")
+                function update() end
+
+                addNotificationAfter("removed", 0, "removed message")
+                removeNotification("removed")
+                addNotificationAfter("replaced", 3600, "old message")
+                addNotificationAfter("replaced", 0, "replacement message")
+                addNotificationAfter("first", 0, "first message")
+            "#,
+        )
+        .unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    let received: mlua::Table = environment.get("received_notifications").unwrap();
+    assert_eq!(received.raw_len(), 0, "native add never calls Lua inline");
+
+    runtime.update(0.0).unwrap();
+    assert_eq!(received.raw_len(), 2);
+    assert_eq!(received.get::<String>(1).unwrap(), "replaced");
+    assert_eq!(received.get::<String>(2).unwrap(), "first");
+
+    // The callback's zero-delay notification was scheduled after this frame's
+    // platform event batch had already been detached.
+    runtime.update(0.0).unwrap();
+    assert_eq!(received.raw_len(), 3);
+    assert_eq!(received.get::<String>(3).unwrap(), "nested");
+
+    runtime.try_submit_local_notification("host-event").unwrap();
+    assert_eq!(received.raw_len(), 4);
+    assert_eq!(received.get::<String>(4).unwrap(), "host-event");
 }
 
 #[test]
@@ -5729,3 +8868,6 @@ fn fallback_audit_distinguishes_missing_data_reads_from_invoked_native_methods()
     );
     assert!(runtime.fallback_calls().is_empty());
 }
+
+mod social_avatar;
+mod social_friends_store;

@@ -21,11 +21,11 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  RUST_TOOLCHAIN: 1.93.0
+  RUST_TOOLCHAIN: 1.98.1
   RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
   RUNTIME_DATA_RELEASE: runtime-data-v1.1.6
-  RUNTIME_DATA_ARCHIVE: angry-birds-stella-runtime-data-v1.1.6.tar.gz
-  RUNTIME_DATA_SHA256: bd72082495afb28f86f09bccfa074a3fb34d29a66a44408fd25e6a0cc0c19857
+  RUNTIME_DATA_ARCHIVE: angry-birds-stella-runtime-data-v1.1.6-beta3.tar.gz
+  RUNTIME_DATA_SHA256: 5192e225ccec77e604e76f9b8ce7b33fda067f67fefcff4239b22376e742e879
 
 jobs:
   validate:
@@ -235,13 +235,22 @@ jobs:
         run: |
           set -euo pipefail
           for archive in dist/*.tar.gz; do
-            if tar -tzf "$archive" | grep -Eq '(^|/)(\.DS_Store|\._[^/]+|__MACOSX)(/|$)'; then
+            if tar -tzf "$archive" | grep -E '(^|/)(\.DS_Store|\._[^/]+|__MACOSX)(/|$)' >/dev/null; then
               echo "macOS metadata found in $(basename "$archive")" >&2
               exit 1
             fi
+            metadata_tar="$RUNNER_TEMP/$(basename "$archive" .gz)"
+            gzip -dc "$archive" > "$metadata_tar"
+            if LC_ALL=C grep -aEq \
+              '(SCHILY\.xattr|LIBARCHIVE\.xattr)\.com\.apple\.' \
+              "$metadata_tar"; then
+              echo "macOS extended attributes found in $(basename "$archive")" >&2
+              exit 1
+            fi
+            rm "$metadata_tar"
           done
           for archive in dist/*.zip; do
-            if unzip -Z1 "$archive" | grep -Eq '(^|/)(\.DS_Store|\._[^/]+|__MACOSX)(/|$)'; then
+            if unzip -Z1 "$archive" | grep -E '(^|/)(\.DS_Store|\._[^/]+|__MACOSX)(/|$)' >/dev/null; then
               echo "macOS metadata found in $(basename "$archive")" >&2
               exit 1
             fi
@@ -262,8 +271,18 @@ jobs:
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" dist/* --clobber
           else
+            release_options=()
+            if [[ "$RELEASE_TAG" == *-* ]]; then
+              release_options+=(--prerelease)
+            fi
+            notes_file=".github/releases/$RELEASE_TAG.md"
+            if [[ -f "$notes_file" ]]; then
+              release_options+=(--notes-file "$notes_file")
+            else
+              release_options+=(--generate-notes)
+            fi
             gh release create "$RELEASE_TAG" dist/* \
               --target "$GITHUB_SHA" \
               --title "Angry Birds Stella: Rehost $RELEASE_TAG" \
-              --generate-notes
+              "${release_options[@]}"
           fi

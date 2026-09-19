@@ -5,10 +5,11 @@ mod clipping;
 mod system;
 
 pub(crate) use bitmap::{bitmap_font_metric, bitmap_font_string_width, load_bitmap_fonts};
-pub(crate) use clipping::native_clip_text_lines;
+pub(crate) use clipping::{native_clip_text_lines, native_utf8_skipping_invalid};
 pub(crate) use system::{
-    SystemFontState, create_system_font_state, platform_system_font_names,
-    system_font_color_from_lua, system_font_metric, system_font_string_width,
+    SystemFontState, create_platform_ui_font, create_platform_ui_regular_font,
+    create_system_font_state, platform_system_font_names, system_font_color_from_lua,
+    system_font_metric, system_font_string_width,
 };
 
 #[derive(Clone, Copy)]

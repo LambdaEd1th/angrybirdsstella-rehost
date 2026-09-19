@@ -44,11 +44,8 @@ pub(crate) fn install(
     retain_native_lua_object(lua, NativeLuaObject::ClippedText, Some(&clipped_text))?;
     for name in ["highscores", "settings", "bi_data"] {
         let path = app_data_path(data_root, &format!("{name}.lua")).map_err(runtime_error)?;
-        let table = if path.is_file() {
-            load_saved_lua_table(lua, &path)?
-        } else {
-            lua.create_table()?
-        };
+        let table =
+            super::persistence::load_persistent_lua_table(lua, &path, &format!("{name}.lua"))?;
         globals.set(name, table)?;
     }
     // Pointer/button event names are string constants owned by the shipped
@@ -60,6 +57,17 @@ pub(crate) fn install(
     // `g_time`, `deltaTime`, or `currentTimeStep` fields.
     let gamelua = lua.create_table()?;
     install_global_fallback(lua, &gamelua)?;
+    // lua::LuaObject's constructor (0x100527710) stores _G as an actual
+    // field of the independent owner table, not just an inherited lookup.
+    gamelua.raw_set("_G", globals.clone())?;
+    // These constructor fields belong to GameLua itself. The split Rust
+    // registration pipeline has already created them on the engine root;
+    // retain the same values on the owner before any script executes. A
+    // metatable-only alias is insufficient for ThemeSystem's native raw
+    // lookups (0x10009861C and 0x10009AD10 onward).
+    for name in ["objects", "particles", "deviceModel"] {
+        gamelua.raw_set(name, globals.raw_get::<Value>(name)?)?;
+    }
     let ui = lua.create_table()?;
     install_table_fallback(lua, &ui, gamelua.clone())?;
     gamelua.set("ui", ui.clone())?;

@@ -20,6 +20,63 @@ fn font(texture: &str, width: i16) -> BitmapFont {
 }
 
 #[test]
+fn projected_text_keeps_homogeneous_vertices_crossing_the_camera_plane() {
+    let texture_source = "<projected-font>".to_owned();
+    let mut assets = AssetCatalog {
+        root: std::path::PathBuf::new(),
+        font_root: std::path::PathBuf::new(),
+        regions: HashMap::new(),
+        composites: HashMap::new(),
+        masked_textures: HashMap::new(),
+        fonts: HashMap::new(),
+        textures: HashMap::from([(texture_source.clone(), alpha_texture(8, 8))]),
+        system_labels: SystemLabelPool::default(),
+        captures: Default::default(),
+    };
+    let projection = TextProjection3D {
+        x: 0.0,
+        y: 0.0,
+        z: 0.001,
+        rotation_x: 1.1,
+        custom_model: true,
+    };
+    let command = TextRenderCommand {
+        order: 0,
+        text: "A".to_owned(),
+        font: "FONT".to_owned(),
+        font_binding: Some(TextFontBinding::Bitmap {
+            font: font("ignored.pvr", 4).into(),
+            texture_source,
+        }),
+        x: -2.0,
+        y: -3.0,
+        native_system_origin: None,
+        scale_x: 1.0,
+        scale_y: 1.0,
+        angle: 0.0,
+        matrix: None,
+        position_matrix: None,
+        alpha: 1.0,
+        horizontal_anchor: "LEFT".to_owned(),
+        vertical_anchor: "TOP".to_owned(),
+        projection_3d: Some(projection),
+        clip_rect: None,
+    };
+    let frame = assets.prepare_gpu_frame(&[], &[command], &[], &[]).unwrap();
+    assert_eq!(frame.vertices.len(), 6);
+    assert!(frame.vertices.iter().any(|v| v.clip_position[3] < 0.0));
+    assert!(frame.vertices.iter().any(|v| v.clip_position[3] > 0.0));
+    // Bitmap GL_Image+48 submits unscaled local positions with custom model.
+    // UVs remain un-divided so wgpu can interpolate with 1/w.
+    assert_eq!(frame.vertices[0].position, [-2.0, -3.0]);
+    assert_eq!(frame.vertices[1].position, [2.0, -3.0]);
+    assert_eq!(frame.vertices[0].uv, [0.0, 0.0]);
+    assert_eq!(frame.vertices[1].uv, [0.5, 0.0]);
+    let [x, y, z, w] = native_project_clip(projection, [-2.0, -3.0, 0.0]);
+    assert_eq!(frame.vertices[0].clip_position, [x, y, (z + w) * 0.5, w]);
+}
+
+#[test]
 fn submitted_text_uses_bound_font_geometry_and_texture_not_active_name() {
     let bound_texture = "<bound-font-texture>".to_owned();
     let active_texture = "<active-font-texture>".to_owned();
@@ -35,6 +92,7 @@ fn submitted_text_uses_bound_font_geometry_and_texture_not_active_name() {
             (active_texture, alpha_texture(8, 8)),
         ]),
         system_labels: SystemLabelPool::default(),
+        captures: Default::default(),
     };
     let command = TextRenderCommand {
         order: 0,
@@ -51,6 +109,7 @@ fn submitted_text_uses_bound_font_geometry_and_texture_not_active_name() {
         scale_y: 1.0,
         angle: 0.0,
         matrix: None,
+        position_matrix: None,
         alpha: 1.0,
         horizontal_anchor: "LEFT".to_owned(),
         vertical_anchor: "TOP".to_owned(),
@@ -93,6 +152,7 @@ fn font_v2_utf32_glyphs_reach_the_wgpu_quad_path() {
         fonts: HashMap::new(),
         textures: HashMap::from([(texture_source.clone(), alpha_texture(8, 8))]),
         system_labels: SystemLabelPool::default(),
+        captures: Default::default(),
     };
     let command = TextRenderCommand {
         order: 0,
@@ -109,6 +169,7 @@ fn font_v2_utf32_glyphs_reach_the_wgpu_quad_path() {
         scale_y: 1.0,
         angle: 0.0,
         matrix: None,
+        position_matrix: None,
         alpha: 1.0,
         horizontal_anchor: "LEFT".to_owned(),
         vertical_anchor: "TOP".to_owned(),
@@ -153,6 +214,7 @@ fn system_text_builds_premultiplied_label_and_uses_native_stroke_anchor_geometry
         fonts: HashMap::new(),
         textures: HashMap::new(),
         system_labels: SystemLabelPool::default(),
+        captures: Default::default(),
     };
     let frame = assets
         .prepare_gpu_frame(&[], std::slice::from_ref(&command), &[], &[])
@@ -368,6 +430,7 @@ fn last_system_font_release_separates_same_hash_deferred_label_lifetimes() {
         fonts: HashMap::new(),
         textures: HashMap::new(),
         system_labels: SystemLabelPool::default(),
+        captures: Default::default(),
     };
     let frame = assets.prepare_gpu_frame(&[], &commands, &[], &[]).unwrap();
     assert_eq!(frame.draws.len(), 2);

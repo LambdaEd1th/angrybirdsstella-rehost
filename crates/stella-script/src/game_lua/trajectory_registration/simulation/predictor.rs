@@ -32,10 +32,16 @@ pub(in crate::game_lua::trajectory_registration) fn install_update(
             // parameter 32. Every retained head fixture is tested against
             // BirdSimulation before each specialized one-body step.
             let aiming_force_sources = bridge
-                .scene
-                .values()
-                .filter(|object| object.aiming_aid_collideable)
-                .cloned()
+                .aiming_aid_force_sources
+                .iter()
+                .filter_map(|source| {
+                    bridge
+                        .game_lua_object(&source.name)
+                        .filter(|object| {
+                            object.physics_creation_order == source.physics_creation_order
+                        })
+                        .cloned()
+                })
                 .collect::<Vec<_>>();
             let sensor_force_settings = (
                 bridge.gravity_force_multiplier as f32,

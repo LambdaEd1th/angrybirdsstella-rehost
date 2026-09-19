@@ -20,6 +20,7 @@ pub(super) struct MixerState {
     pub(super) started: bool,
     pub(super) track_volumes: [f32; 8],
     pub(super) playbacks: BTreeMap<i64, NativePlayback>,
+    pub(super) finished: BTreeSet<i64>,
     pub(super) completed: BTreeSet<i64>,
 }
 
@@ -30,6 +31,7 @@ impl MixerState {
             started: false,
             track_volumes: [1.0; 8],
             playbacks: BTreeMap::new(),
+            finished: BTreeSet::new(),
             completed: BTreeSet::new(),
         }
     }
@@ -50,11 +52,17 @@ impl MixerState {
         if !self.started {
             return vec![0.0; sample_count];
         }
-        match self.configuration.bits_per_sample {
+        let output = match self.configuration.bits_per_sample {
             8 => self.mix_u8(sample_count),
             16 => self.mix_i16(sample_count),
             _ => unreachable!("validated native bit depth"),
-        }
+        };
+        self.finished.extend(
+            self.playbacks
+                .iter()
+                .filter_map(|(handle, playback)| playback.finished.then_some(*handle)),
+        );
+        output
     }
 
     fn mix_i16(&mut self, sample_count: usize) -> Vec<f32> {
@@ -201,11 +209,9 @@ fn track_volume(volumes: &[f32; 8], track: i32) -> f32 {
 
 pub(super) fn native_gain(instance: f32, track: f32, scale: f32) -> i32 {
     let gain = (instance * track) * scale;
-    if !gain.is_finite() || !(-2_147_483_648.0_f32..2_147_483_648.0_f32).contains(&gain) {
-        i32::MIN
-    } else {
-        gain.trunc() as i32
-    }
+    // 0x1005735F8 / 0x100573A94 use FCVTZS W25,S0 after two FMULs.
+    // ARM64 saturates signed overflow and converts NaN to zero.
+    gain as i32
 }
 
 fn scale(sample: i32, gain: i32, shift: u32) -> i32 {
@@ -236,7 +242,7 @@ impl NativePlayback {
             volume: playback.volume,
             looping: playback.looping,
             track: playback.track,
-            finished: false,
+            finished: playback.finished,
         }
     }
 

@@ -482,9 +482,67 @@ fn native_particle_entry_uses_stack_top_and_strict_required_fields() {
     assert_eq!(particle.z, 0.0);
     assert_eq!(particle.theme_layer_index, -1);
     assert!(!particle.ignore_time_multiplier);
-    let indefinite = &bridge.particle_system.particles[1];
-    assert_eq!(indefinite.mode, i32::MIN);
-    assert_eq!(indefinite.theme_layer_index, i32::MIN);
+    let nan = &bridge.particle_system.particles[1];
+    // FCVTZS maps NaN to zero. Mode zero then takes the native foreground
+    // fallback at 100090894..1000908A8; the layer has no such substitution.
+    assert_eq!(nan.mode, 1);
+    assert_eq!(nan.theme_layer_index, 0);
+}
+
+#[test]
+fn native_particle_integer_fields_saturate_before_mode_and_amount_fallbacks() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                particleTable = { particles = { boundary = {
+                    amount=1, sprites={"BOUNDARY"}, lifeTime=1,
+                    gravityX=0, gravityY=0,
+                    minVel=0, maxVel=0,
+                    minAngleEmitter=0, maxAngleEmitter=0,
+                    minAngle=0, maxAngle=0,
+                    minAngleVel=0, maxAngleVel=0,
+                    minScaleBegin=1, maxScaleBegin=1,
+                    minScaleEnd=1, maxScaleEnd=1
+                } } }
+                for index, value in ipairs({
+                    0/0, 1/0, -1/0, 2147483648, -2147483904,
+                    2147483520, 1.9, -1.9
+                }) do
+                    particles.native_addParticlesWithMode({
+                        definitionName="boundary", x=index, y=0, w=0, h=0,
+                        angle=0, amount=0/0, mode=value, themeLayerIndex=value
+                    })
+                end
+                particleTable.particles.background = particleTable.particles.boundary
+                particleTable.particles.background.background = true
+                particles.native_addParticlesWithMode({
+                    definitionName="background", x=9, y=0, w=0, h=0,
+                    angle=0, amount=0/0, mode=0/0, themeLayerIndex=0/0
+                })
+            "#,
+        )
+        .unwrap();
+    let bridge = runtime.render.lock().unwrap();
+    let particles = &bridge.particle_system.particles;
+    // Amount uses FCVTZS W26,S8 at 10008FB7C; zero falls back to the
+    // definition's amount. Mode/layer use W21,S8/W8,S8, not 64-bit results.
+    assert_eq!(particles.len(), 9);
+    for (particle, (mode, layer)) in particles.iter().zip([
+        (1, 0),
+        (i32::MAX, i32::MAX),
+        (i32::MIN, i32::MIN),
+        (i32::MAX, i32::MAX),
+        (i32::MIN, i32::MIN),
+        (2_147_483_520, 2_147_483_520),
+        (1, 1),
+        (-1, -1),
+        (2, 0),
+    ]) {
+        assert_eq!(particle.mode, mode);
+        assert_eq!(particle.theme_layer_index, layer);
+        assert!(!particle.ignore_time_multiplier);
+    }
 }
 
 #[test]

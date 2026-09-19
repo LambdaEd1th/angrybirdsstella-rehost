@@ -3,6 +3,7 @@
 //! Modules here follow the ownership boundaries visible in the executable,
 //! while `lib.rs` remains the public compatibility facade.
 
+mod application_scheduler;
 mod arguments;
 mod audio_registration;
 mod bootstrap;
@@ -10,6 +11,7 @@ mod direct_sprite_registration;
 mod draw_registration;
 mod frame_update;
 mod host;
+mod host_account;
 mod host_audio;
 mod host_frame;
 mod host_input;
@@ -18,6 +20,7 @@ mod host_output;
 mod host_physics;
 mod host_scene_sync;
 mod host_startup;
+mod host_ui;
 mod input;
 mod level_editor_registration;
 mod level_failure_registration;
@@ -83,6 +86,12 @@ mod world_physics_camera_registration;
 mod world_registration;
 mod world_transform_registration;
 
+pub(crate) use application_scheduler::{
+    ANIMATION_ENTITY_ATTACHMENT_REGISTRY_KEY, ANIMATION_ENTITY_REMOVAL_REGISTRY_KEY,
+    ApplicationEvent, ApplicationEventDispatcher, ApplicationEventScheduler,
+    dispatch_registered_application_events, install_application_event_dispatcher,
+    post_animation_entity_attachment, post_animation_entity_removal,
+};
 pub(crate) use arguments::*;
 pub(crate) use audio_registration::install as install_audio_bindings;
 pub(crate) use bootstrap::install as install_bootstrap_globals;
@@ -118,6 +127,8 @@ pub(crate) use particles::{
     NativeParticleRandom, NativeParticles, NativeThemeParticles, Particle, ParticleDefinition,
     spawn_particles,
 };
+#[cfg(test)]
+pub(crate) use persistence::deliver_persistent_load_messages;
 pub(super) use persistence::{
     decode_persistent_lua, install_persistent_save, install_table_files, load_saved_lua_table,
     write_saved_lua_table,
@@ -128,22 +139,30 @@ pub(crate) use platform::set_screenshot_sequence_for_test;
 #[cfg(test)]
 pub(crate) use platform::sha1_upper_hex;
 pub(super) use platform::{
-    InstalledAppsRuntime, UrlRequestRuntime, dispatch_installed_apps, dispatch_url_completions,
+    InstalledAppsRuntime, UrlRequestRuntime, dispatch_installed_apps, dispatch_url_completion,
 };
 pub(crate) use platform_services::announce_cloud_service_registrations;
 pub(crate) use platform_services::complete_iap_initialization;
+pub(crate) use platform_services::enable_shipped_game_server_facade;
 pub(crate) use platform_services::install as install_platform_service_tables;
 pub(crate) use platform_services::install_offline_game_server_facade;
 pub(crate) use platform_services::{
-    AssetsRuntime, ChannelRuntime, GameServerRuntime, GamerServicesRuntime, IapRuntime,
-    SkynestAccountRuntime, SkynestStorageRuntime, dispatch_assets_completions,
-    dispatch_channel_completions, dispatch_game_server_completions,
-    dispatch_gamer_services_completions, dispatch_iap_completions,
-    dispatch_skynest_account_completions, dispatch_skynest_storage_completions,
+    AppraterRuntime, AssetsRuntime, ChannelRuntime, GameServerRuntime, GamerServicesRuntime,
+    IapRuntime, QrScannerRuntime, SkynestAccountRuntime, SkynestStorageRuntime, SocialRuntime,
+    dispatch_assets_completion, dispatch_channel_content_completion,
+    dispatch_channel_loading_failure, dispatch_game_server_completion,
+    dispatch_gamer_services_authentication_completion,
+    dispatch_gamer_services_platform_completions, dispatch_iap_completion, dispatch_qr_completion,
+    dispatch_skynest_account_local_completion, dispatch_skynest_account_online_completion,
+    dispatch_skynest_storage_local_completion, dispatch_skynest_storage_online_completion,
+    dispatch_social_local_completion, dispatch_social_online_completion,
     load_shipped_game_server_facade,
 };
 pub(crate) use primitive_render_registration::install as install_primitive_render_bindings;
 pub(crate) use registration::install_base_globals;
+pub(crate) use registration::{
+    NotificationRuntime, dispatch_due_notification_callbacks, dispatch_notification_callback,
+};
 pub(crate) use registration_inventory::NATIVE_NOOP_FUNCTIONS;
 #[cfg(test)]
 pub(crate) use registration_inventory::{REGISTERED_GLOBAL_FUNCTIONS, REGISTERED_TABLE_FUNCTIONS};
@@ -163,7 +182,9 @@ pub(crate) use theme_arguments::{
     native_theme_layer, theme_required_bool, theme_required_f32, theme_required_string,
     theme_table_bool, theme_table_f32, theme_table_string,
 };
-pub(crate) use theme_layer_parser::{named_theme_layer_offsets, parse_theme_layers};
+pub(crate) use theme_layer_parser::{
+    parse_theme_layers, required_named_theme_layer, required_named_theme_layers,
+};
 pub(super) use theme_objects::install as install_theme_objects;
 pub(crate) use theme_render_registration::install as install_theme_render_bindings;
 pub(crate) use theme_state::{
@@ -171,13 +192,17 @@ pub(crate) use theme_state::{
     ThemeLayer, ThemeSpawnArea, ThemeSpawnParameters, ThemeVerticalOffset, ThemeWorldLimits,
     native_theme_parallax_scale, native_theme_relative_y_offset,
 };
-pub(crate) use theme_world_offsets::{
-    ThemeWorldOffsetContext, live_theme_world_limits, refresh_theme_layer_world_offset,
-};
+#[cfg(test)]
+pub(crate) use theme_world_offsets::native_offset_y;
+pub(crate) use theme_world_offsets::{ThemeWorldOffsetContext, refresh_theme_layer_world_offset};
 pub(crate) use time::{
-    add_duration_to_time_table, current_time_table, current_utc_time_table, time_table_seconds,
+    add_duration_to_time_table, current_time_table, time_table_from_seconds, time_table_seconds,
+    utc_time_table_from_seconds,
 };
-pub(crate) use time_registration::install as install_time_bindings;
+pub(crate) use time_registration::{
+    ServerTimeRuntime, dispatch_completion as dispatch_server_time_completion,
+    install as install_time_bindings,
+};
 pub(crate) use trajectory::*;
 pub(crate) use trajectory_registration::install as install_trajectory_bindings;
 pub(crate) use ui_text_registration::install as install_ui_text_bindings;

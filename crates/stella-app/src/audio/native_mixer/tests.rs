@@ -33,6 +33,7 @@ fn playback(
             volume,
             looping,
             track: 0,
+            finished: false,
         },
         NativeClip {
             reader: NativeReader::Memory {
@@ -44,6 +45,35 @@ fn playback(
             sample_rate: 16_000,
         },
     )
+}
+
+fn playback_state(handle: i64) -> AudioPlaybackState {
+    AudioPlaybackState {
+        handle,
+        source: None,
+        duration: None,
+        sample_frames: None,
+        source_channels: None,
+        source_bits_per_sample: None,
+        volume: 1.0,
+        looping: false,
+        track: 0,
+        finished: false,
+    }
+}
+
+fn output_state(playbacks: Vec<AudioPlaybackState>) -> AudioOutputState {
+    AudioOutputState {
+        generation: 0,
+        started: true,
+        master_volume: 1.0,
+        channels: 1,
+        bits_per_sample: 16,
+        sample_rate: 44_100,
+        buffer_bytes: 4,
+        track_volumes: [1.0; 8],
+        playbacks,
+    }
 }
 
 #[test]
@@ -103,6 +133,64 @@ fn muted_instance_short_read_then_zero_read_then_removal_matches_three_blocks() 
 }
 
 #[test]
+fn control_publishes_finished_before_next_block_removal() {
+    let control = create(configuration(1, 16, 4));
+    {
+        let mut mixer = control.shared.lock().unwrap();
+        mixer.started = true;
+        mixer
+            .playbacks
+            .insert(7, playback(7, &0_i16.to_le_bytes(), 1, 16, 1.0, false));
+        mixer.fill_block();
+        mixer.fill_block();
+    }
+    let state = output_state(vec![playback_state(7)]);
+    assert_eq!(
+        control.synchronize(&state),
+        AudioPlaybackTransitions {
+            finished: vec![7],
+            removed: Vec::new(),
+        }
+    );
+    control.shared.lock().unwrap().fill_block();
+    assert_eq!(
+        control.synchronize(&state),
+        AudioPlaybackTransitions {
+            finished: Vec::new(),
+            removed: vec![7],
+        }
+    );
+    assert!(!control.shared.lock().unwrap().playbacks.contains_key(&7));
+}
+
+#[test]
+fn startup_prefill_drain_does_not_reconcile_a_stale_removed_snapshot() {
+    let control = create(configuration(1, 16, 4));
+    let mut playback = playback_state(11);
+    playback.source = Some(AudioAssetSource::PcmData {
+        origin: PathBuf::from("short.pcm"),
+        data: Arc::from(0_i16.to_le_bytes()),
+        channels: 1,
+        bits_per_sample: 16,
+        sample_rate: 44_100,
+    });
+    playback.sample_frames = Some(1);
+    playback.source_channels = Some(1);
+    playback.source_bits_per_sample = Some(16);
+    let state = output_state(vec![playback]);
+    assert!(control.synchronize(&state).is_empty());
+    let _source = control.source(6);
+    assert_eq!(
+        control.take_transitions(),
+        AudioPlaybackTransitions {
+            finished: vec![11],
+            removed: vec![11],
+        }
+    );
+    assert!(!control.shared.lock().unwrap().playbacks.contains_key(&11));
+}
+
+#[test]
 fn eight_bit_conversion_preserves_target_unsigned_centering_bug() {
     let mut mixer = MixerState::new(configuration(2, 8, 2));
     mixer.started = true;
@@ -157,6 +245,7 @@ fn composite_child_end_returns_short_before_next_child_on_non_looping_read() {
             volume: 1.0,
             looping: false,
             track: 0,
+            finished: false,
         },
         NativeClip {
             reader: NativeReader::Sequence {
@@ -244,10 +333,46 @@ fn output_source_refills_only_after_two_processed_buffers_at_a_worker_poll() {
 }
 
 #[test]
-fn gain_conversion_keeps_arm_integer_indefinite_for_nan_and_overflow() {
-    assert_eq!(native_gain(f32::NAN, 1.0, 4_096.0), i32::MIN);
-    assert_eq!(native_gain(f32::INFINITY, 1.0, 4_096.0), i32::MIN);
+fn gain_conversion_uses_arm_saturation_for_nan_and_overflow() {
+    assert_eq!(native_gain(f32::NAN, 1.0, 4_096.0), 0);
+    assert_eq!(native_gain(f32::INFINITY, 1.0, 4_096.0), i32::MAX);
+    assert_eq!(native_gain(f32::NEG_INFINITY, 1.0, 4_096.0), i32::MIN);
     assert_eq!(native_gain(0.9999, 1.0, 4_096.0), 4_095);
+}
+
+#[cfg(target_arch = "aarch64")]
+#[test]
+fn gain_matches_the_native_two_fmul_and_fcvtzs_instruction_sequence() {
+    for instance in [
+        f32::NAN,
+        f32::INFINITY,
+        f32::NEG_INFINITY,
+        1e30,
+        -1e30,
+        0.9999,
+        1.0,
+    ] {
+        for track in [0.0, 0.3, 1.0, -1.0] {
+            for scale in [256.0, 4096.0] {
+                let native: i32;
+                // SAFETY: register-only arithmetic, no memory/stack operands.
+                unsafe {
+                    std::arch::asm!(
+                        "fmul {gain:s}, {instance:s}, {track:s}",
+                        "fmul {gain:s}, {gain:s}, {scale:s}",
+                        "fcvtzs {result:w}, {gain:s}",
+                        instance = in(vreg) instance,
+                        track = in(vreg) track,
+                        scale = in(vreg) scale,
+                        gain = out(vreg) _,
+                        result = out(reg) native,
+                        options(nomem, nostack),
+                    );
+                }
+                assert_eq!(native_gain(instance, track, scale), native);
+            }
+        }
+    }
 }
 
 #[test]
@@ -272,6 +397,7 @@ fn shipped_mp3_streams_match_native_gapless_pcm() {
                 volume: 1.0,
                 looping: false,
                 track: 0,
+                finished: false,
             },
             clip,
         );

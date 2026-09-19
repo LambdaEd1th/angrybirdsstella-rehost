@@ -13,6 +13,10 @@ pub(super) fn install(
         "setTheme",
         lua.create_function(move |lua, args: MultiValue| {
             let theme_name = native_required_string(&args, 0, "setTheme")?;
+            render
+                .lock()
+                .expect("render bridge lock poisoned")
+                .theme_name = theme_name.clone();
             let Some(block_table) = native_lua_object(lua, NativeLuaObject::BlockTable)? else {
                 return Ok(());
             };

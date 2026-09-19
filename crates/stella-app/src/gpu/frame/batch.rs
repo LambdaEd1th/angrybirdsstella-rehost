@@ -13,6 +13,30 @@ pub(in crate::gpu) fn screen_to_clip(position: [f32; 2], resolution: GameResolut
     ]
 }
 
+/// GL_Context scissor `0x10059971C` uses signed 32-bit subtraction before GL
+/// intersects with the framebuffer. Clamping edges first incorrectly turns
+/// wrapped negative widths/heights into visible (possibly full-screen) clips.
+pub(in crate::gpu) fn native_scissor(
+    edges: Option<[i32; 4]>,
+    resolution: GameResolution,
+) -> [u32; 4] {
+    let [left, top, right, bottom] = edges.unwrap_or([-32000, -32000, 32000, 32000]);
+    let width = i64::from(right.wrapping_sub(left).max(0));
+    let height = i64::from(bottom.wrapping_sub(top).max(0));
+    let x = i64::from(left);
+    let y = i64::from((resolution.height as i32).wrapping_sub(bottom));
+    let x0 = x.clamp(0, i64::from(resolution.width));
+    let x1 = (x + width).clamp(0, i64::from(resolution.width));
+    let y0 = y.clamp(0, i64::from(resolution.height));
+    let y1 = (y + height).clamp(0, i64::from(resolution.height));
+    [
+        x0 as u32,
+        resolution.height - y1 as u32,
+        (x1 - x0) as u32,
+        (y1 - y0) as u32,
+    ]
+}
+
 impl PreparedFrame {
     #[allow(clippy::too_many_arguments)]
     pub(in crate::gpu) fn push_mesh(
@@ -30,24 +54,13 @@ impl PreparedFrame {
         if positions.is_empty() {
             return;
         }
-        let scissor = match self.current_clip {
-            Some([left, top, right, bottom]) => {
-                let left = left.clamp(0, self.resolution.width as i32);
-                let top = top.clamp(0, self.resolution.height as i32);
-                let right = right.clamp(0, self.resolution.width as i32);
-                let bottom = bottom.clamp(0, self.resolution.height as i32);
-                if right <= left || bottom <= top {
-                    return;
-                }
-                Some([
-                    left as u32,
-                    top as u32,
-                    (right - left) as u32,
-                    (bottom - top) as u32,
-                ])
-            }
-            None => None,
-        };
+        let native_clip = native_scissor(self.current_clip, self.resolution);
+        if native_clip[2] == 0 || native_clip[3] == 0 {
+            return;
+        }
+        let scissor = (self.current_clip.is_some()
+            || native_clip != [0, 0, self.resolution.width, self.resolution.height])
+        .then_some(native_clip);
         let draw_index = self.uniforms.len() as u32;
         self.uniforms.push(uniform);
         let first_vertex = self.vertices.len() as u32;
@@ -61,7 +74,22 @@ impl PreparedFrame {
                         position: *position,
                         uv: *uv,
                         source: *source,
-                        clip_position: screen_to_clip(*position, self.resolution),
+                        clip_position: {
+                            let [x, y] = if self.current_raw_vertices {
+                                *position
+                            } else {
+                                screen_to_clip(*position, self.resolution)
+                            };
+                            self.current_projection
+                                .map_or([x, y, 0.0, 1.0], |projection| {
+                                    let [x, y, z, w] = native_project_clip(
+                                        projection,
+                                        [x, y, self.current_vertex_depth],
+                                    );
+                                    // OpenGL clips z to [-w,+w]; wgpu uses [0,w].
+                                    [x, y, (z + w) * 0.5, w]
+                                })
+                        },
                         draw_index,
                         padding: 0,
                     }),

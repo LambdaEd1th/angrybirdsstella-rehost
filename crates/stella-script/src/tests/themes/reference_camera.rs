@@ -1,8 +1,10 @@
 use super::super::*;
+use super::configure_theme_camera_fixture;
 
 #[test]
 fn theme_refresh_recovers_reference_camera_and_native_layer_transform() {
     let runtime = StellaLua::new("/tmp").unwrap();
+    configure_theme_camera_fixture(&runtime);
     register_test_sprite_sheet(&runtime, &["CAMERA_TILE"]);
     runtime
         .execute_source(
@@ -26,6 +28,7 @@ fn theme_refresh_recovers_reference_camera_and_native_layer_transform() {
                 blockTable = {
                     themes = {
                         camera = {
+                            fgLayers = {},
                             bgLayers = {{
                                 sprite = "CAMERA_TILE",
                                 offsetX = 8,
@@ -39,6 +42,7 @@ fn theme_refresh_recovers_reference_camera_and_native_layer_transform() {
                 setWorldScale(5)
                 setMaxWorldScale(99)
                 setTopLeft(2, -3)
+                screen = { x = 2 + 1024 / 10, y = -3 + 768 / 10 }
                 setTheme("camera")
                 native_refreshThemeSystem()
             "#,
@@ -47,7 +51,7 @@ fn theme_refresh_recovers_reference_camera_and_native_layer_transform() {
 
     {
         let mut bridge = runtime.render.lock().unwrap();
-        assert!(bridge.theme_camera.valid);
+        assert!(!bridge.theme_camera.valid);
         // 0x10009B040/0x10009B198 select the component-wise maximum when the
         // historical "lower camera" switch is enabled.
         assert_eq!(
@@ -57,7 +61,7 @@ fn theme_refresh_recovers_reference_camera_and_native_layer_transform() {
                 bridge.theme_camera.scale,
                 bridge.resolution_camera_scale,
             ),
-            (20.0, -5.0, 4.0, 6.0)
+            (0.0, 0.0, 4.0, 6.0)
         );
         let geometry = SpriteGeometry {
             min_x: -3.0,
@@ -71,6 +75,7 @@ fn theme_refresh_recovers_reference_camera_and_native_layer_transform() {
 
     runtime.execute_source("drawBackgroundNative(-1)").unwrap();
     let bridge = runtime.render.lock().unwrap();
+    assert_eq!((bridge.theme_camera.x, bridge.theme_camera.y), (20.0, -5.0));
     let command = bridge
         .commands
         .iter()
@@ -93,6 +98,7 @@ fn theme_refresh_recovers_reference_camera_and_native_layer_transform() {
 #[test]
 fn theme_refresh_uses_reference_camera_fallback_and_zero_overrides() {
     let runtime = StellaLua::new("/tmp").unwrap();
+    configure_theme_camera_fixture(&runtime);
     runtime
         .execute_source(
             r#"
@@ -104,7 +110,10 @@ fn theme_refresh_uses_reference_camera_fallback_and_zero_overrides() {
                 }
                 g_useZeroAsThemeReferencePointX = true
                 g_useZeroAsThemeReferencePointY = true
+                blockTable = { themes = { empty = { bgLayers = {}, fgLayers = {} } } }
+                setTheme("empty")
                 native_refreshThemeSystem()
+                drawBackgroundNative(-1)
             "#,
         )
         .unwrap();
@@ -130,6 +139,7 @@ fn native_theme_scale_uses_reference_camera_instead_of_physics_scale() {
 #[test]
 fn theme_layer_preserves_remaining_scalar_record_abi_and_native_defaults() {
     let runtime = StellaLua::new("/tmp").unwrap();
+    configure_theme_camera_fixture(&runtime);
     register_test_sprite_sheet(&runtime, &["SCALAR_TILE"]);
     runtime
         .execute_source(
@@ -195,6 +205,7 @@ fn theme_layer_preserves_remaining_scalar_record_abi_and_native_defaults() {
 #[test]
 fn theme_layer_narrows_active_draw_scalars_and_keeps_uniform_scale_fallbacks_independent() {
     let runtime = StellaLua::new("/tmp").unwrap();
+    configure_theme_camera_fixture(&runtime);
     register_test_sprite_sheet(&runtime, &["DRAW_SCALAR_TILE"]);
     runtime
         .execute_source(
@@ -249,6 +260,7 @@ fn theme_layer_narrows_active_draw_scalars_and_keeps_uniform_scale_fallbacks_ind
 #[test]
 fn theme_layer_preserves_xmult_and_relative_record_fields() {
     let runtime = StellaLua::new("/tmp").unwrap();
+    configure_theme_camera_fixture(&runtime);
     register_test_sprite_sheet(&runtime, &["RELATIVE_TILE"]);
     runtime
         .execute_source(
@@ -274,6 +286,7 @@ fn theme_layer_preserves_xmult_and_relative_record_fields() {
                 blockTable = {
                     themes = {
                         relative = {
+                            fgLayers = {},
                             bgLayers = {{
                                 sprite = "RELATIVE_TILE",
                                 offsetX = 0,
@@ -288,6 +301,7 @@ fn theme_layer_preserves_xmult_and_relative_record_fields() {
                 }
                 setWorldScale(5)
                 setTopLeft(2, -3)
+                screen = { x = 2 + 1024 / 10, y = -3 + 768 / 10 }
                 setTheme("relative")
                 native_refreshThemeSystem()
             "#,
@@ -341,7 +355,7 @@ fn theme_layer_preserves_xmult_and_relative_record_fields() {
     let one_minus_z = 1.0_f32 - z_distance;
     let centered_x = 16.0_f32.mul_add(0.5_f32, -3.0_f32);
     let local_x = centered_x / reference_scale;
-    let base_x = z_distance.mul_add(local_x / ratio, local_x * one_minus_z) + 10.0_f32;
+    let base_x = local_x.mul_add(one_minus_z, z_distance * (local_x / ratio)) + 10.0_f32;
     let camera_x = 2.0_f32 + (1024.0_f32 * 0.5_f32) / current_scale;
     let x_world = base_x + (z_distance + 0.5_f32) * (camera_x - 10.0_f32);
     let expected_x = (x_world - 2.0_f32) * current_scale;
@@ -358,6 +372,7 @@ fn theme_layer_preserves_xmult_and_relative_record_fields() {
 #[test]
 fn theme_world_fields_refresh_live_offsets_and_share_native_cmwc() {
     let runtime = StellaLua::new("/tmp").unwrap();
+    configure_theme_camera_fixture(&runtime);
     register_test_sprite_sheet(&runtime, &["WORLD_ANCHOR", "WORLD_RANDOM"]);
     runtime
         .execute_source(
@@ -381,6 +396,7 @@ fn theme_world_fields_refresh_live_offsets_and_share_native_cmwc() {
                 blockTable = {
                     themes = {
                         world = {
+                            fgLayers = {},
                             bgLayers = {
                                 {
                                     sprite = "WORLD_ANCHOR",
@@ -402,6 +418,7 @@ fn theme_world_fields_refresh_live_offsets_and_share_native_cmwc() {
                 }
                 setWorldScale(5)
                 setTopLeft(2, -3)
+                screen = { x = 2 + 1024 / 10, y = -3 + 768 / 10 }
                 setTheme("world")
                 native_refreshThemeSystem()
                 drawBackgroundNative(-1)
@@ -455,6 +472,7 @@ fn theme_world_fields_refresh_live_offsets_and_share_native_cmwc() {
 #[test]
 fn theme_refresh_resolves_symbolic_foreground_offsets_from_all_corrected_cameras() {
     let runtime = StellaLua::new("/tmp").unwrap();
+    configure_theme_camera_fixture(&runtime);
     register_test_sprite_sheet(&runtime, &["TOP", "BOTTOM"]);
     runtime
         .execute_source(
@@ -524,15 +542,146 @@ fn theme_refresh_resolves_symbolic_foreground_offsets_from_all_corrected_cameras
         bridge.theme_foreground_layers[1].offset_y,
         ThemeVerticalOffset::Bottom
     ));
-    // sub_100099828 returns vertical bounds 83 and 166. The top branch uses
-    // max=166; the bottom branch uses min=83. end/reference is 8/4=2,
+    // Refresh does not initialize XY: sub_100099828 sees referenceY=0 and
+    // returns bounds 3 and 6. Top selects max=6, bottom selects min=3.
+    // end/reference is 8/4=2,
     // and the signed integer half-height term is (10/2)*1.5 = 7.5.
     assert_eq!(
         bridge.theme_foreground_layers[0].resolved_offset_y,
-        Some(-90.5)
+        Some(-10.5)
     );
     assert_eq!(
         bridge.theme_foreground_layers[1].resolved_offset_y,
-        Some(350.0)
+        Some(390.0)
+    );
+    drop(bridge);
+
+    // Explicit writes update only the native float, not the source marker
+    // consulted by sub_1000985DC on a later refresh.
+    runtime
+        .execute_source(
+            r#"
+        native_setThemeFgLayerOffsetY("anchored", 1, 123)
+        native_setThemeFgLayerOffsetY("anchored", 2, 456)
+    "#,
+        )
+        .unwrap();
+    {
+        let mut bridge = runtime.render.lock().unwrap();
+        for layer in &mut bridge.theme_foreground_layers {
+            layer.velocity_y = 4.0;
+        }
+        bridge.advance_native_theme_frame(0.25);
+        assert_eq!(
+            bridge.theme_foreground_layers[0].resolved_offset_y,
+            Some(124.0)
+        );
+        assert_eq!(
+            bridge.theme_foreground_layers[1].resolved_offset_y,
+            Some(457.0)
+        );
+    }
+    runtime
+        .execute_source("native_refreshThemeSystem()")
+        .unwrap();
+    let bridge = runtime.render.lock().unwrap();
+    assert_eq!(
+        bridge.theme_foreground_layers[0].resolved_offset_y,
+        Some(-10.5)
+    );
+    assert_eq!(
+        bridge.theme_foreground_layers[1].resolved_offset_y,
+        Some(390.0)
+    );
+    drop(bridge);
+
+    runtime
+        .execute_source(
+            r#"
+        blockTable.themes.anchored.fgLayers[1].offsetY = "bottom"
+        blockTable.themes.anchored.fgLayers[2].offsetY = "123"
+        native_setThemeFgLayerOffsetY("anchored", 2, 500)
+        native_refreshThemeSystem()
+    "#,
+        )
+        .unwrap();
+    {
+        let bridge = runtime.render.lock().unwrap();
+        assert_eq!(
+            bridge.theme_foreground_layers[0].resolved_offset_y,
+            Some(390.0)
+        );
+        // A numeric source means refresh leaves the live float unchanged,
+        // even when this layer was originally parsed as "bottom".
+        assert_eq!(
+            bridge.theme_foreground_layers[1].resolved_offset_y,
+            Some(500.0)
+        );
+    }
+    runtime
+        .execute_source(
+            r#"
+        local layers = blockTable.themes.anchored.fgLayers
+        layers[1].offsetY = nil
+        refresh_offset_reads = 0
+        setmetatable(layers[1], { __index = function(_, key)
+            if key == "offsetY" then
+                refresh_offset_reads = refresh_offset_reads + 1
+                if refresh_offset_reads == 3 then
+                    -- rawget must never invoke this hook.
+                    error("late anchor read")
+                end
+                return "top"
+            end
+        end })
+        native_refreshThemeSystem()
+        assert(refresh_offset_reads == 0)
+        setmetatable(layers[1], nil)
+        layers[1].offsetY = "unknown-anchor"
+        native_refreshThemeSystem()
+    "#,
+        )
+        .unwrap();
+    let bridge = runtime.render.lock().unwrap();
+    assert_eq!(
+        bridge.theme_foreground_layers[0].resolved_offset_y,
+        Some(0.0)
+    );
+    assert_eq!(
+        bridge.theme_foreground_layers[1].resolved_offset_y,
+        Some(500.0)
+    );
+    drop(bridge);
+    runtime
+        .execute_source(
+            r#"
+        local first = blockTable.themes.anchored.fgLayers[1]
+        first.offsetY = nil
+        refresh_offset_reads = 0
+        setmetatable(first, { __index = function(_, key)
+            if key == "offsetY" then
+                refresh_offset_reads = refresh_offset_reads + 1
+                if refresh_offset_reads == 3 then
+                    gameCamera.resolutionCorrectedCameras = {
+                        { sx = 4, px = 2, py = 0, left = -1, top = 0 }
+                    }
+                    native_setThemeFgLayerOffsetY("anchored", 2, 777)
+                end
+                return "top"
+            end
+        end })
+        native_refreshThemeSystem()
+        assert(refresh_offset_reads == 0)
+    "#,
+        )
+        .unwrap();
+    let bridge = runtime.render.lock().unwrap();
+    assert_eq!(
+        bridge.theme_foreground_layers[0].resolved_offset_y,
+        Some(0.0)
+    );
+    assert_eq!(
+        bridge.theme_foreground_layers[1].resolved_offset_y,
+        Some(500.0)
     );
 }

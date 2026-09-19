@@ -81,6 +81,7 @@ pub(crate) fn native_resource_sprite_command(
     };
     state.draw_size = draw.draw_size;
     Some(RenderCommand {
+        projection_3d: None,
         order: 0,
         sprite: draw.sprite.into(),
         texture: None,

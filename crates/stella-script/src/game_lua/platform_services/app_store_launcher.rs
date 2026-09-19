@@ -20,6 +20,7 @@ pub(super) fn install(
 
     let update_root = Arc::clone(&data_root);
     let update_state = Arc::clone(&state);
+    let update_render = Arc::clone(&render);
     launcher.set(
         "updateGameData",
         lua.create_function(move |_, args: MultiValue| {
@@ -42,6 +43,10 @@ pub(super) fn install(
                 .and_then(serde_json::Value::as_str)
                 .ok_or_else(|| runtime_error("cross-promotion storeId must be a string"))?;
 
+            let installed = {
+                let bridge = update_render.lock().expect("render bridge lock poisoned");
+                game_lua::platform::can_open_url(launch_id, &bridge.installed_url_schemes)
+            };
             let mut state = update_state
                 .lock()
                 .expect("app-store launcher state lock poisoned");
@@ -50,9 +55,9 @@ pub(super) fn install(
             state.store_id.clear();
             state.store_id.push_str(store_id);
             // Purple asks UIApplication whether launchId can be opened and
-            // retains that boolean at +0x10. A cross-platform offline host
-            // has no installed mobile application registered for the scheme.
-            state.installed = false;
+            // retains that boolean at +0x10. The portable registry is empty
+            // by default and can be populated by an explicit host backend.
+            state.installed = installed;
             Ok(())
         })?,
     )?;

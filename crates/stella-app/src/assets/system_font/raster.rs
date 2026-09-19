@@ -4,16 +4,19 @@ use std::{collections::HashMap, sync::Arc};
 
 use anyhow::{Result, anyhow};
 use image::{Rgba, RgbaImage};
-use skrifa::bitmap::{BitmapData, BitmapFormat, MaskData};
+use skrifa::bitmap::{
+    BitmapData, BitmapFormat, BitmapGlyph, BitmapStrike, BitmapStrikes, MaskData, Origin,
+};
 use skrifa::instance::{LocationRef, Size};
 use skrifa::outline::{DrawSettings, OutlinePen};
+use skrifa::raw::TableProvider;
 use skrifa::{FontRef, GlyphId, MetadataProvider};
 use tiny_skia::{Mask, Path, PathBuilder};
 
 use super::{
     NativeSystemDecodedRaster, NativeSystemGlyphBounds, NativeSystemPlacedRaster,
     NativeSystemRasterColor, SystemFontLayoutFace, SystemFontShapedLine,
-    color_outline::render_system_color_outline,
+    color_outline::render_system_color_outline, legacy_bitmap::NativeBdtStrikes,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -49,13 +52,16 @@ pub(super) fn append_line_glyphs(
         let raster = if let Some(cached) = raster_cache.get(&key) {
             cached.clone()
         } else {
-            let strikes = parser_face.bitmap_strikes();
-            let decoded = if let Some(image) =
-                strikes.glyph_for_size(Size::new(f32::from(requested_ppem)), glyph_id)
-            {
+            let decoded = if let Some(image) = native_system_bitmap_glyph(
+                parser_face,
+                Size::new(f32::from(requested_ppem)),
+                glyph_id,
+            ) {
                 Some(Arc::new(decode_system_raster(
                     image,
-                    strikes.format() == Some(BitmapFormat::Sbix),
+                    // This flag retained the old parser face's table-presence
+                    // bit; it did not identify the format that actually won.
+                    parser_face.sbix().is_ok(),
                     glyph_bounds(parser_face, glyph_id),
                 )?))
             } else if parser_face.color_glyphs().get(glyph_id).is_some() {
@@ -103,8 +109,55 @@ pub(super) fn append_line_glyphs(
     Ok(())
 }
 
+/// Restores the parser order used before the Fontations migration.  In
+/// particular, Apple `bdat` precedes both standardized BDT pairs. Once a
+/// table pair (or an sbix strike) is selected, a missing glyph is terminal;
+/// the former parser did not search a lower-priority table.
+pub(super) fn native_system_bitmap_glyph<'a>(
+    font: &FontRef<'a>,
+    size: Size,
+    glyph_id: GlyphId,
+) -> Option<BitmapGlyph<'a>> {
+    if let Some(strikes) = BitmapStrikes::with_format(font, BitmapFormat::Sbix)
+        && let Some(strike) = native_system_sbix_strike_for_size(&strikes, size)
+    {
+        return strike.get(glyph_id);
+    }
+    if let Some(strikes) = NativeBdtStrikes::legacy(font) {
+        return strikes.glyph_for_size(size, glyph_id);
+    }
+    if let Some(strikes) = NativeBdtStrikes::ebdt(font) {
+        return strikes.glyph_for_size(size, glyph_id);
+    }
+    if let Some(strikes) = NativeBdtStrikes::cbdt(font) {
+        return strikes.glyph_for_size(size, glyph_id);
+    }
+    None
+}
+
+fn native_system_sbix_strike_for_size<'a>(
+    strikes: &BitmapStrikes<'a>,
+    size: Size,
+) -> Option<BitmapStrike<'a>> {
+    let requested = size.ppem().unwrap_or(f32::MAX);
+    // ttf-parser initialized its candidate index to zero. Thus a non-empty
+    // table whose ppem fields are all zero still selects its first strike.
+    let mut best = strikes.get(0);
+    let mut best_ppem = 0.0;
+    for strike in strikes.iter() {
+        let strike_size = strike.ppem();
+        if (requested <= strike_size && strike_size < best_ppem)
+            || (requested > best_ppem && strike_size > best_ppem)
+        {
+            best = Some(strike);
+            best_ppem = strike_size;
+        }
+    }
+    best
+}
+
 pub(super) fn decode_system_raster(
-    raster: skrifa::bitmap::BitmapGlyph<'_>,
+    raster: BitmapGlyph<'_>,
     sbix: bool,
     glyph_bbox: Option<NativeSystemGlyphBounds>,
 ) -> Result<NativeSystemDecodedRaster> {
@@ -129,6 +182,14 @@ pub(super) fn decode_system_raster(
             "embedded system glyph has zero-sized raster metrics"
         ));
     }
+    let inner_y = match raster.placement_origin {
+        // The pre-migration raster payload stored BDT bearings as a bottom
+        // bound. Fontations exposes the same metrics from the top-left, so
+        // subtract the declared bitmap height before entering that retained
+        // placement contract.
+        Origin::TopLeft => raster.inner_bearing_y - raster.height as f32,
+        Origin::BottomLeft => raster.inner_bearing_y,
+    };
     Ok(NativeSystemDecodedRaster {
         image,
         color,
@@ -136,8 +197,7 @@ pub(super) fn decode_system_raster(
             .inner_bearing_x
             .round()
             .clamp(f32::from(i16::MIN), f32::from(i16::MAX)) as i16,
-        y: raster
-            .inner_bearing_y
+        y: inner_y
             .round()
             .clamp(f32::from(i16::MIN), f32::from(i16::MAX)) as i16,
         pixels_per_em: raster.ppem_y.round().clamp(1.0, f32::from(u16::MAX)) as u16,

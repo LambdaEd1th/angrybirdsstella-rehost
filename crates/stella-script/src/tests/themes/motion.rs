@@ -1,8 +1,36 @@
 use super::super::*;
+use super::configure_theme_camera_fixture;
+
+#[test]
+fn symbolic_layer_velocity_rounds_against_the_complete_native_offset() {
+    let runtime = unlocked_test_runtime();
+    configure_theme_camera_fixture(&runtime);
+    runtime
+        .execute_source(
+            r#"
+        blockTable = { themes = { anchored = {
+            fgLayers = {{ sprite = "MISSING_ANCHOR", offsetY = "top", velY = 1 }}
+        }}}
+        setTheme("anchored")
+        native_setThemeFgLayerOffsetY("anchored", 1, 16777216)
+    "#,
+        )
+        .unwrap();
+    let mut bridge = runtime.render.lock().unwrap();
+    for _ in 0..16 {
+        bridge.advance_native_theme_frame(0.25);
+    }
+    let layer = &bridge.theme_foreground_layers[0];
+    assert!(matches!(layer.offset_y, ThemeVerticalOffset::Top));
+    // Each FMADD adds 0.25 to 2^24 and rounds back to 2^24. An independent
+    // motion accumulator would instead introduce an erroneous four pixels.
+    assert_eq!(layer.resolved_offset_y, Some(16_777_216.0));
+}
 
 #[test]
 fn static_sprite_tables_share_ios_rand_with_lua_but_animated_tables_do_not() {
     let runtime = unlocked_test_runtime();
+    configure_theme_camera_fixture(&runtime);
     runtime
         .execute_source(
             r#"
@@ -43,6 +71,7 @@ fn static_sprite_tables_share_ios_rand_with_lua_but_animated_tables_do_not() {
 #[test]
 fn animated_theme_layer_preserves_frames_scale_alpha_and_parallax_velocity() {
     let runtime = unlocked_test_runtime();
+    configure_theme_camera_fixture(&runtime);
     runtime
         .execute_source(
             r#"
@@ -107,6 +136,7 @@ fn animated_theme_layer_preserves_frames_scale_alpha_and_parallax_velocity() {
 #[test]
 fn missing_theme_sprite_geometry_matches_native_zero_resource_queries() {
     let runtime = unlocked_test_runtime();
+    configure_theme_camera_fixture(&runtime);
     runtime
         .execute_source(
             r#"
@@ -164,8 +194,98 @@ fn missing_theme_sprite_geometry_matches_native_zero_resource_queries() {
 }
 
 #[test]
+fn moving_theme_layers_wrap_against_level_union_from_last_draw_center() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    configure_theme_camera_fixture(&runtime);
+    register_test_sprite_sheet_with_sizes(&runtime, &[("MOVING_TILE", 100, 100)]);
+    runtime
+        .execute_source(
+            r#"
+                leftLimitWorld = 0
+                rightLimitWorld = 200
+                topLimitWorld = 0
+                bottomLimitWorld = 100
+                objects = {
+                    castleCameraData = {
+                        ipad = { sx = 20, sy = 20 },
+                        ios = { px = 0, py = 0 }
+                    }
+                }
+                gameCamera = {
+                    resolutionCorrectedCameras = {
+                        { sx = 20, sy = 20, px = 0, py = 0 }
+                    },
+                    endCameraIndex = 1
+                }
+                blockTable = {
+                    themes = {
+                        moving_union = {
+                            fgLayers = {},
+                            bgLayers = {{
+                                sprite = "MOVING_TILE",
+                                offsetX = 2000,
+                                offsetY = 1000,
+                                scaleX = 1,
+                                scaleY = 1,
+                                zDistance = 0,
+                                velX = 1,
+                                velY = 1
+                            }}
+                        }
+                    }
+                }
+                setWorldScale(20)
+                setMaxWorldScale(20)
+                setTopLeft(0, 0)
+                setTheme("moving_union")
+                native_refreshThemeSystem()
+                drawBackgroundNative(-1)
+                "#,
+        )
+        .unwrap();
+
+    let limits = ThemeWorldLimits {
+        left: Some(0.0),
+        right: Some(200.0),
+        top: Some(0.0),
+        bottom: Some(100.0),
+    };
+    let mut bridge = runtime.render.lock().unwrap();
+    let layer = &bridge.theme_background_layers[0];
+    assert_eq!(layer.cached_draw_world_x, 100.0);
+    assert_eq!(layer.cached_draw_world_y, 50.0);
+
+    // The drawn center remains inside the level/screen union, even though
+    // the authored offsets are far beyond the 1024x768 pixel viewport.
+    bridge.advance_native_theme_frame_with_limits(0.0, limits);
+    assert_eq!(bridge.theme_background_layers[0].offset_x, 2000.0);
+    assert!(matches!(
+        bridge.theme_background_layers[0].offset_y,
+        ThemeVerticalOffset::Pixels(value) if value == 1000.0
+    ));
+
+    let layer = &mut bridge.theme_background_layers[0];
+    layer.cached_draw_world_x = 210.0;
+    layer.cached_draw_world_y = 110.0;
+    bridge.advance_native_theme_frame_with_limits(0.0, limits);
+
+    // X: 100 * (FCVTZS((200 / 100) * 20) + 1) = 4100.
+    // Y: 100 * (FCVTZS((100 / 100) * 20) + 1) = 2100.
+    assert_eq!(bridge.theme_background_layers[0].offset_x, -2100.0);
+    // The X-wrap branch continues to the next layer, skipping Y this pass.
+    assert_eq!(native_offset_y(&bridge.theme_background_layers[0]), 1000.0);
+    bridge.theme_background_layers[0].cached_draw_world_x = 100.0;
+    bridge.advance_native_theme_frame_with_limits(0.0, limits);
+    assert!(matches!(
+        bridge.theme_background_layers[0].offset_y,
+        ThemeVerticalOffset::Pixels(value) if value == -1100.0
+    ));
+}
+
+#[test]
 fn theme_frame_keeps_native_position_and_parallax_offset_pairs_distinct() {
     let runtime = unlocked_test_runtime();
+    configure_theme_camera_fixture(&runtime);
     runtime
         .execute_source(
             r#"
@@ -235,6 +355,7 @@ fn theme_frame_keeps_native_position_and_parallax_offset_pairs_distinct() {
 #[test]
 fn native_physics_lock_gates_the_complete_theme_frame_chain() {
     let runtime = unlocked_test_runtime();
+    configure_theme_camera_fixture(&runtime);
     runtime
         .execute_source(
             r#"
@@ -277,6 +398,7 @@ fn native_physics_lock_gates_the_complete_theme_frame_chain() {
 #[test]
 fn theme_frame_precedes_update_physics_lock_mutation() {
     let runtime = unlocked_test_runtime();
+    configure_theme_camera_fixture(&runtime);
     runtime
         .execute_source(
             r#"

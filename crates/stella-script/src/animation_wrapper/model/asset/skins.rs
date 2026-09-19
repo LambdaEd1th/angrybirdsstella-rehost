@@ -1,13 +1,13 @@
 //! Companion `.skins.json` resolution and skin transform decoding.
 
-use std::{collections::BTreeMap, fs, path::Path};
+use std::collections::BTreeMap;
 
 use super::super::{AnimationSkin, AnimationSkinTransform};
 
 const ANIMATION_SUFFIX: &[u8] = b".anim.json";
 const SKINS_SUFFIX: &[u8] = b".skins.json";
 
-fn animation_skin_filename(filename: &str) -> String {
+pub(crate) fn animation_skin_filename(filename: &str) -> String {
     // Both native load members use `filename.length() - strlen(".anim.json")`
     // as the std::string substring count without first checking the suffix. An
     // underflowed count is clamped by the substring constructor to the input.
@@ -20,20 +20,6 @@ fn animation_skin_filename(filename: &str) -> String {
     result.extend_from_slice(&bytes[..prefix_length]);
     result.extend_from_slice(SKINS_SUFFIX);
     String::from_utf8_lossy(&result).into_owned()
-}
-
-pub(super) fn load_animation_skins(
-    data_root: &Path,
-    filename: &str,
-) -> BTreeMap<String, AnimationSkin> {
-    let path = data_root.join(animation_skin_filename(filename).trim_start_matches('/'));
-    let Ok(bytes) = fs::read(path) else {
-        return BTreeMap::new();
-    };
-    let Ok(document) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
-        return BTreeMap::new();
-    };
-    parse_animation_skins(&document)
 }
 
 pub(crate) fn parse_animation_skins(

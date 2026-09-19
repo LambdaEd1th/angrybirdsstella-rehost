@@ -1,4 +1,5 @@
 use super::super::*;
+use super::configure_theme_camera_fixture;
 
 fn refresh_theme_system(runtime: &StellaLua) {
     runtime
@@ -54,6 +55,7 @@ fn install_particle_theme(runtime: &StellaLua) {
 #[test]
 fn theme_particle_spawner_updates_parallax_fields_and_draws_before_layer() {
     let runtime = unlocked_test_runtime();
+    configure_theme_camera_fixture(&runtime);
     install_particle_theme(&runtime);
     {
         let bridge = runtime.render.lock().unwrap();
@@ -88,8 +90,10 @@ fn theme_particle_spawner_updates_parallax_fields_and_draws_before_layer() {
     assert!(!particle.world_space);
     let projected_x = (particle.state.translate_x + particle.x) * particle.state.scale_x;
     let projected_y = (particle.state.translate_y + particle.y) * particle.state.scale_y;
-    assert_eq!(projected_x, 128.381_26_f32);
-    assert_eq!(projected_y, 102.006_25_f32);
+    // Draw's lazy prelude captures endScale=20; 1x1/pivot0 contributes a
+    // half pixel. The particle's 0.28125 local Y contributes 5.625 pixels.
+    assert_eq!(projected_x, 128.5_f32);
+    assert_eq!(projected_y, 102.125_01_f32);
     assert_eq!(particle.state.scale_x, 23.75);
     assert_eq!(particle.state.scale_y, 23.75);
 }
@@ -97,6 +101,7 @@ fn theme_particle_spawner_updates_parallax_fields_and_draws_before_layer() {
 #[test]
 fn theme_particles_inherit_then_restore_the_callers_non_transform_state() {
     let runtime = unlocked_test_runtime();
+    configure_theme_camera_fixture(&runtime);
     install_particle_theme(&runtime);
     runtime.update(0.25).unwrap();
     runtime
@@ -156,6 +161,7 @@ fn theme_particle_creation_retains_its_atlas_after_theme_resources_are_released(
     fs::write(data_root.join("second/second.pvr"), []).unwrap();
 
     let runtime = StellaLua::new(&data_root).unwrap();
+    configure_theme_camera_fixture(&runtime);
     runtime
         .execute_source(
             r#"
@@ -213,6 +219,7 @@ fn theme_particle_creation_retains_its_atlas_after_theme_resources_are_released(
 #[test]
 fn theme_particle_preroll_and_interval_match_single_spawn_per_update() {
     let runtime = unlocked_test_runtime();
+    configure_theme_camera_fixture(&runtime);
     install_particle_theme(&runtime);
 
     // The first call emits immediately. Even a delta larger than several
@@ -254,6 +261,7 @@ fn theme_particle_preroll_and_interval_match_single_spawn_per_update() {
 #[test]
 fn theme_particle_nan_interval_follows_native_unordered_branches() {
     let runtime = unlocked_test_runtime();
+    configure_theme_camera_fixture(&runtime);
     runtime
         .execute_source(
             r#"
@@ -265,7 +273,7 @@ fn theme_particle_nan_interval_follows_native_unordered_branches() {
                     minScaleBegin=1, maxScaleBegin=1,
                     minScaleEnd=1, maxScaleEnd=1
                 } } }
-                blockTable = { themes = { nanTheme = { bgLayers = {{
+                blockTable = { themes = { nanTheme = { fgLayers = {}, bgLayers = {{
                     sprite="LAYER", particles="mist", spawnInterval=0/0
                 }} } } }
                 setTheme("nanTheme")
@@ -293,6 +301,7 @@ fn theme_particle_nan_interval_follows_native_unordered_branches() {
 #[test]
 fn theme_particle_limits_count_the_empty_native_base_vector() {
     let runtime = unlocked_test_runtime();
+    configure_theme_camera_fixture(&runtime);
     runtime
         .execute_source(
             r#"
@@ -304,7 +313,7 @@ fn theme_particle_limits_count_the_empty_native_base_vector() {
                     minScaleBegin=1, maxScaleBegin=1,
                     minScaleEnd=1, maxScaleEnd=1
                 } } }
-                blockTable = { themes = { limitTheme = { bgLayers = {{
+                blockTable = { themes = { limitTheme = { fgLayers = {}, bgLayers = {{
                     sprite="LAYER", particles="mist", spawnInterval=0
                 }} } } }
                 setTheme("limitTheme")
@@ -340,6 +349,7 @@ fn theme_particle_limits_count_the_empty_native_base_vector() {
 #[test]
 fn expanded_theme_layers_replace_spawner_by_source_definition_index() {
     let runtime = unlocked_test_runtime();
+    configure_theme_camera_fixture(&runtime);
     register_test_sprite_sheet(&runtime, &["EXPANDED"]);
     runtime
         .execute_source(
@@ -352,7 +362,7 @@ fn expanded_theme_layers_replace_spawner_by_source_definition_index() {
                     minScaleBegin=1, maxScaleBegin=1,
                     minScaleEnd=1, maxScaleEnd=1
                 } } }
-                blockTable = { themes = { expanded = { bgLayers = {{
+                blockTable = { themes = { expanded = { fgLayers = {}, bgLayers = {{
                     sprite="EXPANDED", particles="mist", spawnInterval=-1,
                     spawnParameters={
                         amount=3,
@@ -383,6 +393,7 @@ fn expanded_theme_layers_replace_spawner_by_source_definition_index() {
 #[test]
 fn theme_system_force_spawn_routes_authored_ids_to_native_layer_buckets() {
     let runtime = unlocked_test_runtime();
+    configure_theme_camera_fixture(&runtime);
     runtime
         .execute_source(
             r#"
@@ -451,6 +462,7 @@ fn theme_system_force_spawn_routes_authored_ids_to_native_layer_buckets() {
 #[test]
 fn theme_particle_systems_are_rebuilt_only_by_native_refresh() {
     let runtime = unlocked_test_runtime();
+    configure_theme_camera_fixture(&runtime);
     runtime
         .execute_source(
             r#"
@@ -473,11 +485,11 @@ fn theme_particle_systems_are_rebuilt_only_by_native_refresh() {
                     }
                 } }
                 blockTable = { themes = {
-                    oldTheme = { bgLayers = {{
+                    oldTheme = { fgLayers = {}, bgLayers = {{
                         sprite="OLD_LAYER", particles="oldMist",
                         spawnInterval=0.5, spawnerId=11
                     }} },
-                    newTheme = { bgLayers = {{
+                    newTheme = { fgLayers = {}, bgLayers = {{
                         sprite="NEW_LAYER", particles="newMist",
                         spawnInterval=2, spawnerId=22
                     }} }
@@ -541,6 +553,7 @@ fn theme_particle_systems_are_rebuilt_only_by_native_refresh() {
 #[test]
 fn theme_refresh_retains_each_native_particle_definition_cache() {
     let runtime = unlocked_test_runtime();
+    configure_theme_camera_fixture(&runtime);
     runtime
         .execute_source(
             r#"
@@ -552,7 +565,7 @@ fn theme_refresh_retains_each_native_particle_definition_cache() {
                     minScaleBegin=1, maxScaleBegin=1,
                     minScaleEnd=1, maxScaleEnd=1
                 } } }
-                blockTable = { themes = { cachedTheme = { bgLayers = {{
+                blockTable = { themes = { cachedTheme = { fgLayers = {}, bgLayers = {{
                     sprite="LAYER", particles="mist",
                     spawnInterval=-1, spawnerId=17
                 }} } } }

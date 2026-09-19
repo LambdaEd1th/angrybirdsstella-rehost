@@ -35,17 +35,6 @@ impl AssetCatalog {
                 resolution.height
             ));
         }
-        let capture_width = resolution.width as u16;
-        let capture_height = resolution.height as u16;
-        for region in self
-            .regions
-            .values_mut()
-            .filter(|region| region.texture.starts_with("<capture:"))
-        {
-            region.sprite.width = capture_width as i16;
-            region.sprite.height = capture_height as i16;
-        }
-
         #[derive(Clone, Copy)]
         enum FrameCommand {
             Rect,
@@ -125,6 +114,9 @@ impl AssetCatalog {
                     let command = &rect_commands[rect_index];
                     rect_index += 1;
                     frame.current_clip = command.clip_rect;
+                    frame.current_projection = command.projection_3d;
+                    frame.current_raw_vertices = false;
+                    frame.current_vertex_depth = 0.001;
                     append_gpu_rect(&mut frame, command);
                 }
                 FrameCommand::Sprite => {
@@ -141,30 +133,35 @@ impl AssetCatalog {
                     let command = &text_commands[text_index];
                     text_index += 1;
                     frame.current_clip = command.clip_rect;
+                    frame.current_projection = command.projection_3d;
+                    frame.current_raw_vertices = false;
+                    frame.current_vertex_depth = 0.001;
                     self.append_gpu_text(command, &mut frame)?;
                 }
                 FrameCommand::Capture => {
                     let command = &capture_commands[capture_index];
                     capture_index += 1;
-                    let texture = format!("<capture:{}>", command.name);
-                    self.composites.remove(&command.name);
-                    self.regions.insert(
-                        command.name.clone(),
-                        AtlasRegion {
-                            texture: texture.clone(),
-                            sprite: SpriteRegion {
-                                name: command.name.clone(),
-                                x: 0,
-                                y: 0,
-                                width: capture_width as i16,
-                                height: capture_height as i16,
-                                pivot_x: 0,
-                                pivot_y: 0,
-                                atlas_rotation: 0,
-                            },
-                        },
-                    );
-                    frame.operations.push(PreparedOperation::Capture(texture));
+                    let (texture, retired) = self.prepare_capture_texture(
+                        &command.texture_source,
+                        resolution,
+                        command.temporary,
+                    )?;
+                    if let Some(retired) = retired {
+                        frame.retired_textures.insert(retired);
+                    }
+                    if command.temporary {
+                        frame.retired_textures.insert(texture.source.clone());
+                    }
+                    frame
+                        .capture_formats
+                        .insert(texture.source.clone(), texture.surface_format);
+                    // ResourceManager already registered the SpriteSheet (or
+                    // retained an existing one). Only replace its Image pixels;
+                    // geometry, aliases, composite priority and draw bindings
+                    // continue to come from the script resource catalog.
+                    frame
+                        .operations
+                        .push(PreparedOperation::Capture(texture.source));
                 }
             }
         }
@@ -190,6 +187,25 @@ impl AssetCatalog {
     ) -> Result<()> {
         let state = command.state;
         frame.current_clip = state.clip_rect;
+        frame.current_projection = command.projection_3d.as_deref().copied();
+        let is_composite = command.bound_composite.is_some()
+            || (command.bound_region.is_none()
+                && self.composites.contains_key(command.sprite.as_str()));
+        frame.current_raw_vertices =
+            matches!(
+                command.geometry,
+                Some(SpriteGeometrySubmission::RawAtlasQuad(_))
+            ) || (frame.current_projection.is_some_and(|p| p.custom_model)
+                && !command.world_space
+                && command.geometry.is_none()
+                && command.texture.is_none()
+                && !is_composite);
+        frame.current_vertex_depth =
+            if command.world_space || frame.current_raw_vertices || is_composite {
+                0.0
+            } else {
+                0.001
+            };
         if ![command.x, command.y].into_iter().all(f32::is_finite)
             || ![
                 state.translate_x,
@@ -214,7 +230,8 @@ impl AssetCatalog {
                         .chain(quad.uv)
                         .flatten()
                         .all(f64::is_finite),
-                    SpriteGeometrySubmission::NativeAtlasQuad(quad) => {
+                    SpriteGeometrySubmission::NativeAtlasQuad(quad)
+                    | SpriteGeometrySubmission::RawAtlasQuad(quad) => {
                         quad.iter().flatten().copied().all(f64::is_finite)
                     }
                 };
@@ -250,7 +267,8 @@ impl AssetCatalog {
             );
         }
         match command.geometry.as_ref() {
-            Some(SpriteGeometrySubmission::NativeAtlasQuad(positions)) => {
+            Some(SpriteGeometrySubmission::NativeAtlasQuad(positions))
+            | Some(SpriteGeometrySubmission::RawAtlasQuad(positions)) => {
                 return self.append_gpu_native_sprite_quad(
                     &command.sprite,
                     command.bound_region.as_deref(),
@@ -270,7 +288,11 @@ impl AssetCatalog {
             }
             None => {}
         }
-        let transform = render_command_transform(command);
+        let transform = if frame.current_raw_vertices {
+            SpriteTransform::from_scale_rotation(command.x, command.y, 1.0, 1.0, 0.0, state.alpha)
+        } else {
+            render_command_transform(command)
+        };
         if let Some(dirt) = command.dirt.as_deref() {
             self.append_gpu_dirt(dirt, transform, frame)?;
             return Ok(());

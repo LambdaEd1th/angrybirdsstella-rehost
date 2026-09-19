@@ -294,6 +294,14 @@ fn recovered_object_extension_members_keep_native_float_and_lua_mirror_boundarie
                 bad_collision_value = pcall(native_setTimeSinceCollision, "body", false)
                 bad_revert_flag = pcall(setRevertGravityWithMultiplier, "body", 1, 2, 3)
                 bad_revert_force = pcall(setRevertGravityWithMultiplier, "body", true, false, 3)
+                for _, call in ipairs({
+                    function() native_setTimeSinceCollision("missing", 1) end,
+                    function() setRevertGravityWithMultiplier("missing", false, 1, 2) end
+                }) do
+                    local ok, message = pcall(call)
+                    assert(not ok and string.find(tostring(message),
+                        "Missing object: missing", 1, true))
+                end
                 bad_sprite_name = pcall(setSpriteRotation, false, 1)
                 bad_sprite_angle = pcall(setSpriteRotation, "body", "1")
                 bad_velocity_name = pcall(multiplyVelocity, false, 1)

@@ -82,11 +82,13 @@ pub(crate) fn install(lua: &Lua, globals: &Table, context: RegistrationContext) 
         Arc::clone(&data_root),
         Arc::clone(&resource_runtime),
     )?;
-    resources::install_closing(
+    resources::install_closing_with_resources(
         lua,
         &animation_native,
         Arc::clone(&animation_runtime),
         animation_callbacks.clone(),
+        Arc::clone(&resource_runtime),
+        Arc::clone(&data_root),
     )?;
     playback::install_controls_with_resources(
         lua,

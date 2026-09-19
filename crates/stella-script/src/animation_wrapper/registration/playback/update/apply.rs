@@ -57,12 +57,22 @@ fn resolve_native_sprite_binding(
         AnimationSpriteTrackKind::DirectSprite => {
             (alias.rsplit('/').next().unwrap_or(alias).to_owned(), None)
         }
-        AnimationSpriteTrackKind::SkinAlias => animation_skin_alias_attachment(
-            definition,
-            runtime.skins.get(tag).map(String::as_str),
-            slot,
-            alias,
-        )?,
+        AnimationSpriteTrackKind::SkinAlias => {
+            let skins = match runtime.skin_sets.get(tag) {
+                Some(skins) => skins,
+                // Manually assembled transform fixtures have no native root
+                // or wrapper map. An attached scene with no wrapper owner
+                // must not resurrect its discarded skins after closeAll.
+                None if !runtime.root_present => &definition.skins,
+                None => return None,
+            };
+            animation_skin_alias_attachment(
+                skins,
+                runtime.skins.get(tag).map(String::as_str),
+                slot,
+                alias,
+            )?
+        }
     };
     let region = match kind {
         AnimationSpriteTrackKind::DirectSprite => runtime

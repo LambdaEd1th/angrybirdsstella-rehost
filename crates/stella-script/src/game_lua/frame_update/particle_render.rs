@@ -30,6 +30,7 @@ impl RenderBridge {
                     render_scale
                 };
                 RenderCommand {
+                    projection_3d: None,
                     order: 0,
                     sprite: particle.sprite.clone(),
                     texture: None,

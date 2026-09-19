@@ -1,6 +1,36 @@
 use super::*;
 
 #[test]
+fn rendering_disabled_skips_the_top_level_draw_and_resumes_from_update() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                draw_count = 0
+                draw = function()
+                    draw_count = draw_count + 1
+                    drawRect(1, 0, 0, 1, 0, 0, 10, 10, false)
+                end
+                update = function() setGameRenderingDisabled(false) end
+            "#,
+        )
+        .unwrap();
+    assert!(runtime.draw().unwrap());
+    runtime
+        .execute_source("setGameRenderingDisabled(true)")
+        .unwrap();
+    assert!(!runtime.draw().unwrap());
+    assert!(runtime.take_rect_commands().is_empty());
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert_eq!(environment.get::<u32>("draw_count").unwrap(), 1);
+
+    runtime.update(1.0 / 60.0).unwrap();
+    assert!(runtime.draw().unwrap());
+    assert_eq!(environment.get::<u32>("draw_count").unwrap(), 2);
+    assert_eq!(runtime.take_rect_commands().len(), 1);
+}
+
+#[test]
 fn recovered_native_sprite_helpers_emit_every_requested_layer() {
     let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data");
     let runtime = StellaLua::new(data_root).unwrap();
@@ -65,11 +95,16 @@ fn recovered_native_sprite_helpers_emit_every_requested_layer() {
         TextFontBinding::System(_) => panic!("shipped font is a bitmap IFont"),
     }
     assert_eq!(bridge.text_commands[0].angle, 0.0);
+    assert_eq!(bridge.text_commands[0].horizontal_anchor, "LEFT");
+    assert_eq!(bridge.text_commands[0].vertical_anchor, "TOP");
     assert_eq!(
         bridge.text_commands[0].projection_3d,
         Some(TextProjection3D {
+            x: 7.0,
+            y: 8.0,
             z: 9.0,
             rotation_x: 0.25,
+            custom_model: true,
         })
     );
 }
@@ -173,9 +208,19 @@ fn string_3d_adapter_is_strict_and_does_not_replace_x_rotation_with_z_rotation()
     runtime
         .execute_source(
             r#"
+                local no_font_3d_ok
+                no_font_3d_ok, no_font_3d_error = pcall(
+                    drawString3D, "MISSING_GROUP", "text", 1, 2, 3, 0.75, 4, 5, 0.6
+                )
+                no_font_3d_error = tostring(no_font_3d_error)
+                no_font_3d_fails = not no_font_3d_ok
                 res.createBitmapFont("fonts/1024x768/FONT_CRIMSON_BASIC.dat")
                 res.useFont("FONT_CRIMSON_BASIC")
-                drawString3D("MISSING_GROUP", "text", 1, 2, 3, 0.75, 4, 5, 0.6)
+                setRenderState(10, 20, 2, 3, 0.5, 6, 7, 0.25)
+                res.setClipRect(11, 12, 13, 14)
+                string_3d_return_count = select('#', drawString3D(
+                    "MISSING_GROUP", "text", 1, 2, 3, 0.75, 4, 5, 0.6
+                ))
                 missing_3d_values_fail = pcall(drawString3D, "MISSING_GROUP", "text", 1)
             "#,
         )
@@ -186,21 +231,129 @@ fn string_3d_adapter_is_strict_and_does_not_replace_x_rotation_with_z_rotation()
             .get::<bool>("missing_3d_values_fail")
             .unwrap()
     );
+    assert!(
+        game_environment(runtime.lua())
+            .unwrap()
+            .get::<bool>("no_font_3d_fails")
+            .unwrap()
+    );
+    assert!(
+        game_environment(runtime.lua())
+            .unwrap()
+            .get::<String>("no_font_3d_error")
+            .unwrap()
+            .contains("No font is set while trying to draw string")
+    );
+    assert_eq!(
+        game_environment(runtime.lua())
+            .unwrap()
+            .get::<i64>("string_3d_return_count")
+            .unwrap(),
+        0
+    );
     let bridge = runtime.render.lock().unwrap();
     let text = &bridge.text_commands[0];
-    assert_eq!(
-        (text.x, text.y, text.scale_x, text.scale_y),
-        (1.0, 2.0, 4.0, 5.0)
-    );
+    assert_eq!([text.x, text.y], [4.0, 5.0]);
+    assert_eq!((text.scale_x, text.scale_y), (1.0, 1.0));
+    assert_eq!(text.native_system_origin, Some([4.0, 5.0]));
     assert_eq!(text.alpha, f64::from(0.6_f32));
     assert_eq!(text.angle, 0.0);
+    assert_eq!(text.horizontal_anchor, "LEFT");
+    assert_eq!(text.vertical_anchor, "TOP");
+    assert_eq!(text.clip_rect, Some([11, 12, 24, 26]));
     assert_eq!(
         text.projection_3d,
         Some(TextProjection3D {
+            x: 1.0,
+            y: 2.0,
             z: 3.0,
             rotation_x: 0.75,
+            custom_model: true,
         })
     );
+    // The successful native epilogue leaves identity model state and the 3D
+    // alpha installed, while retaining the pre-existing scissor.
+    assert_eq!(
+        (bridge.state.translate_x, bridge.state.translate_y),
+        (10.0, 20.0)
+    );
+    assert_eq!((bridge.state.scale_x, bridge.state.scale_y), (2.0, 3.0));
+    assert_eq!(
+        (
+            bridge.state.angle,
+            bridge.state.pivot_x,
+            bridge.state.pivot_y
+        ),
+        (0.5, 6.0, 7.0)
+    );
+    assert!(bridge.state.matrix.is_none());
+    assert!(bridge.state.custom_model.is_none());
+    assert!(!bridge.perspective_projection);
+    assert_eq!(bridge.state.alpha, f64::from(0.6_f32));
+    assert_eq!(bridge.state.clip_rect, Some([11, 12, 24, 26]));
+}
+
+#[test]
+fn caught_string_3d_error_preserves_projection_for_later_draws_and_state_resets() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .execute_source(
+            r#"
+        setRenderState(10, 20, 2, 3, 0.5, 6, 7, 0.25)
+        local ok = pcall(drawString3D, "MISSING", "A", 1, 2, 3, 0.75, 4, 5, 0.6)
+        assert(not ok)
+    "#,
+        )
+        .unwrap();
+    let projection = TextProjection3D {
+        x: 1.0,
+        y: 2.0,
+        z: 3.0,
+        rotation_x: 0.75,
+        custom_model: true,
+    };
+    {
+        let bridge = runtime.render.lock().unwrap();
+        assert_eq!(bridge.projection_3d(), Some(projection));
+        assert_eq!(bridge.state.alpha, f64::from(0.6_f32));
+        assert_eq!(
+            (bridge.state.translate_x, bridge.state.translate_y),
+            (10.0, 20.0)
+        );
+        assert!(bridge.text_commands.is_empty());
+    }
+    runtime
+        .execute_source(
+            r#"
+        drawRect(1, 1, 1, 1, 0, 0, 10, 10, true)
+        drawSelectedTexturizedObject("MISSING", "MISSING", 0, 0, 1, 1)
+        res.createSystemFont("FONT", "Arial", 12, 255, 255, 255, 255)
+        res.useFont("FONT")
+        res.drawString("MISSING", "A", 0, 0)
+        clearScreen()
+        res.drawString("MISSING", "B", 0, 0)
+        drawString3D("MISSING", "C", 0, 0, 10, 0, 0, 0, 1)
+        res.drawString("MISSING", "D", 0, 0)
+    "#,
+        )
+        .unwrap();
+    let bridge = runtime.render.lock().unwrap();
+    assert_eq!(bridge.rect_commands[0].projection_3d, Some(projection));
+    assert_eq!(
+        bridge.commands[0].projection_3d.as_deref(),
+        Some(&projection)
+    );
+    assert_eq!(bridge.text_commands[0].projection_3d, Some(projection));
+    // glClear bypasses projection, while clearScreen's state reset preserves
+    // the separate perspective projection for the following ordinary text.
+    assert_eq!(bridge.rect_commands[1].projection_3d, None);
+    assert_eq!(
+        bridge.text_commands[1].projection_3d,
+        Some(TextProjection3D::default())
+    );
+    assert_eq!(bridge.text_commands[2].projection_3d.unwrap().z, 10.0);
+    assert_eq!(bridge.text_commands[3].projection_3d, None);
+    assert!(!bridge.perspective_projection);
 }
 
 #[test]
@@ -242,6 +395,8 @@ fn string_3d_uses_text_group_key_and_current_font_like_resource_draw_string() {
     let command = &bridge.text_commands[0];
     assert_eq!(command.text, "Localized title");
     assert_eq!(command.font, "FONT");
+    assert_eq!(command.horizontal_anchor, "LEFT");
+    assert_eq!(command.vertical_anchor, "TOP");
     match command.font_binding.as_ref().unwrap() {
         TextFontBinding::Bitmap {
             font,
@@ -359,6 +514,7 @@ fn submitted_system_text_retains_native_argb_stroke_metrics_and_face_after_relea
                     "SYSTEM_PLAIN", "Arial", 12, 64, 128, 32, 255
                 )
                 res.useFont("SYSTEM_PLAIN")
+                setRenderState(10, 20, 2, 3, 0.5, 4, 5, 1)
                 res.drawString("MISSING_GROUP", "Plain", 10.75, -20.75, "RIGHT", "BOTTOM")
                 res.createSystemFontWithStroke(
                     "SYSTEM_STROKE", "Arial", 20,
@@ -398,6 +554,28 @@ fn submitted_system_text_retains_native_argb_stroke_metrics_and_face_after_relea
     assert_eq!(
         bridge.text_commands[0].native_system_origin,
         Some([10.75, -20.75])
+    );
+    let state = RenderState {
+        translate_x: 10.0,
+        translate_y: 20.0,
+        scale_x: 2.0,
+        scale_y: 3.0,
+        angle: f64::from(0.5_f32),
+        pivot_x: 4.0,
+        pivot_y: 5.0,
+        ..RenderState::default()
+    };
+    assert_eq!(
+        [bridge.text_commands[0].x, bridge.text_commands[0].y],
+        native_text_state_origin(state, 10.75, -20.75)
+    );
+    assert_eq!(
+        bridge.text_commands[0].matrix,
+        Some(native_text_state_matrix(state))
+    );
+    assert_eq!(
+        bridge.text_commands[0].position_matrix,
+        Some(native_system_text_position_matrix(state))
     );
     assert!(!plain.font_data.is_empty());
     assert!(plain.ascending > 0);
@@ -1383,38 +1561,43 @@ fn ui_text_native_matches_strict_abi_localization_floor_pivot_and_live_state() {
     assert_eq!(command.vertical_anchor, "BOTTOM");
     assert_eq!(command.alpha, 0.25);
 
-    let angle = 0.4_f64;
+    // sub_100031434 receives every Lua scalar in an S register, evaluates
+    // cosf/sinf, and uses FNMSUB/FMADD for the final rotated components.
+    let angle = 0.4_f32;
     let cosine = angle.cos();
     let sine = angle.sin();
-    let final_x = 10.0 + 2.0 * cosine * 4.0 - 3.0 * sine * 5.0;
-    let final_y = 20.0 + 2.0 * sine * 4.0 + 3.0 * cosine * 5.0;
-    let final_scale_x = 1.0;
-    let final_scale_y = 0.75;
-    let pivot_correction_x = 2.0 - cosine * 2.0 + sine * 3.0;
-    let pivot_correction_y = 3.0 - sine * 2.0 - cosine * 3.0;
-    let expected_x = 3.0 * final_scale_x
+    let final_x = 10.0_f32 + 2.0_f32.mul_add(cosine * 4.0, -(3.0 * (sine * 5.0)));
+    let final_y = 20.0_f32 + 2.0_f32.mul_add(sine * 4.0, 3.0 * (cosine * 5.0));
+    let final_scale_x = 1.0_f32;
+    let final_scale_y = 0.75_f32;
+    let pivot_correction_x = 2.0_f32 - cosine * 2.0 + sine * 3.0;
+    let pivot_correction_y = 3.0_f32 - sine * 2.0 - cosine * 3.0;
+    let expected_x = 3.0_f32 * final_scale_x
         + (final_x / final_scale_x).floor() * final_scale_x
         + final_scale_x * pivot_correction_x;
-    let expected_y = 4.0 * final_scale_y
+    let expected_y = 4.0_f32 * final_scale_y
         + (final_y / final_scale_y).floor() * final_scale_y
         + final_scale_y * pivot_correction_y;
-    assert!((command.x - expected_x).abs() < 1e-12);
-    assert!((command.y - expected_y).abs() < 1e-12);
+    assert_eq!(command.x, f64::from(expected_x));
+    assert_eq!(command.y, f64::from(expected_y));
     assert_eq!(
         command.matrix,
         Some([
-            final_scale_x * cosine,
-            -final_scale_x * sine,
-            final_scale_y * sine,
-            final_scale_y * cosine,
+            f64::from(final_scale_x * cosine),
+            f64::from(-final_scale_x * sine),
+            f64::from(final_scale_y * sine),
+            f64::from(final_scale_y * cosine),
         ])
     );
     assert_eq!(
         (bridge.state.translate_x, bridge.state.translate_y),
         (3.0, 4.0)
     );
-    assert_eq!((bridge.state.scale_x, bridge.state.scale_y), (1.0, 0.75));
-    assert_eq!(bridge.state.angle, angle);
+    assert_eq!(
+        (bridge.state.scale_x, bridge.state.scale_y),
+        (f64::from(final_scale_x), f64::from(final_scale_y))
+    );
+    assert_eq!(bridge.state.angle, f64::from(angle));
     assert_eq!((bridge.state.pivot_x, bridge.state.pivot_y), (2.0, 3.0));
     assert_eq!(bridge.state.matrix, None);
     // The explicit sub-one alpha is temporary and Purple restores 1.0,
@@ -1468,14 +1651,16 @@ fn ui_text_native_clipped_lines_inherit_alpha_and_restore_it_on_error() {
     let calls = environment.get::<mlua::Table>("line_calls").unwrap();
     assert_eq!(calls.raw_len(), 2);
     let first = calls.raw_get::<mlua::Table>(1).unwrap();
-    let angle = 0.4_f64;
-    let expected_x = 10.0 + 2.0 * angle.cos() * 4.0 - 3.0 * angle.sin() * 5.0;
-    let expected_y = 20.0 + 2.0 * angle.sin() * 4.0 + 3.0 * angle.cos() * 5.0;
-    assert!((first.get::<f64>("x").unwrap() - expected_x).abs() < 1e-12);
-    assert!((first.get::<f64>("y").unwrap() - expected_y).abs() < 1e-12);
+    let angle = 0.4_f32;
+    let cosine = angle.cos();
+    let sine = angle.sin();
+    let expected_x = 10.0_f32 + 2.0_f32.mul_add(cosine * 4.0, -(3.0 * (sine * 5.0)));
+    let expected_y = 20.0_f32 + 2.0_f32.mul_add(sine * 4.0, 3.0 * (cosine * 5.0));
+    assert_eq!(first.get::<f64>("x").unwrap(), f64::from(expected_x));
+    assert_eq!(first.get::<f64>("y").unwrap(), f64::from(expected_y));
     assert_eq!(first.get::<f64>("sx").unwrap(), 1.0);
     assert_eq!(first.get::<f64>("sy").unwrap(), 0.75);
-    assert_eq!(first.get::<f64>("angle").unwrap(), angle);
+    assert_eq!(first.get::<f64>("angle").unwrap(), f64::from(angle));
 
     let bridge = runtime.render.lock().unwrap();
     assert!(bridge.text_commands.is_empty());

@@ -24,7 +24,8 @@ pub(crate) use registration::{RegistrationContext, install};
 
 pub(super) use fonts::{
     FontMetric, SystemFontState, bitmap_font_metric, bitmap_font_string_width,
-    create_system_font_state, load_bitmap_fonts, native_clip_text_lines,
+    create_platform_ui_font, create_platform_ui_regular_font, create_system_font_state,
+    load_bitmap_fonts, native_clip_text_lines, native_utf8_skipping_invalid,
     platform_system_font_names, system_font_color_from_lua, system_font_metric,
     system_font_string_width,
 };

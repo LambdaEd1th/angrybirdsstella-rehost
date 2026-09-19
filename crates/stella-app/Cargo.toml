@@ -7,6 +7,7 @@ rust-version.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+arboard.workspace = true
 bytemuck.workspace = true
 clap.workspace = true
 image = { workspace = true, features = ["webp"] }
@@ -16,5 +17,6 @@ stella-assets = { path = "../stella-assets" }
 stella-script = { path = "../stella-script" }
 skrifa.workspace = true
 tiny-skia.workspace = true
+unicode-segmentation.workspace = true
 wgpu.workspace = true
 winit.workspace = true

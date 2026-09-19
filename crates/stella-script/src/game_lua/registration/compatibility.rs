@@ -87,13 +87,6 @@ pub(super) fn install(
             })?,
         )?;
     }
-    globals.set(
-        "uniqueDeviceId",
-        // pf::DeviceID::Impl first tries the MAC address and, for iOS's
-        // 02:00:00:00:00:00 sentinel, identifierForVendor. Its literal
-        // result when neither platform identifier exists is "unavailable".
-        lua.create_function(|_, ()| Ok("unavailable"))?,
-    )?;
     install_unique_shaders(lua, globals)?;
     globals.set(
         "fileExistsInAppData",

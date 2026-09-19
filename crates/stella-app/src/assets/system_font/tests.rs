@@ -31,6 +31,119 @@ fn binding() -> SystemFontRenderBinding {
     }
 }
 
+fn append_u16(bytes: &mut Vec<u8>, value: u16) {
+    bytes.extend_from_slice(&value.to_be_bytes());
+}
+
+fn append_u32(bytes: &mut Vec<u8>, value: u32) {
+    bytes.extend_from_slice(&value.to_be_bytes());
+}
+
+fn synthetic_bitmap_tables(size_glyph: u16, index_glyph: u16) -> (Vec<u8>, Vec<u8>) {
+    let mut bdat = Vec::new();
+    append_u32(&mut bdat, 0x0002_0000);
+    bdat.extend_from_slice(&[
+        2,           // height
+        3,           // width
+        1,           // horizontal bearing X
+        2,           // horizontal bearing Y (top bearing)
+        4,           // horizontal advance
+        0b1010_0000, // first byte-aligned one-bit row
+        0b0100_0000, // second row
+    ]);
+
+    let mut bloc = Vec::new();
+    append_u32(&mut bloc, 0x0002_0000);
+    append_u32(&mut bloc, 1); // one BitmapSize
+    append_u32(&mut bloc, 56); // IndexSubtableList offset
+    append_u32(&mut bloc, 20); // record plus format-1 subtable
+    append_u32(&mut bloc, 1); // one index subtable
+    append_u32(&mut bloc, 0); // colorRef
+    bloc.extend_from_slice(&[0; 24]); // horizontal and vertical line metrics
+    append_u16(&mut bloc, size_glyph); // declared start glyph
+    append_u16(&mut bloc, size_glyph); // declared end glyph
+    bloc.extend_from_slice(&[7, 11, 1, 1]); // differing ppem X/Y, one bit, horizontal
+    assert_eq!(bloc.len(), 56);
+    append_u16(&mut bloc, index_glyph); // first glyph in subtable
+    append_u16(&mut bloc, index_glyph); // last glyph in subtable
+    append_u32(&mut bloc, 8); // subtable follows this record
+    append_u16(&mut bloc, 1); // index format 1
+    append_u16(&mut bloc, 1); // small metrics, byte-aligned bitmap
+    append_u32(&mut bloc, 4); // image bytes follow bdat version
+    append_u32(&mut bloc, 0); // first glyph offset
+    append_u32(&mut bloc, 7); // glyph end offset
+    (bdat, bloc)
+}
+
+fn synthetic_sfnt(mut tables: Vec<([u8; 4], Vec<u8>)>) -> Vec<u8> {
+    tables.sort_unstable_by_key(|(tag, _)| *tag);
+    let table_count = u16::try_from(tables.len()).unwrap();
+    let directory_len = 12 + tables.len() * 16;
+    let mut next_offset = directory_len;
+    let records = tables
+        .iter()
+        .map(|(tag, data)| {
+            let offset = next_offset;
+            next_offset = (offset + data.len() + 3) & !3;
+            (*tag, offset, data.len())
+        })
+        .collect::<Vec<_>>();
+
+    let power = if table_count == 0 {
+        0
+    } else {
+        u16::BITS - 1 - table_count.leading_zeros()
+    };
+    let search_range = if table_count == 0 {
+        0
+    } else {
+        (1_u16 << power) * 16
+    };
+    let mut font = Vec::new();
+    append_u32(&mut font, 0x0001_0000);
+    append_u16(&mut font, table_count);
+    append_u16(&mut font, search_range);
+    append_u16(&mut font, u16::try_from(power).unwrap());
+    append_u16(&mut font, table_count * 16 - search_range);
+    for (tag, offset, len) in &records {
+        font.extend_from_slice(tag);
+        append_u32(&mut font, 0); // checksum is irrelevant to table reads
+        append_u32(&mut font, u32::try_from(*offset).unwrap());
+        append_u32(&mut font, u32::try_from(*len).unwrap());
+    }
+    for ((_, data), (_, offset, _)) in tables.into_iter().zip(records) {
+        font.resize(offset, 0);
+        font.extend_from_slice(&data);
+    }
+    font
+}
+
+/// Small, self-contained sfnt whose glyph 5 is a 3x2 monochrome Apple
+/// `bloc`/`bdat` bitmap. No host or Purple.app font is involved in this
+/// regression.
+fn synthetic_legacy_bitmap_font() -> Vec<u8> {
+    let (bdat, bloc) = synthetic_bitmap_tables(5, 5);
+    synthetic_sfnt(vec![(*b"bdat", bdat), (*b"bloc", bloc)])
+}
+
+fn synthetic_standard_bitmap_font() -> Vec<u8> {
+    let (ebdt, eblc) = synthetic_bitmap_tables(5, 5);
+    synthetic_sfnt(vec![(*b"EBDT", ebdt), (*b"EBLC", eblc)])
+}
+
+fn synthetic_bitmap_priority_font() -> Vec<u8> {
+    // The legacy size declares glyph 5 but its sole index subtable contains
+    // glyph 6, while the lower-priority EBDT pair has a valid glyph 5.
+    let (bdat, bloc) = synthetic_bitmap_tables(5, 6);
+    let (ebdt, eblc) = synthetic_bitmap_tables(5, 5);
+    synthetic_sfnt(vec![
+        (*b"EBDT", ebdt),
+        (*b"EBLC", eblc),
+        (*b"bdat", bdat),
+        (*b"bloc", bloc),
+    ])
+}
+
 #[test]
 fn system_font_stroke_is_a_closed_centered_vector_outline() {
     let Some(open_sans) = open_sans() else {
@@ -101,6 +214,7 @@ fn label_offset_truncates_anchored_local_coordinates_toward_zero() {
         scale_y: 1.0,
         angle: 0.0,
         matrix: None,
+        position_matrix: None,
         alpha: 1.0,
         horizontal_anchor: String::new(),
         vertical_anchor: String::new(),
@@ -117,14 +231,24 @@ fn label_offset_truncates_anchored_local_coordinates_toward_zero() {
         y: 226.75,
         native_system_origin: Some([10.75, -3.25]),
         matrix: Some([2.0, -3.0, 4.0, 5.0]),
+        position_matrix: Some([2.0, 0.0, 0.0, 5.0]),
         ..command
     };
     let [left, top] = native_system_label_offset(&command, 0, 2, 4);
     let transformed = text_glyph_transform(&command, left, top);
     // The native order is trunc(10.75-2, -3.25-4) = (8,-7), followed by
-    // the matrix and translation: (137,197). Truncating screen space or
-    // transforming the fractional anchored point produces other values.
-    assert_eq!([transformed.x, transformed.y], [137.0, 197.0]);
+    // axis scale and translation: (125.75,208). GL_Image uses the full matrix
+    // only for the cached label quad, so its rotation/shear remains intact.
+    assert_eq!([transformed.x, transformed.y], [125.75, 208.0]);
+    assert_eq!(
+        (
+            transformed.m00,
+            transformed.m01,
+            transformed.m10,
+            transformed.m11
+        ),
+        (2.0, -3.0, 4.0, 5.0)
+    );
 }
 
 #[test]
@@ -217,6 +341,79 @@ fn embedded_bitmap_coverage_decodes_padded_rows_and_bit_depths() {
     assert_eq!(
         gray.pixels().map(|pixel| pixel[3]).collect::<Vec<_>>(),
         [0, 85, 170, 255]
+    );
+}
+
+#[test]
+fn legacy_bloc_bdat_font_uses_raw_fontations_tables_and_preserves_bdt_origin() {
+    let data = synthetic_legacy_bitmap_font();
+    let face = FontRef::new(&data).unwrap();
+    // This is the exact migration gap: Skrifa's standard strike facade does
+    // not alias Apple's legacy tags.
+    assert!(face.bitmap_strikes().is_empty());
+
+    let glyph = raster::native_system_bitmap_glyph(
+        &face,
+        skrifa::instance::Size::new(7.0),
+        skrifa::GlyphId::new(5),
+    )
+    .unwrap();
+    assert_eq!((glyph.width, glyph.height), (3, 2));
+    assert_eq!((glyph.inner_bearing_x, glyph.inner_bearing_y), (1.0, 2.0));
+    // The pre-migration payload selected and scaled BDT strikes with ppemX.
+    assert_eq!((glyph.ppem_x, glyph.ppem_y), (7.0, 7.0));
+
+    let decoded = decode_system_raster(glyph, false, None).unwrap();
+    assert_eq!(decoded.color, NativeSystemRasterColor::Foreground);
+    assert_eq!((decoded.x, decoded.y, decoded.pixels_per_em), (1, 0, 7));
+    assert_eq!(
+        decoded
+            .image
+            .pixels()
+            .map(|pixel| pixel[3])
+            .collect::<Vec<_>>(),
+        [255, 0, 255, 0, 255, 0]
+    );
+
+    // The same ppem-axis and origin normalization also restores the retired
+    // parser contract for standardized EBDT/EBLC tables after the migration.
+    let data = synthetic_standard_bitmap_font();
+    let face = FontRef::new(&data).unwrap();
+    assert_eq!(
+        face.bitmap_strikes().format(),
+        Some(skrifa::bitmap::BitmapFormat::Ebdt)
+    );
+    let glyph = raster::native_system_bitmap_glyph(
+        &face,
+        skrifa::instance::Size::new(7.0),
+        skrifa::GlyphId::new(5),
+    )
+    .unwrap();
+    assert_eq!((glyph.ppem_x, glyph.ppem_y), (7.0, 7.0));
+    let decoded = decode_system_raster(glyph, false, None).unwrap();
+    assert_eq!((decoded.x, decoded.y, decoded.pixels_per_em), (1, 0, 7));
+}
+
+#[test]
+fn legacy_bitmap_pair_is_terminal_after_selected_strike_misses_glyph() {
+    let data = synthetic_bitmap_priority_font();
+    let face = FontRef::new(&data).unwrap();
+    assert_eq!(
+        face.bitmap_strikes().format(),
+        Some(skrifa::bitmap::BitmapFormat::Ebdt)
+    );
+
+    // This intentionally differs from Skrifa's default strike facade. The
+    // former parser selected the higher-priority bdat size from its declared
+    // glyph range and returned its failed sparse lookup directly, rather than
+    // falling through to the valid lower-priority EBDT glyph.
+    assert!(
+        raster::native_system_bitmap_glyph(
+            &face,
+            skrifa::instance::Size::new(7.0),
+            skrifa::GlyphId::new(5),
+        )
+        .is_none()
     );
 }
 

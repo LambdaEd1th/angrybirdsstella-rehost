@@ -286,28 +286,29 @@ pub(crate) fn dispatch_native_contact_callbacks(
                 second,
                 force,
                 damaged,
-                second_damage,
+                collision_damage,
                 point_x,
                 point_y,
                 normal_x,
                 normal_y,
                 score_damage,
+                previous_score,
             } => {
-                if let Value::Function(function) = environment.get::<Value>("blockCollision")? {
+                if let Value::Function(function) = environment.raw_get::<Value>("blockCollision")? {
                     function.call::<()>((
                         first.as_str(),
                         second.as_str(),
                         force,
                         damaged,
                         false,
-                        second_damage,
+                        collision_damage,
                         point_x,
                         point_y,
                         normal_x,
                         normal_y,
                     ))?;
                 }
-                native_add_block_collision_score(lua, score_damage)?;
+                native_add_block_collision_score(lua, previous_score, score_damage)?;
             }
         }
     }

@@ -11,20 +11,17 @@ impl RenderBridge {
         &mut self,
         foreground: bool,
         selected_layer: Option<usize>,
-        world_limits: ThemeWorldLimits,
         resources: &ResourceRuntime,
         data_root: &Path,
     ) {
-        if self.game_rendering_disabled {
-            return;
-        }
+        // The public theme members enter this pass unconditionally. +0xCC
+        // guards the host Lua draw callback and drawGameNative, not this pass.
         if !foreground {
             // `0x10009BE6C..0x10009BE88` applies GameLua's stored sky color
             // only for ThemeManager mode one. This deliberately happens at
             // background draw time rather than inside `setTheme`.
             self.background_color = self.theme_sky_color.map(native_theme_color_channel);
         }
-        self.refresh_theme_world_offsets(foreground, world_limits);
         let layer_count = if foreground {
             self.theme_foreground_layers.len()
         } else {
@@ -57,6 +54,19 @@ impl RenderBridge {
                     positions,
                 )
             };
+            {
+                let [world_x, world_y] = transform.native_world;
+                let layer = if foreground {
+                    &mut self.theme_foreground_layers[index]
+                } else {
+                    &mut self.theme_background_layers[index]
+                };
+                // sub_10009BDB4 stores the `sub_10009CEB0` result at
+                // layer+0x94/+0x98 before resource lookup/culling. The next
+                // update's moving-layer wrap reads this exact drawn center.
+                layer.cached_draw_world_x = world_x;
+                layer.cached_draw_world_y = world_y;
+            }
             self.draw_theme_particles_for_layer(foreground, definition_index as i32, &transform);
 
             let bound_region = resources.active_atlas_catalog_region(&sprite, data_root);
@@ -91,6 +101,7 @@ impl RenderBridge {
                 (anchor_x, anchor_y, None)
             };
             let command = |x, y| RenderCommand {
+                projection_3d: None,
                 order: 0,
                 sprite: sprite.clone(),
                 texture: None,
@@ -142,10 +153,7 @@ impl RenderBridge {
         if world_scale == 0.0 || !world_scale.is_finite() {
             return;
         }
-        let [layer_x, layer_y] = transform.native_world.unwrap_or([
-            self.top_left_x as f32 + transform.x as f32 / world_scale,
-            self.top_left_y as f32 + transform.y as f32 / world_scale,
-        ]);
+        let [layer_x, layer_y] = transform.native_world;
         let top_left_x = self.top_left_x as f32;
         let top_left_y = self.top_left_y as f32;
         let commands = particles
@@ -154,6 +162,7 @@ impl RenderBridge {
                 let (bound_region, bound_composite) = particle.draw_bindings();
                 let render_scale = world_scale * particle.current_scale;
                 RenderCommand {
+                    projection_3d: None,
                     order: 0,
                     sprite: particle.sprite.clone(),
                     texture: None,

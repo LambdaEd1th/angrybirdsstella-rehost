@@ -2,17 +2,108 @@ use super::*;
 use super::{shader::apply_sprite_shader, texture::sample_bilinear_clamped};
 use crate::reference_renderer::commands::render_game;
 use std::path::Path;
+use stella_assets::surface_format::SurfaceFormat;
 use stella_script::RenderState;
 
 #[test]
-fn maps_letterboxed_input() {
+fn reference_game_preserves_capture_commands_and_cross_frame_painter_order() {
+    let mut assets = AssetCatalog {
+        root: std::path::PathBuf::new(),
+        font_root: std::path::PathBuf::new(),
+        regions: HashMap::new(),
+        composites: HashMap::new(),
+        masked_textures: HashMap::new(),
+        fonts: HashMap::new(),
+        textures: HashMap::new(),
+        system_labels: SystemLabelPool::default(),
+        captures: Default::default(),
+    };
+    let mut pixels = vec![0; (GAME_WIDTH * GAME_HEIGHT) as usize];
+    commands::render_game_with_captures(
+        &mut assets,
+        &[],
+        &[],
+        &[],
+        &[CaptureRenderCommand {
+            order: 0,
+            name: "NEW_CAPTURE".to_owned(),
+            texture_source: "<capture:NEW_CAPTURE>".to_owned(),
+            temporary: false,
+        }],
+        [23, 47, 89],
+        &mut pixels,
+    )
+    .unwrap();
+    let binding = &assets.captures.bindings["<capture:NEW_CAPTURE>"];
+    assert_eq!(binding.surface_format, SurfaceFormat::B8G8R8);
+    let captured = &assets.textures[&binding.source];
+    assert_eq!(captured.image.dimensions(), (GAME_WIDTH, GAME_HEIGHT));
+    assert_eq!(captured.upload_surface_format(), SurfaceFormat::B8G8R8);
+    assert_eq!(captured.image.get_pixel(0, 0).0, [23, 47, 89, 255]);
+    assets.regions.insert(
+        "PATCH".to_owned(),
+        AtlasRegion {
+            texture: "<capture:NEW_CAPTURE>".to_owned(),
+            sprite: SpriteRegion {
+                name: "PATCH".to_owned(),
+                x: 0,
+                y: 0,
+                width: 32,
+                height: 32,
+                pivot_x: 0,
+                pivot_y: 0,
+                atlas_rotation: 0,
+            },
+        },
+    );
+    let sprite = RenderCommand {
+        projection_3d: None,
+        order: 0,
+        sprite: "PATCH".into(),
+        texture: None,
+        bound_region: None,
+        bound_composite: None,
+        geometry: None,
+        shader: None,
+        dirt: None,
+        x: 0.0,
+        y: 0.0,
+        state: RenderState::default().into(),
+        world_space: false,
+    };
+    let overlay = RectRenderCommand {
+        projection_3d: None,
+        order: 1,
+        red: 0.0,
+        green: 255.0,
+        blue: 0.0,
+        alpha: 1.0,
+        left: 0.0,
+        top: 0.0,
+        right: 32.0,
+        bottom: 32.0,
+        color_program: ColorProgram::Plain,
+        vertices: None,
+        mesh_topology: ColorMeshTopology::TriangleFan,
+        clip_rect: None,
+    };
+    render_game(&mut assets, &[sprite], &[], &[overlay], [0; 3], &mut pixels).unwrap();
+    // The legacy per-type path would draw this later rectangle first, then
+    // wrongly cover it with the previous frame's captured blue-gray image.
+    assert_eq!(pixels[0], 0x00ff00);
+    assert_eq!(pixels[31 * GAME_WIDTH as usize + 31], 0x00ff00);
+    assert_eq!(pixels[32], 0);
+}
+
+#[test]
+fn maps_letterboxed_input_without_clamping_active_drags() {
     assert_eq!(
         map_window_to_game(400.0, 300.0, 800, 600, GameResolution::default()),
         (512.0, 384.0)
     );
     assert_eq!(
         map_window_to_game(0.0, 0.0, 1200, 600, GameResolution::default()),
-        (0.0, 0.0)
+        (-256.0, 0.0)
     );
 }
 
@@ -50,6 +141,7 @@ fn colorize_shader_matches_bundled_pixel_program_order() {
 #[test]
 fn native_scalar_render_state_uses_scale_after_pivoted_rotation() {
     let command = RenderCommand {
+        projection_3d: None,
         order: 0,
         sprite: "TEST".into(),
         texture: None,
@@ -86,6 +178,7 @@ fn native_scalar_render_state_uses_scale_after_pivoted_rotation() {
 #[test]
 fn tutorial_target_uses_the_same_native_matrix_path_as_every_atlas_sprite() {
     let tutorial = RenderCommand {
+        projection_3d: None,
         order: 0,
         sprite: "TUTORIAL_TARGET".into(),
         texture: None,
@@ -136,6 +229,7 @@ fn tutorial_target_uses_the_same_native_matrix_path_as_every_atlas_sprite() {
 #[test]
 fn native_render_boundary_quantizes_to_f32_and_uses_mixed_fmul_fmadd_vertex_math() {
     let command = RenderCommand {
+        projection_3d: None,
         order: 0,
         sprite: "TEST".into(),
         texture: None,
@@ -190,6 +284,7 @@ fn bitmap_glyphs_use_native_scale_once_and_preserve_exact_ui_matrix() {
         scale_y: 3.0,
         angle: 0.0,
         matrix: None,
+        position_matrix: None,
         alpha: 0.75,
         horizontal_anchor: "LEFT".to_owned(),
         vertical_anchor: "TOP".to_owned(),
@@ -211,6 +306,17 @@ fn bitmap_glyphs_use_native_scale_once_and_preserve_exact_ui_matrix() {
         (2.0, -3.0, 4.0, 5.0)
     );
     assert_eq!(affine.alpha, 0.75);
+
+    // SystemFont anchors its x/y before GL_Image rotates the label quad. The
+    // position-only basis is therefore axis scale even though the quad keeps
+    // the complete rotated matrix.
+    command.position_matrix = Some([2.0, 0.0, 0.0, 5.0]);
+    let system = text_glyph_transform(&command, 7.0, 11.0);
+    assert_eq!((system.x, system.y), (24.0, 75.0));
+    assert_eq!(
+        (system.m00, system.m01, system.m10, system.m11),
+        (2.0, -3.0, 4.0, 5.0)
+    );
 }
 
 #[test]
@@ -235,44 +341,35 @@ fn atlas_sampling_matches_native_full_texture_linear_filter() {
 
 #[test]
 fn recovered_3d_text_projection_uses_x_rotation_and_perspective_divide() {
-    let centered = project_text_3d(
-        GameResolution::default(),
-        0.0,
-        0.0,
+    let centered = native_project_clip(
         TextProjection3D {
+            x: 0.0,
+            y: 0.0,
             z: 100.0,
             rotation_x: 0.0,
+            custom_model: true,
         },
-        0.0,
-        0.0,
-    )
-    .unwrap();
-    assert!((centered[0] - 512.0).abs() < 1e-9);
-    assert!((centered[1] - 384.0).abs() < 1e-9);
+        [0.0, 0.0, 0.0],
+    );
+    assert_eq!([centered[0], centered[1], centered[3]], [0.0, 0.0, 100.0]);
+    assert!((centered[2] - 99.99905).abs() < 0.00002);
 
-    let tilted = project_text_3d(
-        GameResolution::default(),
-        0.0,
-        0.0,
+    let tilted = native_project_clip(
         TextProjection3D {
+            x: 0.0,
+            y: 0.0,
             z: 100.0,
-            rotation_x: std::f64::consts::FRAC_PI_2,
+            rotation_x: std::f32::consts::FRAC_PI_2,
+            custom_model: true,
         },
-        11.0,
-        10.0,
-    )
-    .unwrap();
-    let (sine, cosine) = (std::f64::consts::FRAC_PI_2 as f32).sin_cos();
-    let world_y = cosine.mul_add(10.0, 0.0);
-    let world_z = sine.mul_add(10.0, 100.0);
-    let focal = (1.0_f32 / (-0.75_f32).tan()).abs();
-    let doubled_near = 0.001_f32 + 0.001_f32;
-    let vertical_scale = (doubled_near * (focal * -1.33_f32)) / doubled_near;
-    let expected = [
-        f64::from((focal * 11.0 / world_z + 1.0) * 512.0),
-        f64::from((1.0 - vertical_scale * world_y / world_z) * 384.0),
-    ];
-    assert_eq!(tilted, expected);
+        [11.0, 10.0, 0.0],
+    );
+    // Independent fixed-point check: X rotation moves local y=10 into z,
+    // and cot(0.75) scales x. The clip-space w must survive until rasterization.
+    assert!((tilted[0] - 11.807688).abs() < 0.00002);
+    assert!(tilted[1].abs() < 0.00002);
+    assert!((tilted[2] - 109.999054).abs() < 0.00003);
+    assert!((tilted[3] - 110.0).abs() < 0.00002);
 }
 
 #[test]
@@ -317,6 +414,7 @@ fn shipped_challenge_level_end_background_occludes_the_complete_native_framebuff
                    scale_y: f64,
                    pivot_x: f64,
                    pivot_y: f64| RenderCommand {
+        projection_3d: None,
         order: 0,
         sprite: sprite.into(),
         texture: None,

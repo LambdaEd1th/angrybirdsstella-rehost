@@ -8,7 +8,9 @@ fn native_sprite_stream_excludes_host_only_analytic_dirt_holes() {
     // Dirt holes are triangulated by DirtMechanics and never consume an
     // ordinary sprite uniform or per-vertex local-coordinate attribute.
     assert_eq!(std::mem::size_of::<DrawUniform>(), 64);
-    assert_eq!(std::mem::size_of::<GpuVertex>(), 40);
+    // Clip position retains z and w for hardware homogeneous clipping and
+    // perspective-correct interpolation; it cannot be reduced to screen xy.
+    assert_eq!(std::mem::size_of::<GpuVertex>(), 48);
 }
 
 #[test]
@@ -68,6 +70,7 @@ fn wide_headless_readback_removes_wgpu_row_padding() {
         fonts: HashMap::new(),
         textures: HashMap::new(),
         system_labels: SystemLabelPool::default(),
+        captures: Default::default(),
     };
     let frame = PreparedFrame {
         resolution,
@@ -90,7 +93,7 @@ fn wide_headless_readback_removes_wgpu_row_padding() {
 }
 
 #[test]
-fn renderer_recreates_game_and_capture_targets_on_resolution_change() {
+fn renderer_resizes_only_the_game_target_and_retains_capture_dimensions() {
     let initial = GameResolution::default();
     let wide = GameResolution {
         width: 1429,
@@ -110,8 +113,8 @@ fn renderer_recreates_game_and_capture_targets_on_resolution_change() {
         wide
     );
     let capture = &renderer.textures["<capture:resize-test>"].texture;
-    assert_eq!(capture.width(), wide.width);
-    assert_eq!(capture.height(), wide.height);
+    assert_eq!(capture.width(), initial.width);
+    assert_eq!(capture.height(), initial.height);
 }
 
 #[test]
@@ -240,8 +243,10 @@ fn mixed_command_classes_keep_native_immediate_submission_order() {
         fonts: HashMap::new(),
         textures: HashMap::from([(texture_name, alpha_texture(1, 1))]),
         system_labels: SystemLabelPool::default(),
+        captures: Default::default(),
     };
     let rect = |order| RectRenderCommand {
+        projection_3d: None,
         order,
         red: 1.0,
         green: 1.0,
@@ -257,6 +262,7 @@ fn mixed_command_classes_keep_native_immediate_submission_order() {
         clip_rect: None,
     };
     let sprite = RenderCommand {
+        projection_3d: None,
         order: 1,
         sprite: "ORDER_SPRITE".into(),
         texture: None,
@@ -298,8 +304,27 @@ fn capture_sprite_copies_the_immediate_framebuffer_for_later_draws() {
         fonts: HashMap::new(),
         textures: HashMap::new(),
         system_labels: SystemLabelPool::default(),
+        captures: Default::default(),
     };
+    let capture_source = "<capture:batch-test>";
+    assets.regions.insert(
+        "CAPTURED_FRAME".to_owned(),
+        AtlasRegion {
+            texture: capture_source.to_owned(),
+            sprite: SpriteRegion {
+                name: "CAPTURED_FRAME".to_owned(),
+                x: 0,
+                y: 0,
+                width: GAME_WIDTH as i16,
+                height: GAME_HEIGHT as i16,
+                pivot_x: 0,
+                pivot_y: 0,
+                atlas_rotation: 3,
+            },
+        },
+    );
     let rect = |order, red, blue| RectRenderCommand {
+        projection_3d: None,
         order,
         red,
         green: 0.0,
@@ -315,6 +340,7 @@ fn capture_sprite_copies_the_immediate_framebuffer_for_later_draws() {
         clip_rect: None,
     };
     let native_clear = RectRenderCommand {
+        projection_3d: None,
         order: 2,
         red: 0.0,
         green: 0.0,
@@ -335,6 +361,7 @@ fn capture_sprite_copies_the_immediate_framebuffer_for_later_draws() {
         clip_rect: None,
     };
     let captured = RenderCommand {
+        projection_3d: None,
         order: 3,
         sprite: "CAPTURED_FRAME".into(),
         texture: None,
@@ -356,6 +383,8 @@ fn capture_sprite_copies_the_immediate_framebuffer_for_later_draws() {
             &[CaptureRenderCommand {
                 order: 1,
                 name: "CAPTURED_FRAME".to_owned(),
+                texture_source: capture_source.to_owned(),
+                temporary: false,
             }],
         )
         .unwrap();
@@ -363,7 +392,7 @@ fn capture_sprite_copies_the_immediate_framebuffer_for_later_draws() {
         frame.operations,
         [
             PreparedOperation::Draw(0),
-            PreparedOperation::Capture("<capture:CAPTURED_FRAME>".to_owned()),
+            PreparedOperation::Capture(assets.captures.bindings[capture_source].source.clone()),
             PreparedOperation::Draw(1),
             PreparedOperation::Draw(2),
         ]
@@ -392,6 +421,7 @@ fn shipped_challenge_level_end_background_occludes_the_complete_gpu_framebuffer(
                    scale_y: f64,
                    pivot_x: f64,
                    pivot_y: f64| RenderCommand {
+        projection_3d: None,
         order,
         sprite: sprite.into(),
         texture: None,

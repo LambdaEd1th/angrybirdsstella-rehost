@@ -46,6 +46,7 @@ pub(in crate::game_lua::trajectory_registration) fn install_draw(
                         let draw_y = (curve_y * physics_scale) / particle.scale;
                         let context_scale = world_scale * particle.scale;
                         Some(RenderCommand {
+                            projection_3d: None,
                             order: 0,
                             sprite: sprite.clone(),
                             texture: None,

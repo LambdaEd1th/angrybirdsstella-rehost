@@ -133,6 +133,7 @@ pub(crate) fn animation_render_commands(
         .map(
             |(_, sprite, transform, compatibility, alpha, bound_region)| {
                 RenderCommand {
+                    projection_3d: None,
                     order: 0,
                     sprite: sprite.into(),
                     texture: None,

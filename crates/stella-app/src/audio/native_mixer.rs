@@ -13,7 +13,7 @@ use std::{
 
 use rodio::{ChannelCount, SampleRate, Source};
 
-use super::AudioOutputState;
+use super::{AudioOutputState, AudioPlaybackTransitions};
 
 mod engine;
 
@@ -75,6 +75,18 @@ pub(super) fn create(configuration: NativeMixerConfiguration) -> NativeMixerCont
 }
 
 impl NativeMixerControl {
+    /// Drain worker-produced edges without reconciling the VM snapshot again.
+    /// This is used after synchronous startup prefill: the caller has not yet
+    /// applied the first reconcile's removals, so a second reconcile against
+    /// that stale snapshot could otherwise recreate the removed handle.
+    pub(super) fn take_transitions(&self) -> AudioPlaybackTransitions {
+        let mut mixer = self.shared.lock().expect("native mixer lock poisoned");
+        AudioPlaybackTransitions {
+            finished: std::mem::take(&mut mixer.finished).into_iter().collect(),
+            removed: std::mem::take(&mut mixer.completed).into_iter().collect(),
+        }
+    }
+
     /// Purple fills all six OpenAL buffers synchronously before starting its
     /// one source. Reader cursors and completed-instance removal therefore run
     /// six blocks ahead of audible playback at every output start.
@@ -101,19 +113,20 @@ impl NativeMixerControl {
     }
 
     /// Reconcile the VM-owned instance vector with the asynchronous mixer.
-    /// Completed handles are returned only when the next native block removes
-    /// the `+0x1E` instance, matching `sub_100573250`.
-    pub(super) fn synchronize(&self, state: &AudioOutputState) -> Vec<i64> {
+    /// EOF and next-block removal are returned as distinct edges, matching
+    /// AudioClipInstance `+0x1E` and `sub_100573250` respectively.
+    pub(super) fn synchronize(&self, state: &AudioOutputState) -> AudioPlaybackTransitions {
         let live = state
             .playbacks
             .iter()
             .map(|playback| playback.handle)
             .collect::<BTreeSet<_>>();
 
-        let (mut completed, missing) = {
+        let (mut finished, mut completed, missing) = {
             let mut mixer = self.shared.lock().expect("native mixer lock poisoned");
             mixer.started = state.started;
             mixer.track_volumes = state.track_volumes;
+            let finished = std::mem::take(&mut mixer.finished);
             let completed = std::mem::take(&mut mixer.completed);
             mixer.playbacks.retain(|handle, _| live.contains(handle));
             for playback in &state.playbacks {
@@ -121,6 +134,7 @@ impl NativeMixerControl {
                     active.volume = playback.volume;
                     active.looping = playback.looping;
                     active.track = playback.track;
+                    active.finished |= playback.finished;
                 }
             }
             let missing = state
@@ -132,7 +146,7 @@ impl NativeMixerControl {
                 })
                 .cloned()
                 .collect::<Vec<_>>();
-            (completed, missing)
+            (finished, completed, missing)
         };
 
         // Decoding may touch a compressed stream. Keep it outside the audio
@@ -166,11 +180,15 @@ impl NativeMixerControl {
                     );
                 }
                 Ok(None) | Err(_) => {
+                    finished.insert(playback.handle);
                     completed.insert(playback.handle);
                 }
             }
         }
-        completed.into_iter().collect()
+        AudioPlaybackTransitions {
+            finished: finished.into_iter().collect(),
+            removed: completed.into_iter().collect(),
+        }
     }
 }
 

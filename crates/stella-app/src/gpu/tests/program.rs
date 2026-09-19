@@ -117,8 +117,10 @@ fn ordinary_atlas_submission_preserves_the_surface_format_program_branch() {
             ),
         )]),
         system_labels: SystemLabelPool::default(),
+        captures: Default::default(),
     };
     let command = |order, alpha| RenderCommand {
+        projection_3d: None,
         order,
         sprite: "OPAQUE_SPRITE".into(),
         texture: None,

@@ -15,8 +15,15 @@ pub(super) fn install_clear_screen(
             let color = bridge
                 .background_color
                 .map(|channel| f64::from(channel) / 255.0);
-            bridge.push_unclipped_rect_command(RectRenderCommand {
-                order: 0,
+            // Native clearScreen resets the Context state then invokes actual
+            // glClear, not a quad under the retained perspective projection.
+            // The portable command is an opaque screen-space overwrite. Keep
+            // its projection absent without changing the separate projection
+            // used by subsequent ordinary draws.
+            let order = bridge.allocate_draw_order();
+            bridge.rect_commands.push(RectRenderCommand {
+                projection_3d: None,
+                order,
                 red: color[0],
                 green: color[1],
                 blue: color[2],

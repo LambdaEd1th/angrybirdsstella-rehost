@@ -32,11 +32,11 @@ pub(crate) fn animation_slot_attachment(
     if sprite.is_empty() {
         return None;
     }
-    animation_skin_alias_attachment(definition, selected_skin_name, slot, &sprite)
+    animation_skin_alias_attachment(&definition.skins, selected_skin_name, slot, &sprite)
 }
 
 pub(crate) fn animation_skin_alias_attachment(
-    definition: &AnimationDefinition,
+    skins: &BTreeMap<String, AnimationSkin>,
     selected_skin_name: Option<&str>,
     slot: &str,
     sprite: &str,
@@ -52,8 +52,8 @@ pub(crate) fn animation_skin_alias_attachment(
     // component treat the attachment as absent and collapses ComicCutscene's
     // four-border clip rectangle to zero.
     let sprite_basename = sprite.rsplit('/').next().unwrap_or(sprite);
-    let selected_skin = selected_skin_name.and_then(|name| definition.skins.get(name));
-    let default_skin = definition.skins.get("default");
+    let selected_skin = selected_skin_name.and_then(|name| skins.get(name));
+    let default_skin = skins.get("default");
     let skin_transform = selected_skin
         .and_then(|skin| animation_skin_slot(skin, slot))
         .and_then(|variants| {
@@ -78,8 +78,7 @@ pub(crate) fn animation_skin_alias_attachment(
         // intentionally does not resolve to the `POPPY_IDLE` gameplay sprite.
         return Some((skin_transform.sprite.clone(), Some(skin_transform.clone())));
     }
-    let skin_managed_slot = definition
-        .skins
+    let skin_managed_slot = skins
         .values()
         .any(|skin| animation_skin_slot(skin, slot).is_some());
     (!skin_managed_slot).then_some((sprite_basename.to_owned(), None))

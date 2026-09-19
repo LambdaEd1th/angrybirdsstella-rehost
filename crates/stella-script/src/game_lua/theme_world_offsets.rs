@@ -4,24 +4,6 @@
 
 use crate::*;
 
-pub(crate) fn live_theme_world_limits(lua: &Lua) -> LuaResult<ThemeWorldLimits> {
-    let environment = game_environment(lua)?;
-    let number = |field| {
-        environment
-            .get::<Value>(field)
-            .ok()
-            .as_ref()
-            .and_then(native_lua51_number)
-            .map(|value| value as f32)
-    };
-    Ok(ThemeWorldLimits {
-        left: number("leftLimitWorld"),
-        right: number("rightLimitWorld"),
-        top: number("topLimitWorld"),
-        bottom: number("bottomLimitWorld"),
-    })
-}
-
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ThemeWorldOffsetContext {
     pub(crate) current_scale: f32,
@@ -77,7 +59,7 @@ pub(crate) fn refresh_theme_layer_world_offset(
     }
 }
 
-fn native_offset_y(layer: &ThemeLayer) -> f32 {
+pub(crate) fn native_offset_y(layer: &ThemeLayer) -> f32 {
     match layer.offset_y {
         ThemeVerticalOffset::Pixels(value) => value as f32,
         ThemeVerticalOffset::Top | ThemeVerticalOffset::Bottom => {
@@ -86,7 +68,7 @@ fn native_offset_y(layer: &ThemeLayer) -> f32 {
     }
 }
 
-fn set_native_offset_y(layer: &mut ThemeLayer, value: f32) {
+pub(crate) fn set_native_offset_y(layer: &mut ThemeLayer, value: f32) {
     match &mut layer.offset_y {
         ThemeVerticalOffset::Pixels(offset) => *offset = f64::from(value),
         ThemeVerticalOffset::Top | ThemeVerticalOffset::Bottom => {

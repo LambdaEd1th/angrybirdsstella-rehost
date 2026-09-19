@@ -1,4 +1,5 @@
 use super::super::*;
+use super::configure_theme_camera_fixture;
 
 fn set_background_geometry(runtime: &StellaLua, geometry: SpriteGeometry) {
     let mut bridge = runtime.render.lock().unwrap();
@@ -11,6 +12,7 @@ fn set_background_geometry(runtime: &StellaLua, geometry: SpriteGeometry) {
 #[test]
 fn theme_repeat_flags_follow_native_column_and_row_submission_order() {
     let runtime = StellaLua::new("/tmp").unwrap();
+    configure_theme_camera_fixture(&runtime);
     register_test_sprite_sheet(&runtime, &["TILE"]);
     runtime
         .execute_source(
@@ -75,13 +77,19 @@ fn theme_repeat_flags_follow_native_column_and_row_submission_order() {
         vec![
             (512.0, 384.0),
             (256.0, 384.0),
-            (256.0, 128.0),
+            (256.0, 128.00002),
+            (256.0, -127.99999),
             (256.0, 640.0),
+            (256.0, 896.0),
             (0.0, 384.0),
-            (0.0, 128.0),
+            (0.0, 128.00002),
+            (0.0, -127.99999),
             (0.0, 640.0),
-            (512.0, 128.0),
+            (0.0, 896.0),
+            (512.0, 128.00002),
+            (512.0, -127.99999),
             (512.0, 640.0),
+            (512.0, 896.0),
         ]
     );
 
@@ -114,13 +122,19 @@ fn theme_repeat_flags_follow_native_column_and_row_submission_order() {
         vec![
             (512.0, 384.0),
             (768.0, 384.0),
-            (768.0, 128.0),
+            (768.0, 128.00002),
+            (768.0, -127.99999),
             (768.0, 640.0),
+            (768.0, 896.0),
             (1024.0, 384.0),
-            (1024.0, 128.0),
+            (1024.0, 128.00002),
+            (1024.0, -127.99999),
             (1024.0, 640.0),
-            (512.0, 128.0),
+            (1024.0, 896.0),
+            (512.0, 128.00002),
+            (512.0, -127.99999),
             (512.0, 640.0),
+            (512.0, 896.0),
         ]
     );
 }
@@ -128,6 +142,7 @@ fn theme_repeat_flags_follow_native_column_and_row_submission_order() {
 #[test]
 fn theme_repeat_culls_an_offscreen_reference_but_keeps_visible_columns() {
     let runtime = StellaLua::new("/tmp").unwrap();
+    configure_theme_camera_fixture(&runtime);
     register_test_sprite_sheet(&runtime, &["TILE"]);
     runtime
         .execute_source(
@@ -177,6 +192,7 @@ fn theme_repeat_culls_an_offscreen_reference_but_keeps_visible_columns() {
 #[test]
 fn theme_repeat_density_uses_refreshed_camera_scale_instead_of_fixed_twenty() {
     let runtime = StellaLua::new("/tmp").unwrap();
+    configure_theme_camera_fixture(&runtime);
     register_test_sprite_sheet(&runtime, &["TILE"]);
     runtime
         .execute_source(
@@ -217,6 +233,7 @@ fn theme_repeat_density_uses_refreshed_camera_scale_instead_of_fixed_twenty() {
             valid: true,
             x: 128.0,
             y: 96.0,
+            saved_y: 96.0,
             scale: 4.0,
             ..ThemeCameraReference::default()
         };
@@ -236,10 +253,13 @@ fn theme_repeat_density_uses_refreshed_camera_scale_instead_of_fixed_twenty() {
 #[test]
 fn theme_draw_uses_live_renderer_extent_instead_of_authored_asset_size() {
     let runtime = StellaLua::new_with_resolution("/tmp", 1280, 720).unwrap();
+    configure_theme_camera_fixture(&runtime);
     register_test_sprite_sheet(&runtime, &["CENTER"]);
     runtime
         .execute_source(
             r#"
+                -- Native resolution changes always invoke the shipped hook.
+                resolutionChanged = function() end
                 blockTable = {
                     themes = {
                         live_extent = {
@@ -267,7 +287,7 @@ fn theme_draw_uses_live_renderer_extent_instead_of_authored_asset_size() {
             .iter()
             .find(|command| command.sprite == "CENTER")
             .unwrap();
-        assert_eq!((command.x, command.y), (640.0, 360.0));
+        assert_eq!((command.x, command.y), (640.5, 360.5));
         bridge.commands.clear();
     }
 
@@ -279,12 +299,15 @@ fn theme_draw_uses_live_renderer_extent_instead_of_authored_asset_size() {
         .iter()
         .find(|command| command.sprite == "CENTER")
         .unwrap();
-    assert_eq!((command.x, command.y), (700.0, 450.0));
+    // The no-op script hook does not move screen/ref camera on resize.
+    // Native zDistance=0 remains world-anchored instead of recentering.
+    assert_eq!((command.x, command.y), (640.5, 360.5));
 }
 
 #[test]
 fn native_theme_culling_uses_center_bounds_instead_of_atlas_pivot_bounds() {
     let runtime = StellaLua::new("/tmp").unwrap();
+    configure_theme_camera_fixture(&runtime);
     register_test_sprite_sheet(&runtime, &["ASYMMETRIC"]);
     runtime
         .execute_source(
@@ -324,6 +347,7 @@ fn native_theme_culling_uses_center_bounds_instead_of_atlas_pivot_bounds() {
             valid: true,
             x: 0.0,
             y: 384.0,
+            saved_y: 384.0,
             scale: 1.0,
             ..ThemeCameraReference::default()
         };
@@ -347,6 +371,7 @@ fn native_theme_culling_uses_center_bounds_instead_of_atlas_pivot_bounds() {
 #[test]
 fn native_theme_centers_an_asymmetric_composite_around_the_culling_origin() {
     let runtime = StellaLua::new("/tmp").unwrap();
+    configure_theme_camera_fixture(&runtime);
     register_test_sprite_sheet_with_sizes(&runtime, &[("COMPOSITE_PART", 100, 40)]);
     let unique = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -404,6 +429,7 @@ fn native_theme_centers_an_asymmetric_composite_around_the_culling_origin() {
             valid: true,
             x: 0.0,
             y: 384.0,
+            saved_y: 384.0,
             scale: 1.0,
             ..ThemeCameraReference::default()
         };
@@ -427,6 +453,7 @@ fn native_theme_centers_an_asymmetric_composite_around_the_culling_origin() {
 #[test]
 fn native_theme_repeats_accumulate_float32_world_coordinates() {
     let runtime = StellaLua::new("/tmp").unwrap();
+    configure_theme_camera_fixture(&runtime);
     register_test_sprite_sheet(&runtime, &["FLOAT_REPEAT"]);
     runtime
         .execute_source(

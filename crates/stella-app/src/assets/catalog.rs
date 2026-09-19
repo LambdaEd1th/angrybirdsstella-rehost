@@ -72,6 +72,7 @@ impl AssetCatalog {
             fonts,
             textures: HashMap::new(),
             system_labels: SystemLabelPool::default(),
+            captures: CapturedTextureCatalog::default(),
         })
     }
 
@@ -79,6 +80,9 @@ impl AssetCatalog {
         &mut self,
         snapshot: SpriteCatalogSnapshot,
     ) -> Result<()> {
+        for region in snapshot.regions.values() {
+            self.retain_decoded_image(region)?;
+        }
         self.regions = snapshot
             .regions
             .into_iter()
@@ -109,7 +113,12 @@ impl AssetCatalog {
         active_textures.sort_unstable();
         active_textures.dedup();
         for texture in active_textures {
-            self.texture(&texture)?;
+            // A capture Image is allocated/filled by its ordered render
+            // operation. It is not a filename to eagerly decode, and catalog
+            // refreshes must not reset an existing captured Image binding.
+            if !texture.starts_with("<capture:") && !self.captures.bindings.contains_key(&texture) {
+                self.texture(&texture)?;
+            }
         }
         Ok(())
     }
@@ -151,6 +160,7 @@ mod tests {
                 regions: BTreeMap::from([(
                     name,
                     SpriteCatalogRegion {
+                        decoded_image: None,
                         native_sheet_id: 1,
                         texture_source: texture.clone(),
                         sprite: region.sprite,

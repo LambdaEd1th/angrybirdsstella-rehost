@@ -81,7 +81,26 @@ fn clear_native_level_owner(
     draw_callbacks: &Rc<RefCell<DrawCallbacks>>,
 ) {
     let mut bridge = render.lock().expect("render bridge lock poisoned");
+    // 0x100065DD4 calls ThemeSystem::reset before resolving the new level.
+    // Scales, cached reference coordinates and live particle maps survive.
+    bridge.theme_camera.valid = false;
+    bridge.theme_camera.effect_x = 0.0;
+    bridge.theme_camera.effect_y = 0.0;
+    // loadLevelImpl zeroes GameLua+0x51C at 0x100065DE8 before resolving the
+    // retained level tables or opening the requested file.  A fixed-step
+    // remainder therefore belongs only to the preceding level; ordinary Lua
+    // replacement of objects.world does not cross this native clock boundary.
+    bridge.physics_accumulator = 0.0;
+    // The adjacent 0x100065DDC/0x100065DE0/0x100065DE4 stores invalidate
+    // GameLua's rock, wood, and light rolling-loop instance handles.  The
+    // audio instances themselves remain resource-owned; only a native level
+    // load crosses this cached-handle ownership boundary.
+    bridge.rolling_audio_handles = [-1; 3];
     bridge.clear_native_level_scene();
+    // loadLevelImpl invokes the Particles vtable slot +0x60 at
+    // 0x100066214..0x100066220. sub_1000912D8 retires only the active
+    // 0x68-byte records; its cached definitions and draw scale survive.
+    bridge.particle_system.particles.clear();
     // loadLevelImpl calls sub_1000675C0 at 0x100066228, before executing the
     // requested level chunk. Retaining these records leaked the previous
     // attempt's flight dots through retry and into the next level.

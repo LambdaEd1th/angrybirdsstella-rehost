@@ -405,6 +405,196 @@ fn level_loader_snapshots_native_force_and_aim_stream_world_attributes() {
 }
 
 #[test]
+fn level_loader_resets_the_fixed_step_remainder_before_the_new_level() {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "stella-level-physics-clock-{}-{unique}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("clock.lua"), b"filename = 'clock.lua'").unwrap();
+
+    let runtime = StellaLua::new(&root).unwrap();
+    runtime.render.lock().unwrap().physics_accumulator = 1.0_f32 / 60.0_f32;
+    runtime.execute_source("loadLevel('clock')").unwrap();
+    assert_eq!(runtime.render.lock().unwrap().physics_accumulator, 0.0);
+
+    runtime
+        .execute_source(
+            r#"
+                g_outOfBoundariesObjects = {}
+                physics_steps = 0
+                updatePhysics = function()
+                    physics_steps = physics_steps + 1
+                end
+                removeBlocks = function() end
+                clearLuaForceFunctions = function() end
+                update = function() end
+                setPhysicsEnabled(true)
+            "#,
+        )
+        .unwrap();
+
+    runtime.update(1.0 / 60.0).unwrap();
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert_eq!(environment.get::<i64>("physics_steps").unwrap(), 0);
+    runtime.update(1.0 / 60.0).unwrap();
+    assert_eq!(environment.get::<i64>("physics_steps").unwrap(), 1);
+
+    drop(runtime);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn level_loaders_invalidate_native_rolling_handles_before_opening_the_file() {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "stella-level-rolling-handles-{}-{unique}",
+        std::process::id()
+    ));
+    let data_root = root.join("data");
+    let app_data_root = root.join("appdata");
+    fs::create_dir_all(&data_root).unwrap();
+    fs::create_dir_all(&app_data_root).unwrap();
+    fs::write(data_root.join("bundle.lua"), b"filename = 'bundle.lua'").unwrap();
+    fs::write(
+        app_data_root.join("saved.lua"),
+        b"filename = 'saved.lua'; world = {}",
+    )
+    .unwrap();
+
+    let runtime = StellaLua::new(&data_root).unwrap();
+    runtime.render.lock().unwrap().rolling_audio_handles = [11, 12, 13];
+    runtime.execute_source("loadLevel('bundle')").unwrap();
+    assert_eq!(
+        runtime.render.lock().unwrap().rolling_audio_handles,
+        [-1; 3]
+    );
+
+    runtime.render.lock().unwrap().rolling_audio_handles = [21, 22, 23];
+    runtime
+        .execute_source("loadLevelFromAppData('saved')")
+        .unwrap();
+    assert_eq!(
+        runtime.render.lock().unwrap().rolling_audio_handles,
+        [-1; 3]
+    );
+
+    runtime.render.lock().unwrap().rolling_audio_handles = [31, 32, 33];
+    runtime
+        .execute_source("bundle_missing = not pcall(loadLevel, 'missing')")
+        .unwrap();
+    assert!(
+        game_environment(runtime.lua())
+            .unwrap()
+            .get::<bool>("bundle_missing")
+            .unwrap()
+    );
+    assert_eq!(
+        runtime.render.lock().unwrap().rolling_audio_handles,
+        [-1; 3]
+    );
+
+    runtime.render.lock().unwrap().rolling_audio_handles = [41, 42, 43];
+    runtime
+        .execute_source("app_data_missing = not pcall(loadLevelFromAppData, 'missing')")
+        .unwrap();
+    assert!(
+        game_environment(runtime.lua())
+            .unwrap()
+            .get::<bool>("app_data_missing")
+            .unwrap()
+    );
+    assert_eq!(
+        runtime.render.lock().unwrap().rolling_audio_handles,
+        [-1; 3]
+    );
+
+    drop(runtime);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn level_loaders_clear_only_active_native_particles_before_opening_the_file() {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "stella-level-active-particles-{}-{unique}",
+        std::process::id()
+    ));
+    let data_root = root.join("data");
+    let app_data_root = root.join("appdata");
+    fs::create_dir_all(&data_root).unwrap();
+    fs::create_dir_all(&app_data_root).unwrap();
+    fs::write(data_root.join("bundle.lua"), b"filename = 'bundle.lua'").unwrap();
+    fs::write(
+        app_data_root.join("saved.lua"),
+        b"filename = 'saved.lua'; world = {}",
+    )
+    .unwrap();
+
+    let runtime = StellaLua::new(&data_root).unwrap();
+    runtime
+        .execute_source(
+            r#"
+                particleTable = { particles = { retained = {
+                    amount=1, sprites={"RED_CROSS"}, lifeTime=10,
+                    gravityX=0, gravityY=0,
+                    minVel=0, maxVel=0,
+                    minAngleEmitter=0, maxAngleEmitter=0,
+                    minAngle=0, maxAngle=0,
+                    minAngleVel=0, maxAngleVel=0,
+                    minScaleBegin=1, maxScaleBegin=1,
+                    minScaleEnd=1, maxScaleEnd=1
+                } } }
+                function seed_native_particle()
+                    particles.native_addParticlesWithMode({
+                        definitionName="retained", amount=1,
+                        x=0, y=0, w=0, h=0, angle=0, mode=1
+                    })
+                end
+            "#,
+        )
+        .unwrap();
+    runtime.render.lock().unwrap().particle_system.scale = 2.75;
+
+    for load in [
+        "loadLevel('bundle')",
+        "loadLevelFromAppData('saved')",
+        "assert(not pcall(loadLevel, 'missing'))",
+        "assert(not pcall(loadLevelFromAppData, 'missing'))",
+    ] {
+        runtime.execute_source("seed_native_particle()").unwrap();
+        assert_eq!(
+            runtime
+                .render
+                .lock()
+                .unwrap()
+                .particle_system
+                .particles
+                .len(),
+            1
+        );
+        runtime.execute_source(load).unwrap();
+        let bridge = runtime.render.lock().unwrap();
+        assert!(bridge.particle_system.particles.is_empty(), "{load}");
+        assert_eq!(bridge.particle_system.definitions.len(), 1, "{load}");
+        assert_eq!(bridge.particle_system.scale, 2.75, "{load}");
+    }
+
+    drop(runtime);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn rejects_parent_traversal() {
     let error = resolve_script(Path::new("/tmp"), "../secret.lua").unwrap_err();
     assert!(matches!(error, ScriptError::UnsafePath(_)));

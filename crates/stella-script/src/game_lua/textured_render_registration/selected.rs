@@ -68,6 +68,7 @@ pub(super) fn install(
             ));
             let state = bridge.state;
             bridge.push_render_command(RenderCommand {
+                projection_3d: None,
                 order: 0,
                 sprite: sprite.into(),
                 texture: Some(Arc::new(SpriteTextureSubmission {

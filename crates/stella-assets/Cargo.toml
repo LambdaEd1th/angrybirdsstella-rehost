@@ -8,7 +8,7 @@ rust-version.workspace = true
 [dependencies]
 aes.workspace = true
 cbc.workspace = true
-image = { workspace = true, features = ["webp"] }
+image = { workspace = true, features = ["webp", "jpeg"] }
 sevenz-rust2.workspace = true
 serde.workspace = true
 thiserror.workspace = true

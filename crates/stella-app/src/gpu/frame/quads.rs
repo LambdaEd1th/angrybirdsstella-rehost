@@ -15,6 +15,9 @@ impl AssetCatalog {
             return Ok(());
         }
         let asset_name = name.split_once('#').map_or(name, |(base, _)| base);
+        if let Some(region) = bound_region {
+            self.retain_decoded_image(region)?;
+        }
         let region = bound_region
             .map(|region| AtlasRegion {
                 texture: region.texture_source.clone(),
@@ -32,22 +35,13 @@ impl AssetCatalog {
             }
             return Ok(());
         };
-        let base_texture = region.texture;
-        let (texture_width, texture_height, surface_format) =
-            if base_texture.starts_with("<capture:") {
-                (
-                    frame.resolution.width as f32,
-                    frame.resolution.height as f32,
-                    SurfaceFormat::A8B8G8R8,
-                )
-            } else {
-                let texture = self.texture(&base_texture)?;
-                (
-                    texture.width() as f32,
-                    texture.height() as f32,
-                    texture.upload_surface_format(),
-                )
-            };
+        let texture = self.resolve_gpu_texture(&region.texture)?;
+        let (base_texture, texture_width, texture_height, surface_format) = (
+            texture.source,
+            texture.width as f32,
+            texture.height as f32,
+            texture.surface_format,
+        );
         let uv = region.sprite.native_uvs(texture_width, texture_height);
         let positions = positions.map(|point| point.map(|value| value as f32));
         let mut uniform = shader_uniform(None);
@@ -83,6 +77,9 @@ impl AssetCatalog {
             return Ok(());
         }
         let asset_name = name.split_once('#').map_or(name, |(base, _)| base);
+        if let Some(region) = bound_region {
+            self.retain_decoded_image(region)?;
+        }
         let region = bound_region
             .map(|region| AtlasRegion {
                 texture: region.texture_source.clone(),
@@ -100,12 +97,8 @@ impl AssetCatalog {
             }
             return Ok(());
         };
-        let base_texture = region.texture;
-        let surface_format = if base_texture.starts_with("<capture:") {
-            SurfaceFormat::A8B8G8R8
-        } else {
-            self.texture(&base_texture)?.upload_surface_format()
-        };
+        let texture = self.resolve_gpu_texture(&region.texture)?;
+        let (base_texture, surface_format) = (texture.source, texture.surface_format);
         let positions = quad.positions.map(|[x, y]| [x as f32, y as f32]);
         let uv = quad.uv.map(|[u, v]| [u as f32, v as f32]);
         let mut uniform = shader_uniform(None);

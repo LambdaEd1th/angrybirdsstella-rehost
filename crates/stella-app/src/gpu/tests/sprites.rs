@@ -29,8 +29,10 @@ fn near_degenerate_atlas_matrix_is_submitted_without_a_host_epsilon_cull() {
         fonts: HashMap::new(),
         textures: HashMap::from([(texture_name, alpha_texture(1000, 1000))]),
         system_labels: SystemLabelPool::default(),
+        captures: Default::default(),
     };
     let command = RenderCommand {
+        projection_3d: None,
         order: 0,
         sprite: "TINY".into(),
         texture: None,
@@ -90,15 +92,18 @@ fn native_explicit_quad_reaches_gpu_in_recovered_triangle_and_uv_order() {
             (active_texture, alpha_texture(4, 4)),
         ]),
         system_labels: SystemLabelPool::default(),
+        captures: Default::default(),
     };
     let positions = [[90.0, 80.0], [10.0, 70.0], [100.0, 20.0], [20.0, 10.0]];
     let uv = [[0.9, 0.8], [0.1, 0.7], [1.0, 0.2], [0.2, 0.1]];
     let command = RenderCommand {
+        projection_3d: None,
         order: 0,
         sprite: "MASK".into(),
         texture: None,
         bound_region: Some(
             SpriteCatalogRegion {
+                decoded_image: None,
                 native_sheet_id: 1,
                 texture_source: texture_name.clone(),
                 sprite: SpriteRegion {
@@ -172,14 +177,17 @@ fn native_atlas_quad_keeps_positions_and_signed_rotated_region_uvs() {
             (active_texture, alpha_texture(4, 4)),
         ]),
         system_labels: SystemLabelPool::default(),
+        captures: Default::default(),
     };
     let positions = [[10.0, 16.0], [10.0, 24.0], [30.0, 16.0], [30.0, 24.0]];
     let command = RenderCommand {
+        projection_3d: None,
         order: 0,
         sprite: "RUBBER".into(),
         texture: None,
         bound_region: Some(
             SpriteCatalogRegion {
+                decoded_image: None,
                 native_sheet_id: 1,
                 texture_source: texture_name.clone(),
                 sprite: SpriteRegion {
@@ -224,6 +232,108 @@ fn native_atlas_quad_keeps_positions_and_signed_rotated_region_uvs() {
 }
 
 #[test]
+fn raw_atlas_quad_preserves_custom_model_space_and_native_uvs() {
+    let texture_name = "<raw-atlas-quad-test>".to_owned();
+    let mut assets = AssetCatalog {
+        root: std::path::PathBuf::new(),
+        font_root: std::path::PathBuf::new(),
+        regions: HashMap::new(),
+        composites: HashMap::new(),
+        masked_textures: HashMap::new(),
+        fonts: HashMap::new(),
+        textures: HashMap::from([(texture_name.clone(), alpha_texture(20, 40))]),
+        system_labels: SystemLabelPool::default(),
+        captures: Default::default(),
+    };
+    let positions = [[-2.0, -3.0], [2.0, -3.0], [-2.0, 3.0], [2.0, 3.0]];
+    let projection = TextProjection3D {
+        x: 0.25,
+        y: -0.5,
+        z: 0.001,
+        rotation_x: 1.1,
+        custom_model: true,
+    };
+    let sprite = SpriteRegion {
+        name: "RAW".to_owned(),
+        x: -4,
+        y: -8,
+        width: 10,
+        height: 20,
+        pivot_x: 3,
+        pivot_y: 7,
+        atlas_rotation: 1,
+    };
+    let uv = sprite.native_uvs(20.0, 40.0);
+    let command = RenderCommand {
+        projection_3d: Some(Arc::new(projection)),
+        order: 0,
+        sprite: "RAW".into(),
+        texture: None,
+        bound_region: Some(Arc::new(SpriteCatalogRegion {
+            decoded_image: None,
+            native_sheet_id: 1,
+            texture_source: texture_name,
+            sprite,
+        })),
+        bound_composite: None,
+        geometry: Some(SpriteGeometrySubmission::RawAtlasQuad(Arc::new(positions))),
+        shader: None,
+        dirt: None,
+        x: 9999.0,
+        y: -8888.0,
+        state: stella_script::RenderState {
+            translate_x: 20.0,
+            translate_y: 30.0,
+            scale_x: 2.0,
+            scale_y: -3.0,
+            angle: 0.75,
+            pivot_x: 4.0,
+            pivot_y: 5.0,
+            alpha: 0.375,
+            ..stella_script::RenderState::default()
+        }
+        .into(),
+        world_space: true,
+    };
+    let mut normalized_command = command.clone();
+    normalized_command.geometry = Some(SpriteGeometrySubmission::NativeAtlasQuad(Arc::new(
+        positions,
+    )));
+    let frame = assets.prepare_gpu_frame(&[command], &[], &[], &[]).unwrap();
+    let normalized = assets
+        .prepare_gpu_frame(&[normalized_command], &[], &[], &[])
+        .unwrap();
+    assert_eq!(frame.vertices.len(), 6);
+    assert!(
+        frame
+            .vertices
+            .iter()
+            .any(|vertex| vertex.clip_position[3] < 0.0)
+    );
+    assert!(
+        frame
+            .vertices
+            .iter()
+            .any(|vertex| vertex.clip_position[3] > 0.0)
+    );
+    for ((vertex, normalized), index) in frame
+        .vertices
+        .iter()
+        .zip(&normalized.vertices)
+        .zip([0, 1, 2, 2, 1, 3])
+    {
+        let [px, py] = positions[index].map(|value| value as f32);
+        let [x, y, z, w] = native_project_clip(projection, [px, py, 0.0]);
+        assert_eq!(vertex.position, [px, py]);
+        assert_eq!(vertex.clip_position, [x, y, (z + w) * 0.5, w]);
+        assert_eq!(vertex.uv, uv[index]);
+        assert_ne!(vertex.clip_position, normalized.clip_position);
+    }
+    assert_eq!(frame.uniforms[0].header[0], 0.375);
+    assert_eq!(frame.draws[0].program, NativeProgram::SpriteAlpha);
+}
+
+#[test]
 fn render_state_pivot_is_not_applied_twice_after_native_sprite_anchoring() {
     let texture_name = "<pivot-test>".to_owned();
     let mut assets = AssetCatalog {
@@ -250,8 +360,10 @@ fn render_state_pivot_is_not_applied_twice_after_native_sprite_anchoring() {
         fonts: HashMap::new(),
         textures: HashMap::from([(texture_name, alpha_texture(10, 20))]),
         system_labels: SystemLabelPool::default(),
+        captures: Default::default(),
     };
     let command = RenderCommand {
+        projection_3d: None,
         order: 0,
         sprite: "PIVOT_SPRITE".into(),
         texture: None,
@@ -311,8 +423,10 @@ fn explicit_sprite_pivot_override_replaces_an_atlas_pivot() {
         fonts: HashMap::new(),
         textures: HashMap::from([(texture_name, alpha_texture(10, 20))]),
         system_labels: SystemLabelPool::default(),
+        captures: Default::default(),
     };
     let command = RenderCommand {
+        projection_3d: None,
         order: 0,
         sprite: "PANEL".into(),
         texture: None,
@@ -348,13 +462,16 @@ fn retained_animation_region_draws_after_active_resource_catalog_release() {
         fonts: HashMap::new(),
         textures: HashMap::from([(texture_name.clone(), alpha_texture(16, 16))]),
         system_labels: SystemLabelPool::default(),
+        captures: Default::default(),
     };
     let command = RenderCommand {
+        projection_3d: None,
         order: 0,
         sprite: "RETAINED".into(),
         texture: None,
         bound_region: Some(
             SpriteCatalogRegion {
+                decoded_image: None,
                 native_sheet_id: 1,
                 texture_source: texture_name.clone(),
                 sprite: SpriteRegion {
@@ -404,8 +521,10 @@ fn selected_sprite_uses_its_submission_time_mask_texture_pointer() {
             (active_mask, alpha_texture(4, 4)),
         ]),
         system_labels: SystemLabelPool::default(),
+        captures: Default::default(),
     };
     let command = RenderCommand {
+        projection_3d: None,
         order: 0,
         sprite: "SELECTED".into(),
         texture: Some(Arc::new(stella_script::SpriteTextureSubmission {
@@ -415,6 +534,7 @@ fn selected_sprite_uses_its_submission_time_mask_texture_pointer() {
         })),
         bound_region: Some(
             SpriteCatalogRegion {
+                decoded_image: None,
                 native_sheet_id: 1,
                 texture_source: base_texture.clone(),
                 sprite: SpriteRegion {
@@ -467,8 +587,10 @@ fn retained_scene_composite_draws_its_frozen_child_after_catalog_release() {
         fonts: HashMap::new(),
         textures: HashMap::from([(texture_name.clone(), alpha_texture(16, 16))]),
         system_labels: SystemLabelPool::default(),
+        captures: Default::default(),
     };
     let command = RenderCommand {
+        projection_3d: None,
         order: 0,
         sprite: "RETAINED_COMPOSITE".into(),
         texture: None,
@@ -488,6 +610,7 @@ fn retained_scene_composite_draws_its_frozen_child_after_catalog_release() {
                     visible: true,
                 },
                 region: Arc::new(SpriteCatalogRegion {
+                    decoded_image: None,
                     native_sheet_id: 1,
                     texture_source: texture_name.clone(),
                     sprite: SpriteRegion {
@@ -546,8 +669,10 @@ fn rotated_native_pivot_and_non_uniform_scale_reach_gpu_vertices_exactly() {
         fonts: HashMap::new(),
         textures: HashMap::from([(texture_name, alpha_texture(10, 20))]),
         system_labels: SystemLabelPool::default(),
+        captures: Default::default(),
     };
     let command = RenderCommand {
+        projection_3d: None,
         order: 0,
         sprite: "ROTATED_PIVOT_SPRITE".into(),
         texture: None,
@@ -574,4 +699,88 @@ fn rotated_native_pivot_and_non_uniform_scale_reach_gpu_vertices_exactly() {
     let frame = assets.prepare_gpu_frame(&[command], &[], &[], &[]).unwrap();
     assert_eq!(frame.vertices[0].position, [108.0, 171.0]);
     assert_eq!(frame.vertices[5].position, [68.0, 201.0]);
+}
+
+#[test]
+fn downloaded_avatar_retains_distinct_file_generations_through_gpu_submission() {
+    let root = std::env::temp_dir().join(format!(
+        "stella-avatar-gpu-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let path = root.join("opaque");
+    let mut commands = Vec::new();
+    for (index, color) in [[255, 0, 0, 255], [0, 0, 255, 255]].into_iter().enumerate() {
+        RgbaImage::from_pixel(17, 13, image::Rgba(color))
+            .save_with_format(&path, image::ImageFormat::Png)
+            .unwrap();
+        let decoded =
+            stella_assets::native_image::decode_native_image(&std::fs::read(&path).unwrap(), None)
+                .unwrap();
+        let source = stella_assets::image_source::sheet_image_source(
+            index as u64 + 1,
+            0,
+            path.to_str().unwrap(),
+        );
+        commands.push(RenderCommand {
+            projection_3d: None,
+            order: index as u64,
+            sprite: "AVATAR".into(),
+            texture: None,
+            bound_region: Some(Arc::new(SpriteCatalogRegion {
+                decoded_image: Some(Arc::new(decoded)),
+                native_sheet_id: index as u64 + 1,
+                texture_source: source,
+                sprite: SpriteRegion {
+                    name: "AVATAR".to_owned(),
+                    x: 0,
+                    y: 0,
+                    width: 17,
+                    height: 13,
+                    pivot_x: 8,
+                    pivot_y: 6,
+                    atlas_rotation: 0,
+                },
+            })),
+            bound_composite: None,
+            geometry: None,
+            shader: None,
+            dirt: None,
+            x: 8.0 + index as f32 * 20.0,
+            y: 6.0,
+            state: stella_script::RenderState::default().into(),
+            world_space: true,
+        });
+    }
+    std::fs::remove_dir_all(root).unwrap();
+    let mut assets = AssetCatalog {
+        root: Default::default(),
+        font_root: Default::default(),
+        regions: HashMap::new(),
+        composites: HashMap::new(),
+        masked_textures: HashMap::new(),
+        fonts: HashMap::new(),
+        textures: HashMap::new(),
+        system_labels: SystemLabelPool::default(),
+        captures: Default::default(),
+    };
+    let size = GameResolution {
+        width: 40,
+        height: 16,
+    };
+    let frame = assets
+        .prepare_gpu_frame_at_resolution(size, &commands, &[], &[], &[])
+        .unwrap();
+    assert_ne!(frame.draw_texture_pair(0).0, frame.draw_texture_pair(1).0);
+    let mut renderer = GpuRenderer::headless(size).unwrap();
+    let pixels = renderer
+        .render_to_rgba(&assets, &frame, [0, 255, 0])
+        .unwrap();
+    let pixel = |x: usize, y: usize| &pixels[(y * 40 + x) * 4..(y * 40 + x) * 4 + 4];
+    assert_eq!(pixel(4, 4), [255, 0, 0, 255]);
+    assert_eq!(pixel(24, 4), [0, 0, 255, 255]);
+    assert_eq!(pixel(18, 4), [0, 255, 0, 255]);
 }

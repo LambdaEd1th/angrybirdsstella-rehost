@@ -11,18 +11,7 @@ impl GpuRenderer {
     ) -> Result<()> {
         self.retired_textures
             .extend(frame.retired_textures.iter().cloned());
-        let releasable = self
-            .retired_textures
-            .iter()
-            .filter(|name| !frame.required_textures.contains(*name))
-            .cloned()
-            .collect::<Vec<_>>();
-        for name in releasable {
-            self.textures.remove(&name);
-            self.texture_bind_groups
-                .retain(|(base, fill), _| base != &name && fill != &name);
-            self.retired_textures.remove(&name);
-        }
+        self.retire_unused_textures(frame, false);
         for operation in &frame.operations {
             let PreparedOperation::Capture(name) = operation else {
                 continue;
@@ -50,6 +39,26 @@ impl GpuRenderer {
             );
         }
         Ok(())
+    }
+
+    pub(super) fn retire_unused_textures(&mut self, frame: &PreparedFrame, completed: bool) {
+        let releasable = self
+            .retired_textures
+            .iter()
+            .filter(|name| {
+                !frame.required_textures.contains(*name)
+                    && (completed || !frame.operations.iter().any(|operation| {
+                        matches!(operation, PreparedOperation::Capture(target) if target == *name)
+                    }))
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        for name in releasable {
+            self.textures.remove(&name);
+            self.texture_bind_groups
+                .retain(|(base, fill), _| base != &name && fill != &name);
+            self.retired_textures.remove(&name);
+        }
     }
 
     pub(super) fn texture_bind_group(&mut self, base: &str, fill: &str) -> Result<wgpu::BindGroup> {

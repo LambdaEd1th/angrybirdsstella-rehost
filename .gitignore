@@ -2,13 +2,13 @@
 /extracted/
 /build/
 /dist/
+/docs/
 *.log
 .DS_Store
 
 # Canonical local runtime layout. The directory documentation is tracked, but
 # legally supplied game resources and mutable saves must stay local.
-/runtime/data/
-/runtime/appdata/
+/runtime/
 
 # Locally supplied proprietary game bundle and archive inputs.
 /angry birds stella v1.1.6/

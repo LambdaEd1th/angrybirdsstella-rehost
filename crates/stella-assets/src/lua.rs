@@ -1,8 +1,14 @@
 //! Parser for the portable part of a Lua 5.1 binary chunk header.
 
+use std::fmt::Write as _;
+
 use crate::AssetError;
 
 pub const LUA_SIGNATURE: [u8; 4] = [0x1b, b'L', b'u', b'a'];
+pub const LOSSLESS_TEXT_MARKER: &str =
+    "-- Generated lossless fallback: the stripped chunk could not be safely structured.";
+const LOSSLESS_PAYLOAD_START: &str = "local __stella_bytecode = table.concat({\n";
+const LOSSLESS_PAYLOAD_END: &str = "})\nlocal __stella_chunk";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LuaChunkHeader {
@@ -119,6 +125,104 @@ pub fn prepare_for_host(bytes: &[u8]) -> Result<Vec<u8>, AssetError> {
     } else {
         transcode_for_host(bytes)
     }
+}
+
+/// Encode host-compatible Lua 5.1 bytecode as a syntactically valid text
+/// loader. This keeps the stripped chunk exact when high-level structuring is
+/// unsafe while making the resource itself unencrypted and text-only.
+pub fn wrap_host_chunk_as_text(bytes: &[u8], chunk_name: &str) -> Result<String, AssetError> {
+    LuaChunkHeader::parse(bytes)?;
+    let mut source = String::with_capacity(bytes.len().saturating_mul(4).saturating_add(512));
+    source.push_str(LOSSLESS_TEXT_MARKER);
+    source.push_str("\n-- The bytecode below is host-transcoded, unencrypted, and uncompressed.\n");
+    source.push_str(LOSSLESS_PAYLOAD_START);
+    for chunk in bytes.chunks(192) {
+        source.push_str("  \"");
+        for byte in chunk {
+            write!(source, "\\{byte:03}")
+                .map_err(|_| AssetError::InvalidLua("failed to format text wrapper"))?;
+        }
+        source.push_str("\",\n");
+    }
+    source.push_str(LOSSLESS_PAYLOAD_END);
+    source.push_str(", __stella_error = loadstring(__stella_bytecode, ");
+    append_lua_string(&mut source, chunk_name.as_bytes())?;
+    source.push_str(
+        ")\n\
+         if not __stella_chunk then\n\
+           error(__stella_error, 0)\n\
+         end\n\
+         setfenv(__stella_chunk, getfenv(1))\n\
+         return __stella_chunk(...)\n",
+    );
+    Ok(source)
+}
+
+/// Recover bytecode from a text envelope created by
+/// [`wrap_host_chunk_as_text`]. Ordinary Lua text returns `Ok(None)`.
+pub fn unwrap_host_chunk_text(input: &[u8]) -> Result<Option<Vec<u8>>, AssetError> {
+    if !input.starts_with(LOSSLESS_TEXT_MARKER.as_bytes()) {
+        return Ok(None);
+    }
+    let source = std::str::from_utf8(input)
+        .map_err(|_| AssetError::InvalidLua("text wrapper is not UTF-8"))?;
+    let payload = source
+        .split_once(LOSSLESS_PAYLOAD_START)
+        .and_then(|(_, remainder)| remainder.split_once(LOSSLESS_PAYLOAD_END))
+        .map(|(payload, _)| payload)
+        .ok_or(AssetError::InvalidLua("text wrapper payload is missing"))?;
+
+    let mut bytes = Vec::with_capacity(payload.len() / 4);
+    for line in payload
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
+        let literal = line
+            .strip_prefix('"')
+            .and_then(|line| line.strip_suffix("\","))
+            .ok_or(AssetError::InvalidLua("text wrapper literal is malformed"))?;
+        let literal = literal.as_bytes();
+        if !literal.len().is_multiple_of(4) {
+            return Err(AssetError::InvalidLua(
+                "text wrapper escape length is malformed",
+            ));
+        }
+        let (escapes, remainder) = literal.as_chunks::<4>();
+        debug_assert!(remainder.is_empty());
+        for escape in escapes {
+            if escape[0] != b'\\' || !escape[1..].iter().all(u8::is_ascii_digit) {
+                return Err(AssetError::InvalidLua("text wrapper escape is malformed"));
+            }
+            let value = u16::from(escape[1] - b'0') * 100
+                + u16::from(escape[2] - b'0') * 10
+                + u16::from(escape[3] - b'0');
+            bytes.push(
+                u8::try_from(value)
+                    .map_err(|_| AssetError::InvalidLua("text wrapper byte is out of range"))?,
+            );
+        }
+    }
+    LuaChunkHeader::parse(&bytes)?;
+    Ok(Some(bytes))
+}
+
+fn append_lua_string(output: &mut String, bytes: &[u8]) -> Result<(), AssetError> {
+    output.push('"');
+    for byte in bytes {
+        match byte {
+            b'"' => output.push_str("\\\""),
+            b'\\' => output.push_str("\\\\"),
+            b'\n' => output.push_str("\\n"),
+            b'\r' => output.push_str("\\r"),
+            b'\t' => output.push_str("\\t"),
+            0x20..=0x7e => output.push(char::from(*byte)),
+            _ => write!(output, "\\{byte:03}")
+                .map_err(|_| AssetError::InvalidLua("failed to format Lua string"))?,
+        }
+    }
+    output.push('"');
+    Ok(())
 }
 
 #[derive(Clone, Copy)]
@@ -341,5 +445,18 @@ mod tests {
         assert_eq!(&output[77..81], &0x0a0b_0c0du32.to_be_bytes());
         assert_eq!(&output[81..85], &0x0101_0101u32.to_be_bytes());
         assert_eq!(output.len(), 89);
+    }
+
+    #[test]
+    fn lossless_text_wrapper_round_trips_host_bytecode() {
+        let mut bytes = [0x1b, b'L', b'u', b'a', 0x51, 0, 1, 4, 8, 4, 8, 0].to_vec();
+        bytes.extend(0u8..=255);
+        let source = wrap_host_chunk_as_text(&bytes, "@scripts/quoted_\"name.lua").unwrap();
+        assert!(source.is_ascii());
+        assert_eq!(
+            unwrap_host_chunk_text(source.as_bytes()).unwrap(),
+            Some(bytes)
+        );
+        assert_eq!(unwrap_host_chunk_text(b"return true").unwrap(), None);
     }
 }

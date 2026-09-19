@@ -7,27 +7,43 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use skrifa::raw::TableProvider;
+use skrifa::{
+    Tag,
+    raw::{
+        FontRead, TableProvider,
+        tables::{cbdt::Cbdt, cblc::Cblc},
+    },
+};
 pub(super) use unicode_script::Script as UnicodeScriptCode;
 use unicode_script::UnicodeScript;
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::SystemFontLayoutFace;
 use super::font_shaper;
+use crate::preferred_languages::host_preferred_languages;
 
 #[derive(Clone)]
 pub struct SystemFontFallbackCatalog(Arc<SystemFontFallbackCatalogInner>);
 
 struct SystemFontFallbackCatalogInner {
     database: Arc<fontdb::Database>,
+    preferred_languages: Arc<[String]>,
     clusters: Mutex<HashMap<String, Option<SystemFontLayoutFace>>>,
     faces: Mutex<HashMap<fontdb::ID, SystemFontLayoutFace>>,
 }
 
 impl SystemFontFallbackCatalog {
     pub(crate) fn new(database: Arc<fontdb::Database>) -> Self {
+        Self::new_with_preferred_languages(database, host_preferred_languages())
+    }
+
+    pub(crate) fn new_with_preferred_languages(
+        database: Arc<fontdb::Database>,
+        preferred_languages: impl IntoIterator<Item = String>,
+    ) -> Self {
         Self(Arc::new(SystemFontFallbackCatalogInner {
             database,
+            preferred_languages: preferred_languages.into_iter().collect(),
             clusters: Mutex::new(HashMap::new()),
             faces: Mutex::new(HashMap::new()),
         }))
@@ -61,7 +77,7 @@ impl SystemFontFallbackCatalog {
         let preferred = if presentation == NativeSystemFontPresentation::Emoji {
             native_system_font_emoji_fallback_names()
         } else {
-            native_system_font_fallback_names(script)
+            native_system_font_fallback_names(script, &self.0.preferred_languages)
         };
         let preferred_id = preferred.iter().find_map(|preferred_name| {
             self.0
@@ -167,6 +183,7 @@ impl fmt::Debug for SystemFontFallbackCatalog {
         formatter
             .debug_struct("SystemFontFallbackCatalog")
             .field("faces", &self.0.database.faces().count())
+            .field("preferred_languages", &self.0.preferred_languages)
             .field(
                 "cached_clusters",
                 &self.0.clusters.lock().map_or(0, |cache| cache.len()),
@@ -349,12 +366,27 @@ fn native_system_font_face_has_color_tables(
                 return false;
             };
             skrifa::MetadataProvider::charmap(&face).has_map()
-                && (face.sbix().is_ok()
-                    || face.cbdt().is_ok()
-                    || face.ebdt().is_ok()
-                    || face.colr().is_ok())
+                && native_system_font_raw_face_has_color_tables(&face)
         })
         .unwrap_or(false)
+}
+
+fn native_system_font_raw_face_has_color_tables(face: &skrifa::FontRef<'_>) -> bool {
+    face.sbix().is_ok()
+        || native_system_font_face_has_legacy_bdat(face)
+        || face.ebdt().is_ok()
+        || face.cbdt().is_ok()
+        || face.colr().is_ok()
+}
+
+fn native_system_font_face_has_legacy_bdat(face: &skrifa::FontRef<'_>) -> bool {
+    let Some((bloc, bdat)) = face
+        .table_data(Tag::new(b"bloc"))
+        .zip(face.table_data(Tag::new(b"bdat")))
+    else {
+        return false;
+    };
+    Cblc::read(bloc).is_ok() && Cbdt::read(bdat).is_ok()
 }
 
 fn native_system_font_face_covers_cluster(face: &font_shaper::Face<'_>, cluster: &str) -> bool {
@@ -450,7 +482,131 @@ fn native_system_font_emoji_fallback_names() -> &'static [&'static str] {
     ]
 }
 
-fn native_system_font_fallback_names(script: UnicodeScriptCode) -> &'static [&'static str] {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NativeSystemFontCjkPreference {
+    SimplifiedChinese,
+    TraditionalChinese,
+    Japanese,
+    Korean,
+}
+
+const CJK_SIMPLIFIED_FALLBACKS: &[&str] = &[
+    "PingFangSC-Regular",
+    "PingFangTC-Regular",
+    "HiraginoSans-W3",
+    "HiraginoSansGB-W3",
+    "HiraKakuProN-W3",
+    "MicrosoftYaHei",
+    "Microsoft YaHei",
+    "NotoSansCJKsc-Regular",
+    "Noto Sans CJK SC",
+    "NotoSansSC-Regular",
+    "Noto Sans SC",
+    "SimSun",
+    "AppleSDGothicNeo-Regular",
+    "NotoSansCJKkr-Regular",
+    "MalgunGothic",
+    "ArialUnicodeMS",
+];
+
+const CJK_TRADITIONAL_FALLBACKS: &[&str] = &[
+    "PingFangTC-Regular",
+    "PingFangHK-Regular",
+    "PingFangSC-Regular",
+    "HiraginoSans-W3",
+    "HiraginoSansGB-W3",
+    "HiraKakuProN-W3",
+    "MicrosoftJhengHei",
+    "Microsoft JhengHei",
+    "NotoSansCJKtc-Regular",
+    "Noto Sans CJK TC",
+    "NotoSansTC-Regular",
+    "Noto Sans TC",
+    "MingLiU",
+    "AppleSDGothicNeo-Regular",
+    "NotoSansCJKkr-Regular",
+    "MalgunGothic",
+    "ArialUnicodeMS",
+];
+
+const CJK_JAPANESE_FALLBACKS: &[&str] = &[
+    "HiraginoSans-W3",
+    "HiraginoSansGB-W3",
+    "HiraKakuProN-W3",
+    "YuGothic-Regular",
+    "Yu Gothic",
+    "NotoSansCJKjp-Regular",
+    "Noto Sans CJK JP",
+    "NotoSansJP-Regular",
+    "Noto Sans JP",
+    "PingFangSC-Regular",
+    "PingFangTC-Regular",
+    "AppleSDGothicNeo-Regular",
+    "NotoSansCJKkr-Regular",
+    "MalgunGothic",
+    "ArialUnicodeMS",
+];
+
+const CJK_KOREAN_FALLBACKS: &[&str] = &[
+    "AppleSDGothicNeo-Regular",
+    "Apple SD Gothic Neo",
+    "MalgunGothic",
+    "Malgun Gothic",
+    "NotoSansCJKkr-Regular",
+    "Noto Sans CJK KR",
+    "NotoSansKR-Regular",
+    "Noto Sans KR",
+    "PingFangSC-Regular",
+    "PingFangTC-Regular",
+    "HiraginoSans-W3",
+    "HiraKakuProN-W3",
+    "ArialUnicodeMS",
+];
+
+fn native_system_font_cjk_preference(
+    preferred_languages: &[String],
+) -> NativeSystemFontCjkPreference {
+    let Some(language) = preferred_languages
+        .iter()
+        .find(|language| !language.trim().is_empty())
+    else {
+        return NativeSystemFontCjkPreference::SimplifiedChinese;
+    };
+    let language = language.trim().replace('_', "-").to_ascii_lowercase();
+    let is_language = |code: &str| language == code || language.starts_with(&format!("{code}-"));
+    if is_language("ja") {
+        NativeSystemFontCjkPreference::Japanese
+    } else if is_language("ko") {
+        NativeSystemFontCjkPreference::Korean
+    } else if is_language("zh")
+        && (language.split('-').any(|part| part == "hant")
+            || ["zh-tw", "zh-hk", "zh-mo"]
+                .iter()
+                .any(|prefix| language == *prefix || language.starts_with(&format!("{prefix}-"))))
+    {
+        NativeSystemFontCjkPreference::TraditionalChinese
+    } else {
+        // CoreText's default/en cascade and generic zh both put Simplified
+        // Chinese ahead of Japanese and Korean CJK faces.
+        NativeSystemFontCjkPreference::SimplifiedChinese
+    }
+}
+
+fn native_system_font_cjk_fallback_names(
+    preferred_languages: &[String],
+) -> &'static [&'static str] {
+    match native_system_font_cjk_preference(preferred_languages) {
+        NativeSystemFontCjkPreference::SimplifiedChinese => CJK_SIMPLIFIED_FALLBACKS,
+        NativeSystemFontCjkPreference::TraditionalChinese => CJK_TRADITIONAL_FALLBACKS,
+        NativeSystemFontCjkPreference::Japanese => CJK_JAPANESE_FALLBACKS,
+        NativeSystemFontCjkPreference::Korean => CJK_KOREAN_FALLBACKS,
+    }
+}
+
+fn native_system_font_fallback_names(
+    script: UnicodeScriptCode,
+    preferred_languages: &[String],
+) -> &'static [&'static str] {
     use UnicodeScriptCode::*;
     match script {
         Hebrew => &[
@@ -460,26 +616,9 @@ fn native_system_font_fallback_names(script: UnicodeScriptCode) -> &'static [&'s
             "DejaVuSans",
         ],
         Arabic => &["GeezaPro", "Arial", "NotoSansArabic-Regular", "DejaVuSans"],
-        Han => &[
-            "PingFangSC-Regular",
-            "HiraginoSans-W3",
-            "HiraKakuProN-W3",
-            "NotoSansCJKsc-Regular",
-            "ArialUnicodeMS",
-        ],
-        Hiragana | Katakana => &[
-            "HiraginoSans-W3",
-            "HiraKakuProN-W3",
-            "YuGothic-Regular",
-            "NotoSansCJKjp-Regular",
-            "ArialUnicodeMS",
-        ],
-        Hangul => &[
-            "AppleSDGothicNeo-Regular",
-            "NotoSansCJKkr-Regular",
-            "MalgunGothic",
-            "ArialUnicodeMS",
-        ],
+        Han | Hiragana | Katakana | Hangul => {
+            native_system_font_cjk_fallback_names(preferred_languages)
+        }
         Thai => &[
             "Thonburi",
             "NotoSansThai-Regular",
@@ -540,6 +679,41 @@ pub(super) fn native_system_font_script(script: UnicodeScriptCode) -> font_shape
 mod tests {
     use super::*;
 
+    fn append_u16(bytes: &mut Vec<u8>, value: u16) {
+        bytes.extend_from_slice(&value.to_be_bytes());
+    }
+
+    fn append_u32(bytes: &mut Vec<u8>, value: u32) {
+        bytes.extend_from_slice(&value.to_be_bytes());
+    }
+
+    fn synthetic_font_with_legacy_bitmap_tables() -> Vec<u8> {
+        let bdat = 0x0002_0000_u32.to_be_bytes();
+        let mut bloc = Vec::new();
+        append_u32(&mut bloc, 0x0002_0000);
+        append_u32(&mut bloc, 0); // no strikes are needed for table detection
+        let directory_len = 12 + 2 * 16;
+        let bloc_offset = directory_len + bdat.len();
+        let mut font = Vec::new();
+        append_u32(&mut font, 0x0001_0000);
+        append_u16(&mut font, 2);
+        append_u16(&mut font, 32);
+        append_u16(&mut font, 1);
+        append_u16(&mut font, 0);
+        for (tag, offset, len) in [
+            (*b"bdat", directory_len, bdat.len()),
+            (*b"bloc", bloc_offset, bloc.len()),
+        ] {
+            font.extend_from_slice(&tag);
+            append_u32(&mut font, 0);
+            append_u32(&mut font, u32::try_from(offset).unwrap());
+            append_u32(&mut font, u32::try_from(len).unwrap());
+        }
+        font.extend_from_slice(&bdat);
+        font.extend_from_slice(&bloc);
+        font
+    }
+
     fn purple_font(name: &str) -> Option<Vec<u8>> {
         std::fs::read(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -569,6 +743,14 @@ mod tests {
         assert!(Arc::ptr_eq(&first.font_data, &second.font_data));
         assert_eq!(catalog.0.faces.lock().unwrap().len(), 1);
         assert_eq!(catalog.0.clusters.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn legacy_bloc_bdat_pair_is_an_embedded_bitmap_fallback_face() {
+        let data = synthetic_font_with_legacy_bitmap_tables();
+        let face = skrifa::FontRef::new(&data).unwrap();
+        assert!(native_system_font_face_has_legacy_bdat(&face));
+        assert!(native_system_font_raw_face_has_color_tables(&face));
     }
 
     #[test]
@@ -626,5 +808,97 @@ mod tests {
             native_system_font_cluster_presentation("\u{231A}\u{FE0E}"),
             NativeSystemFontPresentation::Text
         );
+    }
+
+    #[test]
+    fn cjk_fallback_order_is_frozen_from_the_first_process_language() {
+        let names = |language: &str| {
+            native_system_font_fallback_names(UnicodeScriptCode::Hiragana, &[language.to_owned()])
+        };
+        assert_eq!(names("zh-Hans-CN")[0], "PingFangSC-Regular");
+        assert_eq!(names("zh_CN")[0], "PingFangSC-Regular");
+        assert_eq!(names("zh-Hant-TW")[0], "PingFangTC-Regular");
+        assert_eq!(names("zh_HK")[0], "PingFangTC-Regular");
+        assert_eq!(names("ja-JP")[0], "HiraginoSans-W3");
+        assert_eq!(names("ko-KR")[0], "AppleSDGothicNeo-Regular");
+        assert_eq!(names("en-US")[0], "PingFangSC-Regular");
+
+        let japanese = ["ja-JP".to_owned()];
+        assert_eq!(
+            native_system_font_fallback_names(UnicodeScriptCode::Han, &japanese),
+            native_system_font_fallback_names(UnicodeScriptCode::Katakana, &japanese)
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn injected_cjk_languages_match_installed_coretext_fallback_glyphs() {
+        use crate::{SystemFontRenderBinding, SystemFontShapedGlyph};
+
+        let Some(open_sans) = purple_font("OpenSans-Regular.ttf") else {
+            eprintln!("skipping CJK fallback regression: bundle font is unavailable");
+            return;
+        };
+        let mut database = fontdb::Database::new();
+        database.load_system_fonts();
+        database.load_fonts_dir("/System/Library/AssetsV2/com_apple_MobileAsset_Font8");
+        if !["PingFangSC-Regular", "HiraginoSans-W3"]
+            .into_iter()
+            .all(|name| database.faces().any(|face| face.post_script_name == name))
+        {
+            eprintln!("skipping CJK fallback regression: Apple CJK faces are unavailable");
+            return;
+        }
+        let database = Arc::new(database);
+        let base_data = Arc::<[u8]>::from(open_sans);
+        let binding = |language: &str| SystemFontRenderBinding {
+            label_pool_epoch: 0,
+            family: "OpenSans".to_owned(),
+            font_data: base_data.clone(),
+            face_index: 0,
+            fallback_catalog: Some(SystemFontFallbackCatalog::new_with_preferred_languages(
+                database.clone(),
+                [language.to_owned()],
+            )),
+            size: 40,
+            fill_rgba: [0, 0, 0, 255],
+            stroke_width: 0,
+            stroke_rgba: [0, 0, 0, 255],
+            style: 0,
+            ascending: 37,
+            descending: 8,
+            leading: 0,
+            label_line_height: 46,
+        };
+        let glyph_ids = |glyphs: &[SystemFontShapedGlyph]| {
+            glyphs
+                .iter()
+                .map(|glyph| glyph.glyph_id)
+                .collect::<Vec<_>>()
+        };
+
+        let simplified = binding("zh-Hans-CN");
+        let kana = simplified.native_system_font_layout("かな").unwrap();
+        assert_eq!(kana.width, 80);
+        assert_eq!(kana.faces[1].family, "PingFangSC-Regular");
+        assert_eq!(glyph_ids(&kana.lines[0].glyphs), [865, 896]);
+
+        let mixed = simplified.native_system_font_layout("漢か").unwrap();
+        assert_eq!(mixed.width, 80);
+        assert_eq!(mixed.faces.len(), 2);
+        assert_eq!(mixed.faces[1].family, "PingFangSC-Regular");
+        assert_eq!(glyph_ids(&mixed.lines[0].glyphs), [20344, 865]);
+        assert!(
+            mixed.lines[0]
+                .glyphs
+                .iter()
+                .all(|glyph| glyph.face_slot == 1)
+        );
+
+        let japanese = binding("ja-JP");
+        let kana = japanese.native_system_font_layout("かな").unwrap();
+        assert_eq!(kana.width, 80);
+        assert_eq!(kana.faces[1].family, "HiraginoSans-W3");
+        assert_eq!(glyph_ids(&kana.lines[0].glyphs), [852, 883]);
     }
 }

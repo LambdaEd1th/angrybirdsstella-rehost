@@ -3,12 +3,14 @@
 mod damage;
 mod dispatch;
 mod prepare;
+mod score;
 
 use crate::ContactPoint;
 
 pub(crate) use damage::*;
 pub(crate) use dispatch::*;
 pub(crate) use prepare::*;
+pub(crate) use score::*;
 
 /// One contact per fixture pair, with bodies stored in native ContactFactory
 /// fixture-A/fixture-B order.
@@ -62,12 +64,13 @@ pub(crate) enum NativeContactCallback {
         second: String,
         force: f64,
         damaged: bool,
-        second_damage: f64,
+        collision_damage: f64,
         point_x: f64,
         point_y: f64,
         normal_x: f64,
         normal_y: f64,
         score_damage: f64,
+        previous_score: f32,
     },
 }
 
@@ -76,6 +79,10 @@ pub(crate) struct NativeDamageResult {
     attempted: bool,
     reported_damage: f64,
     applied_damage: f64,
+    /// Unrounded surviving damage (or previous strength for a dead block).
+    /// None means the block-score branch was skipped by ignoreAllDamage or
+    /// defence, so the corresponding ignoresScore byte is not consulted.
+    score_damage: Option<f32>,
     previous_strength: f64,
     remaining_strength: f64,
     destroyed: bool,

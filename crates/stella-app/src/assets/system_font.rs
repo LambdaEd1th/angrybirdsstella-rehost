@@ -11,6 +11,7 @@ use super::*;
 
 mod cache;
 mod color_outline;
+mod legacy_bitmap;
 mod placement;
 mod raster;
 
@@ -22,7 +23,7 @@ pub(crate) use placement::{
     native_system_label_horizontal_anchor, native_system_label_offset,
     native_system_label_vertical_anchor,
 };
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(test)]
 use raster::decode_system_raster;
 use raster::{append_line_glyphs, composite_system_mask, composite_system_rasters};
 #[cfg(test)]

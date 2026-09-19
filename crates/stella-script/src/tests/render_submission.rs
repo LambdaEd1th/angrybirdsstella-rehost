@@ -1,5 +1,7 @@
 use super::*;
 
+mod capture;
+
 #[test]
 fn global_draw_compo_sprite_matches_native_legacy_part_scaling() {
     let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data");
@@ -67,6 +69,88 @@ fn global_draw_compo_sprite_matches_native_legacy_part_scaling() {
     // sub_10004DDA0 ignores the entry's scale/angle/flip/visible fields.
     assert_ne!(first_command.state.scale_x, 9.0);
     assert_ne!(first_command.state.angle, 1.25);
+}
+
+#[test]
+fn global_draw_compo_sprite_preserves_raw_quads_after_caught_3d_failure() {
+    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data");
+    let runtime = StellaLua::new(data_root).unwrap();
+    runtime
+        .execute_source(
+            r#"
+                ResourceManager.native_createSpriteSheet("images/1024x768/BUTTONS_SHEET_1.dat")
+                res.createCompoSpriteSet("images/1024x768/BUTTONS_COMPOSPRITES.dat")
+                res.setCompoSpriteEntry("BTN_OPTIONS_SMALL", 0, {
+                    x = 4097, y = 4097,
+                    scaleX = 9, scaleY = 8, angle = 1.25,
+                    flipX = true, flipY = true, visible = false
+                })
+                setRenderState(123, 456, 2, -3, 0.75, 4, 5, 0.9)
+                assert(not pcall(drawString3D, "MISSING", "A", 1, 2, 40, 0.5, 0, 0, 0.6))
+                drawCompoSprite("BTN_OPTIONS_SMALL", -16785408, -16785408, 4097, 4097)
+            "#,
+        )
+        .unwrap();
+    let commands = runtime.take_render_commands();
+    assert!(!commands.is_empty());
+    let projection = TextProjection3D {
+        x: 1.0,
+        y: 2.0,
+        z: 40.0,
+        rotation_x: 0.5,
+        custom_model: true,
+    };
+    for command in &commands {
+        assert_eq!(command.projection_3d.as_deref(), Some(&projection));
+        assert!(matches!(
+            command.geometry,
+            Some(SpriteGeometrySubmission::RawAtlasQuad(_))
+        ));
+        assert_eq!(command.state.alpha, 0.6_f32);
+        assert_eq!(command.state.matrix, None);
+    }
+    let first = &commands[0];
+    let sprite = &first.bound_region.as_ref().unwrap().sprite;
+    let Some(SpriteGeometrySubmission::RawAtlasQuad(quad)) = first.geometry.as_ref() else {
+        unreachable!()
+    };
+    // FMADD(4097,4097,-16785408) is 1, not the 0 produced by separate
+    // rounded multiply and add. Both axes enter the same native sequence.
+    let start = [sprite.pivot_x, sprite.pivot_y].map(|pivot| {
+        let pivot = f32::from(pivot);
+        (-4096.0_f32).mul_add(pivot, 1.0) - pivot
+    });
+    let end = [
+        start[0] + f32::from(sprite.width) * 4097.0,
+        start[1] + f32::from(sprite.height) * 4097.0,
+    ];
+    assert_eq!(
+        **quad,
+        [start, [end[0], start[1]], [start[0], end[1]], end].map(|point| point.map(f64::from))
+    );
+    let bridge = runtime.render.lock().unwrap();
+    assert_eq!(bridge.projection_3d(), Some(projection));
+    assert_eq!(
+        (bridge.state.translate_x, bridge.state.translate_y),
+        (123.0, 456.0)
+    );
+    assert_eq!((bridge.state.scale_x, bridge.state.scale_y), (2.0, -3.0));
+    assert_eq!(bridge.state.angle, 0.75);
+    // The helper still updates the context pivot for every part, even though
+    // this GL overload ignores that pivot while the custom model is enabled.
+    let resources = runtime.resource_runtime.lock().unwrap();
+    let parts = resources
+        .active_bound_composite_snapshot("BTN_OPTIONS_SMALL")
+        .unwrap();
+    let last = parts.last().unwrap();
+    assert_eq!(
+        bridge.state.pivot_x,
+        f64::from((f32::from(last.region.sprite.pivot_x) - last.part.x) * 4097.0)
+    );
+    assert_eq!(
+        bridge.state.pivot_y,
+        f64::from((f32::from(last.region.sprite.pivot_y) - last.part.y) * 4097.0)
+    );
 }
 
 #[test]
@@ -172,6 +256,11 @@ fn resource_clip_rect_is_truncated_and_captured_by_draw_submission() {
                 res.setClipRect(16777216, 0, 1, 1)
                 wide_clip_x, wide_clip_y, wide_clip_width, wide_clip_height =
                     res.getClipRect()
+                res.setClipRect(-2147483648, -2147483648, 4294967296, 4294967296)
+                local x, y
+                x, y, wrapped_clip_width, wrapped_clip_height = res.getClipRect()
+                res.setClipRect(2147483648, 0, 0, 1)
+                saturated_clip_x = res.getClipRect()
                 "#,
         )
         .unwrap();
@@ -194,6 +283,12 @@ fn resource_clip_rect_is_truncated_and_captured_by_draw_submission() {
     assert_eq!(environment.get::<f64>("wide_clip_y").unwrap(), 0.0);
     assert_eq!(environment.get::<f64>("wide_clip_width").unwrap(), 0.0);
     assert_eq!(environment.get::<f64>("wide_clip_height").unwrap(), 1.0);
+    assert_eq!(environment.get::<f64>("wrapped_clip_width").unwrap(), -1.0);
+    assert_eq!(environment.get::<f64>("wrapped_clip_height").unwrap(), -1.0);
+    assert_eq!(
+        environment.get::<f64>("saturated_clip_x").unwrap(),
+        2_147_483_648.0
+    );
     let commands = runtime.take_rect_commands();
     assert_eq!(commands.len(), 1);
     assert_eq!(commands[0].clip_rect, Some([10, 20, 41, 61]));
@@ -226,6 +321,8 @@ fn mixed_draw_command_classes_share_one_native_submission_sequence() {
         [CaptureRenderCommand {
             order: 2,
             name: "ORDER_CAPTURE".to_owned(),
+            texture_source: "<capture:image:1>".to_owned(),
+            temporary: false,
         }]
     );
     assert_eq!(rectangles[1].order, 3);
@@ -286,13 +383,35 @@ fn host_frame_exchange_recycles_all_deferred_queue_allocations() {
         (0, 1, 2)
     );
 
-    // The old completed frame is now back in the bridge. Native draw startup
-    // drops its elements while preserving that allocation for reuse.
+    // Exchanging drops old elements immediately while preserving capacity, so
+    // platform callbacks/update can append without replaying the old stream.
+    assert!(!runtime.has_frame_commands());
     runtime.draw().unwrap();
     let bridge = runtime.render.lock().unwrap();
     assert_eq!(bridge.commands.len(), 1);
     assert_eq!(bridge.rect_commands.len(), 1);
     assert_eq!(bridge.capture_commands.len(), 1);
+}
+
+#[test]
+fn exchanged_stream_does_not_reappear_before_a_later_draw_callback() {
+    let sandbox = super::ShippedDataSandbox::new("exchanged-stream");
+    let runtime = StellaLua::new(&sandbox.data_root).unwrap();
+    let mut sprites = Vec::new();
+    let mut text = Vec::new();
+    let mut rectangles = Vec::new();
+    let mut captures = Vec::new();
+    for expected in ["BEFORE_UPDATE", "FROM_UPDATE", "AFTER_UPDATE"] {
+        runtime
+            .execute_source(&format!("res.captureSprite('{expected}')"))
+            .unwrap();
+        assert!(runtime.has_frame_commands());
+        runtime.swap_frame_commands(&mut sprites, &mut text, &mut rectangles, &mut captures);
+        assert!(!runtime.has_frame_commands());
+        assert_eq!(captures.len(), 1);
+        assert_eq!(captures[0].name, expected);
+        assert_eq!(captures[0].order, 0);
+    }
 }
 
 #[test]

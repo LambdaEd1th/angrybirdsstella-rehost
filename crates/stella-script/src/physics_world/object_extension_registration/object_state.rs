@@ -13,16 +13,13 @@ pub(super) fn install_collision_time(
             let name = native_required_string(&args, 0, "native_setTimeSinceCollision")?;
             let value =
                 f64::from(native_required_number(&args, 1, "native_setTimeSinceCollision")? as f32);
-            if let Some(object) = render
-                .lock()
-                .expect("render bridge lock poisoned")
+            let mut bridge = render.lock().expect("render bridge lock poisoned");
+            let object = bridge
                 .game_lua_object_mut(&name)
-            {
-                // sub_10005959C writes only RenderObjectData+0x128. The Lua
-                // world record remains untouched until normal game logic or
-                // frame-state publication changes it independently.
-                object.time_since_collision = value;
-            }
+                .ok_or_else(|| runtime_error(format!("Missing object: {name}")))?;
+            // sub_10005959C uses throwing getRenderObject and writes only
+            // RenderObjectData+0x128. The Lua world record remains untouched.
+            object.time_since_collision = value;
             Ok(())
         })?,
     )?;
@@ -46,17 +43,15 @@ pub(super) fn install_revert_gravity(
                 f64::from(
                     native_required_number(&args, 3, "setRevertGravityWithMultiplier")? as f32,
                 );
-            if let Some(object) = render
-                .lock()
-                .expect("render bridge lock poisoned")
+            let mut bridge = render.lock().expect("render bridge lock poisoned");
+            let object = bridge
                 .game_lua_object_mut(&name)
-            {
-                // sub_10005962C owns +0x12F independently of the plain
-                // setRevertGravity byte at +0x12E and creates no Lua fields.
-                object.revert_gravity_with_multiplier = enabled;
-                object.revert_gravity_force = force;
-                object.revert_gravity_max_velocity = max_velocity;
-            }
+                .ok_or_else(|| runtime_error(format!("Missing object: {name}")))?;
+            // sub_10005962C uses throwing getRenderObject and owns +0x12F
+            // independently of +0x12E; it creates no Lua mirror fields.
+            object.revert_gravity_with_multiplier = enabled;
+            object.revert_gravity_force = force;
+            object.revert_gravity_max_velocity = max_velocity;
             Ok(())
         })?,
     )?;

@@ -1,5 +1,90 @@
 use super::*;
 
+mod score;
+
+#[test]
+fn block_score_retains_fractional_damage_and_native_fixture_order_flags() {
+    for (first_ignores, second_ignores, second_skipped, velocity, expected_damage) in [
+        (false, false, 0, 17.5, 3.5),
+        (true, false, 0, 17.5, 1.75),
+        (false, true, 0, 17.5, 0.0),
+        (true, true, 0, 17.5, 0.0),
+        // An ignored or defended second hit does not execute its score gate.
+        (false, true, 1, 17.5, 1.75),
+        (false, true, 2, 17.5, 1.75),
+        // Each hit removes zero strength, but the combined score rounds to 1.
+        (false, false, 0, 7.5, 1.5),
+    ] {
+        let runtime = unlocked_test_runtime();
+        runtime
+            .execute_source(
+                r#"
+                    createBox("a", "", 0, 0, 1, 1, 1, 0, 0, true, false, 1)
+                    createBox("b", "", 0, 0, 1, 1, 1, 0, 0, true, false, 1)
+                    objects.world.a.strength = 100
+                    objects.world.b.strength = 100
+                    worldAttributes = { forceDamageMultiplier = 1, scoreDamageMultiplier = 1 }
+                    scoreTable = { blocks = { score = 0 } }
+                "#,
+            )
+            .unwrap();
+        let world = object_world(runtime.lua()).unwrap();
+        let second = world.get::<mlua::Table>("b").unwrap();
+        if second_skipped == 1 {
+            second.set("ignoreAllDamage", true).unwrap();
+        } else if second_skipped == 2 {
+            second.set("defence", 100).unwrap();
+        }
+        let event = ContactEvent {
+            first: "a".to_owned(),
+            second: "b".to_owned(),
+            first_fixture: 0,
+            second_fixture: 0,
+            sensor: false,
+            began: true,
+            ended: false,
+            impulse: 0.0,
+            normal_x: 1.0,
+            normal_y: 0.0,
+            point_x: 0.0,
+            point_y: 0.0,
+            first_mass: 1.0,
+            first_velocity_x: velocity,
+            first_velocity_y: 0.0,
+            second_mass: 1.0,
+            second_velocity_x: 0.0,
+            second_velocity_y: 0.0,
+        };
+        let callbacks = {
+            let mut bridge = runtime.render.lock().unwrap();
+            bridge.scene.get_mut("a").unwrap().ignores_score = first_ignores;
+            bridge.scene.get_mut("b").unwrap().ignores_score = second_ignores;
+            prepare_native_contact_callbacks(runtime.lua(), &mut bridge, &[event])
+                .unwrap()
+                .0
+        };
+        let [NativeContactCallback::Block { score_damage, .. }] = callbacks.as_slice() else {
+            panic!("expected one block collision: {callbacks:?}");
+        };
+        assert_eq!(*score_damage, expected_damage);
+        let previous_score = native_capture_block_collision_score(runtime.lua()).unwrap();
+        native_add_block_collision_score(runtime.lua(), previous_score, *score_damage).unwrap();
+        let environment = game_environment(runtime.lua()).unwrap();
+        let score_table = environment.get::<mlua::Table>("scoreTable").unwrap();
+        let score = score_table.get::<mlua::Table>("blocks").unwrap();
+        assert_eq!(score.get::<f64>("score").unwrap(), expected_damage.floor());
+        let expected_strength = if velocity < 10.0 { 100.0 } else { 99.0 };
+        assert_eq!(
+            world
+                .get::<mlua::Table>("a")
+                .unwrap()
+                .get::<f64>("strength")
+                .unwrap(),
+            expected_strength
+        );
+    }
+}
+
 #[test]
 fn native_collision_force_reads_retained_world_attributes_not_shadow_global() {
     let runtime = unlocked_test_runtime();
@@ -134,7 +219,9 @@ fn physics_contact_resolves_body_and_dispatches_native_collision_callback() {
     assert_eq!(wall.get::<f64>("strength").unwrap(), 99.0);
     let score_table: mlua::Table = environment.get("scoreTable").unwrap();
     let block_score: mlua::Table = score_table.get("blocks").unwrap();
-    assert_eq!(block_score.get::<f64>("score").unwrap(), 2.0);
+    // Native scoring sums unrounded damage before flooring, unlike the
+    // separately rounded per-block strength deductions checked above.
+    assert_eq!(block_score.get::<f64>("score").unwrap(), 3.0);
 }
 
 #[test]
@@ -990,7 +1077,7 @@ fn contact_listener_body_destruction_obeys_native_world_lock() {
                 removed_visible_ok = pcall(isVisible, "body")
                 removed_parameter_ok = pcall(setObjectParameter, "body", 5, 7)
                 setVelocity("body", 97, 96)
-                native_setTimeSinceCollision("body", 95)
+                removed_collision_time_ok = pcall(native_setTimeSinceCollision, "body", 95)
                 removed_velocity = getVelocity("body")
                 removed_sleeping = isSleeping("body")
                 removed_vertices = #getObjectVertices("body")
@@ -1001,6 +1088,11 @@ fn contact_listener_body_destruction_obeys_native_world_lock() {
     assert!(!environment.get::<bool>("removed_position_ok").unwrap());
     assert!(!environment.get::<bool>("removed_visible_ok").unwrap());
     assert!(!environment.get::<bool>("removed_parameter_ok").unwrap());
+    assert!(
+        !environment
+            .get::<bool>("removed_collision_time_ok")
+            .unwrap()
+    );
     assert_eq!(environment.get::<f64>("removed_velocity").unwrap(), 0.0);
     assert!(environment.get::<bool>("removed_sleeping").unwrap());
     assert_eq!(environment.get::<i64>("removed_vertices").unwrap(), 0);

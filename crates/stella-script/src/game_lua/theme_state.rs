@@ -2,18 +2,28 @@
 
 use crate::SpriteGeometry;
 
-/// Camera values cached by `ThemeManager::update` (`sub_10009AA4C`).  Purple
+/// Camera values cached by the draw prelude (`sub_10009AA4C`). Purple
 /// keeps these as float32 even though Lua numbers are doubles.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ThemeCameraReference {
-    /// The native manager initializes the reference point lazily on its first
-    /// update after `native_refreshThemeSystem`.
+    /// Native +0x30: set before the first draw's camera lookup after reset.
+    /// This is a lifecycle latch, not a finite/usable-camera predicate.
     pub(crate) valid: bool,
     pub(crate) x: f32,
     pub(crate) y: f32,
+    /// +0x9C: background passes restore this value; foreground uses zero.
+    pub(crate) saved_y: f32,
+    /// +0x40/+0x44 and +0x68, captured from Lua screen and GameLua on draw.
+    pub(crate) screen_x: f32,
+    pub(crate) screen_y: f32,
+    pub(crate) current_scale: f32,
+    /// +0x80..+0x8C: update/wrap use the last draw's world limits.
+    pub(crate) world_limits: ThemeWorldLimits,
     /// ThemeManager+0x70, selected from `castleCameraData.ipad` and falling
     /// back to `referenceCamera` when the iPad entry is absent.
     pub(crate) scale: f32,
+    /// +0x74: vertical wrap counts use reference sy independently of sx.
+    pub(crate) scale_y: f32,
     /// ThemeManager+0x6C. `sub_1000985DC` divides
     /// `originalCameras[2].sx` by the reference-camera `sx` and later uses
     /// that ratio when `relativeY` replaces native layer+0x40.
@@ -34,11 +44,20 @@ impl Default for ThemeCameraReference {
             valid: false,
             x: 0.0,
             y: 0.0,
-            // Synthetic binding tests do not run the level refresh chain.
-            // Twenty preserves their legacy physics-scale fixture; shipped
-            // levels always replace it with their authored camera scale.
-            scale: 20.0,
-            original_scale_ratio: 1.0,
+            saved_y: 0.0,
+            screen_x: 0.0,
+            screen_y: 0.0,
+            current_scale: 0.0,
+            world_limits: ThemeWorldLimits {
+                left: Some(0.0),
+                right: Some(0.0),
+                top: Some(0.0),
+                bottom: Some(0.0),
+            },
+            // sub_10008AD30, not the physics scale used by old fixtures.
+            scale: 1.0,
+            scale_y: 1.0,
+            original_scale_ratio: 0.0,
             effect_x: 0.0,
             effect_y: 0.0,
             orientation: 0.0,
@@ -61,8 +80,8 @@ pub(crate) fn native_theme_parallax_scale(
     end_over_reference.mul_add(z_distance, current_term)
 }
 
-/// `0x10009B4C8..0x10009B4F8`: a finite `relativeY` replaces the layer's
-/// normal Y offset on every ThemeManager draw pass. The AArch64 `FNMSUB`
+/// `0x10009B4C8..0x10009B4F8`: a non-sentinel `relativeY` replaces the layer's
+/// normal Y offset once on the first selected draw pass after reset. The AArch64 `FNMSUB`
 /// computes `relative_y * height - height * 0.5` with one rounding.
 pub(crate) fn native_theme_relative_y_offset(
     relative_y: f32,
@@ -149,6 +168,11 @@ pub(crate) struct ThemeLayer {
     pub(crate) resolved_offset_y: Option<f64>,
     pub(crate) scale_x: f64,
     pub(crate) scale_y: f64,
+    /// Native layer+0x94/+0x98. `sub_10009BDB4` writes the actual float32
+    /// world-space parallax center after each draw; the following
+    /// `sub_10009B8B4` update uses it to decide when a moving tile wraps.
+    pub(crate) cached_draw_world_x: f32,
+    pub(crate) cached_draw_world_y: f32,
     /// Native layer+0x18 (`parallaxSpeed`). Purple 1.1.6 parses and copies
     /// this float32 slot, but none of the GameLua or ThemeManager consumers
     /// reads it; live parallax motion uses `(1 - zDistance)` directly.
@@ -197,7 +221,6 @@ pub(crate) struct ThemeLayer {
     pub(crate) world_height: Option<f64>,
     pub(crate) velocity_x: f64,
     pub(crate) velocity_y: f64,
-    pub(crate) motion_y: f64,
 }
 
 /// Live Lua world limits read by `sub_10009AA4C` before its per-layer

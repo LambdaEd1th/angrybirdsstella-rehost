@@ -55,6 +55,29 @@ pub(super) fn install(
                 return Ok(());
             }
 
+            if parameter == 32 {
+                let mut bridge = render.lock().expect("render bridge lock poisoned");
+                let source = {
+                    let Some(object) = bridge.game_lua_object_mut(&name) else {
+                        return Err(runtime_error(format!("Missing object: {name}")));
+                    };
+                    // sub_10004F1F0 first requires RenderObjectData+0x88's
+                    // b2Body, then FCVTZS(value)==1. Every successful call
+                    // appends the pointer at GameLua+0x3A0; value zero does
+                    // not unregister an earlier entry.
+                    if !object.has_physics_body() || !enabled {
+                        return Ok(());
+                    }
+                    object.aiming_aid_collideable = true;
+                    NativeAimingAidForceSource {
+                        name: name.clone(),
+                        physics_creation_order: object.physics_creation_order,
+                    }
+                };
+                bridge.aiming_aid_force_sources.push(source);
+                return Ok(());
+            }
+
             let mut bridge = render.lock().expect("render bridge lock poisoned");
             let physics_world_locked = bridge.physics_world_locked;
             let Some(object) = bridge.game_lua_object_mut(&name) else {
@@ -120,7 +143,6 @@ pub(super) fn install(
                 28 => object.sensor_width = value,
                 29 => object.sensor_force_angle = value,
                 31 => object.time_since_collision = value,
-                32 => object.aiming_aid_collideable |= enabled,
                 33 => object.visible = enabled,
                 34 => object.bubble = enabled,
                 35 => object.sensor_height = value,

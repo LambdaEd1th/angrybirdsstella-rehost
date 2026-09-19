@@ -55,6 +55,9 @@ impl GpuRenderer {
             sprite_storage_layout,
             sprite_texture_layout,
         } = target::create(&device, resolution);
+        let (capture_pipeline, capture_layout) = super::capture::create_pipeline(&device);
+        let capture_bind_group =
+            super::capture::bind_framebuffer(&device, &capture_layout, &game_view);
         let programs::NativePrograms {
             plain,
             plain_alpha,
@@ -97,6 +100,9 @@ impl GpuRenderer {
             resolution,
             game_texture,
             game_view,
+            capture_pipeline,
+            capture_layout,
+            capture_bind_group,
             sprite_storage_layout,
             sprite_texture_layout,
             draw_storage_buffer,
@@ -118,6 +124,7 @@ impl GpuRenderer {
             blit_bind_group,
             blit_layout,
             blit_sampler,
+            window_overlay: None,
         })
     }
 }

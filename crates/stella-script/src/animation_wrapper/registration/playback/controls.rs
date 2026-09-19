@@ -4,6 +4,7 @@ mod helpers;
 mod start;
 mod state;
 mod stop;
+pub(in crate::animation_wrapper::registration) use stop::stop_all_native;
 
 use std::sync::{Arc, Mutex};
 
@@ -295,6 +296,7 @@ mod tests {
                     (
                         name.to_owned(),
                         SpriteCatalogRegion {
+                            decoded_image: None,
                             native_sheet_id: 1,
                             texture_source: "test-animation.pvr".to_owned(),
                             sprite: stella_assets::ka3d::SpriteRegion {

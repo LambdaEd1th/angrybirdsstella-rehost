@@ -3,6 +3,51 @@
 use super::super::*;
 
 impl GpuRenderer {
+    pub(crate) fn render_offscreen_with_clip(
+        &mut self,
+        assets: &AssetCatalog,
+        frame: &PreparedFrame,
+        background_color: [u8; 3],
+        clip: Option<[i32; 4]>,
+    ) -> Result<()> {
+        let [x, y, width, height] = frame::native_scissor(clip, self.resolution);
+        if [x, y, width, height] == [0, 0, self.resolution.width, self.resolution.height] {
+            return self.render_game(assets, frame, background_color);
+        }
+        if width != 0 && height != 0 {
+            // wgpu attachment clears ignore scissor. Represent GL's partial
+            // clear by an opaque, unprojected overwrite, independent of the
+            // Lua program/model/alpha state, before loading the draw stream.
+            let mut clear = PreparedFrame {
+                resolution: self.resolution,
+                ..PreparedFrame::default()
+            };
+            let [red, green, blue] = background_color.map(|v| f64::from(v) / 255.0);
+            frame::append_gpu_rect(
+                &mut clear,
+                &RectRenderCommand {
+                    projection_3d: None,
+                    order: 0,
+                    red,
+                    green,
+                    blue,
+                    alpha: 1.0,
+                    left: f64::from(x),
+                    top: f64::from(y),
+                    right: f64::from(x + width),
+                    bottom: f64::from(y + height),
+                    color_program: ColorProgram::Plain,
+                    vertices: None,
+                    mesh_topology: ColorMeshTopology::TriangleStrip,
+                    clip_rect: None,
+                },
+            );
+            self.render_before_clear(assets, &clear)?;
+        }
+        self.render_before_clear(assets, frame)
+    }
+
+    #[cfg(test)]
     pub(crate) fn render_offscreen(
         &mut self,
         assets: &AssetCatalog,
@@ -17,6 +62,25 @@ impl GpuRenderer {
         assets: &AssetCatalog,
         frame: &PreparedFrame,
         background_color: [u8; 3],
+    ) -> Result<()> {
+        self.render_stream(assets, frame, Some(background_color))
+    }
+
+    /// Native calls made before App's clear (including Lua update and platform
+    /// callbacks) operate on the existing framebuffer without an implicit clear.
+    pub(crate) fn render_before_clear(
+        &mut self,
+        assets: &AssetCatalog,
+        frame: &PreparedFrame,
+    ) -> Result<()> {
+        self.render_stream(assets, frame, None)
+    }
+
+    fn render_stream(
+        &mut self,
+        assets: &AssetCatalog,
+        frame: &PreparedFrame,
+        background_color: Option<[u8; 3]>,
     ) -> Result<()> {
         if frame.resolution != self.resolution {
             return Err(anyhow!(
@@ -53,12 +117,12 @@ impl GpuRenderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Stella game-target encoder"),
             });
-        let clear_color = wgpu::Color {
-            r: f64::from(background_color[0]) / 255.0,
-            g: f64::from(background_color[1]) / 255.0,
-            b: f64::from(background_color[2]) / 255.0,
+        let clear_color = background_color.map(|color| wgpu::Color {
+            r: f64::from(color[0]) / 255.0,
+            g: f64::from(color[1]) / 255.0,
+            b: f64::from(color[2]) / 255.0,
             a: 1.0,
-        };
+        });
         let mut operation_index = 0usize;
         let mut target_initialized = false;
         while operation_index < frame.operations.len() || !target_initialized {
@@ -70,10 +134,9 @@ impl GpuRenderer {
                 operation_index += 1;
             }
             if operation_index > first_draw_operation || !target_initialized {
-                let load = if target_initialized {
-                    wgpu::LoadOp::Load
-                } else {
-                    wgpu::LoadOp::Clear(clear_color)
+                let load = match (target_initialized, clear_color) {
+                    (false, Some(color)) => wgpu::LoadOp::Clear(color),
+                    _ => wgpu::LoadOp::Load,
                 };
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("Reverse-aligned Purple 2D pass"),
@@ -143,28 +206,35 @@ impl GpuRenderer {
                 .textures
                 .get(name)
                 .ok_or_else(|| anyhow!("capture texture is missing: {name}"))?;
-            encoder.copy_texture_to_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &self.game_texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                wgpu::TexelCopyTextureInfo {
-                    texture: &captured.texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                wgpu::Extent3d {
-                    width: self.resolution.width,
-                    height: self.resolution.height,
-                    depth_or_array_layers: 1,
-                },
-            );
+            if captured.texture.width() != self.resolution.width
+                || captured.texture.height() != self.resolution.height
+            {
+                return Err(anyhow!("Wrong size capture target image: {name}"));
+            }
+            let mut capture_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Stella bottom-up RGB framebuffer capture"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &captured.view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                ..Default::default()
+            });
+            capture_pass.set_pipeline(&self.capture_pipeline);
+            capture_pass.set_bind_group(0, &self.capture_bind_group, &[]);
+            capture_pass.draw(0..3, 0..1);
+            drop(capture_pass);
             operation_index += 1;
         }
         self.queue.submit([encoder.finish()]);
+        // Wgpu retains submitted resources until GPU work completes. Images
+        // discarded by native capture(... on a released sheet) have no owner
+        // beyond this operation; do not accumulate one allocation per call.
+        self.retire_unused_textures(frame, true);
         Ok(())
     }
 }

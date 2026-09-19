@@ -194,7 +194,7 @@ impl SystemFontRenderBinding {
     /// Shape the NSString payload once for both `sizeWithFont:`-equivalent
     /// measurement and `drawInRect:withFont:`-equivalent rasterization.
     ///
-    /// UIKit delegates both calls to its text stack. Rustybuzz supplies the
+    /// UIKit delegates both calls to its text stack. HarfRust supplies the
     /// corresponding OpenType GSUB/GPOS pass on every desktop backend; a raw
     /// character/advance loop would disagree for ligatures, combining marks,
     /// contextual scripts and fonts whose kerning lives only in GPOS.
@@ -460,24 +460,108 @@ fn native_font_codepoint_substring(text: &str, start: i32, count: i32) -> Option
 }
 
 fn native_font_fcvtzs_f32(value: f32) -> i32 {
-    if !value.is_finite() || !(-2_147_483_648.0_f32..2_147_483_648.0_f32).contains(&value) {
-        i32::MIN
-    } else {
-        value.trunc() as i32
-    }
+    crate::native_fcvtzs_f32(value)
 }
 
 fn native_font_fcvtzs_f64(value: f64) -> i32 {
-    if !value.is_finite() || !(-2_147_483_648.0_f64..2_147_483_648.0_f64).contains(&value) {
-        i32::MIN
-    } else {
-        value.trunc() as i32
-    }
+    // NSString width/height overloads execute FCVTZS W0,D8 directly at
+    // 1004769D0/100476810: no f32 narrowing or JavaScript-style wrap. AArch64
+    // saturates overflow by sign and converts NaN to zero, as this cast does.
+    value as i32
 }
 
 #[cfg(test)]
 mod system_font_bounds_tests {
     use super::*;
+
+    #[test]
+    fn system_font_fcvtzs_saturates_both_precisions_and_retains_double_fractions() {
+        for (input, expected) in [
+            (f64::NAN, 0),
+            (f64::INFINITY, i32::MAX),
+            (f64::NEG_INFINITY, i32::MIN),
+            (2_147_483_648.0, i32::MAX),
+            (-2_147_483_649.0, i32::MIN),
+            (1.99, 1),
+            (-1.99, -1),
+        ] {
+            assert_eq!(native_font_fcvtzs_f64(input), expected, "D: {input:?}");
+            assert_eq!(
+                native_font_fcvtzs_f32(input as f32),
+                expected,
+                "S: {input:?}"
+            );
+        }
+        assert_eq!(native_font_fcvtzs_f64(36.999_999_9), 36);
+        assert_eq!(native_font_fcvtzs_f32(36.999_999_9_f64 as f32), 37);
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn system_font_fcvtzs_matches_actual_arm64_s_and_d_instructions() {
+        let mut bits = 0xC619_0B42_1793_528Du64;
+        // Finite signed limits, infinities, positive/negative quiet and
+        // signaling NaNs, signed zero, and arbitrary exponent/fraction bits.
+        for fixed in [
+            0,
+            0x8000_0000_0000_0000,
+            0x7FF0_0000_0000_0000,
+            0xFFF0_0000_0000_0000,
+            0x7FF8_0000_0000_0001,
+            0xFFF8_0000_0000_0001,
+            0x7FF0_0000_0000_0001,
+            0x41E0_0000_0000_0000,
+            0xC1E0_0000_0000_0000,
+        ] {
+            for index in 0..512 {
+                bits = bits.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+                let input = f64::from_bits(if index == 0 { fixed } else { bits });
+                let input_s = input as f32;
+                let native_d: i32;
+                let native_s: i32;
+                // SAFETY: both instructions operate only on registers, with
+                // no pointer dereference, memory access or stack modification.
+                unsafe {
+                    std::arch::asm!(
+                        "fcvtzs {result_d:w}, {value_d:d}",
+                        "fcvtzs {result_s:w}, {value_s:s}",
+                        result_d = out(reg) native_d,
+                        result_s = out(reg) native_s,
+                        value_d = in(vreg) input,
+                        value_s = in(vreg) input_s,
+                        options(nomem, nostack),
+                    );
+                }
+                assert_eq!(
+                    native_font_fcvtzs_f64(input),
+                    native_d,
+                    "D bits={:016x}",
+                    input.to_bits()
+                );
+                assert_eq!(
+                    native_font_fcvtzs_f32(input_s),
+                    native_s,
+                    "S bits={:08x}",
+                    input_s.to_bits()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn system_font_extreme_bounds_and_multiline_height_saturate_positive_edges() {
+        let mut font = binding();
+        // i32::MAX rounds upward when getBounds converts W -> S. Its right
+        // and bottom edges must saturate positive, not flip to i32::MIN.
+        assert_eq!(
+            font.native_bounds_from_measurement(i32::MAX, i32::MAX, "LEFT", "TOP"),
+            [-2, -2, i32::MAX, i32::MAX]
+        );
+        font.label_line_height = i32::MAX;
+        assert_eq!(font.native_string_height("first\nsecond"), i32::MAX);
+        font.label_line_height = i32::MIN;
+        assert_eq!(font.native_string_height("first\nsecond"), i32::MIN);
+    }
 
     fn open_sans() -> Option<Vec<u8>> {
         std::fs::read(

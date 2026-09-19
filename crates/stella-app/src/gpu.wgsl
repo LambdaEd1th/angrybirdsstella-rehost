@@ -26,7 +26,7 @@ struct VertexInput {
     @location(0) screen_position: vec2<f32>,
     @location(1) uv: vec2<f32>,
     @location(2) source: vec2<f32>,
-    @location(4) clip_position: vec2<f32>,
+    @location(4) clip_position: vec4<f32>,
     @location(3) draw_index: u32,
 };
 
@@ -40,7 +40,7 @@ struct VertexOutput {
 @vertex
 fn sprite_vertex(input: VertexInput) -> VertexOutput {
     var output: VertexOutput;
-    output.position = vec4<f32>(input.clip_position, 0.0, 1.0);
+    output.position = input.clip_position;
     output.uv = input.uv;
     output.source = input.source;
     output.draw_index = input.draw_index;

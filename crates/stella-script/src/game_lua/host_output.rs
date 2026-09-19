@@ -62,20 +62,26 @@ impl StellaLua {
                     volume: clip.volume,
                     looping: clip.looping,
                     track: clip.channel,
+                    finished: clip.finished,
                 })
                 .collect(),
         }
     }
 
-    /// Retire one-shot handles whose physical decoder reached end-of-stream.
-    /// Purple's output callback drops completed AudioInstances asynchronously;
-    /// the host reports that boundary at the next fixed update.
-    pub fn finish_audio_playbacks(&self, handles: &[i64]) {
+    /// Publish physical decoder lifetime edges back to the VM-owned manager.
+    /// EOF first makes the retained instance non-playing; the next mixed block
+    /// removes that same instance from Purple's vector.
+    pub fn apply_audio_playback_transitions(&self, transitions: &AudioPlaybackTransitions) {
         let mut audio = self
             ._audio_runtime
             .lock()
             .expect("audio runtime lock poisoned");
-        for handle in handles {
+        for handle in &transitions.finished {
+            if let Some(clip) = audio.clips.get_mut(handle) {
+                clip.finished = true;
+            }
+        }
+        for handle in &transitions.removed {
             audio.clips.remove(handle);
         }
     }
@@ -131,9 +137,9 @@ impl StellaLua {
     ///
     /// Purple submits each draw immediately, so it has no per-frame command
     /// allocation corresponding to the wgpu host's deferred queues. Swapping
-    /// returns the preceding host allocations to `RenderBridge`; the next
-    /// [`Self::draw`] clears their old elements and reuses their capacity while
-    /// the host owns the newly completed frame.
+    /// returns the preceding host allocations to `RenderBridge`, cleared for
+    /// immediate reuse. Native calls between display frames or during update
+    /// must not append to a stale copy of the preceding draw stream.
     pub fn swap_frame_commands(
         &self,
         render_commands: &mut Vec<RenderCommand>,
@@ -142,15 +148,30 @@ impl StellaLua {
         capture_commands: &mut Vec<CaptureRenderCommand>,
     ) {
         let mut bridge = self.render.lock().expect("render bridge lock poisoned");
+        render_commands.clear();
+        text_commands.clear();
+        rect_commands.clear();
+        capture_commands.clear();
         std::mem::swap(render_commands, &mut bridge.commands);
         std::mem::swap(text_commands, &mut bridge.text_commands);
         std::mem::swap(rect_commands, &mut bridge.rect_commands);
         std::mem::swap(capture_commands, &mut bridge.capture_commands);
+        bridge.next_draw_order = 0;
+    }
+
+    /// Whether native API calls have emitted an unconsumed immediate stream.
+    /// This includes calls from update and platform callbacks, not only draw.
+    pub fn has_frame_commands(&self) -> bool {
+        let bridge = self.render.lock().expect("render bridge lock poisoned");
+        !bridge.commands.is_empty()
+            || !bridge.text_commands.is_empty()
+            || !bridge.rect_commands.is_empty()
+            || !bridge.capture_commands.is_empty()
     }
 
     /// Report whether the current immediate-order stream contains a framebuffer
-    /// capture. The deterministic host can leave ordinary draw queues in place
-    /// until the final frame, retaining Purple's no-intermediate-consumer path.
+    /// capture. Even a stream without captures must be consumed before the
+    /// next update can draw onto/capture its resulting framebuffer.
     pub fn has_capture_commands(&self) -> bool {
         !self
             .render
@@ -158,6 +179,17 @@ impl StellaLua {
             .expect("render bridge lock poisoned")
             .capture_commands
             .is_empty()
+    }
+
+    /// Retained Context scissor used by App's clear after update. This is not
+    /// ResourceManager's separately stored `getClipRect` value: clearScreen
+    /// resets the Context state without overwriting that resource-side copy.
+    pub fn framebuffer_clip_rect(&self) -> Option<[i32; 4]> {
+        self.render
+            .lock()
+            .expect("render bridge lock poisoned")
+            .state
+            .clip_rect
     }
 
     pub fn take_text_commands(&self) -> Vec<TextRenderCommand> {
@@ -211,6 +243,18 @@ impl StellaLua {
                 .lock()
                 .expect("render bridge lock poisoned")
                 .platform_action_requests,
+        )
+    }
+
+    /// Drain analytics events after Purple's native normalization and
+    /// parameter filtering, in provider-broadcast order.
+    pub fn take_analytics_events(&self) -> Vec<AnalyticsEvent> {
+        std::mem::take(
+            &mut self
+                .render
+                .lock()
+                .expect("render bridge lock poisoned")
+                .analytics_events,
         )
     }
 

@@ -7,7 +7,7 @@ use crate::*;
 use body_export::NativeBodyLuaState;
 
 impl StellaLua {
-    fn advance_native_aim_stream(&self, delta_seconds: f64) {
+    fn advance_native_aim_stream(&self, scaled_delta: f64) {
         // 0x10006064C rereads GameLua+0x6A8 after both Lua update and the
         // particle-system call. A locked frame does not age, compact, or
         // spawn AimStream particles.
@@ -21,38 +21,54 @@ impl StellaLua {
         }
         let mut bridge = self.render.lock().expect("render bridge lock poisoned");
         if bridge.physics_enabled {
-            bridge.update_native_aim_stream(delta_seconds as f32);
+            bridge.update_native_aim_stream(scaled_delta as f32);
         }
     }
 
     /// Run the per-frame callback recovered from the native update loop.
     pub fn update(&self, delta_seconds: f64) -> Result<bool, ScriptError> {
-        // AppController calls the process-global zero-delay event scheduler at
-        // 0x1004045D8 before entering the application update virtual. URL
-        // workers post their successful response through that scheduler.
-        dispatch_url_completions(&self.lua, &self.url_requests)?;
-        // GameServerConnection submits native HttpRequestTask instances with
-        // their Lua callbacks captured by request id. Task completion is
-        // delivered on the application thread before entering GameLua update.
-        dispatch_game_server_completions(&self.lua, &self.game_server)?;
-        // GameCenter reports authentication, achievement and score completion
-        // through retained GameLua event calls on the application thread.
-        dispatch_gamer_services_completions(&self.lua, &self.gamer_services)?;
-        // RCS Assets jobs retain the native Assets table and invoke their Lua
-        // completion functors asynchronously on the application thread.
-        dispatch_assets_completions(&self.lua, &self.assets)?;
-        // Channel 1.2 loading runs through the same native background-task
-        // scheduler and reports its retained callback on the main thread.
-        dispatch_channel_completions(&self.lua, &self.channel)?;
-        // Payment provider, voucher redemption and wallet reads all retain
-        // completion functors that re-enter Lua on the application thread.
-        dispatch_iap_completions(&self.lua, &self.iap)?;
-        // Rovio Account login and nickname-validation providers complete
-        // through retained functors on the application thread.
-        dispatch_skynest_account_completions(&self.lua, &self.skynest_account)?;
-        // Skynest key requests retain the supplied LuaFunction by request id;
-        // their provider continuations run on the application thread.
-        dispatch_skynest_storage_completions(&self.lua, &self.skynest_storage)?;
+        let result = self.update_native_frame(delta_seconds);
+        if result.is_err() {
+            // An AnimationWrapper drain inside Lua update can fail after the
+            // frame-head drain has returned. Native AppController treats both
+            // as fatal; clean the active tail only at this embedding boundary,
+            // never when a nested error is still catchable by Lua pcall.
+            self.application_event_dispatcher
+                .discard_unvisited_after_host_error();
+        }
+        result
+    }
+
+    fn update_native_frame(&self, delta_seconds: f64) -> Result<bool, ScriptError> {
+        self.skynest_account.check_sdk_log_thread()?;
+        // UIKit local-notification delivery is a synchronous application
+        // delegate path, independent of the zero-delay scheduler. Poll only
+        // the desktop wall-clock surrogate here.
+        dispatch_due_notification_callbacks(&self.lua, &self.notifications, &self.render)?;
+        // GKAchievement/GKScore completion handlers are always invoked on the
+        // main thread and call the retained listener directly. Deliver the
+        // completions that reached our portable main-thread surrogate before
+        // this display-link boundary before entering the scheduler. Any new
+        // completion produced by a scheduler/Lua callback waits for the next
+        // boundary, matching GameKit's asynchronous background operation.
+        dispatch_gamer_services_platform_completions(&self.lua, &self.gamer_services)?;
+        // Only the virtual source is polled here; native decoded QR results
+        // travel through the shared application scheduler below. Busy input
+        // stays unscanned until a later capture boundary, even if an animation
+        // callback performs another scheduler drain within this frame.
+        self.qr_scanner.poll_host_frame();
+        // `sub_10057C418` appends the complete process-global pending vector
+        // to a persistent active vector, then advances its shared cursor before
+        // invoking each callback. A plain callback post stays pending, while a
+        // nested AnimationWrapper scheduler call appends and drains that new
+        // work before the outer callback resumes. Native AppController treats
+        // an uncaught callback exception as fatal. The Rust embedding boundary
+        // returns it instead, so discard the unvisited active tail and its
+        // parallel payloads while preserving newly posted pending work.
+        // AppController 0x1004045D8 supplies this raw S0 to age delays; the
+        // animation call sites pass zero and Lua's time multiplier is later.
+        self.application_event_dispatcher
+            .dispatch(&self.lua, delta_seconds as f32)?;
         // AppController hands GameLua an `S0` value. `sub_10005E898` retains
         // that float as the raw delta, then performs the time-multiplier FMUL
         // in single precision before forwarding `float,float` to Lua. Keep
@@ -62,6 +78,7 @@ impl StellaLua {
         let delta_seconds = f64::from(raw_delta);
         self.recover_native_audio_output()?;
         publish_native_key_state(&self.lua, &self.native_keys)?;
+        self.apply_native_volume_key_edges()?;
         let environment = game_environment(&self.lua)?;
         // sub_10005E898 converts Lua's g_safeToQuit with lua_toboolean and
         // stores GameLua+0x6AC before applyUserZoom, touch publication and the
@@ -95,17 +112,6 @@ impl StellaLua {
             .lock()
             .expect("render bridge lock poisoned")
             .physics_enabled;
-        let needs_theme_world_limits = if physics_phase_unlocked {
-            let bridge = self.render.lock().expect("render bridge lock poisoned");
-            bridge.native_theme_frame_needs_world_limits(scaled_delta)
-        } else {
-            false
-        };
-        let theme_world_limits = if needs_theme_world_limits {
-            live_theme_world_limits(&self.lua)?
-        } else {
-            ThemeWorldLimits::default()
-        };
         if physics_phase_unlocked {
             let resources = self
                 .resource_runtime
@@ -114,7 +120,6 @@ impl StellaLua {
             let mut bridge = self.render.lock().expect("render bridge lock poisoned");
             bridge.advance_native_theme_frame_with_resources(
                 scaled_delta,
-                theme_world_limits,
                 &resources,
                 &self.data_root,
             );
@@ -269,10 +274,11 @@ impl StellaLua {
                     .lock()
                     .expect("render bridge lock poisoned")
                     .drain_pending_native_joint_destructions();
-                // sub_10005E898 reloads its original float32 frame argument
-                // and updates AimStream after Lua and particles. It is neither
-                // time-multiplied nor advanced while physics is locked.
-                self.advance_native_aim_stream(delta_seconds);
+                // sub_10005E898 reloads the scaled float32 value saved at
+                // 0x10005EC88 before the particle call, then forwards that
+                // same S8 lane to AimStream at 0x100060654..0x100060660.
+                // A fresh physics-lock read still gates the complete update.
+                self.advance_native_aim_stream(scaled_delta);
                 if std::env::var_os("STELLA_TRACE_CAMERA").is_some()
                     && let Value::Table(camera) = environment.get::<Value>("gameCamera")?
                 {
@@ -317,7 +323,7 @@ impl StellaLua {
                     .lock()
                     .expect("render bridge lock poisoned")
                     .drain_pending_native_joint_destructions();
-                self.advance_native_aim_stream(delta_seconds);
+                self.advance_native_aim_stream(scaled_delta);
                 self.finish_mouse_wheel_frame()?;
                 Ok(false)
             }
@@ -346,6 +352,12 @@ impl StellaLua {
             bridge.rect_commands.clear();
             bridge.capture_commands.clear();
             bridge.next_draw_order = 0;
+            // GameLua::draw (sub_100061BF8) tests +0xCC before looking up
+            // the Lua callback. Keep the deferred queues empty on this frame,
+            // but do not execute UI draws or their side effects while disabled.
+            if bridge.game_rendering_disabled {
+                return Ok(false);
+            }
             bridge.z_order_min = f64::NEG_INFINITY;
             bridge.z_order_max = f64::INFINITY;
         }

@@ -6,15 +6,20 @@ pub(crate) fn install_capture(
     lua: &Lua,
     resource_api: &mlua::Table,
     render: Arc<Mutex<RenderBridge>>,
+    resources: Arc<Mutex<ResourceRuntime>>,
+    data_root: Arc<PathBuf>,
 ) -> LuaResult<()> {
     resource_api.set(
         "captureSprite",
         lua.create_function(move |_, args: MultiValue| {
             let name = native_required_string(&args, 0, "captureSprite")?;
-            render
+            let mut bridge = render.lock().expect("render bridge lock poisoned");
+            let dimensions = [bridge.screen_width, bridge.screen_height];
+            let (texture_source, temporary) = resources
                 .lock()
-                .expect("render bridge lock poisoned")
-                .push_capture_command(name);
+                .expect("resource runtime lock poisoned")
+                .capture_sprite(&name, dimensions, &data_root)?;
+            bridge.push_capture_command(name, texture_source, temporary);
             Ok(())
         })?,
     )

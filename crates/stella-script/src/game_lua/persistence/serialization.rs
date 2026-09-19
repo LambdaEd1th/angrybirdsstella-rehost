@@ -6,7 +6,7 @@ use mlua::{Result as LuaResult, Table, Value};
 
 use crate::runtime_error;
 
-pub(super) fn serialize_table(table: &Table) -> LuaResult<Vec<u8>> {
+pub(crate) fn serialize_table(table: &Table) -> LuaResult<Vec<u8>> {
     let mut output = Vec::new();
     let mut table_stack = BTreeSet::new();
     serialize_table_fields(table, &mut output, 0, true, &mut table_stack)?;

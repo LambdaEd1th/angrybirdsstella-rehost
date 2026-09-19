@@ -24,10 +24,11 @@ pub(super) fn install(
         lua.create_function(move |_, args: MultiValue| {
             let path = native_required_string(&args, 0, "playVideo")?;
             // sub_100051B60 forwards the path into the platform video service.
-            video_bridge
-                .lock()
-                .expect("render bridge lock poisoned")
-                .requested_video = Some(path);
+            let mut bridge = video_bridge.lock().expect("render bridge lock poisoned");
+            bridge.requested_video = Some(path.clone());
+            bridge
+                .platform_action_requests
+                .push(PlatformActionRequest::PlayVideo { path });
             Ok(())
         })?,
     )?;

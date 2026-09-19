@@ -12,18 +12,17 @@ pub(super) fn install_background(
     globals.set(
         "drawBackgroundNative",
         lua.create_function(move |lua, args: MultiValue| {
-            let world_limits = live_theme_world_limits(lua)?;
+            let index = theme_required_f32(&args, 0, "drawBackgroundNative")?;
+            let index = native_fcvtzs_f32(index);
             let resources = resource_runtime
                 .lock()
                 .expect("resource runtime lock poisoned");
             let mut bridge = render.lock().expect("render bridge lock poisoned");
             trace_pass(&bridge, "drawBackgroundNative", false);
-            let index = theme_required_f32(&args, 0, "drawBackgroundNative")?;
-            let index = native_fcvtzs_f32(index);
+            super::camera::prepare_draw(lua, &mut bridge, false)?;
             bridge.draw_theme_pass(
                 false,
                 (index >= 0).then_some(index as usize),
-                world_limits,
                 &resources,
                 &data_root,
             );
@@ -42,13 +41,13 @@ pub(super) fn install_foreground(
     globals.set(
         "drawForegroundNative",
         lua.create_function(move |lua, _: MultiValue| {
-            let world_limits = live_theme_world_limits(lua)?;
             let resources = resource_runtime
                 .lock()
                 .expect("resource runtime lock poisoned");
             let mut bridge = render.lock().expect("render bridge lock poisoned");
             trace_pass(&bridge, "drawForegroundNative", true);
-            bridge.draw_theme_pass(true, None, world_limits, &resources, &data_root);
+            super::camera::prepare_draw(lua, &mut bridge, true)?;
+            bridge.draw_theme_pass(true, None, &resources, &data_root);
             Ok(())
         })?,
     )

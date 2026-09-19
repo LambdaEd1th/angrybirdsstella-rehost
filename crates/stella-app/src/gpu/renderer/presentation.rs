@@ -26,19 +26,11 @@ impl GpuRenderer {
         self.game_view = game_view;
         self.resolution = resolution;
 
-        let capture_names = self
-            .textures
-            .keys()
-            .filter(|name| name.starts_with("<capture:"))
-            .cloned()
-            .collect::<Vec<_>>();
-        for name in capture_names {
-            self.textures.insert(
-                name.clone(),
-                super::super::resources::create_capture_texture(&self.device, &name, resolution),
-            );
-        }
-        self.texture_bind_groups.clear();
+        // A captured Image owns its allocation independently of the current
+        // drawable. Recreate only the framebuffer source binding; retained
+        // captures keep both their pixel content and original dimensions.
+        self.capture_bind_group =
+            super::capture::bind_framebuffer(&self.device, &self.capture_layout, &self.game_view);
         if let (Some(layout), Some(sampler)) = (&self.blit_layout, &self.blit_sampler) {
             self.blit_bind_group =
                 Some(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -58,18 +50,11 @@ impl GpuRenderer {
         }
     }
 
-    pub(crate) fn render_to_window(
-        &mut self,
-        assets: &AssetCatalog,
-        frame: &PreparedFrame,
-        background_color: [u8; 3],
-        width: u32,
-        height: u32,
-    ) -> Result<()> {
+    /// Present the completed game target without replaying its command stream.
+    pub(crate) fn present_to_window(&mut self, width: u32, height: u32) -> Result<()> {
         if width == 0 || height == 0 {
             return Ok(());
         }
-        self.render_game(assets, frame, background_color)?;
         self.resize_surface(width, height);
         let surface = self
             .surface
@@ -145,6 +130,9 @@ impl GpuRenderer {
             );
             pass.draw(0..3, 0..1);
         }
+        // Skynest's native UIView is a sibling above the EAGL view, not part
+        // of its drawable. Composite only onto the acquired window surface.
+        self.encode_window_overlay(&mut encoder, &view, width, height);
         self.queue.submit([encoder.finish()]);
         self.queue.present(output);
         Ok(())

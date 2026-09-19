@@ -35,7 +35,10 @@ pub(super) fn install_level_limits(
             let limits = render
                 .lock()
                 .expect("render bridge lock poisoned")
-                .level_limits;
+                .level_limits
+                // sub_100059CF4 reads the four signed bounds at +0x608 and
+                // executes SCVTF S0 before the float-to-Lua-number push.
+                .map(|bound| (bound as i32) as f32);
             Ok((limits[0], limits[1], limits[2], limits[3]))
         })?,
     )?;

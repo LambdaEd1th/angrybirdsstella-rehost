@@ -1,6 +1,49 @@
 use super::*;
 
 #[test]
+fn aiming_aid_force_source_registration_preserves_native_order_and_duplicates() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createCircle("z_sensor", "", 0, 0, 1, 1, 0, 0,
+                    true, false, 1)
+                createCircle("a_sensor", "", 0, 0, 1, 1, 0, 0,
+                    true, false, 1)
+                createNonPhysicsObject("visual", "", 0, 0, 1)
+
+                setObjectParameter("z_sensor", 32, 1)
+                setObjectParameter("a_sensor", 32, 1)
+                setObjectParameter("z_sensor", 32, 1)
+                setObjectParameter("z_sensor", 32, 0)
+                setObjectParameter("a_sensor", 32, 2)
+                setObjectParameter("visual", 32, 1)
+                "#,
+        )
+        .unwrap();
+
+    let mut bridge = runtime.render.lock().unwrap();
+    assert_eq!(
+        bridge
+            .aiming_aid_force_sources
+            .iter()
+            .map(|source| source.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["z_sensor", "a_sensor", "z_sensor"]
+    );
+    assert_eq!(
+        bridge.aiming_aid_force_sources[0].physics_creation_order,
+        bridge.aiming_aid_force_sources[2].physics_creation_order
+    );
+    assert!(bridge.scene["z_sensor"].aiming_aid_collideable);
+    assert!(bridge.scene["a_sensor"].aiming_aid_collideable);
+    assert!(!bridge.scene["visual"].aiming_aid_collideable);
+
+    bridge.clear_native_level_scene();
+    assert!(bridge.aiming_aid_force_sources.is_empty());
+}
+
+#[test]
 fn object_parameter_switch_preserves_native_fields_and_body_type_side_effects() {
     let runtime = unlocked_test_runtime();
     runtime
@@ -393,6 +436,97 @@ fn native_motion_globals_and_collision_timer_follow_frame_pass() {
             .get::<bool>("hasMovingObjectsZeroTolerance")
             .unwrap()
     );
+}
+
+#[test]
+fn graphics_auto_flip_uses_native_velocity_sign_threshold_and_body_state_gate() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createBox("dynamic", "", 0, 0, 2, 2, 1, 0, 0, true, false, 1)
+                createBox("static", "", 0, 0, 2, 2, 0, 0, 0, true, false, 1)
+                createBox("kinematic", "", 0, 0, 2, 2, 1, 0, 0, true, false, 1)
+                createNonPhysicsObject("visual", "", 0, 0, 1)
+                setObjectParameter("dynamic", 9, 1)
+                setObjectParameter("static", 9, 1)
+                setObjectParameter("kinematic", 9, 1)
+                setObjectParameter("kinematic", 39, 1)
+                setObjectParameter("visual", 9, 1)
+                "#,
+        )
+        .unwrap();
+
+    let mut bridge = runtime.render.lock().unwrap();
+
+    {
+        let body = bridge.scene.get_mut("dynamic").unwrap();
+        body.velocity_x = -4.0;
+        body.horizontal_flip = true;
+    }
+    bridge.advance_native_scene_frame(0.0);
+    assert!(!bridge.scene["dynamic"].horizontal_flip);
+
+    // Both exact threshold values retain the preceding byte.
+    {
+        let body = bridge.scene.get_mut("dynamic").unwrap();
+        body.velocity_x = 3.0;
+        body.horizontal_flip = false;
+    }
+    bridge.advance_native_scene_frame(0.0);
+    assert!(!bridge.scene["dynamic"].horizontal_flip);
+    {
+        let body = bridge.scene.get_mut("dynamic").unwrap();
+        body.velocity_x = -3.0;
+        body.horizontal_flip = true;
+    }
+    bridge.advance_native_scene_frame(0.0);
+    assert!(bridge.scene["dynamic"].horizontal_flip);
+
+    {
+        let body = bridge.scene.get_mut("dynamic").unwrap();
+        body.velocity_x = 4.0;
+        body.horizontal_flip = false;
+    }
+    bridge.advance_native_scene_frame(0.0);
+    assert!(bridge.scene["dynamic"].horizontal_flip);
+
+    // A fully sleeping body is skipped, while the one transition frame from
+    // awake to sleeping still consumes the cached previous-awake byte.
+    {
+        let body = bridge.scene.get_mut("dynamic").unwrap();
+        body.velocity_x = -4.0;
+        body.horizontal_flip = true;
+        body.sleeping = true;
+        body.native_was_awake = false;
+    }
+    bridge.advance_native_scene_frame(0.0);
+    assert!(bridge.scene["dynamic"].horizontal_flip);
+    {
+        let body = bridge.scene.get_mut("dynamic").unwrap();
+        body.horizontal_flip = true;
+        body.native_was_awake = true;
+    }
+    bridge.advance_native_scene_frame(0.0);
+    assert!(!bridge.scene["dynamic"].horizontal_flip);
+
+    // Native requires a dynamic-mass or kinematic body. Static bodies and
+    // non-physics render objects keep their authored horizontal flip.
+    {
+        let body = bridge.scene.get_mut("static").unwrap();
+        body.velocity_x = -4.0;
+        body.horizontal_flip = true;
+        let kinematic = bridge.scene.get_mut("kinematic").unwrap();
+        kinematic.velocity_x = 4.0;
+        kinematic.horizontal_flip = false;
+        let visual = bridge.scene.get_mut("visual").unwrap();
+        visual.velocity_x = -4.0;
+        visual.horizontal_flip = true;
+    }
+    bridge.advance_native_scene_frame(0.0);
+    assert!(bridge.scene["static"].horizontal_flip);
+    assert!(bridge.scene["kinematic"].horizontal_flip);
+    assert!(bridge.scene["visual"].horizontal_flip);
 }
 
 #[test]

@@ -44,9 +44,22 @@ pub(crate) struct NativeBodyProxyState {
     pub(crate) position: (f32, f32),
 }
 
+/// One entry in GameLua+0x3A0's insertion-only `RenderObjectData*` vector.
+///
+/// Names make the native pointer portable, while the body creation token
+/// prevents a later same-name object from inheriting an earlier allocation's
+/// registration. Duplicate entries are intentional and apply force again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct NativeAimingAidForceSource {
+    pub(crate) name: String,
+    pub(crate) physics_creation_order: u64,
+}
+
 #[derive(Debug)]
 pub(crate) struct RenderBridge {
     pub(crate) state: RenderState,
+    /// GL_Context projection is outside its resettable 0x9c-byte draw state.
+    pub(crate) perspective_projection: bool,
     pub(crate) background_color: [u8; 3],
     /// GameLua+0x250..+0x258. `setTheme` stores the raw float32 sky color;
     /// the background ThemeManager draw applies it to the renderer later.
@@ -216,6 +229,8 @@ pub(crate) struct RenderBridge {
     pub(crate) theme_background_particles: NativeThemeParticles,
     pub(crate) theme_foreground_particles: NativeThemeParticles,
     pub(crate) theme_sprites: NativeThemeSprites,
+    /// GameLua+0x248, assigned before setTheme traverses its Lua definition.
+    pub(crate) theme_name: String,
     pub(crate) theme_offset_y: f64,
     pub(crate) theme_camera: ThemeCameraReference,
     pub(crate) physics_enabled: bool,
@@ -252,6 +267,12 @@ pub(crate) struct RenderBridge {
     pub(crate) requested_url: Option<String>,
     pub(crate) requested_app_store_product: Option<(String, u32)>,
     pub(crate) platform_action_requests: Vec<PlatformActionRequest>,
+    pub(crate) analytics_events: Vec<AnalyticsEvent>,
+    /// Portable equivalent of UIApplication's URL-scheme registry. Purple's
+    /// installed-app parser and AppStoreLauncher both query `canOpenURL`;
+    /// desktop hosts leave this empty unless an integration explicitly
+    /// advertises compatible handlers.
+    pub(crate) installed_url_schemes: BTreeSet<String>,
     pub(crate) screenshot_share_requests: Vec<ScreenshotShareRequest>,
     pub(crate) smooth_zooming: bool,
     pub(crate) input_zoom: NativeInputZoom,
@@ -282,6 +303,10 @@ pub(crate) struct RenderBridge {
     pub(crate) aim_stream_spawn_timer: f32,
     pub(crate) aim_stream_particles: Vec<NativeAimParticle>,
     pub(crate) selected_simulation_bird: Option<String>,
+    /// GameLua+0x3A0. Object parameter 32 appends body-backed render records
+    /// in call order without deduplicating them; the trajectory predictor
+    /// traverses this exact sequence before every one-body simulation step.
+    pub(crate) aiming_aid_force_sources: Vec<NativeAimingAidForceSource>,
     /// GameLua+0x588 selects one of the two 0x38-byte flight-trail records.
     pub(crate) trajectory_stream_index: usize,
     pub(crate) trajectory_streams: [NativeTrajectoryBuffer; 2],
@@ -354,6 +379,7 @@ impl Default for RenderBridge {
     fn default() -> Self {
         Self {
             state: RenderState::default(),
+            perspective_projection: false,
             // GameLua::GameLua stores packed 0xFFFF_FFFF at +0x238 before
             // the boot scripts select their theme background.
             background_color: [0xff; 3],
@@ -436,6 +462,7 @@ impl Default for RenderBridge {
             theme_background_particles: NativeThemeParticles::default(),
             theme_foreground_particles: NativeThemeParticles::default(),
             theme_sprites: NativeThemeSprites::default(),
+            theme_name: String::new(),
             theme_offset_y: 0.0,
             theme_camera: ThemeCameraReference::default(),
             // GameLua::GameLua (`sub_10002C274`) writes one to +0x6A8.
@@ -462,12 +489,14 @@ impl Default for RenderBridge {
             game_rendering_disabled: false,
             exit_requested: false,
             safe_to_quit: false,
-            resolution_camera_scale: 1.0,
+            resolution_camera_scale: 0.0,
             starting_camera_value: false,
             requested_video: None,
             requested_url: None,
             requested_app_store_product: None,
             platform_action_requests: Vec::new(),
+            analytics_events: Vec::new(),
+            installed_url_schemes: BTreeSet::new(),
             screenshot_share_requests: Vec::new(),
             // GameApp::GameApp stores one at +0x514 after loading the native
             // game configuration; +0x50C/+0x510 begin at -1.0f.
@@ -493,6 +522,7 @@ impl Default for RenderBridge {
             aim_stream_spawn_timer: 0.0,
             aim_stream_particles: Vec::new(),
             selected_simulation_bird: None,
+            aiming_aid_force_sources: Vec::new(),
             trajectory_stream_index: 0,
             trajectory_streams: [
                 NativeTrajectoryBuffer::default(),

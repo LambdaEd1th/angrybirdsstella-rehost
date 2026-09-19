@@ -39,6 +39,7 @@ pub(super) fn push_native_trajectory_streams(
             }
             let sprite: SharedSpriteName = stream.normal_sprite.as_str().into();
             commands.extend(stream.points.iter().map(|&(x, y)| RenderCommand {
+                projection_3d: None,
                 order: 0,
                 sprite: sprite.clone(),
                 texture: None,
@@ -65,6 +66,7 @@ pub(super) fn push_native_trajectory_streams(
                 bound_composite = Some(Arc::new(Vec::new()));
             }
             commands.push(RenderCommand {
+                projection_3d: None,
                 order: 0,
                 sprite: stream.special_sprite.as_str().into(),
                 texture: None,

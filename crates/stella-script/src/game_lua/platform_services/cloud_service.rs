@@ -29,6 +29,11 @@ pub(crate) fn announce_registrations(lua: &Lua) -> LuaResult<()> {
         }
         announce_registration(lua, service_name, table_name)?;
     }
+    // ServerTimeImpl starts a request from its native constructor and posts
+    // EID_SERVER_TIME_SYNCHRONIZED on the application thread after success.
+    // The local clock is the authoritative offline source, but the completion
+    // event must still cross the same post-bootstrap boundary.
+    crate::game_lua::time_registration::complete_initial_sync(lua)?;
     load_late_ads_facade(lua)?;
     // The native account constructor starts an automatic login independently
     // of service announcement. Complete its offline equivalent only after all

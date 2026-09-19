@@ -122,10 +122,16 @@ pub(super) fn install_skin(
             let tag = native_required_string(&args, 0, "setSkin")?;
             let skin = native_required_string(&args, 1, "setSkin")?;
             let mut runtime = runtime.lock().expect("animation runtime lock poisoned");
-            let supported = runtime
-                .definitions
-                .get(&tag)
-                .is_some_and(|definition| definition.skins.contains_key(&skin));
+            let supported = runtime.skin_sets.get(&tag).map_or_else(
+                || {
+                    !runtime.root_present
+                        && runtime
+                            .definitions
+                            .get(&tag)
+                            .is_some_and(|definition| definition.skins.contains_key(&skin))
+                },
+                |skins| skins.contains_key(&skin),
+            );
             if std::env::var_os("STELLA_TRACE_ANIMATION").is_some() {
                 eprintln!("animation-native set-skin tag={tag} skin={skin} supported={supported}");
             }

@@ -21,21 +21,21 @@ pub(super) fn install(
                 // All five registrations use generated adapter sub_10008598C.
                 let name = native_required_string(&args, 0, function_name)?;
                 let enabled = native_required_boolean(&args, 1, function_name)?;
-                if let Some(object) = flag_bridge
-                    .lock()
-                    .expect("render bridge lock poisoned")
+                let mut bridge = flag_bridge.lock().expect("render bridge lock poisoned");
+                // Every member calls throwing getRenderObject (sub_10005DAF8),
+                // including non-physics records. A retired name is not a no-op.
+                let object = bridge
                     .game_lua_object_mut(&name)
-                {
-                    match function_name {
-                        "native_setBlockCollisionEnabled" => {
-                            object.block_collision_enabled = enabled;
-                        }
-                        "native_setIgnoresScore" => object.ignores_score = enabled,
-                        "native_setKeepOrientation" => object.keep_orientation = enabled,
-                        "setRecordVelocity" => object.record_velocity = enabled,
-                        "setRevertGravity" => object.revert_gravity = enabled,
-                        _ => unreachable!("registered native object flag"),
+                    .ok_or_else(|| runtime_error(format!("Missing object: {name}")))?;
+                match function_name {
+                    "native_setBlockCollisionEnabled" => {
+                        object.block_collision_enabled = enabled;
                     }
+                    "native_setIgnoresScore" => object.ignores_score = enabled,
+                    "native_setKeepOrientation" => object.keep_orientation = enabled,
+                    "setRecordVelocity" => object.record_velocity = enabled,
+                    "setRevertGravity" => object.revert_gravity = enabled,
+                    _ => unreachable!("registered native object flag"),
                 }
                 // The 36-byte native members only resolve RenderObjectData and
                 // write one byte. They do not mirror objects.world fields.

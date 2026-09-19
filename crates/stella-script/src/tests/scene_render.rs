@@ -1197,9 +1197,29 @@ fn native_duplicate_constructor_replaces_name_pointer_but_retains_old_render_lea
 fn replacing_objects_world_retires_same_named_native_scene_before_rebuild() {
     let runtime = StellaLua::new("/tmp").unwrap();
     register_test_sprite_sheet(&runtime, &["OLD", "NEW"]);
+    {
+        let mut bridge = runtime.render.lock().unwrap();
+        bridge.physics_accumulator = 1.0_f32 / 60.0_f32;
+        bridge.rolling_audio_handles = [31, 32, 33];
+        bridge.particle_system.scale = 3.25;
+    }
     runtime
         .execute_source(
             r#"
+                particleTable = { particles = { retained = {
+                    amount=1, sprites={"OLD"}, lifeTime=10,
+                    gravityX=0, gravityY=0,
+                    minVel=0, maxVel=0,
+                    minAngleEmitter=0, maxAngleEmitter=0,
+                    minAngle=0, maxAngle=0,
+                    minAngleVel=0, maxAngleVel=0,
+                    minScaleBegin=1, maxScaleBegin=1,
+                    minScaleEnd=1, maxScaleEnd=1
+                } } }
+                particles.native_addParticlesWithMode({
+                    definitionName="retained", amount=1,
+                    x=0, y=0, w=0, h=0, angle=0, mode=1
+                })
                 createNonPhysicsObject("same", "OLD", 1, 2, 2)
                 native_setPreDrawFunction("same", function()
                     stale_callback_count = (stale_callback_count or 0) + 1
@@ -1210,6 +1230,20 @@ fn replacing_objects_world_retires_same_named_native_scene_before_rebuild() {
             "#,
         )
         .unwrap();
+    assert_eq!(
+        runtime.render.lock().unwrap().physics_accumulator,
+        1.0_f32 / 60.0_f32
+    );
+    assert_eq!(
+        runtime.render.lock().unwrap().rolling_audio_handles,
+        [31, 32, 33]
+    );
+    {
+        let bridge = runtime.render.lock().unwrap();
+        assert_eq!(bridge.particle_system.particles.len(), 1);
+        assert_eq!(bridge.particle_system.definitions.len(), 1);
+        assert_eq!(bridge.particle_system.scale, 3.25);
+    }
 
     runtime.execute_source("drawGameNative()").unwrap();
 
@@ -1424,6 +1458,7 @@ fn native_scene_composite_callback_uses_integer_bounds_pivot_and_ignores_object_
                     visible: true,
                 },
                 region: Arc::new(SpriteCatalogRegion {
+                    decoded_image: None,
                     native_sheet_id: 1,
                     texture_source: "part.pvr".to_owned(),
                     sprite: stella_assets::ka3d::SpriteRegion {
@@ -1882,7 +1917,7 @@ fn chapter01_finale_gold_transformer_reaches_native_scene_submission() {
     runtime.boot("scripts/game.lua").unwrap();
     runtime.execute_source("initializeEventSystem()").unwrap();
     runtime
-        .execute_source(
+        .execute_diagnostic_source(
             r#"
                 SpriteSheetManager.useGroupSet('INGAME')
                 currentFolder = 'Chapter01'

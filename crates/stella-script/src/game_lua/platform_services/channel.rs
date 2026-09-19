@@ -1,37 +1,128 @@
 //! Rovio Channel/Toons service lifecycle and retired-content fallback.
 
 use crate::*;
+use std::collections::VecDeque;
 
 const SDK_ENABLED_REGISTRY_KEY: &str = "stella.rovio_channel.sdk_enabled";
 
-/// Retired Channel request state retained by the native SDK owner.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
+enum Completion {
+    NewContentUpdated(i32),
+}
+
+#[derive(Debug, Default)]
+struct ChannelState {
+    pending_loading_failure: bool,
+    new_content_count: i32,
+    menu_initialised: bool,
+    launch_notification: Option<String>,
+    completions: VecDeque<Completion>,
+}
+
+/// Retired Channel request, catalog and launch-notification state retained by
+/// the native SDK owner.
+#[derive(Clone, Debug)]
 pub(crate) struct ChannelRuntime {
-    pending_loading_failure: Arc<Mutex<bool>>,
+    state: Arc<Mutex<ChannelState>>,
+    application_events: ApplicationEventScheduler,
 }
 
 impl ChannelRuntime {
+    fn new(application_events: ApplicationEventScheduler) -> Self {
+        Self {
+            state: Arc::new(Mutex::new(ChannelState::default())),
+            application_events,
+        }
+    }
+
     fn schedule_loading_failure(&self) {
-        *self
-            .pending_loading_failure
-            .lock()
-            .expect("channel completion lock poisoned") = true;
+        let mut state = self.state.lock().expect("channel state lock poisoned");
+        if !state.pending_loading_failure {
+            state.pending_loading_failure = true;
+            self.application_events
+                .post(ApplicationEvent::ChannelLoadingFailure);
+        }
     }
 
     fn cancel_loading(&self) {
-        *self
-            .pending_loading_failure
+        self.state
             .lock()
-            .expect("channel completion lock poisoned") = false;
+            .expect("channel state lock poisoned")
+            .pending_loading_failure = false;
+        self.application_events
+            .cancel(ApplicationEvent::ChannelLoadingFailure);
     }
 
     fn take_loading_failure(&self) -> bool {
         std::mem::take(
-            &mut *self
-                .pending_loading_failure
+            &mut self
+                .state
                 .lock()
-                .expect("channel completion lock poisoned"),
+                .expect("channel state lock poisoned")
+                .pending_loading_failure,
         )
+    }
+
+    fn new_content_count(&self) -> i32 {
+        self.state
+            .lock()
+            .expect("channel state lock poisoned")
+            .new_content_count
+    }
+
+    fn apply_content_count(&self, count: i32) {
+        self.state
+            .lock()
+            .expect("channel state lock poisoned")
+            .new_content_count = count;
+    }
+
+    fn initialise_menu(&self) {
+        self.state
+            .lock()
+            .expect("channel state lock poisoned")
+            .menu_initialised = true;
+    }
+
+    fn take_launch_notification(&self) -> Option<String> {
+        self.state
+            .lock()
+            .expect("channel state lock poisoned")
+            .launch_notification
+            .take()
+    }
+
+    fn pop_completion(&self) -> Option<Completion> {
+        self.state
+            .lock()
+            .expect("channel state lock poisoned")
+            .completions
+            .pop_front()
+    }
+
+    pub(crate) fn discard_loading_failure(&self) {
+        let _ = self.take_loading_failure();
+    }
+
+    pub(crate) fn discard_content_completion(&self) {
+        let _ = self.pop_completion();
+    }
+
+    pub(crate) fn submit_content_update(&self, count: i32) {
+        let mut state = self.state.lock().expect("channel state lock poisoned");
+        let count = count.max(0);
+        state
+            .completions
+            .push_back(Completion::NewContentUpdated(count));
+        self.application_events
+            .post(ApplicationEvent::ChannelContent);
+    }
+
+    pub(crate) fn submit_launch_notification(&self, content_path: String) {
+        self.state
+            .lock()
+            .expect("channel state lock poisoned")
+            .launch_notification = Some(content_path);
     }
 }
 
@@ -59,8 +150,9 @@ pub(super) fn install(
     lua: &Lua,
     globals: &mlua::Table,
     resource_runtime: Arc<Mutex<ResourceRuntime>>,
+    application_events: ApplicationEventScheduler,
 ) -> LuaResult<ChannelRuntime> {
-    let runtime = ChannelRuntime::default();
+    let runtime = ChannelRuntime::new(application_events);
     lua.set_named_registry_value(SDK_ENABLED_REGISTRY_KEY, false)?;
     resource_runtime
         .lock()
@@ -109,15 +201,55 @@ pub(super) fn install(
             Ok(())
         })?,
     )?;
-    for method in ["updateNewContent", "onMenuInitialised"] {
-        channel.set(method, lua.create_function(|_, _: MultiValue| Ok(()))?)?;
-    }
+    channel.set(
+        "updateNewContent",
+        lua.create_function(|_, _: MultiValue| {
+            // sub_1000ADB80 calls Channel::updateNewContent(Normal). The
+            // retired endpoint has no successful provider result to publish,
+            // so this submission remains a zero-result command. A compatible
+            // host provider delivers its eventual result through the retained
+            // ChannelRuntime completion queue below.
+            Ok(())
+        })?,
+    )?;
+    let menu_runtime = runtime.clone();
+    channel.set(
+        "onMenuInitialised",
+        lua.create_function(move |lua, _: MultiValue| {
+            // sub_1000ADBC0 guards only the SDK configuration block with its
+            // +0x70 byte. Its launch-notification test runs on every call and
+            // synchronously re-enters the retained root Lua object.
+            menu_runtime.initialise_menu();
+            if !lua
+                .named_registry_value::<bool>(SDK_ENABLED_REGISTRY_KEY)
+                .unwrap_or(false)
+            {
+                return Ok(());
+            }
+            let Some(content_path) = menu_runtime.take_launch_notification() else {
+                return Ok(());
+            };
+            let native_channel = lua.globals().get::<mlua::Table>("RovioChannel")?;
+            native_channel
+                .get::<mlua::Function>("onRemoteNotificationReceived")?
+                .call::<()>(content_path)
+        })?,
+    )?;
+    let count_runtime = runtime.clone();
     channel.set(
         "numOfNewContent",
-        // sub_1000ADBAC returns zero when the native Channel pointer is null.
-        // Its generated adapter then publishes that int through the native
-        // float-number setter, so retain a Lua number rather than an integer.
-        lua.create_function(|_, _: MultiValue| Ok(0.0_f64))?,
+        // sub_1000ADBAC reads the SDK's persisted `newVideos.num` value. Its
+        // generated adapter publishes that int through the native float-number
+        // setter, so retain a Lua number rather than an integer.
+        lua.create_function(move |lua, _: MultiValue| {
+            if !lua
+                .named_registry_value::<bool>(SDK_ENABLED_REGISTRY_KEY)
+                .unwrap_or(false)
+            {
+                return Ok(0.0_f64);
+            }
+            Ok(f64::from(count_runtime.new_content_count()))
+        })?,
     )?;
     channel.set(
         "isAvailable",
@@ -142,16 +274,34 @@ pub(super) fn install(
 }
 
 /// Deliver the retired SDK request result on the application thread.
-pub(crate) fn dispatch_completions(lua: &Lua, runtime: &ChannelRuntime) -> LuaResult<()> {
-    if !runtime.take_loading_failure() {
-        return Ok(());
-    }
+pub(crate) fn dispatch_loading_failure(lua: &Lua, runtime: &ChannelRuntime) -> LuaResult<()> {
     let native_channel = lua.globals().get::<mlua::Table>("RovioChannel")?;
-    // sub_1000AE41C addresses the retained native LuaObject directly and
-    // calls the member with no arguments.
-    native_channel
-        .get::<mlua::Function>("onChannelLoadingFailed")?
-        .call::<()>(())
+    if runtime.take_loading_failure() {
+        // sub_1000AE41C addresses the retained native LuaObject directly and
+        // calls the member with no arguments.
+        native_channel
+            .get::<mlua::Function>("onChannelLoadingFailed")?
+            .call::<()>(())?;
+    }
+    Ok(())
+}
+
+pub(crate) fn dispatch_content_completion(lua: &Lua, runtime: &ChannelRuntime) -> LuaResult<()> {
+    let Some(completion) = runtime.pop_completion() else {
+        return Ok(());
+    };
+    let native_channel = lua.globals().get::<mlua::Table>("RovioChannel")?;
+    match completion {
+        Completion::NewContentUpdated(count) => {
+            // Channel's success continuations persist `newVideos.num`, then
+            // delegate to sub_1000AE4AC with the same native int.
+            runtime.apply_content_count(count);
+            native_channel
+                .get::<mlua::Function>("onNewChannelContentUpdated")?
+                .call::<()>(count)?;
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn enable_service(lua: &Lua) -> LuaResult<()> {

@@ -2,7 +2,8 @@
 //!
 //! Hopper recovers 245 publication sites at `0x10002C770..0x10002F334`:
 //! `createDirectory` and `checkDirectory` are each replaced once, leaving 243
-//! unique global callable names listed here. The `particles` table member is
+//! unique names. One of those, `uniqueDeviceId`, is a string data field, so
+//! the 242 global callable names are listed here. The `particles` table member is
 //! registered later, after the constructor's global data-field publications.
 
 pub(crate) const REGISTERED_GLOBAL_FUNCTIONS: &[&str] = &[
@@ -19,7 +20,6 @@ pub(crate) const REGISTERED_GLOBAL_FUNCTIONS: &[&str] = &[
     "verifyDeviceID",
     "getDeviceID",
     "checkRegistrationResult",
-    "uniqueDeviceId",
     "setGravityForceMultiplier",
     "getGravityForceMultiplier",
     "setWaterForceMultiplier",

@@ -7,11 +7,13 @@ use crate::*;
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct UiTextTransform {
-    pub(super) x: f64,
-    pub(super) y: f64,
-    pub(super) scale_x: f64,
-    pub(super) scale_y: f64,
-    pub(super) angle: f64,
+    pub(super) x: f32,
+    pub(super) y: f32,
+    pub(super) scale_x: f32,
+    pub(super) scale_y: f32,
+    pub(super) angle: f32,
+    pub(super) cosine: f32,
+    pub(super) sine: f32,
 }
 
 pub(crate) fn install(
@@ -34,9 +36,11 @@ pub(crate) fn install(
                 .and_then(value_table)
                 .ok_or_else(|| runtime_error("drawUITextNative argument 1 must be table"))?;
             let parent_x = value_number_at(&args, 1)
-                .ok_or_else(|| runtime_error("drawUITextNative argument 2 must be number"))?;
+                .ok_or_else(|| runtime_error("drawUITextNative argument 2 must be number"))?
+                as f32;
             let parent_y = value_number_at(&args, 2)
-                .ok_or_else(|| runtime_error("drawUITextNative argument 3 must be number"))?;
+                .ok_or_else(|| runtime_error("drawUITextNative argument 3 must be number"))?
+                as f32;
             let argument_count = args.len();
             // sub_100031434 reads the two parent scales only when both
             // arguments are present. With exactly four arguments, argument 4
@@ -45,25 +49,26 @@ pub(crate) fn install(
                 (
                     value_number_at(&args, 3).ok_or_else(|| {
                         runtime_error("drawUITextNative argument 4 must be number")
-                    })?,
+                    })? as f32,
                     value_number_at(&args, 4).ok_or_else(|| {
                         runtime_error("drawUITextNative argument 5 must be number")
-                    })?,
+                    })? as f32,
                 )
             } else {
-                (1.0, 1.0)
+                (1.0_f32, 1.0_f32)
             };
             let parent_angle = if argument_count >= 6 {
                 value_number_at(&args, 5)
                     .ok_or_else(|| runtime_error("drawUITextNative argument 6 must be number"))?
+                    as f32
             } else {
-                0.0
+                0.0_f32
             };
             let supplied_alpha =
                 if argument_count >= 7 {
                     Some(value_number_at(&args, 6).ok_or_else(|| {
                         runtime_error("drawUITextNative argument 7 must be number")
-                    })?)
+                    })? as f32)
                 } else {
                     None
                 };
@@ -71,20 +76,37 @@ pub(crate) fn install(
             if !matches!(text.get::<Value>("visible")?, Value::Boolean(true)) {
                 return Ok(());
             }
-            let local_x = table_required_number(&text, "x", "drawUITextNative")?;
-            let local_y = table_required_number(&text, "y", "drawUITextNative")?;
-            let local_scale_x = table_required_number(&text, "scaleX", "drawUITextNative")?;
-            let local_scale_y = table_required_number(&text, "scaleY", "drawUITextNative")?;
+            // sub_100031594..0x10003181C evaluates the two trig functions and
+            // every table scalar in float32 S registers. The native fetches X
+            // and Y twice because each rotated component is assembled after a
+            // separate Lua-table lookup; preserve that observable order too.
+            let cosine = parent_angle.cos();
+            let local_x_for_x = table_required_number(&text, "x", "drawUITextNative")? as f32;
+            let sine = parent_angle.sin();
+            let local_y_for_x = table_required_number(&text, "y", "drawUITextNative")? as f32;
+            let local_x_for_y = table_required_number(&text, "x", "drawUITextNative")? as f32;
+            let local_y_for_y = table_required_number(&text, "y", "drawUITextNative")? as f32;
+            let local_scale_x = table_required_number(&text, "scaleX", "drawUITextNative")? as f32;
+            let local_scale_y = table_required_number(&text, "scaleY", "drawUITextNative")? as f32;
             select_font(&text, &text_render_resources)?;
 
-            let cosine = parent_angle.cos();
-            let sine = parent_angle.sin();
+            // 0x1000317F0..0x10003181C: three FMULs followed by FNMSUB for X,
+            // three FMULs followed by FMADD for Y, then two scale FMULs. Using
+            // mul_add at the same final step retains Purple's single rounding.
+            let cosine_local_x = cosine * local_x_for_x;
+            let scaled_sine_local_y = parent_scale_y * (sine * local_y_for_x);
+            let offset_x = parent_scale_x.mul_add(cosine_local_x, -scaled_sine_local_y);
+            let sine_local_x = sine * local_x_for_y;
+            let scaled_cosine_local_y = parent_scale_y * (cosine * local_y_for_y);
+            let offset_y = parent_scale_x.mul_add(sine_local_x, scaled_cosine_local_y);
             let transform = UiTextTransform {
-                x: parent_x + parent_scale_x * cosine * local_x - parent_scale_y * sine * local_y,
-                y: parent_y + parent_scale_x * sine * local_x + parent_scale_y * cosine * local_y,
+                x: parent_x + offset_x,
+                y: parent_y + offset_y,
                 scale_x: parent_scale_x * local_scale_x,
                 scale_y: parent_scale_y * local_scale_y,
                 angle: parent_angle,
+                cosine,
+                sine,
             };
 
             if matches!(text.get::<Value>("clipped")?, Value::Boolean(true)) {

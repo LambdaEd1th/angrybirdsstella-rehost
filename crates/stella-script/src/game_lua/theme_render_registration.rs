@@ -1,5 +1,6 @@
 //! Theme member registration in `sub_10002C274` relative order.
 
+pub(crate) mod camera;
 mod lifecycle;
 mod offsets;
 mod passes;

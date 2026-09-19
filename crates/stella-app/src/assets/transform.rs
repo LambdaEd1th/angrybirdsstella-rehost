@@ -1,39 +1,51 @@
 use super::*;
 
-pub(crate) fn project_text_3d(
-    resolution: GameResolution,
-    translate_x: f64,
-    translate_y: f64,
-    projection: TextProjection3D,
-    local_x: f64,
-    local_y: f64,
-) -> Option<[f64; 2]> {
+pub(crate) fn native_project_clip(projection: TextProjection3D, point: [f32; 3]) -> [f32; 4] {
     // sub_10057BAE0 creates Purple's row-major perspective matrix from
     // (-1.5, 0.001, 2000, -1.33). sub_10057BE78 then installs the model's
     // X-axis rotation before the bitmap-font vertices are submitted.
-    let rotation_x = projection.rotation_x as f32;
-    let (sine, cosine) = rotation_x.sin_cos();
-    let local_x = local_x as f32;
-    let local_y = local_y as f32;
-    let world_x = translate_x as f32 + local_x;
-    let world_y = cosine.mul_add(local_y, translate_y as f32);
-    let world_z = sine.mul_add(local_y, projection.z as f32);
-    if !world_z.is_finite() || world_z <= 0.001_f32 {
-        return None;
-    }
+    // 0x10057BEC0..0x10057BF64 builds a quaternion from the half-angle.
+    // Its matrix coefficients differ in rounding from sin/cos(full angle).
+    let (half_sine, half_cosine) = (projection.rotation_x * 0.5).sin_cos();
+    let sine_product = half_cosine * half_sine;
+    let sine = sine_product + sine_product;
+    let cosine = (-(half_sine * half_sine)).mul_add(2.0, 1.0);
+    let model = [
+        [1.0, 0.0, 0.0, projection.x],
+        [0.0, cosine, -sine, projection.y],
+        [0.0, sine, cosine, projection.z],
+        [0.0, 0.0, 0.0, 1.0],
+    ];
     let focal = (1.0_f32 / (-1.5_f32 * 0.5_f32).tan()).abs();
     // sub_10057BAE0 preserves this nominally cancelling near-plane scale as
     // FADD, FMUL, FMUL, FDIV. Keep the rounded matrix element, rather than
     // algebraically reducing it to `focal * -1.33`.
     let doubled_near = 0.001_f32 + 0.001_f32;
     let vertical_scale = (doubled_near * (focal * -1.33_f32)) / doubled_near;
-    let ndc_x = focal * world_x / world_z;
-    let ndc_y = vertical_scale * world_y / world_z;
-    let screen = [
-        f64::from((ndc_x + 1.0_f32) * (resolution.width as f32 * 0.5_f32)),
-        f64::from((1.0_f32 - ndc_y) * (resolution.height as f32 * 0.5_f32)),
+    let depth_scale = 2000.0_f32 / (2000.0_f32 - 0.001_f32);
+    let perspective = [
+        [focal, 0.0, 0.0, 0.0],
+        [0.0, vertical_scale, 0.0, 0.0],
+        [0.0, 0.0, depth_scale, -(depth_scale * 0.001)],
+        [0.0, 0.0, 1.0, 0.0],
     ];
-    screen.into_iter().all(f64::is_finite).then_some(screen)
+    // ImmediateBatch::flush multiplies projection * model first. Retain
+    // sub_10057BB7C's FMUL(second term), then FMLA(first, third, fourth).
+    let total: [[f32; 4]; 4] = std::array::from_fn(|row| {
+        std::array::from_fn(|column| {
+            let second = perspective[row][1] * model[1][column];
+            let first = perspective[row][0].mul_add(model[0][column], second);
+            let third = perspective[row][2].mul_add(model[2][column], first);
+            perspective[row][3].mul_add(model[3][column], third)
+        })
+    });
+    // The caller preserves each GL_Image overload's input space and z.
+    // Keep w until rasterization, permitting native homogeneous clipping and
+    // perspective-correct texture interpolation across a tilted glyph.
+    total.map(|row| {
+        let value = row[0].mul_add(point[0], row[1] * point[1]);
+        row[2].mul_add(point[2], value) + row[3]
+    })
 }
 
 impl SpriteTransform {
@@ -83,11 +95,15 @@ pub(crate) fn text_glyph_transform(
 ) -> SpriteTransform {
     if let Some([m00, m01, m10, m11]) = command.matrix {
         let [m00, m01, m10, m11] = [m00, m01, m10, m11].map(|value| value as f32);
+        let [position_m00, position_m01, position_m10, position_m11] = command
+            .position_matrix
+            .unwrap_or([m00, m01, m10, m11].map(f64::from))
+            .map(|value| value as f32);
         let cursor = cursor as f32;
         let anchor_y = anchor_y as f32;
         return SpriteTransform {
-            x: m00.mul_add(cursor, m01 * anchor_y) + command.x as f32,
-            y: m10.mul_add(cursor, m11 * anchor_y) + command.y as f32,
+            x: position_m00.mul_add(cursor, position_m01 * anchor_y) + command.x as f32,
+            y: position_m10.mul_add(cursor, position_m11 * anchor_y) + command.y as f32,
             m00,
             m01,
             m10,

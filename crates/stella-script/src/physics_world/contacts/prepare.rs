@@ -142,21 +142,26 @@ pub(crate) fn prepare_native_contact_callbacks(
             // Block/block contacts use one symmetric base force, followed by
             // asymmetric material damage multipliers.
             let force = bridge.native_symmetric_collision_force(event, force_damage_multiplier);
-            bridge.trigger_native_contact_bounce(event, force);
             let second_attacks_first =
                 native_collision_force_factors(lua, &event.second, &event.first)?;
             let first_attacks_second =
                 native_collision_force_factors(lua, &event.first, &event.second)?;
-            let first_damage = native_apply_collision_damage(
+            // 0x100063FC0 captures S8 before either strength write, joint
+            // removal notifications, or blockCollision can change Lua state.
+            let previous_score = native_capture_block_collision_score(lua)?;
+            let first_damage = native_apply_scaled_collision_damage(
                 lua,
                 &event.first,
-                f64::from((force as f32) * (second_attacks_first.damage_multiplier as f32)),
+                force as f32,
+                second_attacks_first.damage_multiplier as f32,
             )?;
-            let second_damage = native_apply_collision_damage(
+            let second_damage = native_apply_scaled_collision_damage(
                 lua,
                 &event.second,
-                f64::from((force as f32) * (first_attacks_second.damage_multiplier as f32)),
+                force as f32,
+                first_attacks_second.damage_multiplier as f32,
             )?;
+            bridge.trigger_native_contact_bounce(event, force);
             extend_unique_joint_names(
                 &mut broken_joints,
                 bridge.break_joints_attached_to(&event.first, force),
@@ -173,25 +178,39 @@ pub(crate) fn prepare_native_contact_callbacks(
                 .scene
                 .get(&event.second)
                 .is_some_and(|object| object.ignores_score);
+            let mut score_damage = if first_scores {
+                first_damage.score_damage.unwrap_or(0.0)
+            } else {
+                0.0
+            };
+            if let Some(damage) = second_damage.score_damage {
+                // Native 0x100064BCC adds in float32 before the second
+                // object's +0x14D test. That flag clears the whole running
+                // total; skipped second damage never reaches that test.
+                score_damage += damage;
+                if !second_scores {
+                    score_damage = 0.0;
+                }
+            }
             contact_callbacks.push(NativeContactCallback::Block {
                 first: event.first.clone(),
                 second: event.second.clone(),
                 force,
                 damaged: first_damage.attempted || second_damage.attempted,
-                second_damage: second_damage.reported_damage,
+                // 0x100064B68 overwrites the shared raw-damage slot only
+                // after the second hit passes ignoreAllDamage and defence.
+                // A skipped second hit preserves the first hit's payload.
+                collision_damage: if second_damage.score_damage.is_some() {
+                    second_damage.reported_damage
+                } else {
+                    first_damage.reported_damage
+                },
                 point_x: event.point_x,
                 point_y: event.point_y,
                 normal_x: event.normal_x,
                 normal_y: event.normal_y,
-                score_damage: if first_scores {
-                    first_damage.applied_damage
-                } else {
-                    0.0
-                } + if second_scores {
-                    second_damage.applied_damage
-                } else {
-                    0.0
-                },
+                score_damage: f64::from(score_damage),
+                previous_score,
             });
         }
     }

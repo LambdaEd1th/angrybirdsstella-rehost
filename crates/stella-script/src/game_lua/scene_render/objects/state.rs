@@ -145,6 +145,7 @@ impl RenderBridge {
             )
         });
         RenderState {
+            custom_model: self.state.custom_model,
             translate_x: f64::from(translate_x),
             translate_y: f64::from(translate_y),
             scale_x: f64::from(scale_x),
@@ -189,6 +190,7 @@ impl RenderBridge {
         // still separate from the object transform passed to the callback.
         if object.flash_animation || object.ray.is_some() {
             return RenderState {
+                custom_model: self.state.custom_model,
                 translate_x: f64::from(-(self.top_left_x as f32)),
                 translate_y: f64::from(-(self.top_left_y as f32)),
                 scale_x: f64::from(world_scale),
@@ -211,6 +213,7 @@ impl RenderBridge {
             let scale_x = object.scale_x as f32;
             let scale_y = object.scale_y as f32;
             return RenderState {
+                custom_model: self.state.custom_model,
                 translate_x: f64::from(-(self.top_left_x as f32) / scale_x),
                 translate_y: f64::from(-(self.top_left_y as f32) / scale_y),
                 scale_x: f64::from(world_scale * scale_x),
@@ -261,6 +264,7 @@ impl RenderBridge {
         // sub_10006D5B4 divides the secondary translation by object scale so
         // the camera contribution remains scale-independent.
         RenderState {
+            custom_model: self.state.custom_model,
             translate_x: f64::from(translate_x),
             translate_y: f64::from(translate_y),
             scale_x: f64::from(scale_x),

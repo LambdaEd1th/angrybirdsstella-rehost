@@ -10,6 +10,52 @@ const ROLLING_AUDIO: [(&str, usize); 3] = [
 ];
 
 impl StellaLua {
+    /// Apply the two platform volume-key press edges owned by GameApp's outer
+    /// frame, after the native key tables have been published and before
+    /// `GameLua::update` observes them.
+    ///
+    /// `sub_1000293C8` handles `VOLUME_UP` first and `VOLUME_DOWN` second. For
+    /// each edge it reads the live AudioOutput master volume (or zero when no
+    /// output exists), performs the add and clamp in float32, writes the
+    /// output when present, then publishes that same float into
+    /// `settings.volume`.
+    pub(super) fn apply_native_volume_key_edges(&self) -> Result<(), ScriptError> {
+        let pressed = native_lua_object(&self.lua, NativeLuaObject::KeyPressed)?
+            .ok_or_else(|| runtime_error("keyPressed is not a table"))?;
+        for (key, delta) in [("VOLUME_UP", 0.1_f32), ("VOLUME_DOWN", -0.1_f32)] {
+            if !pressed.get::<bool>(key)? {
+                continue;
+            }
+
+            let volume = {
+                let mut resources = self
+                    .resource_runtime
+                    .lock()
+                    .expect("resource runtime lock poisoned");
+                let current = if resources.audio_output_created {
+                    resources.master_volume
+                } else {
+                    0.0
+                };
+                let adjusted = current + delta;
+                let volume = if adjusted >= 0.0 {
+                    adjusted.min(1.0)
+                } else {
+                    0.0
+                };
+                if resources.audio_output_created {
+                    resources.master_volume = volume;
+                }
+                volume
+            };
+
+            let environment = game_environment(&self.lua)?;
+            let settings = environment.get::<mlua::Table>("settings")?;
+            settings.set("volume", f64::from(volume))?;
+        }
+        Ok(())
+    }
+
     /// Return the exact nested Boolean stored at
     /// `settings.root.audioEnabled`. The activation virtual treats absence or
     /// a different type as enabled, while GameLua's frame-head recovery path
@@ -92,15 +138,24 @@ impl StellaLua {
                 // LuaResources::stopAudio(resource) marks every instance of
                 // the resource. The cached GameLua handle is deliberately not
                 // cleared by this branch.
-                audio.clips.retain(|_, clip| clip.name != name);
+                for clip in audio.clips.values_mut().filter(|clip| clip.name == name) {
+                    clip.finished = true;
+                }
                 continue;
             }
 
-            let already_playing = audio.clips.values().any(|clip| clip.name == name);
+            let already_playing = audio
+                .clips
+                .values()
+                .any(|clip| clip.name == name && !clip.finished);
             if already_playing {
                 // AudioManager::setVolume walks both instance vectors and
                 // silently ignores a stale integer handle.
-                if let Some(clip) = audio.clips.get_mut(&handles[handle_index]) {
+                if let Some(clip) = audio
+                    .clips
+                    .get_mut(&handles[handle_index])
+                    .filter(|clip| !clip.finished)
+                {
                     clip.volume = level;
                 }
             } else if output_started && available[index] {

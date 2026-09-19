@@ -3,14 +3,15 @@
 use super::*;
 
 impl StellaApp {
-    pub(super) fn view_did_disappear(&mut self) {
-        let had_primary_pointer = self.primary_touch.take().is_some() || self.cursor_down;
+    /// Mirror `MyEAGLViewController::resetTouches`, followed by the host-side
+    /// state which AppController's activation virtual clears. This is not
+    /// `viewDidDisappear:`: startUpdate/stopUpdate must discard a held primary
+    /// pointer without manufacturing an LBUTTON release edge.
+    pub(super) fn reset_platform_input(&mut self) {
+        self.primary_touch = None;
         self.touches.clear();
         self.cursor_down = false;
         self.modifiers = ModifiersState::empty();
-        if let Err(error) = self.runtime.view_did_disappear(had_primary_pointer) {
-            self.fatal_error = Some(error.to_string());
-        }
     }
 
     pub(super) fn update_keyboard(&mut self, event: winit::event::KeyEvent) {
@@ -59,6 +60,7 @@ impl StellaApp {
         let size = window.inner_size();
         let (x, y) =
             map_window_to_game(window_x, window_y, size.width, size.height, self.resolution);
+        let (x, y) = native_cursor_coordinates(x, y);
         self.cursor = (x, y);
         if let Err(error) = self.runtime.set_cursor(x, y, self.cursor_down) {
             self.fatal_error = Some(error.to_string());
@@ -79,8 +81,8 @@ impl StellaApp {
         // MyEAGLViewController multiplies by contentScaleFactor and then uses
         // FCVTZS before constructing framework::TouchEvent.
         let point = (id, x as i32, y as i32);
-        let cursor_x = f64::from(point.1);
-        let cursor_y = f64::from(point.2);
+        let (cursor_x, cursor_y) =
+            native_cursor_coordinates(f64::from(point.1), f64::from(point.2));
         update_native_touch_vector(&mut self.touches, phase, point);
         match phase {
             TouchPhase::Started => {
@@ -156,10 +158,15 @@ pub(crate) fn map_window_to_game(
     let viewport_height = resolution.height as f64 * scale;
     let left = (width as f64 - viewport_width) * 0.5;
     let top = (height as f64 - viewport_height) * 0.5;
-    (
-        ((x - left) / scale).clamp(0.0, resolution.width as f64),
-        ((y - top) / scale).clamp(0.0, resolution.height as f64),
-    )
+    ((x - left) / scale, (y - top) / scale)
+}
+
+/// GameApp cursor slot 8 (`sub_100029F8C`) accepts signed integer coordinates
+/// and stores each through a float32 Lua adapter. Preserve both conversions;
+/// in particular, active drags outside the drawable remain negative/oversized
+/// rather than snapping to its edge.
+fn native_cursor_coordinates(x: f64, y: f64) -> (f64, f64) {
+    (f64::from((x as i32) as f32), f64::from((y as i32) as f32))
 }
 
 #[cfg(test)]
@@ -179,5 +186,14 @@ mod tests {
 
         update_native_touch_vector(&mut touches, TouchPhase::Ended, (7, 90, 100));
         assert_eq!(touches, [(8, 50, 60)]);
+    }
+
+    #[test]
+    fn native_cursor_coordinates_truncate_and_preserve_out_of_view_drags() {
+        assert_eq!(native_cursor_coordinates(123.875, -45.625), (123.0, -45.0));
+        assert_eq!(
+            native_cursor_coordinates(16_777_217.0, -16_777_217.0),
+            (16_777_216.0, -16_777_216.0)
+        );
     }
 }

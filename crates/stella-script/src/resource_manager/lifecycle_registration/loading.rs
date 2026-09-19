@@ -94,7 +94,9 @@ fn required_native_integer(object: &Map<String, Value>, field: &str) -> LuaResul
         .and_then(Value::as_number)
         .ok_or_else(|| invalid_json_field(field, "number"))?;
     // sub_10055AE64 preserves parser integers as signed i64. Parser doubles
-    // use FCVTZS X8,D0, including integer-indefinite on invalid conversion.
+    // use FCVTZS X8,D0: signed saturation and NaN-to-zero, not x86's
+    // integer-indefinite result. Preserve the 64-bit conversion before
+    // narrowing: positive overflow therefore has a low signed word of -1.
     // sub_10055D93C then exposes only the low W word at map-node +0xa0.
     if let Some(value) = number.as_i64() {
         return Ok(value as i32);
@@ -105,12 +107,11 @@ fn required_native_integer(object: &Map<String, Value>, field: &str) -> LuaResul
     let value = number
         .as_f64()
         .ok_or_else(|| invalid_json_field(field, "number"))?;
-    let integer = if !value.is_finite() || !(i64::MIN as f64..-(i64::MIN as f64)).contains(&value) {
-        i64::MIN
-    } else {
-        value.trunc() as i64
-    };
-    Ok(integer as i32)
+    Ok(native_json_double_integer_view(value))
+}
+
+fn native_json_double_integer_view(value: f64) -> i32 {
+    (value as i64) as i32
 }
 
 fn optional_number(object: &Map<String, Value>, field: &str) -> LuaResult<Option<f64>> {
@@ -325,7 +326,87 @@ fn parse_json_composite_part(value: &Value) -> LuaResult<CompositePart> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_json_composite_set, parse_json_sprite_sheet};
+    use super::{
+        native_json_double_integer_view, parse_json_composite_set, parse_json_sprite_sheet,
+    };
+
+    #[test]
+    fn json_double_integer_view_saturates_to_i64_before_low_word_narrowing() {
+        for (value, expected) in [
+            (f64::NAN, 0),
+            (f64::INFINITY, -1),
+            (f64::NEG_INFINITY, 0),
+            (9_223_372_036_854_775_808.0, -1),
+            (-9_223_372_036_854_775_808.0, 0),
+            (f64::MAX, -1),
+            (-f64::MAX, 0),
+            (4_294_967_295.75, -1),
+            (4_294_967_296.75, 0),
+            (-4_294_967_297.75, -1),
+        ] {
+            assert_eq!(
+                native_json_double_integer_view(value),
+                expected,
+                "{value:?}"
+            );
+        }
+
+        // Exercise the actual JSON-number accessor and Sprite STRH boundary,
+        // not just the scalar helper. Finite JSON doubles may exceed i64.
+        let source = serde_json::json!({
+            "meta": {"app": "http://www.texturepacker.com", "image": "atlas.png"},
+            "frames": [{
+                "filename": "SATURATED",
+                "frame": {"x": 1e100, "y": -1e100, "w": 1e100, "h": 4},
+                "rotated": false
+            }]
+        });
+        let sheet = parse_json_sprite_sheet(&source).unwrap();
+        let sprite = &sheet.sprites[0];
+        assert_eq!(
+            (sprite.x, sprite.y, sprite.width, sprite.height),
+            (-1, 0, -1, 4)
+        );
+        assert_eq!((sprite.pivot_x, sprite.pivot_y), (0, 2));
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn json_double_integer_view_matches_actual_arm64_fcvtzs_x_then_low_word() {
+        let mut bits = 0x9862_3589_932A_B430u64;
+        for fixed in [
+            0,
+            0x7FF0_0000_0000_0000,
+            0xFFF0_0000_0000_0000,
+            0x7FF8_0000_0000_0000,
+            0x43E0_0000_0000_0000,
+            0xC3E0_0000_0000_0000,
+        ] {
+            for index in 0..1024 {
+                bits = bits
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1_442_695_040_888_963_407);
+                let value = f64::from_bits(if index == 0 { fixed } else { bits });
+                let native: i64;
+                // SAFETY: register-only FCVTZS X,D from Purple's JSON
+                // conversion, with no stack or memory access.
+                unsafe {
+                    std::arch::asm!(
+                        "fcvtzs {result:x}, {value:d}",
+                        result = out(reg) native,
+                        value = in(vreg) value,
+                        options(nomem, nostack),
+                    );
+                }
+                assert_eq!(
+                    native_json_double_integer_view(value),
+                    native as i32,
+                    "bits={:016x}",
+                    value.to_bits()
+                );
+            }
+        }
+    }
 
     #[test]
     fn json_loader_families_and_empty_composites_match_native_dispatch() {

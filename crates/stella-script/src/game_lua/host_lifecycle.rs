@@ -1,13 +1,14 @@
 //! GameApp activation callbacks adjacent to the platform display-link owner.
 
-use super::{StellaLua, input::NATIVE_FRAME_KEYS};
+use super::StellaLua;
 use crate::*;
 
 impl StellaLua {
     /// Reproduce GameApp's activation virtual at `sub_100029BE8`. Both the
     /// start and stop display-link paths clear the complete platform hold
     /// buffer and native touch vector before GameLua receives its callback.
-    /// The press/release edge buffers are intentionally not cleared here.
+    /// The press/release edge buffers and last frame's published Lua input
+    /// tables are intentionally not cleared here.
     pub fn set_application_active(&self, active: bool) -> Result<(), ScriptError> {
         self.set_touches(&[])?;
         self.native_keys
@@ -15,21 +16,10 @@ impl StellaLua {
             .expect("native key-buffer lock poisoned")
             .clear_holds();
         let environment = game_environment(&self.lua)?;
-        if let Some(table) = native_lua_object(&self.lua, NativeLuaObject::KeyHold)? {
-            for key in NATIVE_FRAME_KEYS {
-                table.raw_set(key, false)?;
-            }
-            table.raw_set(1, Value::Nil)?;
-        }
-        for table_name in ["g_keyHold", "g_keyHoldNotBlocked"] {
-            let Value::Table(table) = environment.get::<Value>(table_name)? else {
-                continue;
-            };
-            for key in NATIVE_FRAME_KEYS {
-                table.raw_set(key, false)?;
-            }
-            table.raw_set(1, Value::Nil)?;
-        }
+        // sub_100401678 mutates only GameApp's platform bytes/vector. It does
+        // not republish GameLua's keyHold/touches tables, so gamePaused or
+        // gameResumed still sees the preceding frame snapshot; the first
+        // resumed update replaces it with the cleared platform state.
         // GameLua::setActive stores the new byte first, but suppresses all
         // platform/Lua resume-pause dispatch while its +0x513 gamelogic-load
         // byte is still zero.
@@ -41,6 +31,13 @@ impl StellaLua {
             callback.call::<()>(())?;
         }
         Ok(())
+    }
+
+    /// Post the SDK activation event after GameApp's resume callback and
+    /// before its audio activation. Native AppController404D14 ->0B1F48 ->
+    /// 6827BC uses the delayed scheduler; this does not run SDK consumers now.
+    pub fn post_application_resumed(&self) {
+        self.social.post_application_resumed();
     }
 
     /// Reproduce the following GameApp audio-activation virtual at

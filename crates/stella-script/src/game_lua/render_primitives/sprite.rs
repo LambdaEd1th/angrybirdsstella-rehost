@@ -26,6 +26,7 @@ pub(crate) fn native_direct_sprite_command(
         f64::from(cosine * scale_y),
     ];
     RenderCommand {
+        projection_3d: None,
         order: 0,
         sprite,
         texture: None,

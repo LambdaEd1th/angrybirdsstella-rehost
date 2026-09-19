@@ -186,7 +186,9 @@ pub(crate) fn install(
             let mut audio = release_audio_playback
                 .lock()
                 .expect("audio runtime lock poisoned");
-            audio.clips.retain(|_, clip| clip.name != name);
+            for clip in audio.clips.values_mut().filter(|clip| clip.name == name) {
+                clip.finished = true;
+            }
             audio.composite_clips.remove(&name);
             audio.assets.remove(&name);
             Ok(())

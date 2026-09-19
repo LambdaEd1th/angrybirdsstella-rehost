@@ -12,13 +12,85 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_TEST_SPRITE_SHEET_ID: AtomicU64 = AtomicU64::new(0);
 
+impl StellaLua {
+    /// Execute a test probe with a lexical assertion, independent of the
+    /// shipped release initAssertions no-op. The factory preserves the probe's
+    /// empty top-level varargs and lets its callbacks capture this assertion.
+    /// Neither the game environment nor `_G.assert` is rebound. Explicit game
+    /// assertions must therefore be checked separately, not used as probes.
+    fn execute_diagnostic_source(&self, source: &str) -> Result<(), ScriptError> {
+        let raise = self.lua.globals().raw_get::<Function>("error")?;
+        let factory = self
+            .lua
+            .load(format!(
+                r#"return function(raise)
+                    local function assert(value, ...)
+                        if not value then
+                            local message = (...)
+                            if message == nil then message = "assertion failed!" end
+                            raise(message, 2)
+                        end
+                        return value, ...
+                    end
+                    return function(...)
+                    {source}
+                    end
+                end"#
+            ))
+            .set_name("[stella-test-diagnostic]")
+            .set_environment(game_environment(&self.lua)?)
+            .eval::<Function>()?;
+        factory.call::<Function>(raise)?.call::<()>(())?;
+        Ok(())
+    }
+}
+
+#[test]
+fn post_boot_diagnostic_assertions_fail_without_changing_game_assertions() {
+    let sandbox = ShippedDataSandbox::new("diagnostic-assertions");
+    let runtime = StellaLua::new(&sandbox.data_root).unwrap();
+    runtime.boot("scripts/game.lua").unwrap();
+    let original = runtime.lua.globals().raw_get::<Function>("assert").unwrap();
+    // This is the shipped release behavior, not an acceptance assertion.
+    runtime
+        .execute_source("assert(false, 'release no-op')")
+        .unwrap();
+    let error = runtime
+        .execute_diagnostic_source("assert(false, 'post-boot diagnostic must fail')")
+        .unwrap_err();
+    assert!(error.to_string().contains("post-boot diagnostic must fail"));
+    runtime
+        .execute_diagnostic_source(
+            r#"
+                assert(select('#', ...) == 0)
+                local a, b, c = assert(true, "tail", 42)
+                assert(a == true and b == "tail" and c == 42)
+                laterDiagnosticProbe = function()
+                    assert(false, "later diagnostic must fail")
+                end
+            "#,
+        )
+        .unwrap();
+    let error = runtime
+        .execute_source("laterDiagnosticProbe()")
+        .unwrap_err();
+    assert!(error.to_string().contains("later diagnostic must fail"));
+    let unchanged = runtime.lua.globals().raw_get::<Function>("assert").unwrap();
+    assert_eq!(original.to_pointer(), unchanged.to_pointer());
+    runtime
+        .execute_source("_G.assert(false, 'still disabled'); gamelua.assert(false)")
+        .unwrap();
+}
+
 /// Most subsystem tests enter at an already running GameLua frame rather
 /// than replaying the shipped startup scripts. Release the constructor's
 /// native unnamed physics lock explicitly for those fixtures.
 fn unlocked_test_runtime() -> StellaLua {
     let runtime = StellaLua::new("/tmp").unwrap();
     runtime
-        .execute_source("g_outOfBoundariesObjects = {}; setPhysicsEnabled(true)")
+        .execute_source(
+            "g_outOfBoundariesObjects = {}; scoreTable = { blocks = { score = 0 } }; setPhysicsEnabled(true)",
+        )
         .unwrap();
     runtime
 }
@@ -143,6 +215,7 @@ fn bind_test_animation_sprites(runtime: &mut AnimationRuntime, tag: &str, sprite
                 (
                     (*name).to_owned(),
                     SpriteCatalogRegion {
+                        decoded_image: None,
                         native_sheet_id: 1,
                         texture_source: "test-animation.pvr".to_owned(),
                         sprite: stella_assets::ka3d::SpriteRegion {
@@ -263,6 +336,7 @@ mod data_loaders;
 mod definitions;
 mod dirt;
 mod discrete_world;
+mod gameflow;
 mod global_render_state;
 mod gravity_visuals;
 mod joint_construction;
@@ -271,6 +345,7 @@ mod narrow_phase;
 mod object_motion;
 mod object_render_state;
 mod particles;
+mod persistent_load;
 mod physics_queries;
 mod platform_services;
 mod position_constraints;

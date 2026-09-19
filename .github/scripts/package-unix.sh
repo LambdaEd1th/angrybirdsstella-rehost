@@ -23,7 +23,6 @@ done
 
 install -m 0644 "$root/README.md" "$package_root/README.md"
 install -m 0644 "$root/LICENSE" "$package_root/LICENSE"
-install -m 0644 "$root/docs/release-package.md" "$package_root/RELEASE-README.md"
 
 {
   echo "Version: $version"
@@ -32,6 +31,12 @@ install -m 0644 "$root/docs/release-package.md" "$package_root/RELEASE-README.md
   echo "Rust: $(rustc --version)"
 } > "$package_root/BUILD-INFO.txt"
 
-tar -C "$root/dist" -czf "$root/dist/$package.tar.gz" "$package"
+# macOS may attach provenance xattrs even to newly created package files.
+# Suppress both PAX xattrs and AppleDouble records without changing GNU tar.
+tar_create=(tar)
+if [[ "$(uname -s)" == Darwin ]]; then
+  tar_create+=(--no-xattrs)
+fi
+COPYFILE_DISABLE=1 "${tar_create[@]}" -C "$root/dist" -czf "$root/dist/$package.tar.gz" "$package"
 rm -rf "$package_root"
 echo "$root/dist/$package.tar.gz"

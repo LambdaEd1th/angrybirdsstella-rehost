@@ -2,6 +2,7 @@
 
 pub mod archive;
 pub mod crypto;
+pub mod image_source;
 pub mod ka3d;
 pub mod lua;
 pub mod native_image;
@@ -42,6 +43,10 @@ pub enum AssetError {
     UnsupportedPngColorType(u8),
     #[error("invalid WebP image: feature probe failed")]
     InvalidWebp,
+    #[error("invalid JPEG image: {0}")]
+    InvalidJpeg(&'static str),
+    #[error("unsupported native image reader")]
+    UnsupportedImageReader,
     #[error("invalid KA3D resource: {0}")]
     InvalidKa3d(&'static str),
     #[error("invalid Lua chunk: {0}")]

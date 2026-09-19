@@ -4,6 +4,7 @@ use super::*;
 use stella_assets::surface_format::SurfaceFormat;
 
 mod batch;
+mod capture;
 mod geometry;
 mod program;
 mod sprites;

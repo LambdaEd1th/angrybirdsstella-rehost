@@ -21,6 +21,7 @@ impl StellaLua {
         )?;
         self.execute("scripts_common/gamelogic.lua")?;
         self.finish_gamelogic_load()?;
+        super::persistence::deliver_persistent_load_messages(&self.lua)?;
         self.install_native_ui_float_precision()?;
         if !matches!(
             game_script,
@@ -28,16 +29,21 @@ impl StellaLua {
         ) {
             self.execute(game_script)?;
         }
-        // IapManager publishes its eight native members before loading the
-        // scripts, but registers the six Lua callbacks only once iap.lua has
-        // been evaluated. Its provider-success continuation then fetches the
-        // wallet and calls onPaymentInitialized in that order.
+        // Keep the portable offline/local wallet bootstrap. A configured
+        // account provider waits for its internal session-success event;
+        // this helper only starts it if that event already arrived. Provider
+        // success fetches the wallet before onPaymentInitialized/state 2.
         complete_iap_initialization(&self.lua, &self.iap)?;
-        // The shipped 1.1.6 GameServerConnection chunk deliberately asserts
-        // GAMESERVER-DISABLED for every endpoint. Preserve the recovered
-        // asynchronous callback shape while making local challenge replay
-        // usable without the retired backend.
-        install_offline_game_server_facade(&self.lua)?;
+        // The shipped 1.1.6 GameServerConnection chunk contains the complete
+        // route/payload facade but deliberately asserts GAMESERVER-DISABLED
+        // before transport. A configured compatible endpoint suppresses only
+        // that release kill switch; otherwise retain playable local challenge
+        // replay without depending on the retired service.
+        if self.game_server.shipped_facade_enabled() {
+            enable_shipped_game_server_facade(&self.lua)?;
+        } else {
+            install_offline_game_server_facade(&self.lua)?;
+        }
         self.install_challenge_result_background_layout()?;
         install_input_queries(&self.lua)?;
         // RovioCloudManager receives all nine native services only after the
@@ -128,16 +134,17 @@ impl StellaLua {
                 "##,
             )?;
         }
-        // sub_100050948 selects a supported localization table and invokes
+        // sub_100050948 selects the first host-preferred locale available in
+        // TEXTS_BASIC (after platform and Purple's ja/ko/en normalization) and invokes
         // setLocale before the startup-asset callback.
-        let environment = game_environment(&self.lua)?;
-        if let Value::Function(set_locale) = environment.get::<Value>("setLocale")? {
-            set_locale.call::<()>("en_EN")?;
-        }
+        self.call_global("refreshCurrentLocale")?;
         // Native startup routine sub_10005D44C dispatches this callback after
         // both script layers have been loaded, then installs the five Stella
         // channel limits directly on AudioManager.
         self.initialize_startup_assets()?;
+        // GameApp's constructor rereads the live global settings binding only
+        // after createStartUpAssets, then restores the AudioOutput master gain.
+        self.restore_startup_master_volume()?;
         // ThemeManager construction (`sub_1000985DC`) snapshots the current
         // corrected end-camera scale after the startup camera tables exist.
         self.capture_resolution_camera_scale()?;
@@ -176,6 +183,33 @@ impl StellaLua {
             .lock()
             .expect("audio runtime lock poisoned");
         audio.channel_limits[1..=5].copy_from_slice(&[4, 6, 3, 5, 5]);
+        Ok(())
+    }
+
+    /// Restore the startup master gain at `0x100027BB0..0x100027D00`.
+    ///
+    /// Purple looks up the current global `settings` object rather than the
+    /// table loaded by the GameLua constructor. A non-table settings binding,
+    /// or a volume which fails Lua's `isNumber` predicate, falls back to 1.0.
+    /// The selected Lua number is narrowed to float32 before AudioOutput's
+    /// setter; that setter is a no-op when no output exists.
+    pub(crate) fn restore_startup_master_volume(&self) -> Result<(), ScriptError> {
+        let environment = game_environment(&self.lua)?;
+        let volume = match environment.get::<Value>("settings")? {
+            Value::Table(settings) => self
+                .lua
+                .coerce_number(settings.get::<Value>("volume")?)?
+                .map_or(1.0_f32, |volume| volume as f32),
+            _ => 1.0,
+        };
+
+        let mut resources = self
+            .resource_runtime
+            .lock()
+            .expect("resource runtime lock poisoned");
+        if resources.audio_output_created {
+            resources.master_volume = volume;
+        }
         Ok(())
     }
 

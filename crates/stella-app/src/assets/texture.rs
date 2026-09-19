@@ -41,13 +41,45 @@ impl TextureAsset {
 }
 
 impl AssetCatalog {
+    pub(crate) fn retain_decoded_image(&mut self, region: &SpriteCatalogRegion) -> Result<()> {
+        if let Some(image) = &region.decoded_image
+            && !self.textures.contains_key(&region.texture_source)
+        {
+            let pixels = RgbaImage::from_raw(image.width, image.height, image.rgba.clone())
+                .ok_or_else(|| anyhow!("invalid retained native image pixels"))?;
+            self.textures.insert(
+                region.texture_source.clone(),
+                TextureAsset::with_native_layout(pixels, image.layout),
+            );
+        }
+        Ok(())
+    }
     pub(crate) fn texture(&mut self, name: &str) -> Result<&TextureAsset> {
+        let resolved = self
+            .captures
+            .bindings
+            .get(name)
+            .map(|image| image.source.clone());
+        // Native Images have independent write identities. Their initial
+        // immutable file pixels can still share one upload until capture
+        // installs a private physical generation for that logical owner.
+        let name = resolved.as_deref().unwrap_or_else(|| {
+            if self.textures.contains_key(name) {
+                name
+            } else {
+                stella_assets::image_source::image_source_path(name)
+            }
+        });
         if !self.textures.contains_key(name) {
-            let image_path = self.root.join(name);
+            // Resolve only immutable file input here. Mutable image identity
+            // lives in captures.bindings; its GPU generations are prepared
+            // separately and must never overwrite this original file entry.
+            let file_source = stella_assets::image_source::image_source_path(name);
+            let image_path = self.root.join(file_source);
             let path = if image_path.is_file() {
                 image_path
             } else {
-                self.font_root.join(name)
+                self.font_root.join(file_source)
             };
             let texture = load_texture(&path)?;
             self.textures.insert(name.to_owned(), texture);
@@ -60,16 +92,13 @@ impl AssetCatalog {
 
 fn load_texture(path: &Path) -> Result<TextureAsset> {
     let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
-    match path
-        .extension()
-        .and_then(|value| value.to_str())
-        .map(str::to_ascii_lowercase)
-        .as_deref()
-    {
-        Some("pvr") => pvr_reader::load(path, &bytes),
-        Some("png") => raster_reader::load_png(path, &bytes),
-        Some("webp") => raster_reader::load_webp(path, &bytes),
-        _ => Err(anyhow!(
+    use stella_assets::native_image::{ImageReaderKind, image_reader_kind};
+    match image_reader_kind(&bytes, path.extension().and_then(|value| value.to_str())) {
+        ImageReaderKind::Pvr => pvr_reader::load(path, &bytes),
+        ImageReaderKind::Png => raster_reader::load_png(path, &bytes),
+        ImageReaderKind::Webp => raster_reader::load_webp(path, &bytes),
+        ImageReaderKind::Jpeg => raster_reader::load_jpeg(path, &bytes),
+        ImageReaderKind::Unsupported => Err(anyhow!(
             "unsupported native image reader for {}",
             path.display()
         )),

@@ -20,6 +20,23 @@ impl AssetCatalog {
         else {
             return Ok(());
         };
+        // Dirt already has native mesh UVs and an opaque program: no image
+        // dimensions/format are needed here. Resolve an Image overwritten by
+        // capture without forcing uploads for unused (empty) mesh layers.
+        let resolve_source = |source: &String| {
+            self.captures.bindings.get(source).map_or_else(
+                || {
+                    if self.textures.contains_key(source) {
+                        source.clone()
+                    } else {
+                        stella_assets::image_source::image_source_path(source).to_owned()
+                    }
+                },
+                |texture| texture.source.clone(),
+            )
+        };
+        let background_texture = resolve_source(background_texture);
+        let foreground_texture = resolve_source(foreground_texture);
         for triangles in &dirt.background_triangles {
             append_gpu_dirt_triangles(frame, triangles, transform, background_texture.clone());
         }
@@ -102,6 +119,9 @@ impl AssetCatalog {
             }
             return Ok(());
         }
+        if let Some(region) = bound_region {
+            self.retain_decoded_image(region)?;
+        }
         let region = bound_region
             .map(|region| AtlasRegion {
                 texture: region.texture_source.clone(),
@@ -119,21 +139,9 @@ impl AssetCatalog {
             }
             return Ok(());
         };
-        let base_texture = region.texture.clone();
-        let (base_width, base_height, surface_format) = if base_texture.starts_with("<capture:") {
-            (
-                frame.resolution.width,
-                frame.resolution.height,
-                SurfaceFormat::A8B8G8R8,
-            )
-        } else {
-            let texture = self.texture(&base_texture)?;
-            (
-                texture.width(),
-                texture.height(),
-                texture.upload_surface_format(),
-            )
-        };
+        let base = self.resolve_gpu_texture(&region.texture)?;
+        let (base_texture, base_width, base_height, surface_format) =
+            (base.source, base.width, base.height, base.surface_format);
         if matches!(
             masked_texture,
             Some((_, _, Some(MaskedTextureBinding::Missing)))
@@ -150,14 +158,11 @@ impl AssetCatalog {
         });
         let (fill_texture, fill_width, fill_height, texture_scale, source_mode, blend) =
             if let Some((fill_texture, texture_scale)) = fill {
-                let (width, height) = {
-                    let texture = self.texture(&fill_texture)?;
-                    (texture.width(), texture.height())
-                };
+                let fill = self.resolve_gpu_texture(&fill_texture)?;
                 (
-                    fill_texture,
-                    width,
-                    height,
+                    fill.source,
+                    fill.width,
+                    fill.height,
                     texture_scale,
                     1.0,
                     NativeProgram::SpriteAlphaMasked,

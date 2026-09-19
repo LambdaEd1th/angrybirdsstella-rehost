@@ -132,19 +132,16 @@ fn rolling_audio_starts_updates_stops_and_retains_native_handles() {
         .unwrap()
         .angular_velocity = 0.0;
     runtime.update(1.0 / 120.0).unwrap();
-    assert!(runtime._audio_runtime.lock().unwrap().clips.is_empty());
+    {
+        let audio = runtime._audio_runtime.lock().unwrap();
+        assert!(audio.clips[&0].finished);
+        assert_eq!(audio.next_handle, 1);
+    }
     assert_eq!(
         runtime.render.lock().unwrap().rolling_audio_handles,
         [0, 0, 0]
     );
 
-    let replacement =
-        runtime
-            ._audio_runtime
-            .lock()
-            .unwrap()
-            .play("wood_rolling".to_owned(), 0.25, true, 2);
-    assert_eq!(replacement, 1);
     runtime
         .render
         .lock()
@@ -154,18 +151,106 @@ fn rolling_audio_starts_updates_stops_and_retains_native_handles() {
         .unwrap()
         .angular_velocity = 20.0;
     runtime.update(1.0 / 120.0).unwrap();
-    // Resource-name playback suppresses a duplicate start, but setVolume
-    // still targets GameLua's deliberately stale cached handle zero.
+    // The finished-but-retained instance no longer suppresses a replacement.
+    let audio = runtime._audio_runtime.lock().unwrap();
+    assert!(audio.clips[&0].finished);
+    assert!(!audio.clips[&1].finished);
+    assert!(audio.clips[&1].volume > 0.0);
+    drop(audio);
     assert_eq!(
-        runtime._audio_runtime.lock().unwrap().clips[&1].volume,
-        0.25
+        runtime.render.lock().unwrap().rolling_audio_handles,
+        [0, 1, 0]
     );
 
     runtime
         .execute_source("setPhysicsEnabled(false, 'pause')")
         .unwrap();
     runtime.update(1.0 / 120.0).unwrap();
-    assert!(runtime._audio_runtime.lock().unwrap().clips.is_empty());
+    assert!(
+        runtime
+            ._audio_runtime
+            .lock()
+            .unwrap()
+            .clips
+            .values()
+            .all(|clip| clip.finished)
+    );
+}
+
+#[test]
+fn level_load_invalidates_the_handle_before_reusing_a_rolling_resource() {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "stella-level-rolling-audio-{}-{unique}",
+        std::process::id()
+    ));
+    let data_root = root.join("data");
+    fs::create_dir_all(&data_root).unwrap();
+    fs::write(data_root.join("next.lua"), b"filename = 'next.lua'").unwrap();
+
+    let runtime = StellaLua::new(&data_root).unwrap();
+    install_test_audio_output(&runtime, &["wood_rolling"]);
+    runtime
+        .execute_source(
+            r#"
+                g_outOfBoundariesObjects = {}
+                setPhysicsEnabled(true)
+                createCircle("old_roller", "", 0, 0, 2, 1, 0, 0,
+                    true, false, 1)
+                setMaterial("old_roller", "wood")
+                clearLuaForceFunctions = function() end
+                update = function() end
+            "#,
+        )
+        .unwrap();
+    {
+        let mut bridge = runtime.render.lock().unwrap();
+        let roller = bridge.scene.get_mut("old_roller").unwrap();
+        roller.angular_velocity = 4.0;
+        roller.native_shape_radius = 2.0;
+        roller.body_mass = 5.0;
+    }
+    runtime.update(1.0 / 120.0).unwrap();
+    let previous_volume = runtime._audio_runtime.lock().unwrap().clips[&0].volume;
+
+    runtime
+        .execute_source(
+            r#"
+                loadLevel("next")
+                objects.world = {}
+                createCircle("new_roller", "", 0, 0, 2, 1, 0, 0,
+                    true, false, 1)
+                setMaterial("new_roller", "wood")
+            "#,
+        )
+        .unwrap();
+    {
+        let mut bridge = runtime.render.lock().unwrap();
+        assert_eq!(bridge.rolling_audio_handles, [-1; 3]);
+        let roller = bridge.scene.get_mut("new_roller").unwrap();
+        roller.angular_velocity = 20.0;
+        roller.native_shape_radius = 2.0;
+        roller.body_mass = 5.0;
+    }
+
+    runtime.update(1.0 / 120.0).unwrap();
+    {
+        let audio = runtime._audio_runtime.lock().unwrap();
+        assert_eq!(audio.clips.len(), 1);
+        assert_eq!(audio.clips[&0].volume, previous_volume);
+        assert_ne!(audio.clips[&0].volume, native_rolling_level(20.0, 2.0, 5.0));
+        assert_eq!(audio.next_handle, 1);
+    }
+    assert_eq!(
+        runtime.render.lock().unwrap().rolling_audio_handles,
+        [-1; 3]
+    );
+
+    drop(runtime);
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -217,6 +302,100 @@ fn startup_assets_callback_precedes_native_stella_channel_limits() {
     assert_eq!(
         missing_output._audio_runtime.lock().unwrap().channel_limits,
         [-1; 8]
+    );
+}
+
+#[test]
+fn startup_master_volume_uses_the_live_settings_binding_and_float32() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .execute_source(
+            r#"
+                res.createAudioOutput(1, 16, 16000)
+                original_startup_settings = settings
+                original_startup_settings.volume = 0.875
+                createStartUpAssets = function()
+                    res.setMasterVolume(0.75)
+                    settings = { volume = 0.123456789 }
+                end
+            "#,
+        )
+        .unwrap();
+
+    runtime.initialize_startup_assets().unwrap();
+    assert_eq!(runtime.audio_output_state().master_volume, 0.75);
+    runtime.restore_startup_master_volume().unwrap();
+
+    assert_eq!(
+        runtime.audio_output_state().master_volume,
+        0.123456789_f64 as f32
+    );
+    let environment = game_environment(runtime.lua()).unwrap();
+    let current_settings = environment.get::<mlua::Table>("settings").unwrap();
+    let original_settings = environment
+        .get::<mlua::Table>("original_startup_settings")
+        .unwrap();
+    assert_ne!(
+        current_settings.to_pointer(),
+        original_settings.to_pointer()
+    );
+}
+
+#[test]
+fn startup_master_volume_defaults_and_output_pointer_match_native_gates() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime.execute_source("settings = false").unwrap();
+    runtime.restore_startup_master_volume().unwrap();
+    assert_eq!(runtime.resource_runtime.lock().unwrap().master_volume, -1.0);
+
+    runtime
+        .execute_source("res.createAudioOutput(1, 16, 16000)")
+        .unwrap();
+    for source in [
+        "settings = false",
+        "settings = {}",
+        "settings = { volume = false }",
+        "settings = { volume = 'not-a-number' }",
+    ] {
+        runtime.execute_source(source).unwrap();
+        runtime.resource_runtime.lock().unwrap().master_volume = 0.25;
+        runtime.restore_startup_master_volume().unwrap();
+        assert_eq!(runtime.audio_output_state().master_volume, 1.0, "{source}");
+    }
+
+    // Purple's LuaObject::isNumber wraps lua_isnumber, so a convertible Lua
+    // string passes the number gate even though unrelated types do not.
+    runtime
+        .execute_source("settings = { volume = '0.375' }")
+        .unwrap();
+    runtime.restore_startup_master_volume().unwrap();
+    assert_eq!(runtime.audio_output_state().master_volume, 0.375);
+}
+
+#[test]
+fn shipped_boot_refreshes_locale_then_restores_saved_master_volume() {
+    let sandbox = ShippedDataSandbox::new("startup-locale-volume-tail");
+    let runtime = StellaLua::new(&sandbox.data_root).unwrap();
+    runtime
+        .execute_source(
+            r#"
+                local nativeRefreshCurrentLocale = refreshCurrentLocale
+                refreshCurrentLocale = function(...)
+                    startup_refresh_count = (startup_refresh_count or 0) + 1
+                    return nativeRefreshCurrentLocale(...)
+                end
+                settings.volume = 0.3123456789
+            "#,
+        )
+        .unwrap();
+
+    runtime.boot("scripts/game.lua").unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert_eq!(environment.get::<i64>("startup_refresh_count").unwrap(), 1);
+    assert_eq!(
+        runtime.audio_output_state().master_volume,
+        0.3123456789_f64 as f32
     );
 }
 
@@ -591,6 +770,7 @@ fn output_clock_does_not_confuse_reused_handles_across_output_generations() {
         volume: 1.0,
         looping: false,
         track: 0,
+        finished: false,
     };
     let mut state = AudioOutputState {
         generation: 1,
@@ -616,12 +796,20 @@ fn output_clock_does_not_confuse_reused_handles_across_output_generations() {
             .synchronize(&state, Duration::from_millis(2))
             .is_empty()
     );
-    assert!(
-        clock
-            .synchronize(&state, Duration::from_millis(94))
-            .is_empty()
+    assert_eq!(
+        clock.synchronize(&state, Duration::from_millis(94)),
+        AudioPlaybackTransitions {
+            finished: vec![0],
+            removed: Vec::new(),
+        }
     );
-    assert_eq!(clock.synchronize(&state, Duration::from_millis(34)), [0]);
+    assert_eq!(
+        clock.synchronize(&state, Duration::from_millis(34)),
+        AudioPlaybackTransitions {
+            finished: Vec::new(),
+            removed: vec![0],
+        }
+    );
 }
 
 #[test]
@@ -1113,9 +1301,15 @@ fn silent_output_clock_retires_one_shot_and_releases_its_native_channel() {
     let mut clock = AudioOutputClock::default();
     // The 10 ms clip is exhausted and removed during the six-buffer start
     // prefill, before any wall-clock time elapses.
-    let finished = clock.synchronize(&snapshot, Duration::ZERO);
-    assert_eq!(finished, [0]);
-    runtime.finish_audio_playbacks(&finished);
+    let transitions = clock.synchronize(&snapshot, Duration::ZERO);
+    assert_eq!(
+        transitions,
+        AudioPlaybackTransitions {
+            finished: vec![0],
+            removed: vec![0],
+        }
+    );
+    runtime.apply_audio_playback_transitions(&transitions);
     runtime
         .execute_source(
             r#"
@@ -1127,6 +1321,51 @@ fn silent_output_clock_retires_one_shot_and_releases_its_native_channel() {
     assert!(environment.get::<bool>("first_finished").unwrap());
     assert_eq!(environment.get::<i64>("replacement").unwrap(), 1);
     let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn finished_edge_is_not_playing_or_counted_but_is_retained_until_removed_edge() {
+    let runtime = unlocked_test_runtime();
+    install_test_audio_output(&runtime, &["CLIP"]);
+    runtime
+        .execute_source(
+            r#"
+                setChannelCountLimit(2, 1)
+                first = res.playAudio("CLIP", 1, false, 2)
+            "#,
+        )
+        .unwrap();
+
+    runtime.apply_audio_playback_transitions(&AudioPlaybackTransitions {
+        finished: vec![0],
+        removed: Vec::new(),
+    });
+    let retained = runtime.audio_output_state();
+    assert_eq!(retained.playbacks.len(), 1);
+    assert!(retained.playbacks[0].finished);
+
+    runtime
+        .execute_source(
+            r#"
+                finished_by_handle = not res.isAudioPlaying(first)
+                finished_by_name = not res.isAudioPlaying("CLIP")
+                replacement = res.playAudio("CLIP", 1, false, 2)
+            "#,
+        )
+        .unwrap();
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert!(environment.get::<bool>("finished_by_handle").unwrap());
+    assert!(environment.get::<bool>("finished_by_name").unwrap());
+    assert_eq!(environment.get::<i64>("replacement").unwrap(), 1);
+    assert_eq!(runtime.audio_output_state().playbacks.len(), 2);
+
+    runtime.apply_audio_playback_transitions(&AudioPlaybackTransitions {
+        finished: Vec::new(),
+        removed: vec![0],
+    });
+    let removed = runtime.audio_output_state();
+    assert_eq!(removed.playbacks.len(), 1);
+    assert_eq!(removed.playbacks[0].handle, 1);
 }
 
 #[test]
@@ -1181,9 +1420,21 @@ fn shipped_boot_resolves_every_retained_audio_clip_to_an_ios_bundle_file() {
 fn animation_shader_binding_copies_parameters_and_nil_clears_it() {
     let runtime = StellaLua::new("/tmp").unwrap();
     runtime
+        ._animation_runtime
+        .lock()
+        .unwrap()
+        .bundle_cache
+        .insert(
+            "shader-fixture.anim.json".to_owned(),
+            AnimationAsset {
+                actions: BTreeMap::new(),
+                definition: AnimationDefinition::default(),
+            },
+        );
+    runtime
         .execute_source(
             r##"
-                AnimationWrapperNative.loadFromBundle("scene", "missing.anim.json")
+                AnimationWrapperNative.loadFromBundle("scene", "shader-fixture.anim.json")
                 -- sub_10006CB08 is shared by direct sprite draws and
                 -- AnimationWrapper. The missing sprite still mutates the
                 -- process shader cache before its resource lookup fails.
@@ -1296,9 +1547,15 @@ fn sha1_and_unlock_checksum_match_the_native_uppercase_base16_contract() {
                 checksum_numeric_string_rejected = pcall(
                     getUnlockRequestChecksum, "A", "B", "0"
                 )
-                checksum_nan_rejected = not pcall(
-                    getUnlockRequestChecksum, "A", "B", 0/0
-                )
+                checksum_nan = getUnlockRequestChecksum("A", "B", 0/0)
+                checksum_negative_fraction = getUnlockRequestChecksum("A", "B", -0.9)
+                checksum_positive_fraction = getUnlockRequestChecksum("A", "B", 1.9)
+                checksum_saturated_selectors_rejected = {}
+                for _, value in ipairs({1/0, -1/0, 2147483648, -2147483904}) do
+                    checksum_saturated_selectors_rejected[
+                        #checksum_saturated_selectors_rejected + 1
+                    ] = not pcall(getUnlockRequestChecksum, "A", "B", value)
+                end
                 epoch_utc = getTimeFromEpochSeconds("0")
                 epoch_wrong_optional_type = getTimeFromEpochSeconds("0", 1)
                 epoch_local = getTimeFromEpochSeconds("0", true)
@@ -1324,7 +1581,28 @@ fn sha1_and_unlock_checksum_match_the_native_uppercase_base16_contract() {
             .get::<bool>("checksum_numeric_string_rejected")
             .unwrap()
     );
-    assert!(environment.get::<bool>("checksum_nan_rejected").unwrap());
+    // Native 100059718 uses FCVTZS W8,S8 before salt selection: NaN and
+    // -0.9 select zero, while 1.9 selects one. Saturated extremes are still
+    // outside the two-element array (the rehost reports rather than crashes).
+    for name in ["checksum_nan", "checksum_negative_fraction"] {
+        assert_eq!(
+            environment.get::<String>(name).unwrap(),
+            "56B3D25B58D86FCE326D20B674DCB9840C4556E7"
+        );
+    }
+    assert_eq!(
+        environment
+            .get::<String>("checksum_positive_fraction")
+            .unwrap(),
+        "35C2BA63E57D65B080B09E19898A17EBDF327903"
+    );
+    let rejected = environment
+        .get::<mlua::Table>("checksum_saturated_selectors_rejected")
+        .unwrap();
+    assert_eq!(rejected.raw_len(), 4);
+    for index in 1..=4 {
+        assert!(rejected.get::<bool>(index).unwrap());
+    }
     for name in ["epoch_utc", "epoch_wrong_optional_type"] {
         let table = environment.get::<mlua::Table>(name).unwrap();
         assert_eq!(table.get::<i32>("year").unwrap(), 1970);
@@ -1434,7 +1712,7 @@ fn complete_purple_registration_gap_is_explicitly_bound() {
             "Purple AnimationWrapper registration AnimationWrapperNative.{name} is not explicitly bound"
         );
     }
-    assert_eq!(REGISTERED_GLOBAL_FUNCTIONS.len(), 243);
+    assert_eq!(REGISTERED_GLOBAL_FUNCTIONS.len(), 242);
     assert_eq!(REGISTERED_TABLE_FUNCTIONS.len(), 1);
     for name in REGISTERED_GLOBAL_FUNCTIONS {
         assert!(
@@ -1445,6 +1723,10 @@ fn complete_purple_registration_gap_is_explicitly_bound() {
             "Purple native global registration {name} is not callable"
         );
     }
+    assert!(matches!(
+        runtime.lua().globals().raw_get::<Value>("uniqueDeviceId"),
+        Ok(Value::String(_))
+    ));
     for (table_name, method_name) in REGISTERED_TABLE_FUNCTIONS {
         let table = runtime
             .lua()

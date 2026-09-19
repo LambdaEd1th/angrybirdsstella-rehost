@@ -35,29 +35,9 @@ impl RenderBridge {
         }
     }
 
-    pub(crate) fn native_theme_frame_needs_world_limits(&self, delta: f64) -> bool {
-        let delta = delta as f32;
-        self.theme_background_layers
-            .iter()
-            .chain(&self.theme_foreground_layers)
-            .any(|layer| {
-                let delay = layer
-                    .animation_timeline
-                    .get(layer.animation_frame)
-                    .copied()
-                    .unwrap_or(layer.animation_delay as f32);
-                delay > 0.0
-                    && (layer.animation_timer as f32) + delta > delay
-                    && !layer.animation_frames.is_empty()
-                    && layer.animation_frame + 1 >= layer.animation_frames.len()
-                    && layer.native_flags & 0x10 != 0
-                    && layer.spawn_parameters.is_some()
-            })
-    }
-
     #[cfg(test)]
     pub(crate) fn advance_native_theme_frame(&mut self, delta: f64) {
-        self.advance_native_theme_frame_with_limits(delta, ThemeWorldLimits::default());
+        self.advance_native_theme_frame_inner(delta, None);
     }
 
     #[cfg(test)]
@@ -66,23 +46,22 @@ impl RenderBridge {
         delta: f64,
         world_limits: ThemeWorldLimits,
     ) {
-        self.advance_native_theme_frame_inner(delta, world_limits, None);
+        self.theme_camera.world_limits = world_limits;
+        self.advance_native_theme_frame_inner(delta, None);
     }
 
     pub(crate) fn advance_native_theme_frame_with_resources(
         &mut self,
         delta: f64,
-        world_limits: ThemeWorldLimits,
         resources: &ResourceRuntime,
         data_root: &Path,
     ) {
-        self.advance_native_theme_frame_inner(delta, world_limits, Some((resources, data_root)));
+        self.advance_native_theme_frame_inner(delta, Some((resources, data_root)));
     }
 
     fn advance_native_theme_frame_inner(
         &mut self,
         delta: f64,
-        world_limits: ThemeWorldLimits,
         bindings: Option<(&ResourceRuntime, &Path)>,
     ) {
         if self.accelerometer_active {
@@ -97,8 +76,8 @@ impl RenderBridge {
         }
         // 0x10005ED04 / 0x10005ED1C select the ThemeManager mode before
         // invoking the same member for the two native layer vectors.
-        layers::advance_theme_manager_pass(self, false, delta as f32, world_limits, bindings);
-        layers::advance_theme_manager_pass(self, true, delta as f32, world_limits, bindings);
+        layers::advance_theme_manager_pass(self, false, delta as f32, bindings);
+        layers::advance_theme_manager_pass(self, true, delta as f32, bindings);
         // 0x10005ED28 then advances GameLua's layer positions and nested
         // 136-byte ThemeSpriteData vectors.
         sprite_data::advance_game_lua_theme_data(self, delta as f32);

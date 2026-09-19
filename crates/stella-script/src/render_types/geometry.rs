@@ -2,6 +2,7 @@
 
 #[derive(Debug, Clone)]
 pub struct RectRenderCommand {
+    pub projection_3d: Option<super::TextProjection3D>,
     pub order: u64,
     pub red: f64,
     pub green: f64,
@@ -40,4 +41,10 @@ pub enum ColorMeshTopology {
 pub struct CaptureRenderCommand {
     pub order: u64,
     pub name: String,
+    /// Stable native Image identity. Capturing an existing sheet updates its
+    /// image without replacing its atlas geometry or global name priority.
+    pub texture_source: String,
+    /// Existing sheet with a released/null Image: native capture creates and
+    /// immediately drops a temporary image, without restoring the sheet.
+    pub temporary: bool,
 }

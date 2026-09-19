@@ -14,14 +14,13 @@ The working implementation currently includes:
 - PNG, WebP and PVR v2 RGBA4444/RGBA8888 textures;
 - a native `wgpu` atlas/composite renderer in a resizable `winit` window;
 - reverse-aligned premultiplied/straight-alpha pipelines, shaders, masks and
-  bitmap text on Metal, Vulkan, Direct3D 12 and GLES backends;
+  bitmap text on Metal, Vulkan and Direct3D 12 backends;
 - mouse, keyboard, wheel and native touchscreen-to-original-input bridging, including
   Purple's pinch/smooth-zoom state machine, and deterministic GPU PNG capture.
 
-Visual fidelity uses the evidence rules in
-[`docs/visual-reference-policy.md`](docs/visual-reference-policy.md). In
-particular, deterministic Rust screenshots are regression artifacts and are
-not treated as original-game references.
+Visual fidelity is checked against original-game evidence. Deterministic Rust
+screenshots are regression artifacts and are not treated as original-game
+references.
 
 The resource pipeline recovered from the ARM64 binary with IDA is:
 
@@ -35,7 +34,14 @@ The resource pipeline recovered from the ARM64 binary with IDA is:
 cargo run -p stella-tool -- extract \
   --source "angry birds stella v1.1.6/Payload/Purple.app/data" \
   --output runtime/data
+python3 .github/scripts/runtime_native_assets.py stage \
+  --bundle "angry birds stella v1.1.6/Payload/Purple.app" \
+  --output runtime/data
 ```
+
+The staging step includes native Skynest assets and hash-verified OpenSans
+account fonts located outside the original `data` subtree. See
+[`runtime/README.md`](runtime/README.md) for verification and plain-data export.
 
 Inspect or decode individual files:
 
@@ -70,6 +76,153 @@ location by default):
 cargo run --release -p stella-app
 ```
 
+The desktop host enables a persistent local replacement for the retired
+identity, cloud-save, Game Center and social providers by default. It keeps the
+original asynchronous Lua callback boundary and stores only rehost-owned state
+under `runtime/appdata`:
+
+- `stella-device-id`: stable installation UUID published as Purple's global
+  `uniqueDeviceId` string and used by the shipped per-device save keys;
+- `stella-services.json`: local account identity, cloud settings and key/value
+  data;
+- `stella-gamer-services.json`: achievements and per-board high scores;
+- `stella-social.json`: local social progress and leaderboard scores.
+
+The original achievements and leaderboards buttons remain functional with the
+local provider. Since desktop platforms do not expose Apple's Game Center
+controller, the host opens a read-only local view generated from
+`stella-gamer-services.json` at the same native presentation boundary.
+
+The local provider also exposes the six coin bundles from the shipped economy
+configuration as zero-price rehost products. Buying one follows the recovered
+StoreKit transaction-status -> server-delivery -> wallet-voucher sequence and
+therefore exercises the original `iap.lua` listeners without a platform store
+or real-money charge. An unknown product retains the original immediate
+`PURCHASE_FAILED` result.
+
+Use `--offline-services` to exercise the original unavailable-provider branch
+without creating or loading that local state.
+
+The shipped GameServer facade and all of its original `/api/v1` routes can be
+connected to a compatible replacement endpoint explicitly:
+
+```sh
+cargo run --release -p stella-app -- \
+  --game-server-url http://127.0.0.1:8080/api/v1
+```
+
+This restores the release-disabled request closures in
+`GameServerConnection.lua`; it does not redirect traffic to, impersonate or
+claim to restore Rovio's retired production service. Without the option, the
+challenge flow uses the deterministic local completion provider.
+
+Server-time synchronization has a separate compatible-provider boundary. Pass
+the full replacement endpoint URL; a successful HTTP 200 response may be a
+JSON Unix timestamp or an object containing `time`, `serverTime`, `timestamp`
+or `epoch`:
+
+```sh
+cargo run --release -p stella-app -- \
+  --server-time-url http://127.0.0.1:8080/identity/2.0/time
+```
+
+Without this option, `ServerTime` uses the host clock and still preserves the
+original asynchronous synchronization event.
+
+Downloadable Assets has its own compatible-provider boundary. Pass the full
+manifest endpoint corresponding to the original
+`apdrive/1/apps/<app-id>/assets` route:
+
+```sh
+cargo run --release -p stella-app -- \
+  --assets-url http://127.0.0.1:8080/apdrive/1/apps/purple/assets
+```
+
+The client sends one repeated `name` query parameter per requested asset. A
+successful JSON response contains `assets` entries with `name`, `cdnURL` (or
+legacy `url`), `hash` and `size`, plus a `failedAssets` array. Downloads are
+stored under `runtime/appdata/assets_service`, validated against the exact
+declared size and reused only while their persisted hash and size still match.
+Without this option, the same Lua API reads only the existing AppData cache.
+
+Rovio Account/Identity Level 2 also has an explicit compatible-provider
+boundary. Pass a replacement `identity/2.0` or `identity/3.0` service root:
+
+```sh
+cargo run --release -p stella-app -- \
+  --identity-url http://127.0.0.1:8080/identity/2.0
+```
+
+The client preserves the selected server and any prefix before `/identity`.
+Following Purple's per-operation routing, access and nickname validation use
+`identity/2.0`, while `profile/own` uses `identity/3.0`, regardless of the
+configured root version. Arbitrary non-identity roots, URL credentials,
+queries, fragments and ambiguous/traversing paths are rejected; redirects
+are not followed. Active login uses the recovered nested app-session response;
+the parent identity's access request preserves Purple's 16-field form body.
+Interactive sign-in, registration, password reset and delayed validation use
+their recovered provider layers and native-layout forms; callbacks return only
+at the application frame head. A replacement operator may additionally pass
+`--identity-client-id`, `--identity-client-signature` and
+`--identity-client-salt`. These are explicit compatible-service values—the
+rehost never embeds or derives the retired application's production secrets.
+Use `--identity-client-key-file` instead of literal signature/salt to generate
+the recovered per-request signature from an explicitly supplied replacement key.
+The file is read as exact bytes, including any newline; it is not hex-decoded.
+Without `--identity-url`, the persistent local guest identity remains active.
+Session renewal and one first-401 replay are implemented, with refresh/profile
+persistence isolated by provider and client. Native social/unregistration flows
+and all session-event consumers are not yet complete.
+
+Cloud settings and Skynest key/value requests can likewise target an
+independently operated compatible `storage/1.0` service:
+
+```sh
+cargo run --release -p stella-app -- \
+  --storage-url http://127.0.0.1:8080/storage/1.0
+```
+
+The client appends the recovered `state` and `states/query` routes, escapes
+keys under `[my]/[client]/`, preserves optimistic hashes and encodes `SDKv2`
+values as LZMA plus padded URL-safe Base64. Single reads/writes require HTTP
+200 and a single-element JSON response array. Completions return to Lua at
+the frame head. When identity is configured, storage acquires/renews its active
+Level2 session and replays the first 401 once using fresh `X-Access-Token` and
+token-derived `Rovio-Sgs` headers. Alternatively, explicit
+`--storage-access-token` / `--storage-signature` options select a frozen-header
+mode without automatic renewal; they override the corresponding inherited
+header, not the identity client signature. No retired account credential is
+embedded or inferred. Account/provider changes invalidate pending results and
+the online cache without replacing the independent local-provider document.
+The decoded `PurpleState` value is native Lua assignment text, not JSON. On a
+409 write conflict, the client retrieves the remote state once and gives cloud
+data to the original Lua merge callback; it never silently force-overwrites it.
+Without `--storage-url`, cloud data stays in the persistent local provider
+described above.
+
+The native social manager has a separate compatible-provider boundary. The
+original client delegated this layer to the platform Facebook/iOS SDK rather
+than a stable public HTTP route, so the rehost exposes a small explicit JSON
+operation endpoint while preserving the recovered native method and callback
+ABI:
+
+```sh
+cargo run --release -p stella-app -- \
+  --social-url http://127.0.0.1:8080/stella/social
+```
+
+The client POSTs `connect`, `getFriendsProgress`, `postScore`,
+`fetchLeaderboard` and `setProgress` operations on background workers.
+Connection results populate the synchronous friend/account lookup cache; all
+original async result callbacks are delivered only at the application frame
+head. This endpoint is operated by the user and is not a Facebook login or a
+restoration of Rovio's retired service. Without it, the persistent local
+provider supports editable friends, progress, per-level scores, ranked mixed
+leaderboards and avatar resource lifetimes in `stella-social.json`.
+
+Local and compatible-endpoint providers do not restore the original third-party
+services or authorize real-money purchases.
+
 The original camera/provider services are no longer available on desktop, but
 the reverse-matched Telepods flow can be exercised with any product identifier
 from `runtime/data/config/telepod_configuration.json`:
@@ -81,6 +234,23 @@ cargo run --release -p stella-app -- \
 
 This exposes a virtual QR scanner, queues the payload until the original scan
 page opens, and then runs the shipped validation, wallet and unlock callbacks.
+Recognition is delivered through the native-style application event queue, not
+inside scanner start or callback registration. Stopping capture does not cancel
+an already recognized result; the original page clears its callback on exit.
+This is decoded-code injection, not physical camera capture or QR decoding.
+
+Mobile cross-promotion metadata and installed-app responses both use Purple's
+recovered `canOpenURL` check. Desktop defaults to an empty application-scheme
+registry. A host integration or deterministic test can explicitly advertise
+one or more handlers; matching installed-app names are returned in authored
+order and `AppStoreLauncher` opens the configured launch URL instead of its
+StoreKit fallback:
+
+```sh
+cargo run --release -p stella-app -- \
+  --installed-url-scheme angrybirds \
+  --installed-url-scheme badpiggies
+```
 
 Generate a deterministic render without opening a window:
 
@@ -95,8 +265,13 @@ Long-run the original script state machine without graphics:
 
 ```sh
 cargo run -p stella-script --bin stella-headless -- \
-  --data runtime/data --frames 3600 --dump-render
+  --data runtime/data --local-services --frames 3600 --dump-render
 ```
+
+`stella-headless` leaves local providers disabled unless `--local-services` is
+passed. It accepts the same `--game-server-url`, `--server-time-url`,
+`--assets-url`, `--identity-url`, `--storage-url`, `--social-url` and repeatable
+`--installed-url-scheme` options for transport and script contract tests.
 
 ## CI and releases
 
@@ -118,13 +293,15 @@ targets, publishes `.tar.gz` archives for macOS/Linux and `.zip` archives for
 Windows, injects the verified `runtime/data` payload into every archive,
 and attaches a shared `SHA256SUMS` file. Each package therefore runs without a
 separate extraction step and contains its runtime instructions in
-`RELEASE-README.md`.
+`README.md`. `BUILD-INFO.txt` records the release version, target, source commit
+and compiler version.
 
 ## Workspace layout
 
 - `runtime/data`: canonical, locally extracted game resources; intentionally
   ignored by Git and never uploaded by CI.
-- `runtime/appdata`: writable saves, settings and downloaded-asset state;
+- `runtime/appdata`: writable saves, stable installation identity, settings and
+  downloaded-asset state;
   intentionally ignored by Git.
 
 - `stella-app`: resizable desktop host and `wgpu` atlas/composite renderer,
@@ -529,16 +706,24 @@ submission, native audio-state synchronization and physical mixing,
 letterbox pointer mapping, scripted offscreen capture and winit lifecycle
 dispatch.
 
-Online services from the 2014 client are modeled as offline adapters instead of
-depending on discontinued servers. The recovered Box2D simulation, Lua/native
-ABI, skeletal animation, pure-Rust Clipper-compatible dirt geometry and
-OpenGL-to-`wgpu` render paths are implemented, including the recovered
-float32/FMA transform boundary. Physical audio output now follows the
-recovered output lifecycle and decodes/mixes the shipped WAV, MP3 and Vorbis
-assets through a cross-platform host. Physical video output, discontinued
-services and a few platform/driver-dependent ordering, resampling or subpixel
-details remain bounded compatibility surfaces; see `docs/ida-findings.md` for
-the exact list.
+Retired 2014 services retain their recovered Lua/native ABI instead of being
+silently removed. Account/cloud, achievements, scores and social progress have
+persistent local providers; Telepods uses the host scanner and local wallet;
+downloadable content consumes the recovered on-disk cache; challenge requests
+use either the deterministic local provider or the shipped route/payload
+facade against an explicitly configured compatible endpoint. URL, App Store,
+video and screenshot-share requests cross the platform-action boundary to the
+desktop host. Facebook/Game Center/StoreKit/Zappar SDK credentials, copyrighted
+server-side data and Rovio's retired service implementations are not present in
+the client binary and are therefore not fabricated by the rehost.
+
+The recovered Box2D simulation, Lua/native ABI, skeletal animation, pure-Rust
+Clipper-compatible dirt geometry and OpenGL-to-`wgpu` render paths are
+implemented, including the recovered float32/FMA transform boundary. Physical
+audio output follows the recovered output lifecycle and decodes/mixes the
+shipped WAV, MP3 and Vorbis assets through a cross-platform host. Remaining
+platform/driver-dependent ordering, resampling or subpixel details stay bounded
+compatibility surfaces and are not claims of full native equivalence.
 
 ## License
 

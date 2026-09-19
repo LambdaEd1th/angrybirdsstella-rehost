@@ -14,9 +14,11 @@ fn native_color_mesh_reaches_gpu_as_one_triangle_fan_draw() {
         fonts: HashMap::new(),
         textures: HashMap::new(),
         system_labels: SystemLabelPool::default(),
+        captures: Default::default(),
     };
     let vertices = vec![[10.0, 20.0], [30.0, 20.0], [40.0, 40.0], [5.0, 50.0]];
     let command = RectRenderCommand {
+        projection_3d: None,
         order: 0,
         red: 0.25,
         green: 0.5,
@@ -54,6 +56,7 @@ fn native_triangle_list_reaches_gpu_without_fan_reindexing() {
         fonts: HashMap::new(),
         textures: HashMap::new(),
         system_labels: SystemLabelPool::default(),
+        captures: Default::default(),
     };
     let vertices = vec![
         [10.0, 10.0],
@@ -64,6 +67,7 @@ fn native_triangle_list_reaches_gpu_without_fan_reindexing() {
         [10.0, 30.0],
     ];
     let command = RectRenderCommand {
+        projection_3d: None,
         order: 0,
         red: 1.0,
         green: 1.0,
@@ -134,6 +138,7 @@ fn dirt_mesh_uses_constructor_time_texture_pointers_after_catalog_shadowing() {
         fonts: HashMap::new(),
         textures: HashMap::new(),
         system_labels: SystemLabelPool::default(),
+        captures: Default::default(),
     };
     let triangle = vec![RenderTriangle {
         vertices: [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
@@ -147,6 +152,7 @@ fn dirt_mesh_uses_constructor_time_texture_pointers_after_catalog_shadowing() {
         foreground_triangles: vec![triangle],
     };
     let command = RenderCommand {
+        projection_3d: None,
         order: 0,
         sprite: "DIRT".into(),
         texture: None,

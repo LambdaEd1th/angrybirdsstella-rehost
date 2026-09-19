@@ -47,6 +47,15 @@ enum Command {
     PvrToPng { input: PathBuf, output: PathBuf },
     /// Rewrite Purple's Lua 5.1 bytecode representation for the current host.
     TranscodeLua { input: PathBuf, output: PathBuf },
+    /// Wrap host Lua 5.1 bytecode in loadable Lua text without changing its chunk.
+    WrapLuaText {
+        input: PathBuf,
+        output: PathBuf,
+        #[arg(long)]
+        chunk_name: Option<String>,
+    },
+    /// Recover host Lua 5.1 bytecode from a lossless text wrapper.
+    UnwrapLuaText { input: PathBuf, output: PathBuf },
 }
 
 fn main() -> Result<()> {
@@ -65,7 +74,29 @@ fn main() -> Result<()> {
             let transcoded = stella_assets::lua::transcode_for_host(&bytes)?;
             write_file(&output, &transcoded)
         }
+        Command::WrapLuaText {
+            input,
+            output,
+            chunk_name,
+        } => wrap_lua_text(&input, &output, chunk_name.as_deref()),
+        Command::UnwrapLuaText { input, output } => {
+            let bytes = fs::read(&input).with_context(|| format!("reading {}", input.display()))?;
+            let unwrapped =
+                stella_assets::lua::unwrap_host_chunk_text(&bytes)?.with_context(|| {
+                    format!("{} is not a lossless Lua text wrapper", input.display())
+                })?;
+            write_file(&output, &unwrapped)
+        }
     }
+}
+
+fn wrap_lua_text(input: &Path, output: &Path, chunk_name: Option<&str>) -> Result<()> {
+    let bytes = fs::read(input).with_context(|| format!("reading {}", input.display()))?;
+    let chunk_name = chunk_name
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("@{}", input.display()));
+    let source = stella_assets::lua::wrap_host_chunk_as_text(&bytes, &chunk_name)?;
+    write_file(output, source.as_bytes())
 }
 
 fn inspect(path: &Path) -> Result<()> {

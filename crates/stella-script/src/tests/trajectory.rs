@@ -143,6 +143,55 @@ fn game_parameters_reads_only_the_native_stack_top_table() {
 }
 
 #[test]
+fn game_parameters_use_raw_fields_and_exact_boolean_tags() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                setGameParameters({ deterministicPhysics = true, gameWorldScale = 0.5 })
+                parameterLookupCount = 0
+                setGameParameters(setmetatable({}, {
+                    __index = function(_, key)
+                        parameterLookupCount = parameterLookupCount + 1
+                        error("native parameter lookup must not invoke __index: " .. key)
+                    end,
+                }))
+                setGameParameters({ deterministicPhysics = 0, gameWorldScale = "0.125" })
+            "#,
+        )
+        .unwrap();
+    assert_eq!(
+        game_environment(runtime.lua())
+            .unwrap()
+            .get::<u32>("parameterLookupCount")
+            .unwrap(),
+        0
+    );
+    let bridge = runtime.render.lock().unwrap();
+    assert!(bridge.deterministic_physics);
+    assert_eq!(bridge.game_world_scale, 0.125);
+}
+
+#[test]
+fn game_parameters_preserve_boolean_on_wrong_tags_and_reset_non_numeric_scale() {
+    let runtime = unlocked_test_runtime();
+    for invalid in ["nil", "0", "1", "'true'", "{}"] {
+        runtime
+            .execute_source(&format!(
+                "setGameParameters({{deterministicPhysics=false,gameWorldScale=0.25}}); \
+                 setGameParameters({{deterministicPhysics={invalid},gameWorldScale=false}})"
+            ))
+            .unwrap();
+        let bridge = runtime.render.lock().unwrap();
+        assert!(
+            !bridge.deterministic_physics,
+            "invalid Boolean tag {invalid}"
+        );
+        assert_eq!(bridge.game_world_scale, 1.0);
+    }
+}
+
+#[test]
 fn native_trajectory_snapshots_steps_while_aiming_time_reads_live_iterations() {
     let runtime = unlocked_test_runtime();
     load_native_simulation_settings(&runtime, 3, 2.0, 2);
@@ -356,6 +405,9 @@ fn native_trajectory_applies_registered_overlapping_sensor_forces() {
                 native_setAdditionalBirdGravity(0)
                 updateBirdTrajectoryTable()
                 sensor_trajectory = getSimulationTrajectoryPoints()
+                setObjectParameter("aim_gravity", 32, 1)
+                updateBirdTrajectoryTable()
+                duplicate_sensor_trajectory = getSimulationTrajectoryPoints()
                 "#,
         )
         .unwrap();
@@ -366,6 +418,16 @@ fn native_trajectory_applies_registered_overlapping_sensor_forces() {
     assert!(
         point.get::<f64>("x").unwrap() > 0.0,
         "registered overlapping gravity sensor did not bend the prediction"
+    );
+    let duplicate_trajectory = environment
+        .get::<mlua::Table>("duplicate_sensor_trajectory")
+        .unwrap();
+    let duplicate_point = duplicate_trajectory.get::<mlua::Table>(1).unwrap();
+    let single_x = point.get::<f64>("x").unwrap();
+    let duplicate_x = duplicate_point.get::<f64>("x").unwrap();
+    assert!(
+        (duplicate_x - single_x * 2.0).abs() < 1.0e-6,
+        "duplicate native registrations must apply the same sensor force twice: {single_x} vs {duplicate_x}"
     );
 }
 
@@ -464,6 +526,51 @@ fn native_aim_stream_populates_updates_and_draws_catmull_particles() {
         0.0
     );
     assert!((bridge.aim_stream_spawn_timer - 0.45_f32).abs() < 1.0e-6);
+}
+
+#[test]
+fn native_aim_stream_uses_the_scaled_frame_delta_with_or_without_lua_update() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                setDeltaTimeMultiplier(0.25)
+                update = function() end
+                updatePhysics = function() end
+            "#,
+        )
+        .unwrap();
+
+    let reset_stream = || {
+        let mut bridge = runtime.render.lock().unwrap();
+        bridge.load_native_aim_stream_settings(0.5, 2.0);
+        bridge.aim_stream_control_points = (0..12).map(|x| (f64::from(x), 0.0)).collect();
+        bridge.populate_native_aim_stream();
+        bridge.aim_stream_active = true;
+    };
+    let assert_scaled_advance = || {
+        let bridge = runtime.render.lock().unwrap();
+        let scaled_delta = 0.25_f32 * 0.4_f32;
+        let path_parameter = 2.0_f32.mul_add(scaled_delta, 0.0);
+        assert_eq!(
+            bridge.aim_stream_particles[0].path_parameter,
+            path_parameter
+        );
+        assert_eq!(bridge.aim_stream_spawn_timer, 0.5_f32 - scaled_delta);
+        assert_eq!(
+            bridge.aim_stream_particles[0].scale,
+            1.2_f32 - path_parameter / 9.0_f32
+        );
+    };
+
+    reset_stream();
+    runtime.update(0.4).unwrap();
+    assert_scaled_advance();
+
+    runtime.execute_source("update = nil").unwrap();
+    reset_stream();
+    assert!(!runtime.update(0.4).unwrap());
+    assert_scaled_advance();
 }
 
 #[test]

@@ -1,8 +1,10 @@
 use super::super::*;
+use super::configure_theme_camera_fixture;
 
 #[test]
 fn theme_contract_builds_both_native_render_passes() {
     let runtime = StellaLua::new("/tmp").unwrap();
+    configure_theme_camera_fixture(&runtime);
     register_test_sprite_sheet(
         &runtime,
         &["TEST_BACKGROUND", "TEST_BACKGROUND_2", "TEST_FOREGROUND"],
@@ -58,6 +60,38 @@ fn theme_contract_builds_both_native_render_passes() {
                 assert(not pcall(native_setThemeFgLayerOffsetY, "test_theme", 1, "2"))
                 setThemeOffsetY("test_theme", 768)
                 native_setThemeFgLayerOffsetY("test_theme", 1, 12.75)
+
+                local themes = blockTable.themes
+                blockTable.themes = nil
+                missing_themes_bg_fails =
+                    not pcall(setThemeOffsetY, "test_theme", 1)
+                missing_themes_fg_fails =
+                    not pcall(native_setThemeFgLayerOffsetY,
+                        "test_theme", 1, 99)
+                blockTable.themes = themes
+
+                local theme = themes.test_theme
+                themes.test_theme = nil
+                missing_theme_bg_fails =
+                    not pcall(setThemeOffsetY, "test_theme", 1)
+                missing_theme_fg_fails =
+                    not pcall(native_setThemeFgLayerOffsetY,
+                        "test_theme", 1, 99)
+                themes.test_theme = theme
+
+                local bg_layers = theme.bgLayers
+                theme.bgLayers = { bg_layers[1] }
+                short_bg_layers_fails =
+                    not pcall(setThemeOffsetY, "test_theme", 1)
+                theme.bgLayers = bg_layers
+                setThemeOffsetY("test_theme", 768)
+
+                local fg_layers = theme.fgLayers
+                theme.fgLayers = nil
+                missing_fg_layers_fails =
+                    not pcall(native_setThemeFgLayerOffsetY,
+                        "test_theme", 1, 99)
+                theme.fgLayers = fg_layers
                 native_resetThemeSystem()
                 drawBackgroundNative(-1)
                 drawForegroundNative()
@@ -70,6 +104,17 @@ fn theme_contract_builds_both_native_render_passes() {
     assert_eq!(bridge.theme_background_layers.len(), 2);
     assert_eq!(bridge.theme_foreground_layers.len(), 1);
     assert_eq!(bridge.theme_offset_y, 768.0);
+    let environment = game_environment(runtime.lua()).unwrap();
+    for flag in [
+        "missing_themes_bg_fails",
+        "missing_themes_fg_fails",
+        "missing_theme_bg_fails",
+        "missing_theme_fg_fails",
+        "short_bg_layers_fails",
+        "missing_fg_layers_fails",
+    ] {
+        assert!(environment.get::<bool>(flag).unwrap(), "{flag}");
+    }
     assert!(matches!(
         bridge.theme_background_layers[0].offset_y,
         ThemeVerticalOffset::Pixels(value) if value == 778.0
@@ -80,8 +125,12 @@ fn theme_contract_builds_both_native_render_passes() {
     ));
     assert!(matches!(
         bridge.theme_foreground_layers[0].offset_y,
-        ThemeVerticalOffset::Pixels(value) if value == 12.75
+        ThemeVerticalOffset::Bottom
     ));
+    assert_eq!(
+        bridge.theme_foreground_layers[0].resolved_offset_y,
+        Some(12.75)
+    );
     assert!(
         bridge
             .theme_sprites
@@ -110,8 +159,131 @@ fn theme_contract_builds_both_native_render_passes() {
 }
 
 #[test]
+fn background_offset_ignores_metatables_and_preserves_writes_before_a_later_error() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    configure_theme_camera_fixture(&runtime);
+    register_test_sprite_sheet(&runtime, &["PARTIAL_BG_1", "PARTIAL_BG_2"]);
+    runtime
+        .execute_source(
+            r#"
+                blockTable = {
+                    themes = {
+                        partial = {
+                            bgLayers = {
+                                {
+                                    sprite = "PARTIAL_BG_1",
+                                    offsetY = 10,
+                                    scale = 1
+                                },
+                                {
+                                    sprite = "PARTIAL_BG_2",
+                                    offsetY = 20,
+                                    scale = 1
+                                }
+                            },
+                            fgLayers = {}
+                        }
+                    }
+                }
+                setGameParameters({ gameWorldScale = 768 })
+                setTheme("partial")
+
+                local layers = blockTable.themes.partial.bgLayers
+                rawset(layers[1], "offsetY", nil)
+                offset_lookup_count = 0
+                setmetatable(layers[1], {
+                    __index = function(_, key)
+                        if key == "offsetY" then
+                            offset_lookup_count = offset_lookup_count + 1
+                            return 20 + offset_lookup_count
+                        end
+                    end
+                })
+                setThemeOffsetY("partial", 5)
+
+                setmetatable(layers[1], nil)
+                layers[1].offsetY = 10
+                blockTable.themes.partial.bgLayers = { layers[1] }
+                short_background_fails =
+                    not pcall(setThemeOffsetY, "partial", 7)
+            "#,
+        )
+        .unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert_eq!(environment.get::<i64>("offset_lookup_count").unwrap(), 0);
+    assert!(environment.get::<bool>("short_background_fails").unwrap());
+
+    let bridge = runtime.render.lock().unwrap();
+    assert_eq!(bridge.theme_offset_y, 7.0);
+    assert!(matches!(
+        bridge.theme_background_layers[0].offset_y,
+        ThemeVerticalOffset::Pixels(value) if value == 17.0
+    ));
+    assert!(matches!(
+        bridge.theme_background_layers[1].offset_y,
+        ThemeVerticalOffset::Pixels(value) if value == 25.0
+    ));
+}
+
+#[test]
+fn background_offset_uses_drawable_height_without_running_lua_index_hooks() {
+    let runtime = StellaLua::new_with_resolution("/tmp", 1024, 512).unwrap();
+    configure_theme_camera_fixture(&runtime);
+    register_test_sprite_sheet(&runtime, &["LIVE_BG_1", "LIVE_BG_2"]);
+    runtime
+        .execute_source(
+            r#"
+                blockTable = {
+                    themes = {
+                        live = {
+                            bgLayers = {
+                                { sprite = "LIVE_BG_1", offsetY = 10 },
+                                { sprite = "LIVE_BG_2", offsetY = 20 }
+                            },
+                            fgLayers = {}
+                        }
+                    }
+                }
+                setGameParameters({ gameWorldScale = 256 })
+                setTheme("live")
+                local first = blockTable.themes.live.bgLayers[1]
+                first.offsetY = nil
+                offset_reads = 0
+                setmetatable(first, {
+                    __index = function(_, key)
+                        if key == "offsetY" then
+                            offset_reads = offset_reads + 1
+                            setGameParameters({ gameWorldScale = 512 })
+                            if offset_reads == 1 then return 10 end
+                            return false
+                        end
+                    end
+                })
+                -- Native raw reads must not call the hook or change the
+                -- scale. Both layers use the live 256/512 ratio.
+                setThemeOffsetY("live", 128)
+            "#,
+        )
+        .unwrap();
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    assert_eq!(environment.get::<i64>("offset_reads").unwrap(), 0);
+    let bridge = runtime.render.lock().unwrap();
+    assert!(matches!(
+        bridge.theme_background_layers[0].offset_y,
+        ThemeVerticalOffset::Pixels(value) if value == 64.0
+    ));
+    assert!(matches!(
+        bridge.theme_background_layers[1].offset_y,
+        ThemeVerticalOffset::Pixels(value) if value == 84.0
+    ));
+}
+
+#[test]
 fn set_theme_destroys_owned_sprite_vectors_while_native_reset_preserves_them() {
     let runtime = StellaLua::new("/tmp").unwrap();
+    configure_theme_camera_fixture(&runtime);
     runtime
         .execute_source(
             r#"
@@ -138,6 +310,7 @@ fn set_theme_destroys_owned_sprite_vectors_while_native_reset_preserves_them() {
 #[test]
 fn native_theme_reset_clears_only_camera_reference_and_effect_pair() {
     let runtime = StellaLua::new("/tmp").unwrap();
+    configure_theme_camera_fixture(&runtime);
     {
         let mut bridge = runtime.render.lock().unwrap();
         bridge.theme_camera.valid = true;
@@ -162,6 +335,7 @@ fn native_theme_reset_clears_only_camera_reference_and_effect_pair() {
 #[test]
 fn accelerometer_filter_feeds_both_theme_passes_and_activation_resets_it() {
     let runtime = StellaLua::new("/tmp").unwrap();
+    configure_theme_camera_fixture(&runtime);
     {
         let mut bridge = runtime.render.lock().unwrap();
         bridge.accelerometer_sample = [1.234_567, -2.345_678];
@@ -226,6 +400,7 @@ fn accelerometer_filter_feeds_both_theme_passes_and_activation_resets_it() {
 #[test]
 fn theme_sky_color_is_stored_at_selection_and_applied_only_by_background_draw() {
     let runtime = StellaLua::new("/tmp").unwrap();
+    configure_theme_camera_fixture(&runtime);
     runtime
         .execute_source(
             r#"

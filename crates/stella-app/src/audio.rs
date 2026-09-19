@@ -3,7 +3,7 @@
 use anyhow::{Context, Result};
 use rodio::{DeviceSinkBuilder, MixerDeviceSink, Player};
 
-use super::AudioOutputState;
+use super::{AudioOutputState, AudioPlaybackTransitions};
 
 mod native_mixer;
 
@@ -33,7 +33,7 @@ impl AudioDevice {
         })
     }
 
-    pub(super) fn synchronize(&mut self, state: AudioOutputState) -> Vec<i64> {
+    pub(super) fn synchronize(&mut self, state: AudioOutputState) -> AudioPlaybackTransitions {
         let configuration = NativeMixerConfiguration::from_state(&state);
         if self.generation != Some(state.generation) || self.configuration != configuration {
             self.generation = Some(state.generation);
@@ -48,7 +48,7 @@ impl AudioDevice {
             }
         }
 
-        let mut finished = self
+        let mut transitions = self
             .mixer
             .as_ref()
             .map(|mixer| mixer.synchronize(&state))
@@ -62,7 +62,7 @@ impl AudioDevice {
                 // initialization. Collect any short one-shots removed during
                 // that prefill now so they are gone before the next VM tick,
                 // just like the already-running native worker.
-                finished.extend(mixer.synchronize(&state));
+                transitions.merge(mixer.take_transitions());
                 player.play();
                 self.player = Some(player);
                 self.started = true;
@@ -78,8 +78,6 @@ impl AudioDevice {
             // integer mixer has saturated the block.
             player.set_volume(state.master_volume);
         }
-        finished.sort_unstable();
-        finished.dedup();
-        finished
+        transitions
     }
 }

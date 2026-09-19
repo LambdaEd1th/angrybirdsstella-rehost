@@ -3,7 +3,7 @@
 mod layer;
 mod spawn;
 
-use mlua::{Lua, Result as LuaResult, Value};
+use mlua::{Lua, Result as LuaResult, Table, Value};
 
 use crate::*;
 
@@ -19,33 +19,40 @@ struct ThemeLayerOverrides {
     world_height: Option<Option<f32>>,
 }
 
-pub(crate) fn named_theme_layer_offsets(
+/// Reproduce the three throwing LuaObject table traversals shared by
+/// setThemeOffsetY and native_setThemeFgLayerOffsetY.
+pub(crate) fn required_named_theme_layers(
     lua: &Lua,
     theme_name: &str,
     layer_field: &str,
-) -> LuaResult<Vec<Option<f32>>> {
-    let Some(block_table) = native_lua_object(lua, NativeLuaObject::BlockTable)? else {
-        return Ok(Vec::new());
-    };
-    let Value::Table(themes) = block_table.get::<Value>("themes")? else {
-        return Ok(Vec::new());
-    };
-    let Value::Table(theme) = themes.get::<Value>(theme_name)? else {
-        return Ok(Vec::new());
-    };
-    let Value::Table(layers) = theme.get::<Value>(layer_field)? else {
-        return Ok(Vec::new());
-    };
+) -> LuaResult<Table> {
+    let block_table = native_lua_object(lua, NativeLuaObject::BlockTable)?;
+    let themes = required_index_table(
+        match block_table {
+            Some(block_table) => block_table.raw_get::<Value>("themes")?,
+            None => Value::Nil,
+        },
+        "themes",
+    )?;
+    let theme = required_index_table(themes.raw_get::<Value>(theme_name)?, theme_name)?;
+    required_index_table(theme.raw_get::<Value>(layer_field)?, layer_field)
+}
 
-    let mut offsets = Vec::with_capacity(layers.raw_len());
-    for index in 1..=layers.raw_len() {
-        let offset = match layers.raw_get::<Value>(index)? {
-            Value::Table(layer) => theme_table_f32(&layer, "offsetY")?,
-            _ => None,
-        };
-        offsets.push(offset);
+pub(crate) fn required_named_theme_layer(layers: &Table, index: usize) -> LuaResult<Table> {
+    // setThemeOffsetY calls the throwing integer-index LuaObject helper
+    // sub_100070444 once for every live native layer. It writes each layer
+    // immediately, so a later short/non-table entry preserves earlier writes.
+    required_index_table(layers.raw_get::<Value>(index)?, &index.to_string())
+}
+
+fn required_index_table(value: Value, index: &str) -> LuaResult<Table> {
+    match value {
+        Value::Table(table) => Ok(table),
+        value => Err(runtime_error(format!(
+            "Tried to get a Lua table from index '{index}', but type was {}",
+            value.type_name()
+        ))),
     }
-    Ok(offsets)
 }
 
 pub(crate) fn parse_theme_layers(

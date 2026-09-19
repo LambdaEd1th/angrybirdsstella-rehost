@@ -51,18 +51,17 @@ pub(super) fn install_parameters(
                 return Ok(());
             };
             let mut bridge = render.lock().expect("render bridge lock poisoned");
-            if let Ok(value) = parameters.get::<Value>("deterministicPhysics")
-                && let Some(enabled) = value_bool(&value)
-            {
+            // 0x1000554A0/4F8/550/5A8 use lua_rawget. Only an actual
+            // BOOLEAN changes +0x190; truthy numbers and __index values do
+            // not select deterministic physics. Scale uses lua_isnumber /
+            // lua_tonumber instead, so numeric strings remain valid.
+            if let Value::Boolean(enabled) = parameters.raw_get("deterministicPhysics")? {
                 bridge.deterministic_physics = enabled;
             }
-            bridge.game_world_scale = parameters
-                .get::<Value>("gameWorldScale")
-                .ok()
-                .as_ref()
-                .and_then(value_number)
-                .map(|value| f64::from(value as f32))
-                .unwrap_or(1.0);
+            bridge.game_world_scale =
+                native_lua51_number(&parameters.raw_get::<Value>("gameWorldScale")?)
+                    .map(|value| f64::from(value as f32))
+                    .unwrap_or(1.0);
             Ok(())
         })?,
     )

@@ -92,6 +92,7 @@ impl SpriteGeometry {
         );
 
         Some(RenderCommand {
+            projection_3d: None,
             order: 0,
             sprite: sprite.into(),
             texture: None,
@@ -180,6 +181,7 @@ impl SpriteGeometry {
         );
 
         Some(RenderCommand {
+            projection_3d: None,
             order: 0,
             sprite: sprite.into(),
             texture: None,

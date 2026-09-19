@@ -258,6 +258,12 @@ impl StellaLua {
     }
 
     pub fn set_cursor(&self, x: f64, y: f64, down: bool) -> Result<(), ScriptError> {
+        // GameApp slot 8 (`sub_100029F8C`) receives signed integers from the
+        // platform controller, converts each to float32, then stores those
+        // values in the retained cursor table. Keep that boundary even for
+        // embedders which supply convenient f64 host coordinates directly.
+        let x = f64::from((x as i32) as f32);
+        let y = f64::from((y as i32) as f32);
         let cursor = native_lua_object(&self.lua, NativeLuaObject::Cursor)?
             .ok_or_else(|| runtime_error("cursor is not a table"))?;
         cursor.set("x", x)?;

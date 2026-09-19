@@ -47,6 +47,7 @@ pub(crate) fn native_rect_command(
         ColorProgram::PlainAlpha
     };
     RectRenderCommand {
+        projection_3d: None,
         order: 0,
         red: color[0],
         green: color[1],

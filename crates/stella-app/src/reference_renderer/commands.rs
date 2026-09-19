@@ -9,6 +9,27 @@ pub(super) fn render_game(
     background_color: [u8; 3],
     target: &mut [u32],
 ) -> Result<()> {
+    render_game_with_captures(
+        assets,
+        commands,
+        text_commands,
+        rect_commands,
+        &[],
+        background_color,
+        target,
+    )
+}
+
+#[allow(dead_code)]
+pub(super) fn render_game_with_captures(
+    assets: &mut AssetCatalog,
+    commands: &[RenderCommand],
+    text_commands: &[TextRenderCommand],
+    rect_commands: &[RectRenderCommand],
+    capture_commands: &[CaptureRenderCommand],
+    background_color: [u8; 3],
+    target: &mut [u32],
+) -> Result<()> {
     // The original renderer clears before the background/theme passes. A sky
     // blue clear also keeps uncovered letterbox-safe areas deterministic.
     target.fill(
@@ -16,6 +37,25 @@ pub(super) fn render_game(
             | (u32::from(background_color[1]) << 8)
             | u32::from(background_color[2]),
     );
+    if !capture_commands.is_empty()
+        || !assets.captures.bindings.is_empty()
+        || commands
+            .iter()
+            .any(|command| command.projection_3d.is_some())
+        || text_commands
+            .iter()
+            .any(|command| command.projection_3d.is_some())
+        || rect_commands
+            .iter()
+            .any(|command| command.projection_3d.is_some())
+    {
+        // Perspective and captured images require the complete native-order
+        // stream: geometry preserves painter order and capture generations are
+        // resolved at each draw, including draws from subsequent frames.
+        let frame =
+            assets.prepare_gpu_frame(commands, text_commands, rect_commands, capture_commands)?;
+        return frame.render_reference(assets, target);
+    }
     for command in rect_commands {
         super::color_mesh::draw_rect(command, target);
     }

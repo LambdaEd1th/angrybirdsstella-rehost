@@ -49,10 +49,10 @@ pub(crate) fn install(
                 .expect("resource runtime lock poisoned")
                 .clip_rect;
             Ok((
-                f64::from(left),
-                f64::from(top),
-                f64::from(right - left),
-                f64::from(bottom - top),
+                f64::from(left as f32),
+                f64::from(top as f32),
+                f64::from(right.wrapping_sub(left) as f32),
+                f64::from(bottom.wrapping_sub(top) as f32),
             ))
         })?,
     )?;

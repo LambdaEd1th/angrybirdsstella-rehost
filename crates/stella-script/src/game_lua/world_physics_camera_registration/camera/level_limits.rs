@@ -77,9 +77,75 @@ fn drawable_particle_bounds(bounds: [f32; 4], width: u32, height: u32) -> [f32; 
 }
 
 fn native_fcvtzs_f64(value: f64) -> i32 {
-    if !value.is_finite() || !(-2_147_483_648.0_f64..2_147_483_648.0_f64).contains(&value) {
-        i32::MIN
-    } else {
-        value.trunc() as i32
+    // 0x100050348/354/368/374 use FCVTZS W,D. Like the single-precision
+    // variant, it saturates signed overflow and converts NaN to zero; it
+    // does not have x86's universal integer-indefinite result.
+    value as i32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn adjusted_particle_bounds_saturate_the_native_double_to_word_conversion() {
+        for (value, expected) in [
+            (f64::NAN, 0),
+            (f64::INFINITY, i32::MAX),
+            (f64::NEG_INFINITY, i32::MIN),
+            (2_147_483_647.75, i32::MAX),
+            (2_147_483_648.0, i32::MAX),
+            (-2_147_483_648.75, i32::MIN),
+            (-2_147_483_649.0, i32::MIN),
+            (42.75, 42),
+            (-42.75, -42),
+        ] {
+            assert_eq!(native_fcvtzs_f64(value), expected, "{value:?}");
+        }
+
+        // This branch genuinely exceeds a signed word after the double
+        // half-adjustment, even though the preceding bounds were int32.
+        // The previous integer-indefinite approximation wrapped the positive
+        // bottom edge to a large negative value instead of saturating.
+        let bounds = drawable_particle_bounds([0.0, 100.0, 0.0, 2_147_483_520.0], 1, 2);
+        assert_eq!(bounds, [0.0, 100.0, -536_870_880.0, i32::MAX as f32]);
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn particle_double_conversion_matches_actual_arm64_fcvtzs_word() {
+        let mut bits = 0x5346_17A9_723B_045Du64;
+        for fixed in [
+            0,
+            0x7FF0_0000_0000_0000,
+            0xFFF0_0000_0000_0000,
+            0x7FF8_0000_0000_0000,
+            0x41E0_0000_0000_0000,
+            0xC1E0_0000_0000_0000,
+        ] {
+            for index in 0..1024 {
+                bits = bits
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1_442_695_040_888_963_407);
+                let value = f64::from_bits(if index == 0 { fixed } else { bits });
+                let native: i32;
+                // SAFETY: the instruction only accesses scalar registers;
+                // every AArch64 target supports this conversion.
+                unsafe {
+                    std::arch::asm!(
+                        "fcvtzs {result:w}, {value:d}",
+                        result = out(reg) native,
+                        value = in(vreg) value,
+                        options(nomem, nostack),
+                    );
+                }
+                assert_eq!(
+                    native_fcvtzs_f64(value),
+                    native,
+                    "bits={:016x}",
+                    value.to_bits()
+                );
+            }
+        }
     }
 }

@@ -88,11 +88,9 @@ fn native_double_to_i32(value: f64) -> i32 {
     // UIFont metrics and NSString sizes return CGFloat (double on this ARM64
     // build). The constructor converts D0 directly with FCVTZS; narrowing to
     // f32 first can cross an integer boundary before truncation.
-    if !value.is_finite() || !(-2_147_483_648.0_f64..2_147_483_648.0_f64).contains(&value) {
-        i32::MIN
-    } else {
-        value.trunc() as i32
-    }
+    // The ARM64 instruction saturates signed overflow and returns zero for
+    // NaN. It does not use x86's uniform integer-indefinite result.
+    value as i32
 }
 
 fn named_system_font_face(database: &fontdb::Database, family: &str) -> Option<fontdb::ID> {
@@ -236,6 +234,113 @@ impl SystemFontState {
     }
 }
 
+pub(crate) fn create_platform_ui_font(
+    family: &str,
+    size: i32,
+    fill_rgba: [u8; 4],
+    font_data: Arc<[u8]>,
+) -> LuaResult<SystemFontRenderBinding> {
+    platform_ui_font_binding(family, size, fill_rgba, font_data, 0)
+}
+
+fn platform_ui_regular_face(database: &fontdb::Database) -> Option<fontdb::ID> {
+    // This is an adaptation of UIKit's private .HelveticaNeueInterface-Regular
+    // nib face, not an alias installed into the game's generic font resolver.
+    // Apple font bytes are never staged or bundled by the rehost.
+    #[cfg(target_os = "macos")]
+    let names = [
+        "Helvetica Neue",
+        "Helvetica",
+        "Arial",
+        "Liberation Sans",
+        "DejaVu Sans",
+        "Noto Sans",
+    ];
+    #[cfg(target_os = "windows")]
+    let names = [
+        "Segoe UI",
+        "Arial",
+        "Liberation Sans",
+        "DejaVu Sans",
+        "Noto Sans",
+    ];
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let names = ["Liberation Sans", "DejaVu Sans", "Noto Sans", "Arial"];
+    names
+        .into_iter()
+        .map(fontdb::Family::Name)
+        .chain(std::iter::once(fontdb::Family::SansSerif))
+        .find_map(|family| {
+            database
+                .query(&fontdb::Query {
+                    families: &[family],
+                    weight: fontdb::Weight::NORMAL,
+                    stretch: fontdb::Stretch::Normal,
+                    style: fontdb::Style::Normal,
+                })
+                .filter(|id| {
+                    database.face(*id).is_some_and(|face| {
+                        face.weight == fontdb::Weight::NORMAL
+                            && face.style == fontdb::Style::Normal
+                            && face.stretch == fontdb::Stretch::Normal
+                    })
+                })
+        })
+}
+
+pub(crate) fn create_platform_ui_regular_font(
+    size: i32,
+    fill_rgba: [u8; 4],
+) -> LuaResult<SystemFontRenderBinding> {
+    let fonts = platform_system_fonts();
+    let face_id = platform_ui_regular_face(&fonts.database)
+        .ok_or_else(|| runtime_error("no regular sans-serif font is available for platform UI"))?;
+    // Keep the actual host face name and collection index for shaping and
+    // rasterization. This does not claim to recover iOS's byte-identical face.
+    let family = &fonts
+        .database
+        .face(face_id)
+        .expect("queried face is retained")
+        .post_script_name;
+    let (bytes, face_index) = fonts
+        .database
+        .with_face_data(face_id, |data, index| (Arc::<[u8]>::from(data), index))
+        .ok_or_else(|| runtime_error("could not read regular platform UI font"))?;
+    platform_ui_font_binding(family, size, fill_rgba, bytes, face_index)
+}
+
+fn platform_ui_font_binding(
+    family: &str,
+    size: i32,
+    fill_rgba: [u8; 4],
+    font_data: Arc<[u8]>,
+    face_index: u32,
+) -> LuaResult<SystemFontRenderBinding> {
+    let font = FontRef::from_index(&font_data, face_index)
+        .map_err(|_| runtime_error("invalid platform UI font"))?;
+    let metrics = font.metrics(Size::unscaled(), LocationRef::default());
+    let scale = f64::from(size) / f64::from(metrics.units_per_em);
+    let ascending = f64::from(metrics.ascent) * scale;
+    let descending = -f64::from(metrics.descent) * scale;
+    let leading = f64::from(metrics.leading) * scale;
+    Ok(SystemFontRenderBinding {
+        label_pool_epoch: 0,
+        family: family.to_owned(),
+        font_data,
+        face_index,
+        fallback_catalog: Some(platform_system_fonts().fallback_catalog.clone()),
+        size,
+        fill_rgba,
+        stroke_width: 0,
+        stroke_rgba: [0; 4],
+        style: 0,
+        ascending: native_double_to_i32(ascending),
+        descending: native_double_to_i32(descending),
+        leading: native_double_to_i32(leading),
+        label_line_height: native_double_to_i32(ascending + descending + leading),
+    })
+}
+
 pub(crate) fn system_font_string_width(font: &SystemFontState, text: &str) -> i32 {
     font.render.native_string_width(text)
 }
@@ -278,6 +383,53 @@ mod tests {
     }
 
     #[test]
+    fn platform_ui_regular_font_resolves_regular_face_and_drawable_date_glyphs() {
+        let fonts = platform_system_fonts();
+        let id = platform_ui_regular_face(&fonts.database).unwrap();
+        let selected = fonts.database.face(id).unwrap();
+        assert_eq!(selected.weight, fontdb::Weight::NORMAL);
+        assert_eq!(selected.style, fontdb::Style::Normal);
+        assert_eq!(selected.stretch, fontdb::Stretch::Normal);
+        #[cfg(target_os = "macos")]
+        if named_system_font_face(&fonts.database, "HelveticaNeue").is_some() {
+            assert_eq!(
+                selected.post_script_name, "HelveticaNeue",
+                "installed Helvetica Neue Regular must win"
+            );
+        }
+        let binding = create_platform_ui_regular_font(21, [0, 0, 0, 255]).unwrap();
+        assert_eq!(binding.family, selected.post_script_name);
+        assert_eq!(binding.face_index, selected.index);
+        let font = FontRef::from_index(&binding.font_data, binding.face_index).unwrap();
+        let layout = binding
+            .native_system_font_layout("05 September 2000")
+            .unwrap();
+        assert!(layout.width > 0);
+        let glyph = layout.lines[0].glyphs[0];
+        assert_ne!(glyph.glyph_id, 0);
+        let mut outline = Vec::<skrifa::outline::pen::PathElement>::new();
+        font.outline_glyphs()
+            .get(skrifa::GlyphId::new(u32::from(glyph.glyph_id)))
+            .unwrap()
+            .draw(
+                skrifa::outline::DrawSettings::unhinted(Size::new(21.0), LocationRef::default()),
+                &mut outline,
+            )
+            .unwrap();
+        assert!(
+            !outline.is_empty(),
+            "the date face must produce actual renderable outlines"
+        );
+
+        // The host-only nib token must not become a generic Lua font alias.
+        let alias = ".HelveticaNeueInterface-Regular";
+        assert_eq!(
+            resolve_system_font_face(&fonts.database, alias),
+            named_system_font_face(&fonts.database, alias)
+        );
+    }
+
+    #[test]
     fn lua_system_font_colors_follow_native_argb_pack_without_preclamping() {
         assert_eq!(
             system_font_color_from_lua([64.9, 128.9, 32.9, 255.9]),
@@ -289,6 +441,16 @@ mod tests {
         assert_eq!(
             system_font_color_from_lua([0.0, 0.0, 0.0, -1.0]),
             [255, 255, 255, 255]
+        );
+        assert_eq!(
+            system_font_color_from_lua([f32::NAN, 0.0, 0.0, f32::NAN]),
+            [0, 0, 0, 0]
+        );
+        // Positive overflow is i32::MAX before the unmasked OR, so the blue
+        // input contributes low white bytes and alpha 0x7f, not 0x80000000.
+        assert_eq!(
+            system_font_color_from_lua([0.0, 0.0, 0.0, f32::INFINITY]),
+            [255, 255, 255, 127]
         );
     }
 
@@ -312,8 +474,50 @@ mod tests {
         assert_eq!(native_float_to_i32(36.999_999_9), 37);
         assert_eq!(native_double_to_i32(-36.999_999_9), -36);
         assert_eq!(native_float_to_i32(-36.999_999_9), -37);
-        assert_eq!(native_double_to_i32(f64::NAN), i32::MIN);
-        assert_eq!(native_double_to_i32(2_147_483_648.0), i32::MIN);
+        assert_eq!(native_double_to_i32(f64::NAN), 0);
+        assert_eq!(native_double_to_i32(f64::INFINITY), i32::MAX);
+        assert_eq!(native_double_to_i32(f64::NEG_INFINITY), i32::MIN);
+        assert_eq!(native_double_to_i32(2_147_483_648.0), i32::MAX);
+        assert_eq!(native_double_to_i32(-2_147_483_649.0), i32::MIN);
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn ui_font_metrics_conversion_matches_actual_arm64_double_instruction() {
+        let mut bits = 0x4719_82BA_350C_D682u64;
+        for fixed in [
+            0,
+            0x8000_0000_0000_0000,
+            0x7FF0_0000_0000_0000,
+            0xFFF0_0000_0000_0000,
+            0x7FF8_0000_0000_0001,
+            0xFFF8_0000_0000_0001,
+            0x7FF0_0000_0000_0001,
+            0x41E0_0000_0000_0000,
+            0xC1E0_0000_0000_0000,
+        ] {
+            for index in 0..512 {
+                bits = bits.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+                let input = f64::from_bits(if index == 0 { fixed } else { bits });
+                let native: i32;
+                // SAFETY: register-only FCVTZS W,D is supported on every
+                // AArch64 CPU; there is no memory/stack or privileged access.
+                unsafe {
+                    std::arch::asm!(
+                        "fcvtzs {result:w}, {value:d}",
+                        result = out(reg) native,
+                        value = in(vreg) input,
+                        options(nomem, nostack),
+                    );
+                }
+                assert_eq!(
+                    native_double_to_i32(input),
+                    native,
+                    "bits={:016x}",
+                    input.to_bits()
+                );
+            }
+        }
     }
 
     #[test]

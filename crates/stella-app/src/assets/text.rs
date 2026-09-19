@@ -8,6 +8,10 @@ impl AssetCatalog {
         command: &TextRenderCommand,
         target: &mut [u32],
     ) -> Result<()> {
+        if command.projection_3d.is_some() {
+            let frame = self.prepare_gpu_frame(&[], std::slice::from_ref(command), &[], &[])?;
+            return frame.render_reference(self, target);
+        }
         let (font, texture_source) = match command.font_binding.as_ref() {
             Some(TextFontBinding::Bitmap {
                 font,
@@ -42,82 +46,9 @@ impl AssetCatalog {
         // BitmapFont::draw (sub_10042B338) submits each glyph AtlasSprite at
         // the live GL_Context scale without an extra density conversion. The
         // original UI line objects already carry their authored 0.5 scale.
-        let scale_x = command.scale_x;
-        let scale_y = command.scale_y;
         let texture = self.texture(&texture_source)?.clone();
         let mut cursor = anchor_x;
         for glyph in glyphs {
-            if let Some(projection) = command.projection_3d {
-                let glyph_width = f64::from(glyph.width);
-                let glyph_height = f64::from(glyph.height);
-                let local = [
-                    [
-                        cursor * scale_x,
-                        (anchor_y - f64::from(glyph.pivot_y)) * scale_y,
-                    ],
-                    [
-                        (cursor + glyph_width) * scale_x,
-                        (anchor_y - f64::from(glyph.pivot_y)) * scale_y,
-                    ],
-                    [
-                        cursor * scale_x,
-                        (anchor_y - f64::from(glyph.pivot_y) + glyph_height) * scale_y,
-                    ],
-                    [
-                        (cursor + glyph_width) * scale_x,
-                        (anchor_y - f64::from(glyph.pivot_y) + glyph_height) * scale_y,
-                    ],
-                ];
-                let positions = local.map(|[x, y]| {
-                    project_text_3d(
-                        GameResolution::default(),
-                        command.x,
-                        command.y,
-                        projection,
-                        x,
-                        y,
-                    )
-                });
-                if let [
-                    Some(top_left),
-                    Some(top_right),
-                    Some(bottom_left),
-                    Some(bottom_right),
-                ] = positions
-                {
-                    let texture_width = f64::from(texture.width());
-                    let texture_height = f64::from(texture.height());
-                    draw_explicit_quad(
-                        &texture.image,
-                        RenderQuad {
-                            positions: [top_left, top_right, bottom_left, bottom_right],
-                            uv: [
-                                [
-                                    f64::from(glyph.x) / texture_width,
-                                    f64::from(glyph.y) / texture_height,
-                                ],
-                                [
-                                    (f64::from(glyph.x) + f64::from(glyph.width)) / texture_width,
-                                    f64::from(glyph.y) / texture_height,
-                                ],
-                                [
-                                    f64::from(glyph.x) / texture_width,
-                                    (f64::from(glyph.y) + f64::from(glyph.height)) / texture_height,
-                                ],
-                                [
-                                    (f64::from(glyph.x) + f64::from(glyph.width)) / texture_width,
-                                    (f64::from(glyph.y) + f64::from(glyph.height)) / texture_height,
-                                ],
-                            ],
-                        },
-                        command.alpha,
-                        command.clip_rect,
-                        target,
-                    );
-                }
-                cursor += f64::from(i32::from(glyph.width) + i32::from(font.tracking));
-                continue;
-            }
             let transform = text_glyph_transform(command, cursor, anchor_y);
             draw_region(
                 &texture.image,
@@ -168,42 +99,6 @@ fn draw_system_text(
     );
     let width = label.image.width();
     let height = label.image.height();
-    if let Some(projection) = command.projection_3d {
-        let left = label_left * command.scale_x;
-        let top = label_top * command.scale_y;
-        let right = (label_left + f64::from(width)) * command.scale_x;
-        let bottom = (label_top + f64::from(height)) * command.scale_y;
-        let projected =
-            [[left, top], [right, top], [left, bottom], [right, bottom]].map(|[x, y]| {
-                project_text_3d(
-                    GameResolution::default(),
-                    command.x,
-                    command.y,
-                    projection,
-                    x,
-                    y,
-                )
-            });
-        if let [
-            Some(top_left),
-            Some(top_right),
-            Some(bottom_left),
-            Some(bottom_right),
-        ] = projected
-        {
-            draw_explicit_quad(
-                &label.image,
-                RenderQuad {
-                    positions: [top_left, top_right, bottom_left, bottom_right],
-                    uv: [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]],
-                },
-                command.alpha,
-                command.clip_rect,
-                target,
-            );
-        }
-        return Ok(());
-    }
     draw_region(
         &label.image,
         &SpriteRegion {

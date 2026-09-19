@@ -4,6 +4,7 @@ use crate::*;
 
 /// Lua VM plus the original filesystem lookup behavior needed by the scripts.
 pub struct StellaLua {
+    pub(crate) apprater: AppraterRuntime,
     pub(crate) lua: Lua,
     pub(crate) data_root: Arc<PathBuf>,
     pub(crate) missing_globals: Arc<Mutex<BTreeSet<String>>>,
@@ -14,15 +15,19 @@ pub struct StellaLua {
     pub(crate) resource_runtime: Arc<Mutex<ResourceRuntime>>,
     pub(crate) _audio_runtime: Arc<Mutex<AudioRuntime>>,
     pub(crate) _animation_runtime: Arc<Mutex<AnimationRuntime>>,
-    pub(crate) url_requests: UrlRequestRuntime,
+    pub(crate) application_event_dispatcher: ApplicationEventDispatcher,
     pub(crate) installed_apps: InstalledAppsRuntime,
     pub(crate) assets: AssetsRuntime,
     pub(crate) channel: ChannelRuntime,
     pub(crate) game_server: GameServerRuntime,
     pub(crate) gamer_services: GamerServicesRuntime,
     pub(crate) iap: IapRuntime,
+    pub(crate) qr_scanner: QrScannerRuntime,
     pub(crate) skynest_account: SkynestAccountRuntime,
     pub(crate) skynest_storage: SkynestStorageRuntime,
+    pub(crate) social: SocialRuntime,
+    pub(crate) server_time: ServerTimeRuntime,
+    pub(crate) notifications: NotificationRuntime,
     #[cfg(test)]
     pub(crate) draw_callbacks: Rc<RefCell<DrawCallbacks>>,
     pub(crate) touches: Arc<Mutex<Vec<(u64, i32, i32)>>>,
@@ -41,6 +46,163 @@ pub struct StellaLua {
 impl StellaLua {
     pub fn new(data_root: impl Into<PathBuf>) -> Result<Self, ScriptError> {
         Self::new_with_resolution(data_root, 1024, 768)
+    }
+
+    /// Route the recovered GameServerConnection facade to a compatible
+    /// replacement for the discontinued Stella endpoint. This must be called
+    /// before [`Self::boot`] so the shipped high-level facade is selected.
+    pub fn set_game_server_url(&self, base_url: &str) -> Result<(), ScriptError> {
+        self.game_server.set_compatible_base_url(base_url)?;
+        Ok(())
+    }
+
+    /// Route `ServerTime` synchronization to an explicitly selected
+    /// replacement for the retired identity/2.0/time provider.
+    pub fn set_server_time_url(&self, url: &str) -> Result<(), ScriptError> {
+        self.server_time.set_compatible_url(url)?;
+        Ok(())
+    }
+
+    /// Route downloadable `Assets` requests to a compatible replacement for
+    /// the retired `apdrive/1/apps/<app>/assets` provider. The URL is the full
+    /// manifest endpoint; Purple's repeated `name` query parameters and
+    /// `assets`/`failedAssets` response protocol remain intact.
+    pub fn set_assets_url(&self, url: &str) -> Result<(), ScriptError> {
+        self.assets.set_compatible_url(url)?;
+        Ok(())
+    }
+
+    /// Route the recovered Identity Level 2 access, own-profile and nickname
+    /// validation operations to an explicitly selected compatible service.
+    /// `url` is the `identity/2.0` service root.
+    pub fn set_identity_url(&self, url: &str) -> Result<(), ScriptError> {
+        self.skynest_account.set_compatible_url(url)?;
+        self.social.synchronize_native_context()?;
+        self.iap.use_session_provider();
+        Ok(())
+    }
+
+    /// Supply compatible-service client metadata. Historical Stella secrets
+    /// are neither embedded nor inferred; a replacement service may accept an
+    /// application-specific id, signature and salt supplied by its operator.
+    pub fn set_identity_client(
+        &self,
+        client_id: Option<&str>,
+        client_signature: Option<&str>,
+        client_salt: Option<&str>,
+    ) -> Result<(), ScriptError> {
+        self.skynest_account
+            .set_compatible_client(client_id, client_signature, client_salt)?;
+        self.social.synchronize_native_context()?;
+        Ok(())
+    }
+
+    /// Generate each access signature/salt using an explicit replacement
+    /// provider key and fresh randomness. Key bytes are preserved exactly.
+    /// This switches away from literal signature/salt mode; calling
+    /// set_identity_client switches back. Neither mode retrieves a native key.
+    pub fn set_identity_signing_key(&self, key: &[u8]) -> Result<(), ScriptError> {
+        self.skynest_account.set_compatible_signing_key(key)?;
+        self.social.synchronize_native_context()?;
+        Ok(())
+    }
+
+    /// Route Skynest key/value and cloud-settings operations to an explicitly
+    /// selected replacement for the retired `storage/1.0` provider. `url` is
+    /// the service root; the recovered `state` and `states/query` routes are
+    /// appended by the client.
+    pub fn set_storage_url(&self, url: &str) -> Result<(), ScriptError> {
+        self.skynest_storage.set_compatible_url(url)?;
+        Ok(())
+    }
+
+    /// Supply optional credentials for a compatible storage service using
+    /// Purple's recovered `X-Access-Token` and `Rovio-Sgs` header names. No
+    /// historical account credentials are embedded or inferred.
+    pub fn set_storage_credentials(
+        &self,
+        access_token: Option<&str>,
+        signature: Option<&str>,
+    ) -> Result<(), ScriptError> {
+        self.skynest_storage
+            .set_compatible_credentials(access_token, signature)?;
+        Ok(())
+    }
+
+    /// Route the native SocialManager operations to an explicitly selected
+    /// compatible provider. This is a rehost JSON-RPC boundary over the
+    /// recovered native method/callback ABI, not a Facebook credential shim.
+    pub fn set_social_url(&self, url: &str) -> Result<(), ScriptError> {
+        self.social.set_compatible_url(url)?;
+        Ok(())
+    }
+
+    /// Install an explicitly authenticated Facebook platform session. This is
+    /// independent of both Skynest identity and the compatible social endpoint.
+    /// Replacing/removing the provider retires its pending deliveries.
+    pub fn set_facebook_session(
+        &self,
+        provider: Option<Arc<dyn SocialPlatformProvider>>,
+    ) -> Result<(), ScriptError> {
+        self.social.set_facebook_session(self.lua(), provider)?;
+        Ok(())
+    }
+
+    /// Deliver a platform authorization URL on the application thread, before
+    /// posting the subsequent application-resumed event. Returns whether the
+    /// current provider handled it; unrelated application links return false.
+    pub fn handle_platform_open_url(&self, url: &str) -> Result<bool, ScriptError> {
+        Ok(self.social.handle_platform_open_url(self.lua(), url)?)
+    }
+
+    /// Deliver an embedded authorization view's actual callback on the
+    /// application thread. This also schedules the native service profile
+    /// request and resolves any pending Friends login consumer.
+    pub fn handle_platform_login_dialog_event(
+        &self,
+        event: &FacebookLoginDialogEvent,
+    ) -> Result<bool, ScriptError> {
+        Ok(self
+            .social
+            .handle_platform_login_dialog_event(self.lua(), event)?)
+    }
+
+    /// Enable persistent local replacements for retired identity, cloud
+    /// storage, achievement and social providers. The original Lua callbacks
+    /// and asynchronous frame boundaries remain in use; only unavailable
+    /// external providers are replaced. Call this before [`Self::boot`].
+    pub fn enable_local_services(&self) -> Result<(), ScriptError> {
+        self.skynest_account.enable_local_provider()?;
+        self.gamer_services.enable_local_provider()?;
+        self.social.enable_local_provider()?;
+        self.iap.enable_local_provider();
+        // Also support opting into local services after script boot: a
+        // retired account-provider timer cannot bootstrap the new store.
+        complete_iap_initialization(&self.lua, &self.iap)?;
+        Ok(())
+    }
+
+    /// Publish URL schemes that the host can open. Purple routes both
+    /// `checkInstalledApps*` and `AppStoreLauncher.updateGameData` through
+    /// UIApplication's `canOpenURL`; this explicit registry is the portable
+    /// equivalent. Values may be bare schemes or complete scheme URLs.
+    pub fn set_installed_url_schemes<'a>(
+        &self,
+        schemes: impl IntoIterator<Item = &'a str>,
+    ) -> Result<(), ScriptError> {
+        let normalized = schemes
+            .into_iter()
+            .map(|scheme| {
+                game_lua::platform::normalized_url_scheme(scheme).ok_or_else(|| {
+                    runtime_error(format!("invalid installed URL scheme '{scheme}'"))
+                })
+            })
+            .collect::<LuaResult<BTreeSet<_>>>()?;
+        self.render
+            .lock()
+            .expect("render bridge lock poisoned")
+            .installed_url_schemes = normalized;
+        Ok(())
     }
 
     /// Construct a host that records absent global reads for explicit
@@ -113,6 +275,7 @@ impl StellaLua {
             track_missing_globals,
         )?;
         Ok(Self {
+            apprater: installed.apprater,
             lua,
             data_root,
             missing_globals,
@@ -123,15 +286,19 @@ impl StellaLua {
             resource_runtime: installed.resources,
             _audio_runtime: installed.audio,
             _animation_runtime: animation_runtime,
-            url_requests: installed.url_requests,
+            application_event_dispatcher: installed.application_event_dispatcher,
             installed_apps: installed.installed_apps,
             assets: installed.assets,
             channel: installed.channel,
             game_server: installed.game_server,
             gamer_services: installed.gamer_services,
             iap: installed.iap,
+            qr_scanner: installed.qr_scanner,
             skynest_account: installed.skynest_account,
             skynest_storage: installed.skynest_storage,
+            social: installed.social,
+            server_time: installed.server_time,
+            notifications: installed.notifications,
             #[cfg(test)]
             draw_callbacks,
             touches,
@@ -141,10 +308,11 @@ impl StellaLua {
         })
     }
 
-    /// Mirror Purple's resolution callback at `sub_10006E990`: replace the
-    /// renderer-reported globals, then invoke the script callback if startup
-    /// has installed it. `g_startingResolution*` deliberately remains the
-    /// construction-time size.
+    /// Mirror GameApp slot 7 (`sub_10002A25C -> sub_10006E1F4`): after the
+    /// renderer has installed its new extent, snapshot the old corrected
+    /// camera scale, replace the renderer-reported globals, and invoke the
+    /// required script callback. `g_startingResolution*` deliberately remains
+    /// the construction-time size.
     pub fn set_screen_resolution(
         &self,
         screen_width: u32,
@@ -199,15 +367,13 @@ impl StellaLua {
             }
         }
 
-        let environment = game_environment(&self.lua)?;
-        if let Value::Function(callback) = environment.get::<Value>("resolutionChanged")? {
-            callback.call::<()>(())?;
-        } else if let Value::Table(screen) = environment.get::<Value>("screen")? {
-            screen.set("right", f64::from(screen_width))?;
-            screen.set("bottom", f64::from(screen_height))?;
-            screen.set("width", f64::from(screen_width))?;
-            screen.set("height", f64::from(screen_height))?;
-        }
+        // sub_1005278E8 performs an unconditional zero-argument Lua call. A
+        // missing/non-function resolutionChanged is an error after the new
+        // context extent and globals have already become observable; Purple
+        // has no host-side fallback that edits the script-owned screen table.
+        game_environment(&self.lua)?
+            .get::<mlua::Function>("resolutionChanged")?
+            .call::<()>(())?;
         Ok(true)
     }
 
@@ -255,6 +421,12 @@ impl StellaLua {
         &self.data_root
     }
 
+    /// Resolve a platform-owned media request through the same safe bundle
+    /// lookup used by native resource streams.
+    pub fn resolve_bundle_resource(&self, requested: &str) -> Result<PathBuf, ScriptError> {
+        resolve_bundle_file(&self.data_root, requested)
+    }
+
     pub fn execute(&self, path: &str) -> Result<(), ScriptError> {
         let environment = game_environment(&self.lua)?;
         execute_script_in(&self.lua, &self.data_root, path, environment).map_err(ScriptError::Lua)
@@ -272,19 +444,58 @@ impl StellaLua {
         Ok(())
     }
 
+    /// Snapshot GameLua's retained persistent-load diagnostics. Native GameApp
+    /// delivers and clears them after gamelogic initialization. Later loads
+    /// append to the same queue; ordinary frames do not drain it.
+    pub fn pending_persistent_load_messages(&self) -> Vec<String> {
+        super::persistence::pending_persistent_load_messages(&self.lua)
+    }
+
     /// Advertise a host-provided QR source to the shipped Telepods menus.
     /// Desktop builds leave it disabled until a platform integration or a
     /// deterministic command-line code explicitly enables it.
     pub fn set_qr_scanner_available(&self, available: bool) -> Result<(), ScriptError> {
-        super::platform_services::set_qr_scanner_available(&self.lua, available)?;
+        self.qr_scanner.set_host_available(available);
         Ok(())
     }
 
-    /// Queue or deliver one recognized QR payload through QrScanner's retained
-    /// native callback. Returns true when an active scanner consumed it now;
-    /// otherwise it remains queued until `start` and callback registration.
+    /// Submit one decoded payload to the virtual QR capture source. Returns
+    /// true if an available, active, non-busy scanner accepted it and posted an
+    /// application event; the Lua callback is never invoked inline. Otherwise
+    /// the latest input waits for `start` or a later host frame. Already posted
+    /// results survive `stop`; delivery uses the callback then installed.
     pub fn submit_qr_code(&self, code: &str) -> Result<bool, ScriptError> {
-        Ok(super::platform_services::submit_host_code(&self.lua, code)?)
+        Ok(self.qr_scanner.submit_host_code(code))
+    }
+
+    /// Deliver one platform local-notification event through the callback
+    /// installed by `setNotificationCallback`. This follows UIKit's delegate
+    /// boundary and therefore re-enters Lua synchronously.
+    pub fn submit_local_notification(&self, event_name: &str) {
+        if let Err(error) = self.try_submit_local_notification(event_name) {
+            eprintln!("local notification callback failed: {error}");
+        }
+    }
+
+    /// Checked variant of [`Self::submit_local_notification`] for hosts that
+    /// want Lua callback failures to stop their runtime explicitly.
+    pub fn try_submit_local_notification(&self, event_name: &str) -> Result<(), ScriptError> {
+        dispatch_notification_callback(&self.lua, &self.render, event_name)?;
+        Ok(())
+    }
+
+    /// Queue a compatible Rovio Channel catalog result. The native SDK stores
+    /// this as `newVideos.num` and reports it to Lua on the application thread.
+    pub fn submit_channel_content_update(&self, count: i32) {
+        self.channel.submit_content_update(count);
+    }
+
+    /// Supply the Channel content path carried by a platform launch
+    /// notification. `RovioChannel.onMenuInitialised` consumes it only after
+    /// the Channel service exists and synchronously forwards it to Lua.
+    pub fn submit_channel_launch_notification(&self, content_path: &str) {
+        self.channel
+            .submit_launch_notification(content_path.to_owned());
     }
 }
 

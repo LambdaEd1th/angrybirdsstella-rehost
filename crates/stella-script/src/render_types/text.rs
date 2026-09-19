@@ -32,6 +32,15 @@ pub struct TextRenderCommand {
     /// compatibility scale/angle fields as Rotation * Scale when X/Y scales
     /// differ.
     pub matrix: Option<[f64; 4]>,
+    /// Optional position-only basis for the local anchor/cursor offset.
+    ///
+    /// Purple's BitmapFont moves each glyph through the live context pivot,
+    /// so its cursor and glyph quad share `matrix`. UIKit SystemFont instead
+    /// anchors its float x/y before `GL_Image::draw`: that anchored position
+    /// is only axis-scaled, while the cached label quad still uses `matrix`
+    /// for its orientation. Keeping the bases separate preserves that native
+    /// distinction under non-zero rotation.
+    pub position_matrix: Option<[f64; 4]>,
     pub alpha: f64,
     pub horizontal_anchor: String,
     pub vertical_anchor: String,
@@ -55,8 +64,14 @@ pub enum TextFontBinding {
     System(SystemFontRenderBinding),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// Perspective and optional model transform retained by the native context.
+/// Image overloads select raw local vertices or normalized 2D vertices.
+/// A disabled model represents identity while perspective stays active.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct TextProjection3D {
-    pub z: f64,
-    pub rotation_x: f64,
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+    pub rotation_x: f32,
+    pub custom_model: bool,
 }

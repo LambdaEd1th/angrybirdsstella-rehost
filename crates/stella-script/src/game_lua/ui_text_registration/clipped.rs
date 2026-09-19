@@ -7,7 +7,7 @@ pub(super) fn draw(
     text: &mlua::Table,
     render: &Arc<Mutex<RenderBridge>>,
     transform: UiTextTransform,
-    supplied_alpha: Option<f64>,
+    supplied_alpha: Option<f32>,
 ) -> LuaResult<()> {
     let lines = match text.get::<Value>("lines")? {
         Value::Table(lines) => lines,
@@ -22,7 +22,7 @@ pub(super) fn draw(
             .lock()
             .expect("render bridge lock poisoned")
             .state
-            .alpha = alpha;
+            .alpha = f64::from(alpha);
     }
     let callback_result = (|| -> LuaResult<()> {
         for index in 1.. {

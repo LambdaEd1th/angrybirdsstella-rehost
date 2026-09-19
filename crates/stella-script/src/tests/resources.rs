@@ -307,16 +307,32 @@ fn clip_text_uses_localized_font_width_break_set_and_forced_split_contract() {
         line.chars().count() as i32
     });
     assert_eq!(fixed_lines, ["one", "two-", "three", "four"]);
-    assert_eq!(fixed_widest, 5);
+    assert_eq!(fixed_widest, 5.0);
     let (forced_lines, forced_widest) =
         native_clip_text_lines("abcdefgh", 3.0, |line| line.chars().count() as i32);
-    assert_eq!(forced_lines, ["abc", "def", "gh"]);
-    assert_eq!(forced_widest, 3);
+    assert_eq!(forced_lines, ["ab", "cd", "ef", "gh"]);
+    assert_eq!(forced_widest, 2.0);
+    let (newline_lines, newline_widest) =
+        native_clip_text_lines("a\n\nb\n", 7.0, |line| line.chars().count() as i32);
+    assert_eq!(newline_lines, ["a", "", "b"]);
+    assert_eq!(newline_widest, 1.0);
+    let (_, rounded_widest) = native_clip_text_lines("x", f32::INFINITY, |_| 16_777_217_i32);
+    assert_eq!(rounded_widest.to_bits(), 16_777_216.0_f32.to_bits());
+    assert_eq!(native_utf8_skipping_invalid(b"A\xffB\xc3(C"), "AB(C");
 
     let runtime = StellaLua::new("/tmp").unwrap();
     runtime
         .execute_source(
             r#"
+                empty_without_font_ok = pcall(
+                    clipText, "TEXTS_BASIC", "", 7
+                )
+                empty_without_font_lines = clippedText.lines
+                empty_without_font_widest = clippedText.widestLine
+                nonempty_without_font_ok, nonempty_without_font_error = pcall(
+                    clipText, "TEXTS_BASIC", "A", 7
+                )
+                nonempty_without_font_error = tostring(nonempty_without_font_error)
                 res.createSystemFont("CLIP_FONT", "Arial", 2, 255, 255, 255, 255)
                 res.useFont("CLIP_FONT")
                 wrapped_expected_width = res.getStringWidth("three")
@@ -341,6 +357,13 @@ fn clip_text_uses_localized_font_width_break_set_and_forced_split_contract() {
                         forced_measured_widest, res.getStringWidth(line)
                     )
                 end
+                clipText("MISSING_GROUP", string.char(65, 255, 66), 100)
+                invalid_utf8_line = retainedClippedText.lines[1]
+                clipText("MISSING_GROUP", "A\0B", 100)
+                embedded_nul_line = retainedClippedText.lines[1]
+                clip_return_count = select('#',
+                    clipText("TEXTS_BASIC", "", 7)
+                )
                 clip_trailing_accepted = pcall(
                     clipText, "TEXTS_BASIC", "text", 7, false
                 )
@@ -362,6 +385,31 @@ fn clip_text_uses_localized_font_width_break_set_and_forced_split_contract() {
         )
         .unwrap();
     let environment = game_environment(runtime.lua()).unwrap();
+    assert!(environment.get::<bool>("empty_without_font_ok").unwrap());
+    assert_eq!(
+        environment
+            .get::<mlua::Table>("empty_without_font_lines")
+            .unwrap()
+            .raw_len(),
+        0
+    );
+    assert_eq!(
+        environment.get::<f64>("empty_without_font_widest").unwrap(),
+        0.0
+    );
+    assert!(!environment.get::<bool>("nonempty_without_font_ok").unwrap());
+    assert!(
+        environment
+            .get::<String>("nonempty_without_font_error")
+            .unwrap()
+            .contains("No font is set while trying to get string width")
+    );
+    assert_eq!(
+        environment.get::<String>("invalid_utf8_line").unwrap(),
+        "AB"
+    );
+    assert_eq!(environment.get::<String>("embedded_nul_line").unwrap(), "A");
+    assert_eq!(environment.get::<i64>("clip_return_count").unwrap(), 0);
     let wrapped_lines: mlua::Table = environment.get("wrapped_lines").unwrap();
     assert_eq!(wrapped_lines.raw_len(), 4);
     for (index, expected) in ["one", "two-", "three", "four"].into_iter().enumerate() {
@@ -410,6 +458,57 @@ fn clip_text_uses_localized_font_width_break_set_and_forced_split_contract() {
     ] {
         assert!(environment.get::<bool>(name).unwrap(), "{name}");
     }
+}
+
+#[test]
+fn clip_text_dispatches_the_same_threshold_rule_through_bitmap_ifont() {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("stella-clip-bitmap-{unique}"));
+    let data_root = root.join("data");
+    fs::create_dir_all(&data_root).unwrap();
+    fs::create_dir_all(root.join("appdata")).unwrap();
+    fs::write(
+        data_root.join("FONT.dat"),
+        test_bitmap_font_with_glyph("font-atlas.pvr", 6),
+    )
+    .unwrap();
+    fs::write(
+        data_root.join("TEXTS.dat"),
+        test_localization_table("en_EN", "TITLE", "AAAA"),
+    )
+    .unwrap();
+
+    let runtime = StellaLua::new(&data_root).unwrap();
+    runtime
+        .execute_source(
+            r#"
+                res.createBitmapFont("FONT.dat")
+                res.useFont("FONT")
+                res.createTextGroupSet("TEXTS.dat")
+                res.loadLocale("TEXTS", "en_EN")
+                res.useLocale("en_EN")
+                one_glyph_width = res.getStringWidth("A")
+                clipText("TEXTS", "TITLE", one_glyph_width * 2)
+                bitmap_lines = clippedText.lines
+                bitmap_widest = clippedText.widestLine
+            "#,
+        )
+        .unwrap();
+    let environment = game_environment(runtime.lua()).unwrap();
+    let lines = environment.get::<mlua::Table>("bitmap_lines").unwrap();
+    assert_eq!(lines.raw_len(), 4);
+    for index in 1..=4 {
+        assert_eq!(lines.raw_get::<String>(index).unwrap(), "A");
+    }
+    assert_eq!(
+        environment.get::<f64>("bitmap_widest").unwrap(),
+        environment.get::<f64>("one_glyph_width").unwrap()
+    );
+    drop(runtime);
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -490,6 +589,25 @@ fn native_constructor_does_not_publish_script_pointer_event_literals() {
         cursor.raw_get::<Value>("down").unwrap(),
         Value::Nil
     ));
+}
+
+#[test]
+fn gameapp_cursor_slot_truncates_to_integer_then_float32() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    let cursor = game_environment(runtime.lua())
+        .unwrap()
+        .get::<mlua::Table>("cursor")
+        .unwrap();
+
+    runtime.set_cursor(123.875, -45.625, false).unwrap();
+    assert_eq!(cursor.get::<f64>("x").unwrap(), 123.0);
+    assert_eq!(cursor.get::<f64>("y").unwrap(), -45.0);
+
+    runtime
+        .set_cursor(16_777_217.0, -16_777_217.0, false)
+        .unwrap();
+    assert_eq!(cursor.get::<f64>("x").unwrap(), 16_777_216.0);
+    assert_eq!(cursor.get::<f64>("y").unwrap(), -16_777_216.0);
 }
 
 #[test]
@@ -688,6 +806,100 @@ fn native_key_injection_separates_hold_press_release_and_repeat() {
 }
 
 #[test]
+fn native_volume_key_edges_update_master_and_settings_before_lua_update() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    {
+        let mut resources = runtime.resource_runtime.lock().unwrap();
+        resources.audio_output_created = true;
+        resources.master_volume = 0.5;
+    }
+    runtime
+        .execute_source(
+            r#"
+                settings.volume = -1
+                volumeKeyFrames = {}
+                function update()
+                    table.insert(volumeKeyFrames, {
+                        up = keyPressed.VOLUME_UP,
+                        down = keyPressed.VOLUME_DOWN,
+                        volume = settings.volume,
+                    })
+                end
+            "#,
+        )
+        .unwrap();
+    let environment = game_environment(runtime.lua()).unwrap();
+    let settings = environment.get::<mlua::Table>("settings").unwrap();
+
+    runtime.set_key("VOLUME_UP", true).unwrap();
+    assert!(runtime.update(0.0).unwrap());
+    let raised = 0.5_f32 + 0.1_f32;
+    assert_eq!(
+        runtime.resource_runtime.lock().unwrap().master_volume,
+        raised
+    );
+    assert_eq!(settings.get::<f64>("volume").unwrap(), f64::from(raised));
+    let frames = environment.get::<mlua::Table>("volumeKeyFrames").unwrap();
+    let pressed = frames.raw_get::<mlua::Table>(1).unwrap();
+    assert!(pressed.get::<bool>("up").unwrap());
+    assert!(!pressed.get::<bool>("down").unwrap());
+    assert_eq!(pressed.get::<f64>("volume").unwrap(), f64::from(raised));
+
+    // A held key and an auto-repeat down event do not manufacture another
+    // press edge, and release is likewise volume-neutral.
+    assert!(runtime.update(0.0).unwrap());
+    runtime.set_key("VOLUME_UP", true).unwrap();
+    assert!(runtime.update(0.0).unwrap());
+    runtime.set_key("VOLUME_UP", false).unwrap();
+    assert!(runtime.update(0.0).unwrap());
+    assert_eq!(
+        runtime.resource_runtime.lock().unwrap().master_volume,
+        raised
+    );
+
+    // GameApp evaluates UP before DOWN when both edges arrive in one frame.
+    runtime.set_key("VOLUME_UP", true).unwrap();
+    runtime.set_key("VOLUME_DOWN", true).unwrap();
+    assert!(runtime.update(0.0).unwrap());
+    let both = (raised + 0.1_f32).min(1.0) - 0.1_f32;
+    assert_eq!(runtime.resource_runtime.lock().unwrap().master_volume, both);
+    assert_eq!(settings.get::<f64>("volume").unwrap(), f64::from(both));
+    let simultaneous = frames.raw_get::<mlua::Table>(5).unwrap();
+    assert!(simultaneous.get::<bool>("up").unwrap());
+    assert!(simultaneous.get::<bool>("down").unwrap());
+    assert_eq!(simultaneous.get::<f64>("volume").unwrap(), f64::from(both));
+
+    runtime.set_key("VOLUME_UP", false).unwrap();
+    runtime.set_key("VOLUME_DOWN", false).unwrap();
+    assert!(runtime.update(0.0).unwrap());
+    {
+        let mut resources = runtime.resource_runtime.lock().unwrap();
+        resources.master_volume = 0.02;
+    }
+    runtime.set_key("VOLUME_DOWN", true).unwrap();
+    assert!(runtime.update(0.0).unwrap());
+    assert_eq!(runtime.resource_runtime.lock().unwrap().master_volume, 0.0);
+    assert_eq!(settings.get::<f64>("volume").unwrap(), 0.0);
+}
+
+#[test]
+fn native_volume_key_uses_zero_without_an_audio_output_but_still_updates_settings() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime.execute_source("function update() end").unwrap();
+    let environment = game_environment(runtime.lua()).unwrap();
+    let settings = environment.get::<mlua::Table>("settings").unwrap();
+    settings.set("volume", 0.75).unwrap();
+
+    runtime.set_key("VOLUME_UP", true).unwrap();
+    assert!(runtime.update(0.0).unwrap());
+
+    let resources = runtime.resource_runtime.lock().unwrap();
+    assert!(!resources.audio_output_created);
+    assert_eq!(resources.master_volume, -1.0);
+    assert_eq!(settings.get::<f64>("volume").unwrap(), f64::from(0.1_f32));
+}
+
+#[test]
 fn native_key_publication_feeds_shipped_compact_event_tables() {
     let sandbox = ShippedDataSandbox::new("native-key-compact-events");
     let runtime = StellaLua::new(&sandbox.data_root).unwrap();
@@ -821,6 +1033,58 @@ fn application_activation_gates_callbacks_until_loaded_and_clears_input_first() 
         assert!(!paused.get::<bool>("back").unwrap());
         assert!(!paused.get::<bool>("button").unwrap());
     }
+}
+
+#[test]
+fn application_activation_retains_the_last_published_input_snapshot_until_update() {
+    let runtime = StellaLua::new("/tmp").unwrap();
+    runtime
+        .execute_source(
+            r#"
+                lifecycle = {}
+                function update() end
+                function gamePaused()
+                    table.insert(lifecycle, {
+                        name = "paused",
+                        button = keyHold.LBUTTON,
+                        touchcount = touchcount,
+                    })
+                end
+                function gameResumed()
+                    table.insert(lifecycle, {
+                        name = "resumed",
+                        button = keyHold.LBUTTON,
+                        touchcount = touchcount,
+                    })
+                end
+            "#,
+        )
+        .unwrap();
+    runtime.gamelogic_loaded.set(true);
+    runtime.set_cursor(12.0, 34.0, true).unwrap();
+    runtime.set_touches(&[(7, 12, 34)]).unwrap();
+    assert!(runtime.update(0.0).unwrap());
+
+    let environment = game_environment(runtime.lua()).unwrap();
+    let key_hold = environment.get::<mlua::Table>("keyHold").unwrap();
+    let key_released = environment.get::<mlua::Table>("keyReleased").unwrap();
+    assert!(key_hold.get::<bool>("LBUTTON").unwrap());
+    assert_eq!(environment.get::<f64>("touchcount").unwrap(), 1.0);
+
+    runtime.set_application_active(false).unwrap();
+    runtime.set_application_active(true).unwrap();
+    let lifecycle = environment.get::<mlua::Table>("lifecycle").unwrap();
+    for (index, name) in [(1, "paused"), (2, "resumed")] {
+        let event = lifecycle.raw_get::<mlua::Table>(index).unwrap();
+        assert_eq!(event.get::<String>("name").unwrap(), name);
+        assert!(event.get::<bool>("button").unwrap());
+        assert_eq!(event.get::<f64>("touchcount").unwrap(), 1.0);
+    }
+
+    assert!(runtime.update(0.0).unwrap());
+    assert!(!key_hold.get::<bool>("LBUTTON").unwrap());
+    assert!(!key_released.get::<bool>("LBUTTON").unwrap());
+    assert_eq!(environment.get::<f64>("touchcount").unwrap(), 0.0);
 }
 
 #[test]
@@ -1110,7 +1374,7 @@ fn native_direct_mouse_wheel_honours_shift_and_control() {
 }
 
 #[test]
-fn resource_draw_string_is_strict_and_uses_combined_anchor_and_context_matrix() {
+fn resource_draw_string_is_strict_and_keeps_text_origin_unrotated_in_context_matrix() {
     let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data");
     let runtime = StellaLua::new(data_root).unwrap();
     runtime
@@ -1158,15 +1422,12 @@ fn resource_draw_string_is_strict_and_uses_combined_anchor_and_context_matrix() 
         alpha: f64::from(0.6_f32),
         ..RenderState::default()
     };
-    let expected = native_state_screen_point(state, 7.0, 8.0);
-    assert!((command.x - expected[0]).abs() < 1e-12);
-    assert!((command.y - expected[1]).abs() < 1e-12);
-    let cosine = state.angle.cos();
-    let sine = state.angle.sin();
-    let expected_matrix = [2.0 * cosine, -2.0 * sine, 3.0 * sine, 3.0 * cosine];
-    for (actual, expected) in command.matrix.unwrap().into_iter().zip(expected_matrix) {
-        assert!((actual - expected).abs() < 1e-12);
-    }
+    let expected = native_text_state_origin(state, 7.0, 8.0);
+    assert_eq!([command.x, command.y], expected);
+    assert_eq!(command.matrix, Some(native_text_state_matrix(state)));
+    // BitmapFont rotates its cursor/glyph offset through a temporary context
+    // pivot, so position and quad orientation use the same basis.
+    assert_eq!(command.position_matrix, None);
     assert_eq!(command.alpha, f64::from(0.6_f32));
     // ResourceManager.drawString only borrows the live context; unlike
     // drawUITextNative, it does not replace any state field.
@@ -1350,8 +1611,8 @@ fn composite_generic_metrics_read_cached_fields_until_explicit_bounds_refresh() 
 
 #[test]
 fn composite_resource_handwritten_stack_abi_matches_native_dispatch_order() {
-    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data");
-    let runtime = StellaLua::new(data_root).unwrap();
+    let sandbox = ShippedDataSandbox::new("composite-selector-abi");
+    let runtime = StellaLua::new(&sandbox.data_root).unwrap();
     runtime
         .execute_source(
             r##"
@@ -1365,6 +1626,9 @@ fn composite_resource_handwritten_stack_abi_matches_native_dispatch_order() {
                 local first = res.getCompoSpriteEntry(composite, 0)
 
                 negative_fraction = res.getCompoSpriteEntry(composite, -0.75)
+                nan_index_entry = res.getCompoSpriteEntry(composite, 0 / 0)
+                nan_index_set_count = select("#",
+                    res.setCompoSpriteEntry(composite, 0 / 0, { x = 23.5 }))
                 missing_selector_count = select("#", res.getCompoSpriteEntry(composite))
                 invalid_selector_count = select("#", res.getCompoSpriteEntry(composite, {}))
                 missing_resource_count = select("#",
@@ -1401,8 +1665,16 @@ fn composite_resource_handwritten_stack_abi_matches_native_dispatch_order() {
                     res.getCompoSpriteEntry, composite, -1)
                 unknown_name_get_fails = not pcall(
                     res.getCompoSpriteEntry, composite, "DOES_NOT_EXIST")
-                nan_index_get_fails = not pcall(
-                    res.getCompoSpriteEntry, composite, 0 / 0)
+                saturated_index_failures = {}
+                for _, index in ipairs({
+                    math.huge, -math.huge, 2147483648, -2147483904
+                }) do
+                    saturated_index_failures[#saturated_index_failures + 1] = {
+                        not pcall(res.getCompoSpriteEntry, composite, index),
+                        not pcall(res.setCompoSpriteEntry, composite, index, { x = 99 })
+                    }
+                end
+                after_invalid_index_entry = res.getCompoSpriteEntry(composite, 0)
                 missing_data_fails = not pcall(
                     res.getCompoSpriteData, "DOES_NOT_EXIST")
 
@@ -1421,6 +1693,34 @@ fn composite_resource_handwritten_stack_abi_matches_native_dispatch_order() {
 
     let environment = game_environment(runtime.lua()).unwrap();
     let negative_fraction: mlua::Table = environment.get("negative_fraction").unwrap();
+    let nan_index_entry: mlua::Table = environment.get("nan_index_entry").unwrap();
+    // Get/set use FCVTZS W1,S0 at 10044987C/100449D74. NaN therefore
+    // selects the same first entry as -0.75, not an invalid unsigned index.
+    assert_eq!(
+        nan_index_entry.get::<String>("name").unwrap(),
+        negative_fraction.get::<String>("name").unwrap()
+    );
+    assert_eq!(
+        nan_index_entry.get::<f64>("x").unwrap(),
+        negative_fraction.get::<f64>("x").unwrap()
+    );
+    assert_eq!(
+        environment
+            .get::<mlua::Table>("after_invalid_index_entry")
+            .unwrap()
+            .get::<f64>("x")
+            .unwrap(),
+        23.5
+    );
+    let saturated_failures = environment
+        .get::<mlua::Table>("saturated_index_failures")
+        .unwrap();
+    assert_eq!(saturated_failures.raw_len(), 4);
+    for index in 1..=4 {
+        let results = saturated_failures.get::<mlua::Table>(index).unwrap();
+        assert!(results.get::<bool>(1).unwrap());
+        assert!(results.get::<bool>(2).unwrap());
+    }
     let renamed: mlua::Table = environment.get("renamed_entry").unwrap();
     assert_eq!(
         negative_fraction.get::<String>("name").unwrap(),
@@ -1437,6 +1737,7 @@ fn composite_resource_handwritten_stack_abi_matches_native_dispatch_order() {
         "missing_resource_count",
         "invalid_set_count",
         "missing_set_count",
+        "nan_index_set_count",
     ] {
         assert_eq!(environment.get::<i64>(name).unwrap(), 0, "{name}");
     }
@@ -1451,7 +1752,6 @@ fn composite_resource_handwritten_stack_abi_matches_native_dispatch_order() {
         "set_colon_call_fails",
         "out_of_range_get_fails",
         "unknown_name_get_fails",
-        "nan_index_get_fails",
         "missing_data_fails",
         "old_name_get_fails",
     ] {

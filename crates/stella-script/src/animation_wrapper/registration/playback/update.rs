@@ -65,15 +65,19 @@ fn install_update_inner(
     let callbacks = animation_callbacks.clone();
     animation_native.set(
         "update",
-        lua.create_function(move |_, args: MultiValue| {
+        lua.create_function(move |lua, args: MultiValue| {
             let delta_time = f64::from(native_required_number(&args, 0, "update")? as f32);
+            // AnimationWrapper::update begins with the shared zero-delay
+            // scheduler call at 0x100014214, before setting its update byte or
+            // advancing any component.
+            dispatch_registered_application_events(lua)?;
             let event_groups;
             {
                 let resources = resources
                     .as_ref()
                     .map(|resources| resources.lock().expect("resource runtime lock poisoned"));
                 let mut runtime = runtime.lock().expect("animation runtime lock poisoned");
-                let tags = runtime.playback.keys().cloned().collect::<Vec<_>>();
+                let tags = runtime.definitions.keys().cloned().collect::<Vec<_>>();
                 for tag in tags {
                     if let (Some(resources), Some(data_root)) =
                         (resources.as_deref(), sprite_data_root.as_deref())
@@ -96,14 +100,42 @@ fn install_update_inner(
                 event_groups = std::mem::take(&mut runtime.pending_event_tags)
                     .into_iter()
                     .filter_map(|tag| {
-                        runtime
-                            .pending_events
-                            .remove(&tag)
-                            .map(|events| (tag, events))
+                        runtime.pending_events.remove(&tag).map(|events| {
+                            let retained_action = runtime
+                                .playback
+                                .get(&tag)
+                                .map(|playback| playback.current_action.clone())
+                                .unwrap_or_default();
+                            (tag, events, retained_action)
+                        })
                     })
                     .collect::<Vec<_>>();
+                if !event_groups.is_empty() {
+                    // Native offset +0xE9 is a byte, rather than a nesting
+                    // depth. A nested update with events consequently clears
+                    // the outer update's flag when its own dispatch finishes.
+                    runtime.dispatching_events = true;
+                }
             }
-            for (tag, events) in event_groups {
+
+            // The native outer snapshot owns a strong reference to every
+            // AnimationSystemComponent. Retain each component's callback as a
+            // fallback so an immediate closeAll, or a close drained by a
+            // nested update, cannot suppress the outer snapshot's remaining
+            // events.
+            let has_event_groups = !event_groups.is_empty();
+            let event_groups = event_groups
+                .into_iter()
+                .map(|(tag, events, retained_action)| {
+                    let retained_callback = match callbacks.raw_get::<Value>(tag.as_str())? {
+                        Value::Function(callback) => Some(callback),
+                        _ => None,
+                    };
+                    Ok((tag, events, retained_action, retained_callback))
+                })
+                .collect::<LuaResult<Vec<_>>>()?;
+
+            for (tag, events, retained_action, retained_callback) in event_groups {
                 for event in events {
                     let action = runtime
                         .lock()
@@ -111,11 +143,15 @@ fn install_update_inner(
                         .playback
                         .get(&tag)
                         .map(|playback| playback.current_action.clone())
-                        .unwrap_or_default();
+                        .unwrap_or_else(|| retained_action.clone());
                     if std::env::var_os("STELLA_TRACE_ANIMATION").is_some() {
                         eprintln!("animation-native event tag={tag} event={}", event.name);
                     }
-                    if let Value::Function(callback) = callbacks.raw_get::<Value>(tag.as_str())? {
+                    let callback = match callbacks.raw_get::<Value>(tag.as_str())? {
+                        Value::Function(callback) => Some(callback),
+                        _ => retained_callback.clone(),
+                    };
+                    if let Some(callback) = callback {
                         // sub_100016FE4 pushes exactly six values in this
                         // order and reads the component's current action at
                         // dispatch time rather than when the event was queued.
@@ -130,6 +166,32 @@ fn install_update_inner(
                     }
                 }
             }
+
+            if !has_event_groups {
+                // Native only touches +0xE9 and drains +0xD8 when the global
+                // component-event list was non-empty. In particular, an empty
+                // nested update must leave its outer dispatch flag intact.
+                return Ok(());
+            }
+            let deferred = {
+                let mut runtime = runtime.lock().expect("animation runtime lock poisoned");
+                runtime.dispatching_events = false;
+                runtime.deferred_close_tags.clone()
+            };
+            for tag in deferred {
+                let generation = {
+                    let mut runtime = runtime.lock().expect("animation runtime lock poisoned");
+                    super::super::resources::request_animation_close(&mut runtime, tag)
+                };
+                if let Some(generation) = generation {
+                    super::super::resources::finish_animation_close(lua, generation)?;
+                }
+            }
+            runtime
+                .lock()
+                .expect("animation runtime lock poisoned")
+                .deferred_close_tags
+                .clear();
             Ok(())
         })?,
     )?;

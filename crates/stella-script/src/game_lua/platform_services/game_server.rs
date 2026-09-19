@@ -1,4 +1,4 @@
-//! Native game-server transport plus the offline Frenemies completion facade.
+//! Native game-server transport plus local and compatible Frenemies providers.
 
 use crate::*;
 use aes::{
@@ -26,19 +26,20 @@ struct RequestCompletion {
 #[derive(Clone, Debug)]
 pub(crate) struct GameServerRuntime {
     base_url: Arc<Mutex<String>>,
+    shipped_facade_enabled: Arc<Mutex<bool>>,
     completions: Arc<Mutex<VecDeque<RequestCompletion>>>,
-}
-
-impl Default for GameServerRuntime {
-    fn default() -> Self {
-        Self {
-            base_url: Arc::new(Mutex::new(DEFAULT_BASE_URL.to_owned())),
-            completions: Arc::new(Mutex::new(VecDeque::new())),
-        }
-    }
+    application_events: ApplicationEventScheduler,
 }
 
 impl GameServerRuntime {
+    fn new(application_events: ApplicationEventScheduler) -> Self {
+        Self {
+            base_url: Arc::new(Mutex::new(DEFAULT_BASE_URL.to_owned())),
+            shipped_facade_enabled: Arc::new(Mutex::new(false)),
+            completions: Arc::new(Mutex::new(VecDeque::new())),
+            application_events,
+        }
+    }
     fn base_url(&self) -> String {
         self.base_url
             .lock()
@@ -47,10 +48,44 @@ impl GameServerRuntime {
     }
 
     fn push_completion(&self, completion: RequestCompletion) {
-        self.completions
+        let mut completions = self
+            .completions
             .lock()
-            .expect("game-server completion queue lock poisoned")
-            .push_back(completion);
+            .expect("game-server completion queue lock poisoned");
+        completions.push_back(completion);
+        self.application_events.post(ApplicationEvent::GameServer);
+    }
+
+    pub(crate) fn set_compatible_base_url(&self, base_url: &str) -> LuaResult<()> {
+        let base_url = base_url.trim().trim_end_matches('/');
+        let host = base_url
+            .strip_prefix("http://")
+            .or_else(|| base_url.strip_prefix("https://"));
+        let Some(host) = host else {
+            return Err(runtime_error(
+                "game-server URL must use the http or https scheme",
+            ));
+        };
+        if host.is_empty() || host.starts_with('/') {
+            return Err(runtime_error("game-server URL is missing a host"));
+        }
+        *self
+            .base_url
+            .lock()
+            .map_err(|_| runtime_error("game-server base URL lock poisoned"))? =
+            base_url.to_owned();
+        *self
+            .shipped_facade_enabled
+            .lock()
+            .map_err(|_| runtime_error("game-server mode lock poisoned"))? = true;
+        Ok(())
+    }
+
+    pub(crate) fn shipped_facade_enabled(&self) -> bool {
+        *self
+            .shipped_facade_enabled
+            .lock()
+            .expect("game-server mode lock poisoned")
     }
 
     fn pop_completion(&self) -> Option<RequestCompletion> {
@@ -58,6 +93,10 @@ impl GameServerRuntime {
             .lock()
             .expect("game-server completion queue lock poisoned")
             .pop_front()
+    }
+
+    pub(crate) fn discard_completion(&self) {
+        let _ = self.pop_completion();
     }
 
     #[cfg(test)]
@@ -189,8 +228,12 @@ fn enqueue_request(
 }
 
 /// Publish the exact two native members registered by sub_1000D25D8.
-pub(crate) fn install(lua: &Lua, globals: &mlua::Table) -> LuaResult<GameServerRuntime> {
-    let runtime = GameServerRuntime::default();
+pub(crate) fn install(
+    lua: &Lua,
+    globals: &mlua::Table,
+    application_events: ApplicationEventScheduler,
+) -> LuaResult<GameServerRuntime> {
+    let runtime = GameServerRuntime::new(application_events);
     let connection = lua.create_table()?;
 
     let get_runtime = runtime.clone();
@@ -247,11 +290,161 @@ pub(crate) fn install(lua: &Lua, globals: &mlua::Table) -> LuaResult<GameServerR
 /// real distributions execute the exact shipped persistent bytecode here.
 pub(crate) fn load_shipped_facade(lua: &Lua, data_root: &Path) -> LuaResult<bool> {
     const SCRIPT: &str = "scripts_common/network/GameServerConnection.lua";
-    if !data_root.join(SCRIPT).is_file() {
+    let path = data_root.join(SCRIPT);
+    if !path.is_file() {
         return Ok(false);
     }
-    execute_script_in(lua, data_root, SCRIPT, game_environment(lua)?)?;
+    let bytes = std::fs::read(&path).map_err(runtime_error)?;
+    let mut bytes = decode_persistent_lua(bytes);
+    if let Some(unwrapped) =
+        stella_assets::lua::unwrap_host_chunk_text(&bytes).map_err(runtime_error)?
+    {
+        bytes = unwrapped;
+    }
+    patch_shipped_release_guards(&mut bytes)?;
+    let prepared = prepare_lua_chunk(&bytes).map_err(runtime_error)?;
+    let environment = game_environment(lua)?;
+    environment.set("__stellaGameServerTransportPatched", true)?;
+    lua.load(&prepared)
+        .set_name(path.to_string_lossy())
+        .set_environment(environment)
+        .exec()?;
     Ok(true)
+}
+
+const OP_MOVE: u32 = 0;
+const OP_LOADBOOL: u32 = 2;
+const OP_GETGLOBAL: u32 = 5;
+const OP_GETTABLE: u32 = 6;
+const OP_LOADK: u32 = 1;
+const OP_CALL: u32 = 28;
+const OP_RETURN: u32 = 30;
+
+const fn lua_abc(opcode: u32, a: u32, b: u32, c: u32) -> u32 {
+    opcode | (a << 6) | (c << 14) | (b << 23)
+}
+
+const fn lua_abx(opcode: u32, a: u32, bx: u32) -> u32 {
+    opcode | (a << 6) | (bx << 14)
+}
+
+fn instruction_bytes(instructions: &[u32]) -> Vec<u8> {
+    instructions
+        .iter()
+        .flat_map(|instruction| instruction.to_le_bytes())
+        .collect()
+}
+
+fn patch_release_wrapper(bytes: &mut [u8], expected: &[u32], replacement: &[u32]) -> LuaResult<()> {
+    let expected = instruction_bytes(expected);
+    let replacement = instruction_bytes(replacement);
+    if expected.len() != replacement.len() {
+        return Err(runtime_error("invalid game-server bytecode patch length"));
+    }
+    let matches = bytes
+        .windows(expected.len())
+        .enumerate()
+        .filter_map(|(offset, candidate)| (candidate == expected).then_some(offset))
+        .collect::<Vec<_>>();
+    let [code_offset] = matches.as_slice() else {
+        return Err(runtime_error(
+            "unsupported GameServerConnection.lua release wrapper",
+        ));
+    };
+    bytes[*code_offset..*code_offset + replacement.len()].copy_from_slice(&replacement);
+    Ok(())
+}
+
+/// Restore the three transport calls removed from Purple 1.1.6's shipped Lua
+/// bytecode. The release chunk registers listeners and then ends each local
+/// GET/POST wrapper with `_G.assert(false, "GAMESERVER-DISABLED")`; there is
+/// no call after the assertion. Each wrapper has already built a zero-argument
+/// request closure around the native bridge arguments, so patch the exact
+/// stripped Lua 5.1 tail to invoke that closure and then return. This preserves
+/// every authored route, payload, listener and response handler around it.
+fn patch_shipped_release_guards(bytes: &mut [u8]) -> LuaResult<()> {
+    // `stella-tool readable-runtime` emits ordinary Lua 5.1 source after it
+    // has restored these three calls structurally. Accept only that explicit
+    // marker on the text path; arbitrary source must not silently bypass the
+    // release-wrapper validation below.
+    const RESTORED_TEXT_MARKER: &str =
+        "-- stella-rehost: release transport guards restored in text form";
+    if std::str::from_utf8(bytes).is_ok_and(|source| {
+        source
+            .lines()
+            .any(|line| line.trim() == RESTORED_TEXT_MARKER)
+    }) {
+        return Ok(());
+    }
+    if bytes.get(..12).is_none_or(|header| {
+        header[..4] != *b"\x1bLua"
+            || header[4] != 0x51
+            || header[5] != 0
+            || header[6] != 1
+            || header[9] != 4
+    }) {
+        return Err(runtime_error(
+            "unsupported GameServerConnection.lua bytecode format",
+        ));
+    }
+    patch_release_wrapper(
+        bytes,
+        &[
+            lua_abx(OP_GETGLOBAL, 4, 3),
+            lua_abc(OP_GETTABLE, 4, 4, 260),
+            lua_abc(OP_LOADBOOL, 5, 0, 0),
+            lua_abx(OP_LOADK, 6, 5),
+            lua_abc(OP_CALL, 4, 3, 1),
+            lua_abc(OP_RETURN, 0, 1, 0),
+        ],
+        &[
+            lua_abc(OP_MOVE, 4, 3, 0),
+            lua_abc(OP_CALL, 4, 1, 1),
+            lua_abc(OP_RETURN, 0, 1, 0),
+            lua_abc(OP_RETURN, 0, 1, 0),
+            lua_abc(OP_RETURN, 0, 1, 0),
+            lua_abc(OP_RETURN, 0, 1, 0),
+        ],
+    )?;
+    patch_release_wrapper(
+        bytes,
+        &[
+            lua_abx(OP_GETGLOBAL, 5, 3),
+            lua_abc(OP_GETTABLE, 5, 5, 260),
+            lua_abc(OP_LOADBOOL, 6, 0, 0),
+            lua_abx(OP_LOADK, 7, 5),
+            lua_abc(OP_CALL, 5, 3, 1),
+            lua_abc(OP_RETURN, 0, 1, 0),
+        ],
+        &[
+            lua_abc(OP_MOVE, 5, 4, 0),
+            lua_abc(OP_CALL, 5, 1, 1),
+            lua_abc(OP_RETURN, 0, 1, 0),
+            lua_abc(OP_RETURN, 0, 1, 0),
+            lua_abc(OP_RETURN, 0, 1, 0),
+            lua_abc(OP_RETURN, 0, 1, 0),
+        ],
+    )?;
+    patch_release_wrapper(
+        bytes,
+        &[
+            lua_abx(OP_GETGLOBAL, 6, 3),
+            lua_abc(OP_GETTABLE, 6, 6, 260),
+            lua_abc(OP_LOADBOOL, 7, 0, 0),
+            lua_abx(OP_LOADK, 8, 5),
+            lua_abc(OP_CALL, 6, 3, 1),
+            lua_abc(OP_RETURN, 0, 1, 0),
+        ],
+        &[
+            lua_abc(OP_MOVE, 6, 5, 0),
+            lua_abc(OP_CALL, 6, 1, 1),
+            lua_abc(OP_RETURN, 0, 1, 0),
+            lua_abc(OP_RETURN, 0, 1, 0),
+            lua_abc(OP_RETURN, 0, 1, 0),
+            lua_abc(OP_RETURN, 0, 1, 0),
+        ],
+    )?;
+    Ok(())
 }
 
 fn response_table(lua: &Lua, status: i32, body: &[u8]) -> LuaResult<mlua::Table> {
@@ -267,35 +460,35 @@ fn response_table(lua: &Lua, status: i32, body: &[u8]) -> LuaResult<mlua::Table>
 }
 
 /// Deliver completed HttpRequestTask callbacks on the application thread.
-pub(crate) fn dispatch_completions(lua: &Lua, runtime: &GameServerRuntime) -> LuaResult<()> {
-    while let Some(completion) = runtime.pop_completion() {
-        // The shipped chunk creates its public high-level facade in the
-        // retained GameLua environment, but attaches these two native bridge
-        // callbacks to `_G.GameServerConnection`. Purple's LuaObject retains
-        // that original constructor table even after the local shadow exists.
-        let connection: mlua::Table = lua.globals().raw_get("GameServerConnection")?;
-        if completion.status == -1 {
-            let callback: mlua::Function = connection.get("onAsyncRequestTimedOut")?;
-            callback.call::<()>((completion.message_id, completion.status))?;
-        } else {
-            let callback: mlua::Function = connection.get("onAsyncRequestCompleted")?;
-            let response = response_table(lua, completion.status, &completion.body)?;
-            callback.call::<()>((completion.message_id, completion.status, response))?;
-        }
+pub(crate) fn dispatch_completion(lua: &Lua, runtime: &GameServerRuntime) -> LuaResult<()> {
+    let Some(completion) = runtime.pop_completion() else {
+        return Ok(());
+    };
+    // The shipped chunk creates its public high-level facade in the retained
+    // GameLua environment, but attaches these two native bridge callbacks to
+    // `_G.GameServerConnection`.
+    let connection: mlua::Table = lua.globals().raw_get("GameServerConnection")?;
+    if completion.status == -1 {
+        let callback: mlua::Function = connection.get("onAsyncRequestTimedOut")?;
+        callback.call::<()>((completion.message_id, completion.status))?;
+    } else {
+        let callback: mlua::Function = connection.get("onAsyncRequestCompleted")?;
+        let response = response_table(lua, completion.status, &completion.body)?;
+        callback.call::<()>((completion.message_id, completion.status, response))?;
     }
     Ok(())
 }
 
-/// Publish the callback surface consumed by the shipped challenge menus.
+/// Publish the local callback surface consumed by the shipped challenge menus.
 ///
 /// Purple contains a native `GameServerConnection` owner and loads
 /// `scripts_common/network/GameServerConnection.lua`, but this exact 1.1.6
-/// chunk terminates every request with `assert(false,
-/// "GAMESERVER-DISABLED")`. A disconnected cross-platform rehost cannot
-/// obtain the former service's replay response, so retain the script callback
-/// contract and synthesize its level/session payload from the active local
-/// challenge. Callbacks are deferred one update just like native HTTP
-/// completion and all original menu/event routing remains in charge.
+/// source chunk terminates every request with `assert(false,
+/// "GAMESERVER-DISABLED")`. Without an explicitly configured replacement
+/// endpoint, retain the script callback contract and synthesize its
+/// level/session payload from the active local challenge. Callbacks are
+/// deferred one update just like native HTTP completion and all original
+/// menu/event routing remains in charge.
 pub(crate) fn install_offline_facade(lua: &Lua) -> LuaResult<()> {
     lua.load(
         r##"
@@ -471,9 +664,31 @@ pub(crate) fn install_offline_facade(lua: &Lua) -> LuaResult<()> {
     .exec()
 }
 
+/// Enable the complete shipped high-level request facade against a compatible
+/// replacement server. Its original listeners, routes, payload construction
+/// and response dispatch stay intact; only the three release-disabled local
+/// transport wrappers are restored while the chunk is loaded.
+pub(crate) fn enable_shipped_facade(lua: &Lua) -> LuaResult<()> {
+    lua.load(
+        r##"
+        do
+            local connection = GameServerConnection
+            if connection and not rawget(connection, "__stellaCompatibleFacade") then
+                assert(__stellaGameServerTransportPatched,
+                    "compatible GameServerConnection transport is unavailable")
+                connection.__stellaCompatibleFacade = true
+            end
+        end
+        "##,
+    )
+    .set_name("[stella-compatible-game-server]")
+    .set_environment(game_environment(lua)?)
+    .exec()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{base32_without_padding, encrypt_payload};
+    use super::{base32_without_padding, encrypt_payload, patch_shipped_release_guards};
 
     #[test]
     fn encryption_matches_recovered_aes_and_base32_pipeline() {
@@ -481,6 +696,26 @@ mod tests {
         assert_eq!(
             encrypt_payload("12345678tail", br#"{"a":"x","z":2}"#).unwrap(),
             br#"{"data":"ATS5BS2VEJJELN5ULPWIRRDPC4"}"#
+        );
+    }
+
+    #[test]
+    fn readable_facade_accepts_only_the_explicit_restored_transport_marker() {
+        let mut restored = br#"-- dialect: lua5.1
+-- stella-rehost: release transport guards restored in text form
+GameServerConnection = {}
+"#
+        .to_vec();
+        let unchanged = restored.clone();
+        patch_shipped_release_guards(&mut restored).unwrap();
+        assert_eq!(restored, unchanged);
+
+        let mut arbitrary = b"GameServerConnection = {}\n".to_vec();
+        assert!(
+            patch_shipped_release_guards(&mut arbitrary)
+                .unwrap_err()
+                .to_string()
+                .contains("bytecode format")
         );
     }
 }

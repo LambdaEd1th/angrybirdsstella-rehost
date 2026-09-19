@@ -56,9 +56,33 @@ pub(crate) fn prepare_lua_chunk(bytes: &[u8]) -> Result<Vec<u8>, stella_assets::
     // Lua 5.1's native loader accepts both source and binary chunks. Purple's
     // bundled bytecode needs the 32-bit-number transcoder; editor/AppData
     // files may remain ordinary source text and must pass through unchanged.
+    // The plain-runtime generator stores an already host-transcoded chunk in
+    // a text envelope. Recover it before Lua evaluates the wrapper: object
+    // environments need not publish implementation-only `table.concat`,
+    // `loadstring`, `getfenv`, or `setfenv` helpers that the original stripped
+    // chunk itself never referenced.
+    if let Some(unwrapped) = stella_assets::lua::unwrap_host_chunk_text(bytes)? {
+        return Ok(unwrapped);
+    }
     if bytes.starts_with(&stella_assets::lua::LUA_SIGNATURE) {
         stella_assets::lua::prepare_for_host(bytes)
     } else {
         Ok(bytes.to_vec())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::prepare_lua_chunk;
+
+    #[test]
+    fn plain_runtime_text_envelope_is_unwrapped_before_object_execution() {
+        let lua = mlua::Lua::new();
+        let bytecode = lua.load("return 42").into_function().unwrap().dump(true);
+        let wrapped = stella_assets::lua::wrap_host_chunk_as_text(&bytecode, "@probe.lua").unwrap();
+
+        let prepared = prepare_lua_chunk(wrapped.as_bytes()).unwrap();
+        assert_eq!(prepared, bytecode);
+        assert_eq!(lua.load(&prepared).eval::<i32>().unwrap(), 42);
     }
 }

@@ -28,6 +28,12 @@ if [[ ! -f "$work_dir/runtime/data/scripts/game.lua" ]]; then
   exit 1
 fi
 
+# This runs before any platform archive is changed. An old data-only payload
+# otherwise appears valid but omits the native account controller's fonts.
+repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+python3 "$repository_root/.github/scripts/runtime_native_assets.py" verify \
+  --data "$work_dir/runtime/data"
+
 tar_archives=()
 zip_archives=()
 for archive in "$dist_dir"/*.tar.gz; do
@@ -39,6 +45,13 @@ done
 if (( ${#tar_archives[@]} + ${#zip_archives[@]} == 0 )); then
   echo "no platform packages found in $dist_dir" >&2
   exit 1
+fi
+
+# Exclude macOS-generated provenance xattrs and AppleDouble metadata when
+# repacking locally; the Linux publish runner keeps its normal tar options.
+tar_create=(tar)
+if [[ "$(uname -s)" == Darwin ]]; then
+  tar_create+=(--no-xattrs)
 fi
 
 for archive in "${tar_archives[@]}"; do
@@ -57,7 +70,7 @@ for archive in "${tar_archives[@]}"; do
   cp -R "$work_dir/runtime/data" "$package_root/runtime/data"
 
   package_name="$(basename "$package_root")"
-  tar -C "$package_work" -czf "$archive" "$package_name"
+  COPYFILE_DISABLE=1 "${tar_create[@]}" -C "$package_work" -czf "$archive" "$package_name"
 done
 
 for archive in "${zip_archives[@]}"; do

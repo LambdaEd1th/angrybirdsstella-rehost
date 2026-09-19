@@ -122,7 +122,7 @@ fn animation_skin_resolves_namespaced_track_alias_before_basename() {
 #[test]
 fn shipped_leaves_use_inverse_skin_rotation_and_native_layer_order() {
     let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data");
-    let asset = animation_asset(&data_root, "animations/LEAVES.anim.json");
+    let asset = animation_asset(&data_root, "animations/LEAVES.anim.json").unwrap();
     let sheet = stella_assets::ka3d::SpriteSheet::parse(
         &fs::read(data_root.join("images/1024x768/MENU_ELEMENTS_1.dat")).unwrap(),
     )
@@ -149,6 +149,7 @@ fn shipped_leaves_use_inverse_skin_rotation_and_native_layer_order() {
                 (
                     sprite.name.clone(),
                     SpriteCatalogRegion {
+                        decoded_image: None,
                         native_sheet_id: 1,
                         texture_source: sheet.texture_for(sprite).unwrap_or_default().to_owned(),
                         sprite: sprite.clone(),
@@ -240,7 +241,7 @@ fn shipped_leaves_use_inverse_skin_rotation_and_native_layer_order() {
 #[test]
 fn shipped_leaves_follow_native_recursive_world_matrices_during_both_phases() {
     let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data");
-    let asset = animation_asset(&data_root, "animations/LEAVES.anim.json");
+    let asset = animation_asset(&data_root, "animations/LEAVES.anim.json").unwrap();
     let sheet = stella_assets::ka3d::SpriteSheet::parse(
         &fs::read(data_root.join("images/1024x768/MENU_ELEMENTS_1.dat")).unwrap(),
     )
@@ -263,6 +264,7 @@ fn shipped_leaves_follow_native_recursive_world_matrices_during_both_phases() {
                 (
                     sprite.name.clone(),
                     SpriteCatalogRegion {
+                        decoded_image: None,
                         native_sheet_id: 1,
                         texture_source: sheet.texture_for(sprite).unwrap_or_default().to_owned(),
                         sprite: sprite.clone(),
@@ -817,6 +819,7 @@ fn animation_sprite_components_append_native_centering_after_atlas_pivot_vertice
         BTreeMap::from([(
             "PANEL".to_owned(),
             SpriteCatalogRegion {
+                decoded_image: None,
                 native_sheet_id: 1,
                 texture_source: "panel.pvr".to_owned(),
                 sprite: stella_assets::ka3d::SpriteRegion {
@@ -1118,6 +1121,7 @@ fn animation_native_lifecycle_preserves_void_abi_cache_and_active_scene() {
     )
     .unwrap();
 
+    fs::write(root.join("animations/test.skins.json"), b"{}").unwrap();
     let runtime = StellaLua::new(&root).unwrap();
     runtime
         .execute_source(

@@ -7,11 +7,177 @@
 
 use std::io::Cursor;
 
-use image::{ImageDecoder, codecs::webp::WebPDecoder};
+use image::{
+    ImageDecoder,
+    codecs::{jpeg::JpegDecoder, webp::WebPDecoder},
+};
 
 use crate::{AssetError, surface_format::SurfaceFormat};
 
 const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
+
+/// Logical image extent retained by GL_Image, without decoding its pixels.
+/// Capture validation compares this extent, not a sprite's atlas subrectangle.
+pub fn image_dimensions(bytes: &[u8]) -> Result<[u32; 2], AssetError> {
+    if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+        let decoder = JpegDecoder::new(Cursor::new(bytes))
+            .map_err(|_| AssetError::InvalidJpeg("header decoding failed"))?;
+        let (width, height) = decoder.dimensions();
+        return Ok([width, height]);
+    }
+    if bytes.get(..8) == Some(PNG_SIGNATURE) {
+        png_surface_layout(bytes)?;
+        return Ok([
+            u32::from_be_bytes(bytes[16..20].try_into().expect("PNG width")),
+            u32::from_be_bytes(bytes[20..24].try_into().expect("PNG height")),
+        ]);
+    }
+    if bytes.get(..4) == Some(b"RIFF") && bytes.get(8..12) == Some(b"WEBP") {
+        let decoder = WebPDecoder::new(Cursor::new(bytes)).map_err(|_| AssetError::InvalidWebp)?;
+        let (width, height) = decoder.dimensions();
+        return Ok([width, height]);
+    }
+    let header = crate::pvr::parse_header(bytes)?;
+    Ok([header.width, header.height])
+}
+
+/// Fully decoded immutable native Image pixels, retained independently of the
+/// cache file that supplied them. Deferred draws can outlive file replacement.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecodedNativeImage {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+    pub layout: ImageSurfaceLayout,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImageReaderKind {
+    Png,
+    Webp,
+    Jpeg,
+    Pvr,
+    Unsupported,
+}
+
+/// 1004FB774 probes the stream before consulting its name at1004FB534.
+/// Other recognized native formats remain explicitly unsupported here.
+pub fn image_reader_kind(bytes: &[u8], extension: Option<&str>) -> ImageReaderKind {
+    if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+        return ImageReaderKind::Jpeg;
+    }
+    if bytes.starts_with(b"\x89PNG") {
+        return ImageReaderKind::Png;
+    }
+    if bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP") {
+        return ImageReaderKind::Webp;
+    }
+    if bytes.starts_with(b"PVR\x02") || bytes.starts_with(b"PVR\x03") {
+        return ImageReaderKind::Pvr;
+    }
+    if bytes.starts_with(b"BM")
+        || bytes.starts_with(b"DDS ")
+        || bytes.starts_with(b"8BPS")
+        || bytes.starts_with(b"GIF8")
+        || bytes.starts_with(b"II*\0")
+        || bytes.starts_with(b"MM\0*")
+    {
+        return ImageReaderKind::Unsupported;
+    }
+    match extension.map(str::to_ascii_lowercase).as_deref() {
+        Some("png") => ImageReaderKind::Png,
+        Some("webp") => ImageReaderKind::Webp,
+        Some("jpeg" | "jpg" | "jpe") => ImageReaderKind::Jpeg,
+        Some("pvr") => ImageReaderKind::Pvr,
+        _ => ImageReaderKind::Unsupported,
+    }
+}
+
+pub fn decode_native_image(
+    bytes: &[u8],
+    extension: Option<&str>,
+) -> Result<DecodedNativeImage, AssetError> {
+    let (format, layout) = match image_reader_kind(bytes, extension) {
+        ImageReaderKind::Png => (image::ImageFormat::Png, png_surface_layout(bytes)?),
+        ImageReaderKind::Webp => (image::ImageFormat::WebP, webp_surface_layout(bytes)?),
+        ImageReaderKind::Jpeg => (image::ImageFormat::Jpeg, jpeg_surface_layout(bytes)?),
+        ImageReaderKind::Pvr => {
+            let decoded = crate::pvr::decode_rgba8(bytes)?;
+            let header = crate::pvr::parse_header(bytes)?;
+            return Ok(DecodedNativeImage {
+                width: decoded.width,
+                height: decoded.height,
+                rgba: decoded.rgba8,
+                layout: ImageSurfaceLayout::direct(
+                    SurfaceFormat::from_pvr_v2_flags(header.flags)
+                        .ok_or(AssetError::UnsupportedPvr((header.flags & 0xff) as u8))?,
+                ),
+            });
+        }
+        ImageReaderKind::Unsupported => return Err(AssetError::UnsupportedImageReader),
+    };
+    let decoded = image::load_from_memory_with_format(bytes, format)
+        .map_err(|_| match format {
+            image::ImageFormat::Png => AssetError::InvalidPng("pixel decoding failed"),
+            image::ImageFormat::Jpeg => AssetError::InvalidJpeg("pixel decoding failed"),
+            _ => AssetError::InvalidWebp,
+        })?
+        .to_rgba8();
+    Ok(DecodedNativeImage {
+        width: decoded.width(),
+        height: decoded.height(),
+        rgba: decoded.into_raw(),
+        layout,
+    })
+}
+
+/// JPEG1004D58E0 accepts grayscale/RGB output only: L8 or B8G8R8.
+/// Four-component CMYK/YCCK input retains a four-component libjpeg output and
+/// is rejected by1004D5A60; never silently convert it to a successful avatar.
+pub fn jpeg_surface_layout(bytes: &[u8]) -> Result<ImageSurfaceLayout, AssetError> {
+    if !bytes.starts_with(&[0xff, 0xd8]) {
+        return Err(AssetError::InvalidJpeg("signature mismatch"));
+    }
+    let mut offset = 2;
+    while offset < bytes.len() {
+        if bytes[offset] != 0xff {
+            return Err(AssetError::InvalidJpeg("invalid marker"));
+        }
+        while bytes.get(offset) == Some(&0xff) {
+            offset += 1;
+        }
+        let marker = *bytes
+            .get(offset)
+            .ok_or(AssetError::InvalidJpeg("truncated marker"))?;
+        offset += 1;
+        if matches!(marker, 0xd9 | 0xda) {
+            break;
+        }
+        if matches!(marker, 0x01 | 0xd0..=0xd8) {
+            continue;
+        }
+        let len = bytes
+            .get(offset..offset + 2)
+            .ok_or(AssetError::InvalidJpeg("truncated segment"))?;
+        let len = u16::from_be_bytes([len[0], len[1]]) as usize;
+        if len < 2 || offset + len > bytes.len() {
+            return Err(AssetError::InvalidJpeg("truncated segment"));
+        }
+        if matches!(marker,0xc0..=0xc3|0xc5..=0xc7|0xc9..=0xcb|0xcd..=0xcf) {
+            let components = *bytes
+                .get(offset + 7)
+                .filter(|_| len >= 8)
+                .ok_or(AssetError::InvalidJpeg("truncated frame"))?;
+            return match components {
+                1 => Ok(ImageSurfaceLayout::direct(SurfaceFormat::L8)),
+                3 => Ok(ImageSurfaceLayout::direct(SurfaceFormat::B8G8R8)),
+                _ => Err(AssetError::InvalidJpeg("unsupported JPEG color space")),
+            };
+        }
+        offset += len;
+    }
+    Err(AssetError::InvalidJpeg("frame header missing"))
+}
 
 /// The two `img::SurfaceFormat` values carried by Purple's image reader.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,6 +271,72 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn native_avatar_image_decodes_magic_before_filename_and_requires_complete_pixels() {
+        let input = RgbaImage::from_pixel(17, 13, image::Rgba([19, 61, 207, 173]));
+        let mut bytes = Cursor::new(Vec::new());
+        DynamicImage::ImageRgba8(input.clone())
+            .write_to(&mut bytes, ImageFormat::Png)
+            .unwrap();
+        let decoded = decode_native_image(bytes.get_ref(), Some("jpeg")).unwrap();
+        assert_eq!((decoded.width, decoded.height), (17, 13));
+        assert_eq!(decoded.rgba, input.into_raw());
+        assert_eq!(decoded.layout.pixels, SurfaceFormat::A8B8G8R8);
+        assert!(decode_native_image(&bytes.get_ref()[..33], None).is_err());
+        assert_eq!(
+            image_reader_kind(b"GIF89a", Some("png")),
+            ImageReaderKind::Unsupported
+        );
+    }
+
+    #[test]
+    fn native_avatar_jpeg_decodes_opaque_names_and_retains_rgb_or_grayscale_layout() {
+        for grayscale in [false, true] {
+            let source = if grayscale {
+                DynamicImage::ImageLuma8(image::GrayImage::from_pixel(17, 13, image::Luma([127])))
+            } else {
+                DynamicImage::ImageRgb8(RgbImage::from_pixel(17, 13, image::Rgb([120, 60, 30])))
+            };
+            let mut bytes = Vec::new();
+            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, 100)
+                .encode(source.as_bytes(), 17, 13, source.color().into())
+                .unwrap();
+            assert_eq!(image_dimensions(&bytes).unwrap(), [17, 13]);
+            let decoded = decode_native_image(&bytes, None).unwrap();
+            assert_eq!(
+                (decoded.width, decoded.height, decoded.rgba.len()),
+                (17, 13, 17 * 13 * 4)
+            );
+            assert_eq!(
+                decoded.layout.pixels,
+                if grayscale {
+                    SurfaceFormat::L8
+                } else {
+                    SurfaceFormat::B8G8R8
+                }
+            );
+            let expected = if grayscale {
+                [127, 127, 127, 255]
+            } else {
+                [120, 60, 30, 255]
+            };
+            assert!(
+                decoded
+                    .rgba
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .all(|pixel| pixel.iter().zip(expected).all(|(a, b)| a.abs_diff(b) <= 2))
+            );
+        }
+        let cmyk = [0xff, 0xd8, 0xff, 0xc0, 0, 8, 8, 0, 1, 0, 1, 4];
+        assert!(matches!(
+            jpeg_surface_layout(&cmyk),
+            Err(AssetError::InvalidJpeg("unsupported JPEG color space"))
+        ));
+        assert!(decode_native_image(&cmyk, Some("png")).is_err());
+    }
+
     fn png_ihdr(bit_depth: u8, color_type: u8) -> Vec<u8> {
         let mut bytes = PNG_SIGNATURE.to_vec();
         bytes.extend_from_slice(&13u32.to_be_bytes());
@@ -114,6 +346,44 @@ mod tests {
         bytes.extend_from_slice(&[bit_depth, color_type, 0, 0, 0]);
         bytes.extend_from_slice(&[0; 4]);
         bytes
+    }
+
+    #[test]
+    fn image_extent_probe_uses_native_png_webp_and_pvr_dimensions() {
+        let mut png = Cursor::new(Vec::new());
+        DynamicImage::ImageRgba8(RgbaImage::new(3, 5))
+            .write_to(&mut png, ImageFormat::Png)
+            .unwrap();
+        assert_eq!(image_dimensions(png.get_ref()).unwrap(), [3, 5]);
+
+        let mut webp = Cursor::new(Vec::new());
+        DynamicImage::ImageRgb8(RgbImage::new(7, 2))
+            .write_to(&mut webp, ImageFormat::WebP)
+            .unwrap();
+        assert_eq!(image_dimensions(webp.get_ref()).unwrap(), [7, 2]);
+
+        let mut pvr = [
+            52,
+            2,
+            3,
+            0,
+            0x12,
+            24,
+            32,
+            0,
+            0,
+            0,
+            0,
+            u32::from_le_bytes(*b"PVR!"),
+            1,
+        ]
+        .into_iter()
+        .flat_map(u32::to_le_bytes)
+        .collect::<Vec<_>>();
+        pvr.extend_from_slice(&[0; 24]);
+        assert_eq!(image_dimensions(&pvr).unwrap(), [3, 2]);
+        assert!(image_dimensions(&pvr[..52]).is_err());
+        assert!(image_dimensions(b"not an image").is_err());
     }
 
     #[test]

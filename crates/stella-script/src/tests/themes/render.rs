@@ -1,8 +1,10 @@
 use super::super::*;
+use super::configure_theme_camera_fixture;
 
 #[test]
 fn background_theme_draw_selects_one_fcvtzs_layer_while_foreground_draws_all() {
     let runtime = StellaLua::new("/tmp").unwrap();
+    configure_theme_camera_fixture(&runtime);
     let sheet = register_test_sprite_sheet(&runtime, &["BG_0", "BG_1", "BG_2", "FG_0", "FG_1"]);
     runtime
         .execute_source(
@@ -51,6 +53,9 @@ fn background_theme_draw_selects_one_fcvtzs_layer_while_foreground_draws_all() {
     runtime
         .execute_source(
             r#"
+                -- Direct theme members still draw while the host draw is
+                -- disabled; Purple's gate belongs to the outer callback.
+                setGameRenderingDisabled(true)
                 drawBackgroundNative(-1)
                 drawForegroundNative(123)
                 "#,
@@ -67,25 +72,29 @@ fn background_theme_draw_selects_one_fcvtzs_layer_while_foreground_draws_all() {
         bridge.commands.clear();
     }
 
-    // FCVTZS produces INT_MIN for NaN, which enters the native negative
-    // "all layers" branch. A positive in-range but out-of-vector index is
-    // kept memory-safe as an empty pass by the rehost.
-    runtime
-        .execute_source(
-            r#"
-                drawBackgroundNative(99)
-                drawBackgroundNative(0 / 0)
-                "#,
-        )
-        .unwrap();
-    {
+    // 10004C4B0 uses FCVTZS W1,S0: NaN/negative fractions become zero,
+    // positive overflow saturates to INT_MAX, negative overflow to INT_MIN.
+    // The member draws all layers only for negative converted indices.
+    // Out-of-vector positive indices remain a memory-safe empty host pass.
+    for (index, expected) in [
+        ("99", &[][..]),
+        ("0 / 0", &["BG_0"][..]),
+        ("-0.9", &["BG_0"][..]),
+        ("math.huge", &[][..]),
+        ("2147483648", &[][..]),
+        ("-math.huge", &["BG_0", "BG_1", "BG_2"][..]),
+        ("-2147483904", &["BG_0", "BG_1", "BG_2"][..]),
+    ] {
+        runtime
+            .execute_source(&format!("drawBackgroundNative({index})"))
+            .unwrap();
         let mut bridge = runtime.render.lock().unwrap();
         let sprites = bridge
             .commands
             .iter()
             .map(|command| command.sprite.as_str())
             .collect::<Vec<_>>();
-        assert_eq!(sprites, ["BG_0", "BG_1", "BG_2"]);
+        assert_eq!(sprites, expected, "index={index}");
         bridge.commands.clear();
     }
 
@@ -132,6 +141,7 @@ fn theme_draw_submission_retains_the_resolved_atlas_across_shadow_and_release() 
     fs::write(data_root.join("second/second.pvr"), []).unwrap();
 
     let runtime = StellaLua::new(&data_root).unwrap();
+    configure_theme_camera_fixture(&runtime);
     runtime
         .execute_source(
             r#"

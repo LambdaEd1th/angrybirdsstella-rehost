@@ -13,12 +13,13 @@ use stella_assets::ka3d::{
     BitmapFont, CompositePart, CompositeSpriteSet, Ka3dEnvelope, SpriteRegion, SpriteSheet,
 };
 use stella_script::{
-    AudioOutputClock, AudioOutputState, BoundCompositePart, CaptureRenderCommand,
-    ColorMeshTopology, ColorProgram, DirtRenderCommand, MaskedTextureBinding,
-    PlatformActionRequest, RectRenderCommand, RenderCommand, RenderQuad, RenderTriangle,
-    ScreenshotShareRequest, SpriteCatalogRegion, SpriteCatalogSnapshot, SpriteGeometrySubmission,
-    SpriteShader, StellaLua, SystemFontLayoutFace, SystemFontRenderBinding, SystemFontShapedLine,
-    TextFontBinding, TextProjection3D, TextRenderCommand,
+    AudioOutputClock, AudioOutputState, AudioPlaybackTransitions, BoundCompositePart,
+    CaptureRenderCommand, ColorMeshTopology, ColorProgram, DirtRenderCommand, GamerServicesView,
+    MaskedTextureBinding, PlatformActionRequest, RectRenderCommand, RenderCommand, RenderQuad,
+    RenderTriangle, ScreenshotShareRequest, SpriteCatalogRegion, SpriteCatalogSnapshot,
+    SpriteGeometrySubmission, SpriteShader, StellaLua, SystemFontLayoutFace,
+    SystemFontRenderBinding, SystemFontShapedLine, TextFontBinding, TextProjection3D,
+    TextRenderCommand,
 };
 use winit::{
     application::ApplicationHandler,
@@ -29,11 +30,14 @@ use winit::{
     window::{Window, WindowId},
 };
 
+mod account_ui;
 mod app;
+mod apprater_ui;
 mod assets;
 mod audio;
 mod cli;
 mod gpu;
+mod platform_ui_drawing;
 
 use app::*;
 use assets::*;

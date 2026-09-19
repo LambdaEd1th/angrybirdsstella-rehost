@@ -18,8 +18,64 @@ fn playback(mode: &str, speed: f64) -> AnimationPlayback {
     AnimationPlayback::active("action".to_owned(), mode.to_owned(), 7.25, 2.0, speed)
 }
 
+fn timeline_event(name: &str) -> AnimationTimelineEvent {
+    AnimationTimelineEvent {
+        name: name.to_owned(),
+        integer: 0,
+        number: 0.0,
+        text: String::new(),
+    }
+}
+
+fn populate_close_state(runtime: &mut AnimationRuntime, tag: &str) {
+    runtime
+        .actions
+        .insert(tag.to_owned(), BTreeMap::from([("action".to_owned(), 2.0)]));
+    runtime
+        .definitions
+        .insert(tag.to_owned(), AnimationDefinition::default());
+    runtime
+        .transforms
+        .insert(tag.to_owned(), AnimationTransform::default());
+    runtime
+        .matrices
+        .insert(tag.to_owned(), AnimationAffine::default());
+    runtime.descendant_reflections.insert(tag.to_owned(), false);
+    let mut retained = playback("once", 1.0);
+    retained.controls[0].paused = true;
+    runtime.playback.insert(tag.to_owned(), retained);
+    runtime.skins.insert(tag.to_owned(), "default".to_owned());
+    runtime
+        .shaders
+        .insert(tag.to_owned(), SpriteShader::default());
+    runtime
+        .sprite_geometry
+        .insert(tag.to_owned(), BTreeMap::new());
+    runtime
+        .sprite_metrics
+        .insert(tag.to_owned(), BTreeMap::new());
+    runtime
+        .sprite_regions
+        .insert(tag.to_owned(), BTreeMap::new());
+}
+
+fn assert_close_state_removed(runtime: &AnimationRuntime, tag: &str) {
+    assert!(!runtime.actions.contains_key(tag));
+    assert!(!runtime.definitions.contains_key(tag));
+    assert!(!runtime.transforms.contains_key(tag));
+    assert!(!runtime.matrices.contains_key(tag));
+    assert!(!runtime.descendant_reflections.contains_key(tag));
+    assert!(!runtime.playback.contains_key(tag));
+    assert!(!runtime.skins.contains_key(tag));
+    assert!(!runtime.shaders.contains_key(tag));
+    assert!(!runtime.sprite_geometry.contains_key(tag));
+    assert!(!runtime.sprite_metrics.contains_key(tag));
+    assert!(!runtime.sprite_regions.contains_key(tag));
+}
+
 fn test_region(name: &str) -> SpriteCatalogRegion {
     SpriteCatalogRegion {
+        decoded_image: None,
         native_sheet_id: 1,
         texture_source: "timeline-test.pvr".to_owned(),
         sprite: stella_assets::ka3d::SpriteRegion {
@@ -480,4 +536,289 @@ fn callback_queued_seek_event_waits_for_the_next_native_update() {
     update.call::<()>(0.0).unwrap();
     assert_eq!(observed.raw_len(), 2);
     assert_eq!(observed.raw_get::<String>(2).unwrap(), "middle");
+}
+
+#[test]
+fn callback_close_is_deferred_until_every_event_in_its_snapshot_runs() {
+    let lua = Lua::new();
+    let animation_native = lua.create_table().unwrap();
+    let callbacks = lua.create_table().unwrap();
+    let observed = lua.create_table().unwrap();
+    let callback_events = observed.clone();
+    let callback_native = animation_native.clone();
+    let mut state = AnimationRuntime::default();
+    populate_close_state(&mut state, "scene");
+    queue_animation_event(&mut state, "scene", timeline_event("first"));
+    queue_animation_event(&mut state, "scene", timeline_event("second"));
+    let runtime = Arc::new(Mutex::new(state));
+    let callback_runtime = Arc::clone(&runtime);
+    callbacks
+        .set(
+            "scene",
+            lua.create_function(
+                move |_, (_, _, event, _, _, _): (String, String, String, i32, f64, String)| {
+                    callback_events.raw_set(callback_events.raw_len() + 1, event.clone())?;
+                    if event == "first" {
+                        let close = callback_native.get::<mlua::Function>("close")?;
+                        close.call::<()>("scene")?;
+                        close.call::<()>("scene")?;
+                        let runtime = callback_runtime
+                            .lock()
+                            .expect("animation runtime lock poisoned");
+                        callback_events
+                            .set("alive_after_close", runtime.playback.contains_key("scene"))?;
+                        callback_events.set("deferred_count", runtime.deferred_close_tags.len())?;
+                    }
+                    Ok(())
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    super::super::super::resources::install_closing(
+        &lua,
+        &animation_native,
+        Arc::clone(&runtime),
+        callbacks.clone(),
+    )
+    .unwrap();
+    install_update(
+        &lua,
+        &animation_native,
+        Arc::clone(&runtime),
+        callbacks.clone(),
+    )
+    .unwrap();
+
+    animation_native
+        .get::<mlua::Function>("update")
+        .unwrap()
+        .call::<()>(0.0)
+        .unwrap();
+
+    assert_eq!(observed.raw_len(), 2);
+    assert_eq!(observed.raw_get::<String>(1).unwrap(), "first");
+    assert_eq!(observed.raw_get::<String>(2).unwrap(), "second");
+    assert!(observed.get::<bool>("alive_after_close").unwrap());
+    assert_eq!(observed.get::<usize>("deferred_count").unwrap(), 1);
+    let runtime = runtime.lock().unwrap();
+    assert!(!runtime.dispatching_events);
+    assert!(runtime.deferred_close_tags.is_empty());
+    assert_close_state_removed(&runtime, "scene");
+    drop(runtime);
+    assert!(matches!(
+        callbacks.raw_get::<Value>("scene").unwrap(),
+        Value::Nil
+    ));
+}
+
+#[test]
+fn callback_can_close_a_later_tag_without_suppressing_its_snapshot() {
+    let lua = Lua::new();
+    let animation_native = lua.create_table().unwrap();
+    let callbacks = lua.create_table().unwrap();
+    let observed = lua.create_table().unwrap();
+    let first_events = observed.clone();
+    let first_native = animation_native.clone();
+    callbacks
+        .set(
+            "first",
+            lua.create_function(
+                move |_, (_, _, event, _, _, _): (String, String, String, i32, f64, String)| {
+                    first_events.raw_set(first_events.raw_len() + 1, event)?;
+                    first_native
+                        .get::<mlua::Function>("close")?
+                        .call::<()>("second")
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let second_events = observed.clone();
+    callbacks
+        .set(
+            "second",
+            lua.create_function(
+                move |_, (_, _, event, _, _, _): (String, String, String, i32, f64, String)| {
+                    second_events.raw_set(second_events.raw_len() + 1, event)
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    let mut state = AnimationRuntime::default();
+    populate_close_state(&mut state, "first");
+    populate_close_state(&mut state, "second");
+    queue_animation_event(&mut state, "first", timeline_event("first-event"));
+    queue_animation_event(&mut state, "second", timeline_event("second-event"));
+    let runtime = Arc::new(Mutex::new(state));
+    super::super::super::resources::install_closing(
+        &lua,
+        &animation_native,
+        Arc::clone(&runtime),
+        callbacks.clone(),
+    )
+    .unwrap();
+    install_update(&lua, &animation_native, Arc::clone(&runtime), callbacks).unwrap();
+
+    animation_native
+        .get::<mlua::Function>("update")
+        .unwrap()
+        .call::<()>(0.0)
+        .unwrap();
+
+    assert_eq!(observed.raw_len(), 2);
+    assert_eq!(observed.raw_get::<String>(1).unwrap(), "first-event");
+    assert_eq!(observed.raw_get::<String>(2).unwrap(), "second-event");
+    let runtime = runtime.lock().unwrap();
+    assert!(runtime.playback.contains_key("first"));
+    assert_close_state_removed(&runtime, "second");
+}
+
+#[test]
+fn nested_update_retains_outer_callbacks_after_draining_a_close() {
+    let lua = Lua::new();
+    let animation_native = lua.create_table().unwrap();
+    let callbacks = lua.create_table().unwrap();
+    let observed = lua.create_table().unwrap();
+
+    let mut state = AnimationRuntime::default();
+    for tag in ["outer", "inner", "victim"] {
+        populate_close_state(&mut state, tag);
+    }
+    queue_animation_event(&mut state, "outer", timeline_event("outer-event"));
+    queue_animation_event(&mut state, "victim", timeline_event("victim-event"));
+    let runtime = Arc::new(Mutex::new(state));
+
+    let outer_events = observed.clone();
+    let outer_native = animation_native.clone();
+    let outer_runtime = Arc::clone(&runtime);
+    callbacks
+        .set(
+            "outer",
+            lua.create_function(
+                move |_, (_, _, event, _, _, _): (String, String, String, i32, f64, String)| {
+                    outer_events.raw_set(outer_events.raw_len() + 1, event)?;
+                    queue_animation_event(
+                        &mut outer_runtime
+                            .lock()
+                            .expect("animation runtime lock poisoned"),
+                        "inner",
+                        timeline_event("inner-event"),
+                    );
+                    outer_native
+                        .get::<mlua::Function>("update")?
+                        .call::<()>(0.0)
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let inner_events = observed.clone();
+    let inner_native = animation_native.clone();
+    callbacks
+        .set(
+            "inner",
+            lua.create_function(
+                move |_, (_, _, event, _, _, _): (String, String, String, i32, f64, String)| {
+                    inner_events.raw_set(inner_events.raw_len() + 1, event)?;
+                    inner_native
+                        .get::<mlua::Function>("close")?
+                        .call::<()>("victim")
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let victim_events = observed.clone();
+    callbacks
+        .set(
+            "victim",
+            lua.create_function(
+                move |_, (_, _, event, _, _, _): (String, String, String, i32, f64, String)| {
+                    victim_events.raw_set(victim_events.raw_len() + 1, event)
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    super::super::super::resources::install_closing(
+        &lua,
+        &animation_native,
+        Arc::clone(&runtime),
+        callbacks.clone(),
+    )
+    .unwrap();
+    install_update(&lua, &animation_native, Arc::clone(&runtime), callbacks).unwrap();
+
+    animation_native
+        .get::<mlua::Function>("update")
+        .unwrap()
+        .call::<()>(0.0)
+        .unwrap();
+
+    assert_eq!(observed.raw_len(), 3);
+    assert_eq!(observed.raw_get::<String>(1).unwrap(), "outer-event");
+    assert_eq!(observed.raw_get::<String>(2).unwrap(), "inner-event");
+    assert_eq!(observed.raw_get::<String>(3).unwrap(), "victim-event");
+    let runtime = runtime.lock().unwrap();
+    assert!(!runtime.dispatching_events);
+    assert!(runtime.deferred_close_tags.is_empty());
+    assert_close_state_removed(&runtime, "victim");
+}
+
+#[test]
+fn callback_error_leaves_native_dispatch_flag_and_close_queue_intact() {
+    let lua = Lua::new();
+    let animation_native = lua.create_table().unwrap();
+    let callbacks = lua.create_table().unwrap();
+    let callback_native = animation_native.clone();
+    callbacks
+        .set(
+            "scene",
+            lua.create_function(
+                move |_, _: (String, String, String, i32, f64, String)| -> LuaResult<()> {
+                    callback_native
+                        .get::<mlua::Function>("close")?
+                        .call::<()>("scene")?;
+                    Err(mlua::Error::RuntimeError("callback failure".to_owned()))
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    let mut state = AnimationRuntime::default();
+    populate_close_state(&mut state, "scene");
+    queue_animation_event(&mut state, "scene", timeline_event("event"));
+    let runtime = Arc::new(Mutex::new(state));
+    super::super::super::resources::install_closing(
+        &lua,
+        &animation_native,
+        Arc::clone(&runtime),
+        callbacks.clone(),
+    )
+    .unwrap();
+    install_update(&lua, &animation_native, Arc::clone(&runtime), callbacks).unwrap();
+
+    assert!(
+        animation_native
+            .get::<mlua::Function>("update")
+            .unwrap()
+            .call::<()>(0.0)
+            .is_err()
+    );
+    animation_native
+        .get::<mlua::Function>("close")
+        .unwrap()
+        .call::<()>("scene")
+        .unwrap();
+
+    let runtime = runtime.lock().unwrap();
+    assert!(runtime.dispatching_events);
+    assert_eq!(runtime.deferred_close_tags, ["scene"]);
+    assert!(runtime.playback.contains_key("scene"));
 }

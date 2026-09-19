@@ -49,6 +49,8 @@ fn theme_sprite_bindings_preserve_native_layered_abi_and_update_fields() {
             resolved_offset_y: None,
             scale_x: 1.0,
             scale_y: 1.0,
+            cached_draw_world_x: 0.0,
+            cached_draw_world_y: 0.0,
             parallax_speed: 1.0,
             z_distance: 0.0,
             scale_speed: 1.0,
@@ -71,7 +73,6 @@ fn theme_sprite_bindings_preserve_native_layered_abi_and_update_fields() {
             world_height: None,
             velocity_x: 0.0,
             velocity_y: 0.0,
-            motion_y: 0.0,
         });
         assert!(!bridge.theme_sprites.contains_key(&(1, "shared".to_owned())));
         let sprite = bridge

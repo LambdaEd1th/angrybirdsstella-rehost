@@ -5,6 +5,9 @@ impl RenderBridge {
     /// this directly in `sub_100065D3C` before it opens the requested Lua
     /// level file, including a whole-tree erase of GameLua `+0x310`.
     pub(crate) fn clear_native_level_scene(&mut self) {
+        // loadLevelImpl writes begin into the vector's end pointer at
+        // 0x100066010, before objects from the next level can register.
+        self.aiming_aid_force_sources.clear();
         let names = self.scene.keys().cloned().collect::<Vec<_>>();
         let mut removed = Vec::with_capacity(names.len());
         for name in names {

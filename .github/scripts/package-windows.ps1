@@ -25,7 +25,6 @@ foreach ($Binary in @("stella-app", "stella-headless", "stella-mp3-audit", "stel
 
 Copy-Item (Join-Path $Root "README.md") (Join-Path $PackageRoot "README.md")
 Copy-Item (Join-Path $Root "LICENSE") (Join-Path $PackageRoot "LICENSE")
-Copy-Item (Join-Path $Root "docs/release-package.md") (Join-Path $PackageRoot "RELEASE-README.md")
 
 $Commit = if ($env:GITHUB_SHA) { $env:GITHUB_SHA } else { git -C $Root rev-parse HEAD }
 @(

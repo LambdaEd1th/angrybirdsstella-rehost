@@ -91,6 +91,9 @@ impl AssetCatalog {
         target: &mut [u32],
     ) -> Result<()> {
         let asset_name = name.split_once('#').map_or(name, |(base, _)| base);
+        if let Some(region) = bound_region {
+            self.retain_decoded_image(region)?;
+        }
         let region = bound_region
             .map(|region| AtlasRegion {
                 texture: region.texture_source.clone(),

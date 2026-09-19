@@ -23,12 +23,19 @@ pub struct SpriteCatalogSnapshot {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpriteCatalogRegion {
+    /// Downloaded Images own decoded pixels at native construction time.
+    /// Retain them through deferred draws and aliases, independently of disk.
+    pub decoded_image: Option<Arc<stella_assets::native_image::DecodedNativeImage>>,
     /// Deterministic host identity for the retained native `SpriteSheet*`.
     /// Purple uses this pointer as the second key of its z-ordered draw map.
     /// The id changes when a same-named sheet is reconstructed, while regions
     /// retained by existing objects keep the old allocation identity.
     pub native_sheet_id: u64,
-    /// Resolved host source used as both the decoder path and GPU-cache key.
+    /// Opaque native Image binding and GPU-cache key. Ordinary sheet images
+    /// include the concrete sheet/texture-record identity plus their resolved
+    /// file path; `stella_assets::image_source::image_source_path` unwraps it
+    /// only for I/O. Captures use an allocation identity with no file source.
+    /// Retained aliases share this value, while a same-file reload does not.
     pub texture_source: String,
     pub sprite: SpriteRegion,
 }
@@ -138,6 +145,8 @@ pub struct RenderQuad {
 
 #[derive(Debug, Clone, Copy)]
 pub struct RenderState {
+    /// Context+0x4c/0x50 custom model, independent of the 2D affine fields.
+    pub custom_model: Option<super::TextProjection3D>,
     pub translate_x: f64,
     pub translate_y: f64,
     pub scale_x: f64,
@@ -174,6 +183,7 @@ pub struct RenderState {
 impl Default for RenderState {
     fn default() -> Self {
         Self {
+            custom_model: None,
             translate_x: 0.0,
             translate_y: 0.0,
             scale_x: 1.0,
@@ -284,6 +294,9 @@ impl From<RenderState> for RenderSubmissionState {
 
 #[derive(Debug, Clone)]
 pub struct RenderCommand {
+    /// Rare native perspective snapshot. Keep it out of the per-sprite
+    /// compact Copy state, like shader and explicit-geometry payloads.
+    pub projection_3d: Option<Arc<super::TextProjection3D>>,
     /// Monotonic order of the original immediate renderer submission.
     pub order: u64,
     /// Stable sprite label associated with the retained native resource.
@@ -349,6 +362,10 @@ pub enum SpriteGeometrySubmission {
     /// Exact independently rounded atlas corners emitted by textured-line and
     /// rubber-band helpers. UVs still come from the bound atlas region.
     NativeAtlasQuad(Arc<[[f64; 2]; 4]>),
+    /// GL_Image's width/height overload under an active custom model submits
+    /// local xyz=(x,y,0), without the ordinary affine or viewport conversion.
+    /// Retain these rare corners separately from explicit normalized quads.
+    RawAtlasQuad(Arc<[[f64; 2]; 4]>),
 }
 
 /// Reference-counted counterpart of Purple's copy-on-write libstdc++ sprite
@@ -450,9 +467,13 @@ mod deferred_payload_tests {
             std::mem::size_of::<usize>()
         );
         assert_eq!(std::mem::size_of::<RenderSubmissionState>(), 124);
+        assert_eq!(
+            std::mem::size_of::<Option<Arc<super::super::TextProjection3D>>>(),
+            std::mem::size_of::<usize>()
+        );
         // Dirt holes belong to the retained DirtMechanics component.  The
         // original sprite submission has no per-command analytic-hole list.
-        assert_eq!(std::mem::size_of::<RenderCommand>(), 216);
+        assert_eq!(std::mem::size_of::<RenderCommand>(), 224);
         assert!(
             std::mem::size_of::<RenderCommand>()
                 < std::mem::size_of::<RenderState>()

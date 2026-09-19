@@ -519,6 +519,55 @@ fn object_track_overlap_uses_chain_distance_and_only_the_body_list_head() {
 }
 
 #[test]
+fn native_object_flags_use_throwing_lookup_without_requiring_a_body() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createNonPhysicsObject("decoration", "", 0, 0, 1)
+                createBox("retired", "", 0, 0, 2, 2, 1, 0, 0, true, false, 1)
+                createBox("sleeping", "", 0, 0, 2, 2, 1, 0, 0, true, false, 1)
+                setSleeping("sleeping", true)
+            "#,
+        )
+        .unwrap();
+    runtime
+        .render
+        .lock()
+        .unwrap()
+        .orphan_native_body_after_locked_destroy("retired");
+    runtime
+        .execute_source(
+            r#"
+                for _, flag in ipairs({
+                    native_setBlockCollisionEnabled, native_setKeepOrientation,
+                    native_setIgnoresScore, setRecordVelocity, setRevertGravity
+                }) do
+                    for _, name in ipairs({"missing", "retired"}) do
+                        local ok, message = pcall(flag, name, true)
+                        assert(not ok and string.find(tostring(message),
+                            "Missing object: " .. name, 1, true))
+                    end
+                    assert(select('#', flag("decoration", true, false)) == 0)
+                    flag("sleeping", true)
+                end
+            "#,
+        )
+        .unwrap();
+
+    let bridge = runtime.render.lock().unwrap();
+    let decoration = &bridge.scene["decoration"];
+    assert!(!decoration.has_physics_body());
+    assert!(decoration.block_collision_enabled);
+    assert!(decoration.keep_orientation);
+    assert!(decoration.ignores_score);
+    assert!(decoration.record_velocity);
+    assert!(decoration.revert_gravity);
+    assert!(bridge.scene["sleeping"].sleeping);
+    assert!(!bridge.scene["retired"].record_velocity);
+}
+
+#[test]
 fn track_joint_registration_matches_native_adapters_types_and_float32() {
     let runtime = unlocked_test_runtime();
     runtime

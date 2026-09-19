@@ -10,7 +10,27 @@ use crate::*;
 use clean::clean_clipper_polygon;
 
 pub(crate) fn native_dirt_input_integer(value: f64) -> i64 {
+    // 0x100021010/101C and 0x1000210A0/10AC convert to W first, then
+    // SXTW to Clipper's 64-bit coordinate. This is not FCVTZS X,S.
     i64::from(native_fcvtzs_f32((value as f32) * 1000.0))
+}
+
+fn native_dirt_slit_left(slit_right: i64) -> i64 {
+    // 0x100020EE0 quantizes the centre to W. SUB W8,W8,#1 at
+    // 0x100020F00 wraps before SXTW at 0x100020F04; INT_MIN therefore
+    // becomes INT_MAX rather than clamping or subtracting in 64 bits.
+    i64::from((slit_right as i32).wrapping_sub(1))
+}
+
+fn native_dirt_slit(slit_right: i64) -> Path64 {
+    const SLIT_LIMIT: i64 = 100_000;
+    let slit_left = native_dirt_slit_left(slit_right);
+    vec![
+        Point64::new(slit_right, -SLIT_LIMIT),
+        Point64::new(slit_right, SLIT_LIMIT),
+        Point64::new(slit_left, SLIT_LIMIT),
+        Point64::new(slit_left, -SLIT_LIMIT),
+    ]
 }
 
 pub(crate) fn native_dirt_output_coord(value: i64) -> f64 {
@@ -116,26 +136,9 @@ fn clipper_dirt_difference(
         // instance and executes the difference again. Clipper2's Rust port
         // cleans its scanline state after execute, so rebuild the equivalent
         // complete input set before the second execution.
-        const SLIT_LIMIT: i32 = 100_000;
-        let slit_right = i32::try_from(slit_right).unwrap_or_else(|_| {
-            if slit_right.is_negative() {
-                i32::MIN
-            } else {
-                i32::MAX
-            }
-        });
-        let slit = vec![
-            Point64::new(i64::from(slit_right), -i64::from(SLIT_LIMIT)),
-            Point64::new(i64::from(slit_right), i64::from(SLIT_LIMIT)),
-            Point64::new(
-                i64::from(slit_right.saturating_sub(1)),
-                i64::from(SLIT_LIMIT),
-            ),
-            Point64::new(
-                i64::from(slit_right.saturating_sub(1)),
-                -i64::from(SLIT_LIMIT),
-            ),
-        ];
+        // The caller supplies the already sign-extended 32-bit grid point;
+        // the opposite edge must retain the native W-register subtraction.
+        let slit = native_dirt_slit(slit_right);
         let all_cuts = vec![cuts[0].clone(), slit];
         let mut slit_clipper = Clipper64::new();
         slit_clipper.add_subject(&subjects);
@@ -170,7 +173,7 @@ fn clipper_dirt_difference(
 }
 
 fn align_clipper_6_slit_contour(path: &mut [NativeClipperPoint], slit_right: i64) {
-    let slit_left = slit_right.saturating_sub(1);
+    let slit_left = native_dirt_slit_left(slit_right);
     if path.is_empty() || path.iter().any(|point| point.x > slit_left) {
         return;
     }
@@ -194,4 +197,79 @@ fn to_clipper_path(points: &[NativeClipperPoint]) -> Path64 {
         .iter()
         .map(|point| Point64::new(point.x, point.y))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dirt_clipper_grid_sign_extends_saturated_word_before_wrapping_slit_edge() {
+        for (input, right, left) in [
+            (f64::NAN, 0, -1),
+            (f64::INFINITY, i64::from(i32::MAX), i64::from(i32::MAX - 1)),
+            (f64::NEG_INFINITY, i64::from(i32::MIN), i64::from(i32::MAX)),
+            (-1.25, -1250, -1251),
+            (1.25, 1250, 1249),
+        ] {
+            let actual_right = native_dirt_input_integer(input);
+            assert_eq!(actual_right, right, "{input:?}");
+            assert_eq!(native_dirt_slit_left(actual_right), left, "{input:?}");
+            let slit = native_dirt_slit(actual_right);
+            assert_eq!(
+                slit.iter()
+                    .map(|point| (point.x, point.y))
+                    .collect::<Vec<_>>(),
+                vec![
+                    (right, -100_000),
+                    (right, 100_000),
+                    (left, 100_000),
+                    (left, -100_000)
+                ]
+            );
+        }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn dirt_clipper_grid_and_slit_match_actual_arm64_word_instruction_sequence() {
+        for input in [
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            -1e20,
+            1e20,
+            -1.25,
+            1.25,
+        ] {
+            let input = input as f32;
+            let scaled: f32;
+            let right: i64;
+            let left: i64;
+            // SAFETY: register-only reproduction of Purple's float32 grid
+            // multiply, FCVTZS W,S, SUB W,#1 and SXTW instructions.
+            unsafe {
+                std::arch::asm!(
+                    "fmul {scaled:s}, {value:s}, {factor:s}",
+                    "fcvtzs {right:w}, {scaled:s}",
+                    "sub {left:w}, {right:w}, #1",
+                    "sxtw {right:x}, {right:w}",
+                    "sxtw {left:x}, {left:w}",
+                    scaled = out(vreg) scaled,
+                    value = in(vreg) input,
+                    factor = in(vreg) 1000.0f32,
+                    right = out(reg) right,
+                    left = out(reg) left,
+                    options(nomem, nostack),
+                );
+            }
+            let _ = scaled;
+            assert_eq!(
+                native_dirt_input_integer(f64::from(input)),
+                right,
+                "{input:?}"
+            );
+            assert_eq!(native_dirt_slit_left(right), left, "{input:?}");
+        }
+    }
 }

@@ -93,6 +93,7 @@ pub(super) fn install_start(
                 .get_mut(&tag)
                 .expect("newly started animation playback disappeared");
             playback.current_action = action.clone();
+            playback.wrapper_control_present = true;
             playback.mode = mode.clone();
             if let Some(index) = playback.active_control_index(&action) {
                 playback.controls[index].callback_installed = true;

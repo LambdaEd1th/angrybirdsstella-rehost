@@ -8,7 +8,10 @@ use std::{
 
 use mlua::{Function, Lua, MultiValue, Result as LuaResult, Table, Value};
 
-use crate::{RenderBridge, ScreenshotShareRequest, native_required_string, runtime_error};
+use crate::{
+    ApplicationEvent, ApplicationEventScheduler, RenderBridge, ScreenshotShareRequest,
+    native_required_string, runtime_error,
+};
 
 // Purple stores this signed 32-bit sequence beside the process-global unique
 // shader counter, not in GameLua or RenderBridge. The value is incremented
@@ -25,9 +28,10 @@ pub(crate) struct UrlRequestCompletion {
 
 /// Cross-thread half of GameLua's `+0x660` URL worker and the process-global
 /// zero-delay event queue used to hand successful responses back to Lua.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub(crate) struct UrlRequestRuntime {
     completions: Arc<Mutex<VecDeque<UrlRequestCompletion>>>,
+    application_events: ApplicationEventScheduler,
 }
 
 impl UrlRequestRuntime {
@@ -36,6 +40,10 @@ impl UrlRequestRuntime {
             .lock()
             .expect("URL completion queue lock poisoned")
             .pop_front()
+    }
+
+    pub(crate) fn discard_completion(&self) {
+        let _ = self.pop_completion();
     }
 }
 
@@ -82,10 +90,15 @@ pub(super) fn install_url(
     lua: &Lua,
     globals: &Table,
     render: &Arc<Mutex<RenderBridge>>,
+    application_events: ApplicationEventScheduler,
 ) -> LuaResult<UrlRequestRuntime> {
-    let runtime = UrlRequestRuntime::default();
+    let runtime = UrlRequestRuntime {
+        completions: Arc::new(Mutex::new(VecDeque::new())),
+        application_events,
+    };
     let url_bridge = Arc::clone(render);
     let completion_queue = Arc::clone(&runtime.completions);
+    let completion_events = runtime.application_events.clone();
     globals.set(
         "native_startURLThread",
         lua.create_function(move |lua, args: MultiValue| {
@@ -114,16 +127,18 @@ pub(super) fn install_url(
                 .requested_url = Some(url.clone());
 
             let completion_queue = Arc::clone(&completion_queue);
+            let completion_events = completion_events.clone();
             std::thread::Builder::new()
                 .name("stella-url-request".to_owned())
                 .spawn(move || {
                     let Some(body) = fetch_http_200(&url) else {
                         return;
                     };
-                    completion_queue
+                    let mut completions = completion_queue
                         .lock()
-                        .expect("URL completion queue lock poisoned")
-                        .push_back(UrlRequestCompletion { url, body });
+                        .expect("URL completion queue lock poisoned");
+                    completions.push_back(UrlRequestCompletion { url, body });
+                    completion_events.post(ApplicationEvent::Url);
                 })
                 .map_err(|_| runtime_error("Creating thread failed"))?;
             Ok(())
@@ -154,12 +169,13 @@ pub(super) fn fetch_http_200(url: &str) -> Option<Vec<u8>> {
 /// Execute the zero-delay events queued by completed URL workers. Purple's
 /// AppController drains this scheduler before calling the application/GameLua
 /// update virtual, so this must run at the head of [`StellaLua::update`].
-pub(crate) fn dispatch_url_completions(lua: &Lua, runtime: &UrlRequestRuntime) -> LuaResult<()> {
-    while let Some(completion) = runtime.pop_completion() {
-        let callback: Function = lua.named_registry_value(URL_CALLBACK_REGISTRY_KEY)?;
-        let url = lua.create_string(completion.url.as_bytes())?;
-        let body = lua.create_string(&completion.body)?;
-        callback.call::<()>((url, body))?;
-    }
+pub(crate) fn dispatch_url_completion(lua: &Lua, runtime: &UrlRequestRuntime) -> LuaResult<()> {
+    let Some(completion) = runtime.pop_completion() else {
+        return Ok(());
+    };
+    let callback: Function = lua.named_registry_value(URL_CALLBACK_REGISTRY_KEY)?;
+    let url = lua.create_string(completion.url.as_bytes())?;
+    let body = lua.create_string(&completion.body)?;
+    callback.call::<()>((url, body))?;
     Ok(())
 }

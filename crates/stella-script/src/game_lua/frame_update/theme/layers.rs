@@ -1,25 +1,25 @@
 //! One background or foreground ThemeManager pass (`sub_10009B8B4`).
 
+use crate::game_lua::theme_world_offsets::{native_offset_y, set_native_offset_y};
 use crate::*;
 
 pub(super) fn advance_theme_manager_pass(
     bridge: &mut RenderBridge,
     foreground: bool,
     delta: f32,
-    world_limits: ThemeWorldLimits,
     bindings: Option<(&ResourceRuntime, &Path)>,
 ) {
     // ThemeManager::update stores S1/S2 at +0x54/+0x58 before touching the
     // selected layer pass. Both native calls receive the same filtered pair.
     bridge.theme_camera.effect_x = bridge.accelerometer_filtered[0];
     bridge.theme_camera.effect_y = bridge.accelerometer_filtered[1];
-    let world_scale = bridge.world_scale as f32;
-    let max_world_scale = bridge.max_world_scale as f32;
-    let (end_scale, reference_scale) = if bridge.theme_camera.valid {
-        (bridge.resolution_camera_scale, bridge.theme_camera.scale)
+    bridge.theme_camera.y = if foreground {
+        0.0
     } else {
-        (max_world_scale, 20.0_f32)
+        bridge.theme_camera.saved_y
     };
+    let camera = bridge.theme_camera;
+    let world_limits = camera.world_limits;
     let screen_width = bridge.screen_width as f32;
     let screen_height = bridge.screen_height as f32;
     let world_context = ThemeWorldOffsetContext {
@@ -56,25 +56,13 @@ pub(super) fn advance_theme_manager_pass(
         let offset_x_step = (layer.velocity_x as f32) * delta;
         layer.offset_x = f64::from(offset_x_step.mul_add(parallax_velocity, layer.offset_x as f32));
         let offset_y_step = (layer.velocity_y as f32) * delta;
-        match &mut layer.offset_y {
-            ThemeVerticalOffset::Pixels(offset_y) => {
-                *offset_y = f64::from(offset_y_step.mul_add(parallax_velocity, *offset_y as f32));
-            }
-            ThemeVerticalOffset::Top | ThemeVerticalOffset::Bottom => {
-                layer.motion_y =
-                    f64::from(offset_y_step.mul_add(parallax_velocity, layer.motion_y as f32));
-            }
-        }
+        // Native updates the complete layer+0x40 value with one FMADD.
+        // Splitting a resolved anchor and its motion changes float rounding
+        // and incorrectly carries old motion through a later refresh.
+        let offset_y = offset_y_step.mul_add(parallax_velocity, native_offset_y(layer));
+        set_native_offset_y(layer, offset_y);
 
-        wrap_moving_layer(
-            layer,
-            world_scale,
-            max_world_scale,
-            end_scale,
-            reference_scale,
-            screen_width,
-            screen_height,
-        );
+        wrap_moving_layer(layer, camera, bridge.resolution_camera_scale, world_context);
     }
 }
 
@@ -154,8 +142,7 @@ fn refresh_animation_cycle(
     let origin_y = area.screen_height.mul_add(-0.5_f32, area.screen_y);
     let offset_y = area.screen_height.mul_add(random.next() as f32, origin_y);
     layer.offset_x = f64::from(offset_x);
-    layer.offset_y = ThemeVerticalOffset::Pixels(f64::from(offset_y));
-    layer.resolved_offset_y = None;
+    set_native_offset_y(layer, offset_y);
     layer.world_x = area.world_x.map(f64::from);
     layer.world_y = area.world_y.map(f64::from);
     layer.world_width = area.world_width.map(f64::from);
@@ -165,72 +152,79 @@ fn refresh_animation_cycle(
 
 fn wrap_moving_layer(
     layer: &mut ThemeLayer,
-    world_scale: f32,
-    max_world_scale: f32,
+    camera: ThemeCameraReference,
     end_scale: f32,
-    reference_scale: f32,
-    screen_width: f32,
-    screen_height: f32,
+    world_context: ThemeWorldOffsetContext,
 ) {
     if (layer.velocity_x as f32) == 0.0 && (layer.velocity_y as f32) == 0.0 {
         return;
     }
 
-    // sub_10009B8B4 keeps a moving reference tile close to the camera. It
-    // shifts by one more whole tile than the viewport quotient.
+    // 0x10009B9B4..0x10009B9D4 expands the current screen-to-world rectangle
+    // with the four level limits cached by ThemeManager's draw. A moving
+    // reference tile wraps only after its previous actual draw center leaves
+    // this complete union, not merely the current 1024x768 viewport.
+    let current_scale = world_context.current_scale;
+    let world_limits = camera.world_limits;
+    let screen_right = world_context.screen_left + world_context.screen_width / current_scale;
+    let screen_bottom = world_context.screen_top + world_context.screen_height / current_scale;
+    let union_left = world_limits
+        .left
+        .map_or(world_context.screen_left, |value| {
+            value.min(world_context.screen_left)
+        });
+    let union_right = world_limits
+        .right
+        .map_or(screen_right, |value| value.max(screen_right));
+    let union_top = world_limits.top.map_or(world_context.screen_top, |value| {
+        value.min(world_context.screen_top)
+    });
+    let union_bottom = world_limits
+        .bottom
+        .map_or(screen_bottom, |value| value.max(screen_bottom));
+    let union_width = union_right - union_left;
+    let union_height = union_bottom - union_top;
+
     let z_distance = layer.z_distance as f32;
-    let parallax_scale = if reference_scale == 20.0_f32 && end_scale == max_world_scale {
-        (world_scale * (1.0_f32 - z_distance) + max_world_scale * z_distance) / 20.0_f32
-    } else {
-        native_theme_parallax_scale(world_scale, end_scale, reference_scale, z_distance)
-    };
-    let width = (layer.geometry.width() as f32 * layer.scale_x as f32 * parallax_scale).abs();
-    if width > f32::EPSILON && (layer.velocity_x as f32) != 0.0 {
-        let center = screen_width * 0.5_f32 + layer.offset_x as f32;
-        let half_width = width * 0.5_f32;
-        let tile_count = (screen_width / width).trunc();
-        let shift = width.mul_add(tile_count, width);
+    let parallax_scale =
+        native_theme_parallax_scale(camera.current_scale, end_scale, camera.scale, z_distance);
+    // ResourceManager's four geometry accessors are retained in signed
+    // 16-bit layer slots at +0x58/+0x5A.
+    let width = f32::from(layer.geometry.width() as i16);
+    if (layer.velocity_x as f32) != 0.0 {
+        let authored_step = width * layer.scale_x as f32;
+        let half_width =
+            ((width * ((layer.scale_x as f32) * parallax_scale)) / camera.current_scale) * 0.5_f32;
+        let tile_count = native_fcvtzs_f32((union_width / authored_step) * camera.scale);
+        let shift = authored_step.mul_add(tile_count as f32, authored_step);
+        let center = layer.cached_draw_world_x;
         let offset = layer.offset_x as f32;
-        if center - half_width > screen_width && (layer.velocity_x as f32) > 0.0 {
+        if center - half_width > union_right && (layer.velocity_x as f32) > 0.0 {
             layer.offset_x = f64::from(offset - shift);
-        } else if center + half_width < 0.0 && (layer.velocity_x as f32) < 0.0 {
+            return;
+        } else if center + half_width < union_left && (layer.velocity_x as f32) < 0.0 {
             layer.offset_x = f64::from(offset + shift);
+            return;
         }
     }
 
-    let height = (layer.geometry.height() as f32 * layer.scale_y as f32 * parallax_scale).abs();
-    if height <= f32::EPSILON || (layer.velocity_y as f32) == 0.0 {
+    if (layer.velocity_y as f32) == 0.0 {
         return;
     }
-
-    let anchored_y = match layer.offset_y {
-        ThemeVerticalOffset::Pixels(offset) => screen_height * 0.5_f32 + offset as f32,
-        ThemeVerticalOffset::Top => {
-            -(layer.geometry.min_y as f32) * layer.scale_y as f32 * parallax_scale
-                + layer.motion_y as f32
-        }
-        ThemeVerticalOffset::Bottom => {
-            screen_height - (layer.geometry.max_y as f32) * layer.scale_y as f32 * parallax_scale
-                + layer.motion_y as f32
-        }
-    };
-    let half_height = height * 0.5_f32;
-    let tile_count = (screen_height / height).trunc();
-    let shift = height.mul_add(tile_count, height);
-    if anchored_y + half_height < 0.0 && (layer.velocity_y as f32) < 0.0 {
+    let height = f32::from(layer.geometry.height() as i16);
+    let authored_step = height * layer.scale_y as f32;
+    let half_height =
+        ((((layer.scale_y as f32) * parallax_scale) * height) / camera.current_scale) * 0.5_f32;
+    let tile_count = native_fcvtzs_f32((union_height / authored_step) * camera.scale_y);
+    let shift = authored_step.mul_add(tile_count as f32, authored_step);
+    let center = layer.cached_draw_world_y;
+    if center + half_height < union_top && (layer.velocity_y as f32) < 0.0 {
         shift_layer_y(layer, shift);
-    } else if anchored_y - half_height > screen_height && (layer.velocity_y as f32) > 0.0 {
+    } else if center - half_height > union_bottom && (layer.velocity_y as f32) > 0.0 {
         shift_layer_y(layer, -shift);
     }
 }
 
 fn shift_layer_y(layer: &mut ThemeLayer, shift: f32) {
-    match &mut layer.offset_y {
-        ThemeVerticalOffset::Pixels(offset) => {
-            *offset = f64::from(*offset as f32 + shift);
-        }
-        ThemeVerticalOffset::Top | ThemeVerticalOffset::Bottom => {
-            layer.motion_y = f64::from(layer.motion_y as f32 + shift);
-        }
-    }
+    set_native_offset_y(layer, native_offset_y(layer) + shift);
 }

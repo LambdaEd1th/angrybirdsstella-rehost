@@ -137,7 +137,13 @@ pub(crate) fn install(lua: &Lua, globals: &Table, context: RegistrationContext) 
         Arc::clone(&audio_runtime),
         Arc::clone(&data_root),
     )?;
-    draw_registration::install_capture(lua, &resource_api, Arc::clone(&render))?;
+    draw_registration::install_capture(
+        lua,
+        &resource_api,
+        Arc::clone(&render),
+        Arc::clone(&resource_runtime),
+        Arc::clone(&data_root),
+    )?;
     lifecycle_registration::install_release(
         lua,
         &resource_api,

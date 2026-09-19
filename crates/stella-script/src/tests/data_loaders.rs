@@ -254,6 +254,61 @@ fn native_text_table_loader_matches_recovered_five_slot_contract() {
 }
 
 #[test]
+fn load_table_from_missing_account_file_publishes_fresh_empty_table_without_writing() {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "stella-missing-account-{}-{unique}",
+        std::process::id()
+    ));
+    let data_root = root.join("data");
+    let app_root = root.join("appdata");
+    fs::create_dir_all(&data_root).unwrap();
+    fs::create_dir_all(&app_root).unwrap();
+    fs::write(
+        app_root.join("corrupt.lua"),
+        b"this is not a valid Lua chunk !!!",
+    )
+    .unwrap();
+    let runtime = StellaLua::new(&data_root).unwrap();
+    runtime.execute_source(r#"
+        oldAccountSettings = {root = {score = 17}}
+        localAccountSettings = oldAccountSettings
+        if select('#', loadTableFromFile('settings_synthetic.lua', 'localAccountSettings')) ~= 0 then error('native member must return zero values') end
+        if type(localAccountSettings) ~= 'table' or next(localAccountSettings) ~= nil then error('missing account must publish empty table') end
+        if rawequal(localAccountSettings, oldAccountSettings) then error('previous account settings were reused') end
+        if oldAccountSettings.root.score ~= 17 then error('old account table mutated') end
+        firstMissing = localAccountSettings
+        loadTableFromFile('settings_synthetic.lua', 'localAccountSettings')
+        if rawequal(firstMissing, localAccountSettings) then error('missing loads must create fresh tables') end
+        if not rawequal(_G.localAccountSettings, localAccountSettings) then error('global publication mismatch') end
+        if pcall(loadTableFromFile, 'settings_synthetic.lua') then error('missing filename bypassed arity check') end
+        if pcall(loadTableFromFile, '../outside.lua', 'localAccountSettings') then error('unsafe path accepted') end
+        if pcall(loadTableFromFile, '', 'localAccountSettings') then error('empty path accepted') end
+        loadTableFromFile('corrupt.lua', 'localAccountSettings')
+        if next(localAccountSettings) ~= nil then error('compile failure must return a fresh empty table') end
+    "#).unwrap();
+    assert!(!app_root.join("settings_synthetic.lua").exists());
+    assert!(!app_root.join("settings_synthetic.lua.json").exists());
+    assert_eq!(
+        &runtime.pending_persistent_load_messages()[3..],
+        [
+            "File Created:settings_synthetic.lua",
+            "File Created:settings_synthetic.lua",
+            "Persistent file loading failed corrupt.lua",
+        ]
+    );
+    assert_eq!(
+        fs::read(app_root.join("corrupt.lua")).unwrap(),
+        b"this is not a valid Lua chunk !!!"
+    );
+    drop(runtime);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn app_data_lua_serializer_and_loaders_round_trip_native_table_shape() {
     let unique = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

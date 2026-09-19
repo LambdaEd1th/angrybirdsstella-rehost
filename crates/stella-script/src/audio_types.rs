@@ -62,6 +62,38 @@ pub struct AudioPlaybackState {
     pub volume: f32,
     pub looping: bool,
     pub track: i32,
+    /// Purple keeps an EOF/stopped AudioClipInstance in the manager until the
+    /// next mixer block removes it, but it is no longer considered playing.
+    pub finished: bool,
+}
+
+/// Instance-lifetime edges published by one output synchronization.
+///
+/// A short clip can cross both edges between two display ticks, so the two
+/// vectors are intentionally independent rather than mutually exclusive.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AudioPlaybackTransitions {
+    pub finished: Vec<i64>,
+    pub removed: Vec<i64>,
+}
+
+impl AudioPlaybackTransitions {
+    pub fn is_empty(&self) -> bool {
+        self.finished.is_empty() && self.removed.is_empty()
+    }
+
+    pub fn merge(&mut self, mut other: Self) {
+        self.finished.append(&mut other.finished);
+        self.removed.append(&mut other.removed);
+        self.normalize();
+    }
+
+    pub fn normalize(&mut self) {
+        self.finished.sort_unstable();
+        self.finished.dedup();
+        self.removed.sort_unstable();
+        self.removed.dedup();
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -110,8 +142,12 @@ const WORKER_POLL_NANOS: u128 = 10_000_000;
 
 impl AudioOutputClock {
     /// Reconcile a VM snapshot and advance the independent output clock.
-    /// Returns non-looping handles whose source reached end-of-stream.
-    pub fn synchronize(&mut self, state: &AudioOutputState, elapsed: Duration) -> Vec<i64> {
+    /// Returns the distinct native finished and next-block removal edges.
+    pub fn synchronize(
+        &mut self,
+        state: &AudioOutputState,
+        elapsed: Duration,
+    ) -> AudioPlaybackTransitions {
         if self.generation != Some(state.generation) {
             self.generation = Some(state.generation);
             self.started = false;
@@ -126,14 +162,15 @@ impl AudioOutputClock {
             .collect::<BTreeSet<_>>();
         self.playbacks.retain(|handle, _| live.contains(handle));
         for playback in &state.playbacks {
-            self.playbacks
+            let active = self
+                .playbacks
                 .entry(playback.handle)
                 .or_insert(ClockPlayback {
                     remaining_frames: playback
                         .sample_frames
                         .unwrap_or_else(|| duration_frames(playback.duration, state.sample_rate)),
                     looping: playback.looping,
-                    finished: false,
+                    finished: playback.finished,
                     advances: match (playback.source_bits_per_sample, playback.source_channels) {
                         (Some(bits), Some(channels)) => {
                             bits == state.bits_per_sample
@@ -145,28 +182,31 @@ impl AudioOutputClock {
                         _ => true,
                     },
                 });
+            active.looping = playback.looping;
+            active.finished |= playback.finished;
         }
         if !state.started {
             self.started = false;
             self.worker_poll_nanos = 0;
             self.output_frame_nanos = 0;
-            return Vec::new();
+            return AudioPlaybackTransitions::default();
         }
 
-        let mut finished = Vec::new();
+        let mut transitions = AudioPlaybackTransitions::default();
         let Some(block_frames) = output_block_frames(state) else {
-            return finished;
+            return transitions;
         };
         if !self.started {
             self.started = true;
             self.worker_poll_nanos = 0;
             self.output_frame_nanos = 0;
             for _ in 0..6 {
-                self.fill_block(block_frames, &mut finished);
+                self.fill_block(block_frames, &mut transitions);
             }
         }
-        self.advance_worker(state.sample_rate, block_frames, elapsed, &mut finished);
-        finished
+        self.advance_worker(state.sample_rate, block_frames, elapsed, &mut transitions);
+        transitions.normalize();
+        transitions
     }
 
     fn advance_worker(
@@ -174,7 +214,7 @@ impl AudioOutputClock {
         sample_rate: u32,
         block_frames: u64,
         elapsed: Duration,
-        completed: &mut Vec<i64>,
+        transitions: &mut AudioPlaybackTransitions,
     ) {
         let block_frame_nanos = u128::from(block_frames) * 1_000_000_000;
         let queue_frame_nanos = block_frame_nanos * 6;
@@ -198,14 +238,14 @@ impl AudioOutputClock {
                 if processed >= 2 {
                     self.output_frame_nanos %= block_frame_nanos;
                     for _ in 0..processed {
-                        self.fill_block(block_frames, completed);
+                        self.fill_block(block_frames, transitions);
                     }
                 }
             }
         }
     }
 
-    fn fill_block(&mut self, block_frames: u64, completed: &mut Vec<i64>) {
+    fn fill_block(&mut self, block_frames: u64, transitions: &mut AudioPlaybackTransitions) {
         let removed = self
             .playbacks
             .iter()
@@ -213,14 +253,15 @@ impl AudioOutputClock {
             .collect::<Vec<_>>();
         for handle in removed {
             self.playbacks.remove(&handle);
-            completed.push(handle);
+            transitions.removed.push(handle);
         }
-        for playback in self.playbacks.values_mut() {
+        for (handle, playback) in &mut self.playbacks {
             if playback.looping || !playback.advances {
                 continue;
             }
             if playback.remaining_frames == 0 {
                 playback.finished = true;
+                transitions.finished.push(*handle);
             } else {
                 playback.remaining_frames = playback.remaining_frames.saturating_sub(block_frames);
             }
@@ -277,6 +318,7 @@ mod tests {
             volume: 1.0,
             looping,
             track: 0,
+            finished: false,
         }
     }
 
@@ -289,13 +331,22 @@ mod tests {
         // Six 2,048-frame blocks are consumed during initialization. Purple's
         // 10 ms worker waits for two processed OpenAL buffers, then refills
         // both: the first observes EOF and the second removes the handle.
-        assert!(clock.synchronize(&snapshot, Duration::ZERO).is_empty());
+        assert_eq!(
+            clock.synchronize(&snapshot, Duration::ZERO),
+            AudioPlaybackTransitions::default()
+        );
         assert!(
             clock
                 .synchronize(&snapshot, Duration::from_millis(189))
-                .is_empty()
+                .eq(&AudioPlaybackTransitions::default())
         );
-        assert_eq!(clock.synchronize(&snapshot, Duration::from_millis(1)), [5]);
+        assert_eq!(
+            clock.synchronize(&snapshot, Duration::from_millis(1)),
+            AudioPlaybackTransitions {
+                finished: vec![5],
+                removed: vec![5],
+            }
+        );
     }
 
     #[test]
@@ -308,14 +359,20 @@ mod tests {
                 playback(8, Some(Duration::from_millis(5)), true),
             ],
         );
-        assert_eq!(clock.synchronize(&snapshot, Duration::ZERO), [7]);
+        assert_eq!(
+            clock.synchronize(&snapshot, Duration::ZERO),
+            AudioPlaybackTransitions {
+                finished: vec![7],
+                removed: vec![7],
+            }
+        );
         assert!(
             clock
                 .synchronize(
                     &state(true, vec![playback(8, None, true)]),
                     Duration::from_secs(10),
                 )
-                .is_empty()
+                .eq(&AudioPlaybackTransitions::default())
         );
     }
 
@@ -323,7 +380,10 @@ mod tests {
     fn stopped_output_freezes_existing_decoder_progress() {
         let mut clock = AudioOutputClock::default();
         let running = state(true, vec![playback(3, Some(Duration::from_secs(1)), false)]);
-        assert!(clock.synchronize(&running, Duration::ZERO).is_empty());
+        assert_eq!(
+            clock.synchronize(&running, Duration::ZERO),
+            AudioPlaybackTransitions::default()
+        );
         let stopped = state(
             false,
             vec![playback(3, Some(Duration::from_secs(1)), false)],
@@ -331,10 +391,13 @@ mod tests {
         assert!(
             clock
                 .synchronize(&stopped, Duration::from_secs(1))
-                .is_empty()
+                .eq(&AudioPlaybackTransitions::default())
         );
         // Restart executes a new six-block prefill from the retained cursor.
-        assert!(clock.synchronize(&running, Duration::ZERO).is_empty());
+        assert_eq!(
+            clock.synchronize(&running, Duration::ZERO),
+            AudioPlaybackTransitions::default()
+        );
     }
 
     #[test]
@@ -345,7 +408,10 @@ mod tests {
                 &state(true, vec![playback(12, None, false)]),
                 Duration::ZERO,
             ),
-            [12]
+            AudioPlaybackTransitions {
+                finished: vec![12],
+                removed: vec![12],
+            }
         );
     }
 }
