@@ -45,6 +45,7 @@ impl StellaLua {
             install_offline_game_server_facade(&self.lua)?;
         }
         self.install_challenge_result_background_layout()?;
+        self.install_host_language_text_refresh()?;
         install_input_queries(&self.lua)?;
         // RovioCloudManager receives all nine native services only after the
         // scripts install its event dispatcher. The announcements load the
@@ -239,6 +240,41 @@ impl StellaLua {
                     end
                     resultClass.__stellaBackgroundLayoutRepair = true
                 end
+            end
+            "##,
+        )
+    }
+
+    /// The browser can change language while Text widgets remain alive.
+    /// Their original formatter replaces the text key with its translation,
+    /// so retain the formatter's inputs for a later host language refresh.
+    fn install_host_language_text_refresh(&self) -> Result<(), ScriptError> {
+        if self
+            .resource_runtime
+            .lock()
+            .expect("resource runtime lock poisoned")
+            .preferred_languages
+            .is_none()
+        {
+            return Ok(());
+        }
+        self.execute_source(
+            r##"
+            local textClass = ui and ui.Text
+            if textClass and not rawget(textClass, "__stellaLocaleSourceCapture") then
+                local originalFormat = textClass._formatText
+                textClass._formatText = function(self, ...)
+                    local text = select(1, ...)
+                    local localized = false
+                    if self.group and self.group ~= "" and type(text) == "string" then
+                        localized = res.getString(self.group, text) ~= text
+                    end
+                    self.__stellaLocaleTextSource = {
+                        count = select("#", ...), localized = localized, ...
+                    }
+                    return originalFormat(self, ...)
+                end
+                textClass.__stellaLocaleSourceCapture = true
             end
             "##,
         )

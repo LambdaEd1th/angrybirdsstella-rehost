@@ -2,6 +2,7 @@
 """Build a complete static GitHub Pages artifact, including the original data."""
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -24,6 +25,10 @@ def build(data: Path, output: Path) -> None:
         raise SystemExit("emcc is required. Install/activate Emscripten 6.0.1 and source emsdk_env.sh.")
     if output == ROOT or output in data.parents or data in output.parents or output == data:
         raise SystemExit("Output must be separate from the source and runtime data directories.")
+    fonts = ROOT / "web/fonts"
+    font = fonts / "NotoSansCJK-Regular.ttc"
+    if hashlib.sha256(font.read_bytes()).hexdigest() != "b76b0433203017ca80401b2ee0dd69350349871c4b19d504c34dbdd80541690a":
+        raise SystemExit("The bundled Noto Sans CJK fallback font does not match its pinned hash.")
     subprocess.run(["rustup", "target", "add", "wasm32-unknown-emscripten"], check=True)
     with tempfile.TemporaryDirectory(prefix="stella-pages-") as temporary:
         stage = Path(temporary) / "data"
@@ -36,6 +41,7 @@ def build(data: Path, output: Path) -> None:
             "-sEXPORTED_FUNCTIONS=" + json.dumps(EXPORTS, separators=(",", ":")),
             '-sEXPORTED_RUNTIME_METHODS=["FS","UTF8ToString","HEAPU8","HEAPF32"]',
             "--preload-file", str(stage) + "@/runtime/data",
+            "--preload-file", str(fonts) + "@/runtime/host-fonts",
         ]
         env = os.environ.copy()
         # Apply application exports/preloading only to the final binary, not
@@ -56,6 +62,9 @@ def build(data: Path, output: Path) -> None:
         for name in ("index.html", "style.css", "launcher.js", "storage.js", "renderer.js", "audio.js", "i18n.js", "locales.js", "app-icon.png"):
             shutil.copyfile(ROOT / "web" / name, output / name)
         shutil.copytree(ROOT / "web/assets", output / "assets", dirs_exist_ok=True)
+        (output / "fonts").mkdir(exist_ok=True)
+        for name in ("OFL.txt", "README.md"):
+            shutil.copyfile(fonts / name, output / "fonts" / name)
         (output / ".nojekyll").write_text("")
         (output / "package.json").write_text('{"type":"module"}\n')
         version = tomllib.loads((ROOT / "Cargo.toml").read_text())["workspace"]["package"]["version"]

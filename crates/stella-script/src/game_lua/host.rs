@@ -423,7 +423,8 @@ impl StellaLua {
 
     /// Prefer this host-selected language at startup and on application resume.
     /// The original locale-refresh binding resolves it against TEXTS_BASIC;
-    /// changing a running game also reloads its original localized resources.
+    /// changing a running game also reloads its original localized resources
+    /// and relays out the current UI's cached localized text.
     pub fn set_preferred_language(&self, language: &str) -> Result<(), ScriptError> {
         self.resource_runtime
             .lock()
@@ -437,6 +438,69 @@ impl StellaLua {
             environment
                 .get::<mlua::Function>("refreshCurrentLocale")?
                 .call::<()>(())?;
+            // Restore formatter inputs after layout refreshes the localized
+            // fonts, then use the original formatter/clip methods. The
+            // formatter also measures width and needs its font selected.
+            fn reclip_text(
+                frame: &mlua::Table,
+                select_font: &mlua::Function,
+                resources: &Arc<Mutex<ResourceRuntime>>,
+            ) -> mlua::Result<()> {
+                let font = frame.get::<Value>("font")?;
+                if matches!(font, Value::String(_)) {
+                    // The original selector lazily creates localized faces.
+                    select_font.call::<()>(font)?;
+                }
+                let font_ready = resources
+                    .lock()
+                    .expect("resource runtime lock poisoned")
+                    .current_font
+                    .is_some();
+                if font_ready
+                    && let Value::Table(source) =
+                        frame.raw_get::<Value>("__stellaLocaleTextSource")?
+                    && source.raw_get::<bool>("localized")?
+                {
+                    let mut args = mlua::MultiValue::new();
+                    args.push_back(Value::Table(frame.clone()));
+                    for index in 1..=source.raw_get::<usize>("count")? {
+                        args.push_back(source.raw_get::<Value>(index)?);
+                    }
+                    frame.get::<mlua::Function>("setText")?.call::<()>(args)?;
+                } else if font_ready
+                    && let (Value::Function(clip), Value::Function(_)) = (
+                        frame.get::<Value>("clip")?,
+                        frame.get::<Value>("getFontLeading")?,
+                    )
+                {
+                    clip.call::<()>(frame.clone())?;
+                }
+                if let Value::Table(children) = frame.raw_get::<Value>("children")? {
+                    for child in children.sequence_values::<mlua::Table>() {
+                        reclip_text(&child?, select_font, resources)?;
+                    }
+                }
+                Ok(())
+            }
+            if let Value::Table(manager) = environment.raw_get::<Value>("menuManager")?
+                && let Value::Table(root) = manager.raw_get::<Value>("currentRoot")?
+                && !self
+                    .resource_runtime
+                    .lock()
+                    .expect("resource runtime lock poisoned")
+                    .bitmap_fonts
+                    .is_empty()
+            {
+                root.get::<mlua::Function>("layout")?
+                    .call::<()>(root.clone())?;
+                // Loading screens before the first font load are initialized
+                // later by the original scripts, without cached text to refresh.
+                reclip_text(
+                    &root,
+                    &environment.get::<mlua::Function>("setFont")?,
+                    &self.resource_runtime,
+                )?;
+            }
         }
         Ok(())
     }

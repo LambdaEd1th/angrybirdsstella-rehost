@@ -11,6 +11,82 @@ const CHILD_EXPECTED: &str = "STELLA_LOCALE_CHILD_EXPECTED";
 const CHILD_TEST: &str = "tests::platform_services::locale::shipped_locale_subprocess_probe";
 
 #[test]
+fn shipped_host_language_change_retranslates_cached_text_and_fonts() {
+    let sandbox = ShippedDataSandbox::new("host-language-fonts");
+    let runtime = StellaLua::new_with_resolution(&sandbox.data_root, 1024, 768).unwrap();
+    runtime.enable_local_services().unwrap();
+    runtime.set_preferred_language("ja-JP").unwrap();
+    runtime.boot("scripts/game.lua").unwrap();
+    runtime.set_application_active(true).unwrap();
+    runtime.post_application_resumed();
+    for _ in 0..600 {
+        runtime.update(1.0 / 60.0).unwrap();
+        runtime.draw().unwrap();
+    }
+    runtime.set_cursor(972.0, 727.0, true).unwrap();
+    runtime.update(1.0 / 60.0).unwrap();
+    runtime.draw().unwrap();
+    runtime.set_cursor(972.0, 727.0, false).unwrap();
+    for _ in 0..120 {
+        runtime.update(1.0 / 60.0).unwrap();
+        runtime.draw().unwrap();
+    }
+    runtime.draw().unwrap();
+    let before = runtime.take_text_commands();
+    assert!(
+        before
+            .iter()
+            .any(|command| command.text.contains("プライバシー")),
+        "the original Japanese settings panel is open: {before:?}"
+    );
+    // Original score animations assign .text directly after Text initialization.
+    // A locale refresh must reclip the current score, not restore its old value.
+    runtime
+        .execute_source(
+            r#"
+        local label = ui.Text:new{name = "hostLocaleScoreProbe", text = "123"}
+        menuManager.currentRoot:addChild(label)
+        label.text = "17030"
+        label:clip()
+    "#,
+        )
+        .unwrap();
+    for language in ["zh-CN", "ja-JP", "zh-CN"] {
+        runtime.set_preferred_language(language).unwrap();
+        runtime.update(1.0 / 60.0).unwrap();
+        runtime.draw().unwrap();
+        let commands = runtime.take_text_commands();
+        let text = commands
+            .iter()
+            .map(|command| command.text.as_str())
+            .collect::<String>();
+        if language == "zh-CN" {
+            for label in ["连接", "隐私政策", "用户协议"] {
+                assert!(
+                    text.contains(label),
+                    "the settings label retranslated: {text}"
+                );
+            }
+        } else {
+            assert!(text.contains("プライバシー"), "Japanese restored: {text}");
+        }
+        assert!(text.contains("17030"), "the current score survives: {text}");
+        for command in commands {
+            let Some(TextFontBinding::Bitmap { font, .. }) = &command.font_binding else {
+                panic!("the original settings label uses a bitmap font");
+            };
+            for character in command.text.chars() {
+                assert!(
+                    font.glyph(character as u32).is_some(),
+                    "{} lacks {character}",
+                    command.font
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn shipped_host_language_selection_covers_all_locales_and_survives_resume() {
     let sandbox = ShippedDataSandbox::new("host-language-selection");
     let table = LocalizationTable::parse(

@@ -40,13 +40,11 @@ fn platform_system_fonts() -> &'static PlatformSystemFonts {
         {
             // MEMFS has no operating-system font catalog. Retain actual bytes
             // instead of relying on fontdb's platform mmap-backed file source.
-            for name in ["OpenSans-Regular.ttf", "OpenSans-CondBold.ttf"] {
-                if let Ok(bytes) = std::fs::read(format!("/runtime/data/skynestdata/fonts/{name}"))
-                {
-                    database.load_font_data(bytes);
-                }
-            }
-            database.set_sans_serif_family("Open Sans");
+            load_browser_system_fonts(
+                &mut database,
+                std::path::Path::new("/runtime/data/skynestdata/fonts"),
+                std::path::Path::new("/runtime/host-fonts"),
+            );
         }
         #[cfg(target_os = "macos")]
         database.load_fonts_dir("/System/Library/AssetsV2/com_apple_MobileAsset_Font8");
@@ -63,6 +61,26 @@ fn platform_system_fonts() -> &'static PlatformSystemFonts {
             names,
         }
     })
+}
+
+/// MEMFS retains the game's original Latin faces plus a separate, OFL-licensed
+/// CJK collection to replace UIKit's operating-system fallback cascade.
+#[cfg(any(target_os = "emscripten", test))]
+fn load_browser_system_fonts(
+    database: &mut fontdb::Database,
+    game_fonts: &std::path::Path,
+    host_fonts: &std::path::Path,
+) {
+    for path in [
+        game_fonts.join("OpenSans-Regular.ttf"),
+        game_fonts.join("OpenSans-CondBold.ttf"),
+        host_fonts.join("NotoSansCJK-Regular.ttc"),
+    ] {
+        if let Ok(bytes) = std::fs::read(path) {
+            database.load_font_data(bytes);
+        }
+    }
+    database.set_sans_serif_family("Open Sans");
 }
 
 fn native_available_font_names<'a>(
@@ -381,6 +399,66 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
+
+    #[test]
+    fn browser_font_catalog_renders_cjk_player_names_without_system_fonts() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let mut database = fontdb::Database::new();
+        load_browser_system_fonts(
+            &mut database,
+            &root.join("runtime/data/skynestdata/fonts"),
+            &root.join("web/fonts"),
+        );
+        let id = ios_menu_system_font_compatibility_face(&database).unwrap();
+        let primary = &database.face(id).unwrap().post_script_name;
+        assert!(
+            primary.starts_with("OpenSans"),
+            "the original Latin face remains primary"
+        );
+        let (data, index) = database
+            .with_face_data(id, |data, index| (Arc::<[u8]>::from(data), index))
+            .unwrap();
+        let database = Arc::new(database);
+        for (language, text, family) in [
+            ("zh-CN", "你 本地玩家", "NotoSansCJKsc-Regular"),
+            ("zh-TW", "你 繁體中文", "NotoSansCJKtc-Regular"),
+            ("ja-JP", "あなた ステラ", "NotoSansCJKjp-Regular"),
+            ("ko-KR", "플레이어 스텔라", "NotoSansCJKkr-Regular"),
+        ] {
+            let mut binding = platform_ui_font_binding(
+                "Open Sans Condensed",
+                40,
+                [0, 0, 0, 255],
+                data.clone(),
+                index,
+            )
+            .unwrap();
+            binding.fallback_catalog =
+                Some(SystemFontFallbackCatalog::new_with_preferred_languages(
+                    database.clone(),
+                    [language.to_owned()],
+                ));
+            let layout = binding.native_system_font_layout(text).unwrap();
+            assert!(layout.width > 0, "{language}: {text}");
+            assert!(
+                layout.faces.iter().any(|face| face.family == family),
+                "{language}: {:?}",
+                layout
+                    .faces
+                    .iter()
+                    .map(|face| &face.family)
+                    .collect::<Vec<_>>()
+            );
+            assert!(
+                layout
+                    .lines
+                    .iter()
+                    .flat_map(|line| &line.glyphs)
+                    .all(|glyph| glyph.glyph_id != 0),
+                "{language}: missing player-name glyph"
+            );
+        }
+    }
 
     fn metric_state(ascending: i32, descending: i32) -> SystemFontState {
         SystemFontState {

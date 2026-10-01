@@ -60,8 +60,8 @@ python3 -m http.server 8000 --directory dist/pages
 Open `http://localhost:8000/`. Serve the **built** directory over HTTP; opening
 `web/index.html` directly or copying only the HTML does not provide the compiled
 game. The complete artifact includes `engine/stella_web.js`,
-`engine/stella_web.wasm`, and `engine/stella_web.data`. The original resource
-package is approximately 167 MB, so the first launch can take time. The game
+`engine/stella_web.wasm`, and `engine/stella_web.data`. The resource package, including the CJK fallback
+font, is approximately 186 MB, so the first launch can take time. The game
 requires WebAssembly and WebGL2 and uses no SharedArrayBuffer, threads, custom
 headers or backend server. Modern desktop browsers are the primary target.
 
@@ -75,6 +75,8 @@ Manual selection is remembered under `stella-rehost:language:v1:<site-base-path>
 It updates the page, dates, accessibility labels and status/error messages, and
 sets an instance-local game language preference through the original
 `refreshCurrentLocale` binding. The preference also survives application resume.
+Existing text widgets retain their original localization keys and retranslate
+and reclip when the language changes.
 
 ## Display size
 
@@ -139,5 +141,8 @@ The browser uses the offline local providers. Native account dialogs return to
 the game with an explanatory browser dialog; desktop-compatible remote service
 endpoints, native sharing, and platform store integrations are not exposed by
 this host. Fonts use the shipped Open Sans faces in the browser instead of the
-host operating system's fonts. Proprietary runtime resources retain their
-existing licensing; this browser host does not change it.
+host operating system's fonts, with the bundled OFL-licensed
+[Noto Sans CJK collection](fonts/README.md) supplying Chinese, Japanese and Korean
+glyphs missing from Open Sans (including the score panel's player name).
+Proprietary runtime resources retain their existing licensing; this browser host
+does not change it.
