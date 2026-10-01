@@ -36,6 +36,11 @@ use assets::*;
 
 const GAME_WIDTH: u32 = 1024;
 const GAME_HEIGHT: u32 = 768;
+// Same order as the shipped TEXTS_BASIC table and web/locales.js.
+const LOCALES: [&str; 11] = [
+    "en_EN", "fr_FR", "it_IT", "de_DE", "es_ES", "pt_BR", "zh_CN", "zh_TW", "ja_JP", "ko_KR",
+    "ru_RU",
+];
 
 #[derive(Clone, Copy)]
 struct GameResolution {
@@ -66,6 +71,7 @@ struct BrowserGame {
 thread_local! {
     static GAME: RefCell<Option<BrowserGame>> = const { RefCell::new(None) };
     static ERROR: RefCell<CString> = RefCell::new(CString::new("").unwrap());
+    static LANGUAGE: RefCell<usize> = const { RefCell::new(0) };
 }
 
 trait ScriptResultExt<T> {
@@ -104,11 +110,30 @@ pub extern "C" fn stella_error() -> *const std::ffi::c_char {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn stella_set_locale(index: i32) -> i32 {
+    boundary(|| {
+        let index = usize::try_from(index).context("Invalid language index")?;
+        let locale = LOCALES.get(index).context("Unsupported language index")?;
+        GAME.with(|slot| -> Result<()> {
+            if let Some(game) = slot.borrow().as_ref() {
+                game.runtime.set_preferred_language(locale).browser()?;
+            }
+            Ok(())
+        })?;
+        LANGUAGE.with(|slot| *slot.borrow_mut() = index);
+        Ok(())
+    })
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn stella_init() -> i32 {
     boundary(|| {
         let root = PathBuf::from("/runtime/data");
         let runtime = StellaLua::new_with_resolution(&root, GAME_WIDTH, GAME_HEIGHT).browser()?;
         runtime.enable_local_services().browser()?;
+        runtime
+            .set_preferred_language(LANGUAGE.with(|slot| LOCALES[*slot.borrow()]))
+            .browser()?;
         runtime.boot("scripts/game.lua").browser()?;
         runtime.set_application_active(true).browser()?;
         runtime.post_application_resumed();
@@ -168,6 +193,7 @@ pub extern "C" fn stella_frame(delta: f64) -> i32 {
         // Browser account modals have a cancel ingress instead of leaving the
         // game trapped behind an unavailable native UIKit view.
         packet["account"] = json!(game.runtime.account_ui().map(|view| view.id));
+        packet["locale"] = json!(game.runtime.current_locale().browser()?);
         if let Some(prompt) = game.runtime.app_rating_prompt() {
             game.runtime
                 .answer_app_rating(prompt.id, stella_script::AppRatingChoice::Later)

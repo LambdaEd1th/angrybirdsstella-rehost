@@ -1,3 +1,5 @@
+import { LocalizedError } from "./i18n.js";
+
 const vertexSource = `#version 300 es
 precision highp float;
 layout(location=0) in vec2 aUv;
@@ -66,7 +68,7 @@ void main() {
 export class GameRenderer {
   constructor(canvas) {
     const gl = canvas.getContext("webgl2", { alpha: false, antialias: false, preserveDrawingBuffer: true });
-    if (!gl) throw new Error("此浏览器无法启用 WebGL2，请使用支持硬件加速的浏览器。");
+    if (!gl) throw new LocalizedError("graphicsUnsupported");
     this.gl = gl;
     this.textures = new Map();
     this.program = gl.createProgram();
@@ -110,7 +112,7 @@ export class GameRenderer {
   }
   render(module, packet) {
     const gl = this.gl;
-    if (gl.isContextLost()) throw new Error("图形上下文已丢失。请导出存档后重新打开游戏。");
+    if (gl.isContextLost()) throw new LocalizedError("graphicsLost");
     gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
     gl.useProgram(this.program);
     gl.bindVertexArray(this.vao);
@@ -122,7 +124,7 @@ export class GameRenderer {
     const count = packet.uniforms.count;
     const width = Math.min(1024, gl.getParameter(gl.MAX_TEXTURE_SIZE));
     const height = Math.max(1, Math.ceil(count * 4 / width));
-    if (height > gl.getParameter(gl.MAX_TEXTURE_SIZE)) throw new Error("场景超过显卡的绘制容量。");
+    if (height > gl.getParameter(gl.MAX_TEXTURE_SIZE)) throw new LocalizedError("graphicsCapacity");
     const uniforms = new Float32Array(width * height * 4);
     uniforms.set(module.HEAPF32.subarray(packet.uniforms.pointer / 4, packet.uniforms.pointer / 4 + count * 16));
     gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, this.draws);
@@ -154,7 +156,7 @@ export class GameRenderer {
       }
       for (const [unit, name, captured] of [[0, operation.base, "uBaseCaptured"], [1, operation.fill, "uFillCaptured"]]) {
         const entry = this.textures.get(name);
-        if (!entry) throw new Error(`缺少游戏纹理：${name}`);
+        if (!entry) throw new LocalizedError("missingTexture", { name });
         gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, entry.texture);
         gl.uniform1i(this.locations[captured], entry.captured ? 1 : 0);
       }

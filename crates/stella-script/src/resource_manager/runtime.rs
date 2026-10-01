@@ -174,6 +174,8 @@ pub(crate) struct SpriteResourceEntry {
 
 #[derive(Debug)]
 pub(crate) struct ResourceRuntime {
+    /// Instance-local language preference supplied by an embedding host.
+    pub(crate) preferred_languages: Option<Vec<String>>,
     pub(crate) path: String,
     pub(crate) sprite_sheets: BTreeSet<String>,
     /// Native SpriteSheet map value identity represented by its resolved file.
@@ -285,6 +287,7 @@ impl Default for ResourceRuntime {
 impl ResourceRuntime {
     pub(crate) fn new(screen_width: u32, screen_height: u32) -> Self {
         Self {
+            preferred_languages: None,
             path: String::new(),
             sprite_sheets: BTreeSet::new(),
             sprite_sheet_paths: BTreeMap::new(),

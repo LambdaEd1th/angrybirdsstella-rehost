@@ -52,10 +52,6 @@ jobs:
           git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
           "$RUNNER_TEMP/emsdk/emsdk" install "$EMSCRIPTEN_VERSION"
           "$RUNNER_TEMP/emsdk/emsdk" activate "$EMSCRIPTEN_VERSION"
-      - name: Test browser save handling
-        run: |
-          source "$RUNNER_TEMP/emsdk/emsdk_env.sh"
-          node --test web/tests/storage.test.js
       - name: Download and verify the existing runtime release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -66,6 +62,10 @@ jobs:
           echo "$RUNTIME_DATA_SHA256  $RUNNER_TEMP/runtime-data/$RUNTIME_DATA_ARCHIVE" | sha256sum --check -
           tar -xzf "$RUNNER_TEMP/runtime-data/$RUNTIME_DATA_ARCHIVE" -C runtime
           python3 .github/scripts/runtime_native_assets.py verify --data runtime/data
+      - name: Test browser saves and original language coverage
+        run: |
+          source "$RUNNER_TEMP/emsdk/emsdk_env.sh"
+          node --test web/tests/*.test.js
       - name: Build complete static website
         run: |
           source "$RUNNER_TEMP/emsdk/emsdk_env.sh"

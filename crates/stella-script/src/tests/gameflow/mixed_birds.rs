@@ -97,7 +97,7 @@ fn sixteenth_attempt(
     tick(runtime, frame, 240, "mixed birds camera settle");
     let start = *frame;
     let mut shots = 0;
-    for (index, offset) in [0, 2600, 5600, 8800].into_iter().enumerate() {
+    'shots: for (index, offset) in [0, 2600, 5600, 8800].into_iter().enumerate() {
         until(
             runtime,
             frame,
@@ -107,7 +107,7 @@ fn sixteenth_attempt(
         let ready_deadline = *frame + 3600;
         let mut return_attempts = 0;
         loop {
-            let (done, ready, x, y, can_return, tap_count): (bool, bool, f64, f64, bool, f64) =
+            let (done, failed, ready, x, y, can_return, tap_count): (bool, bool, bool, f64, f64, bool, f64) =
                 runtime
                     .lua()
                     .load(
@@ -116,12 +116,18 @@ fn sixteenth_attempt(
                 local canReturn=birdSpecialtyAvailable==false
                     and gameCamera.cameraAnimationSliderTarget==1
                     and gameCamera:getNumOfCameraTargetObjects()==0
-                return next(levelGoals)==nil,not not birdReady,x,y,canReturn,tapCount
+                return next(levelGoals)==nil,not not g_levelFailed,not not birdReady,x,y,canReturn,tapCount
             "#,
                     )
                     .set_environment(environment.clone())
                     .eval()
                     .unwrap();
+            // Failed scenes reject slingshot input even when the retained
+            // birdReady flag is true. Use the normal failed-screen accounting
+            // and retry below instead of waiting for an impossible camera tap.
+            if failed {
+                break 'shots;
+            }
             if done || (ready && (16.0..1008.0).contains(&x) && (16.0..752.0).contains(&y)) {
                 break;
             }
@@ -134,9 +140,16 @@ fn sixteenth_attempt(
                     runtime,
                     frame,
                     512.0,
-                    384.0,
+                    if return_attempts == 1 { 384.0 } else { 128.0 },
                     "mixed birds original camera-return tap",
                 );
+                let tap: (f64, bool, bool, bool, Option<String>) = runtime
+                    .lua()
+                    .load("return tapCount,not not tapStarted,not not g_levelFailed,not not g_refuseDrags,currentEvent")
+                    .set_environment(environment.clone())
+                    .eval()
+                    .unwrap();
+                eprintln!("[sixteenth-camera] immediate tap feedback={tap:?}");
                 tick(
                     runtime,
                     frame,

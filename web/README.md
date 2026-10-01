@@ -65,9 +65,20 @@ package is approximately 167 MB, so the first launch can take time. The game
 requires WebAssembly and WebGL2 and uses no SharedArrayBuffer, threads, custom
 headers or backend server. Modern desktop browsers are the primary target.
 
+## Languages
+
+The language selector offers every locale in the original `TEXTS_BASIC.dat`:
+English, French, Italian, German, Spanish, Brazilian Portuguese, Simplified
+Chinese, Traditional Chinese, Japanese, Korean and Russian. On the first visit
+the launcher matches `navigator.languages`, with English as the fallback.
+Manual selection is remembered under `stella-rehost:language:v1:<site-base-path>`.
+It updates the page, dates, accessibility labels and status/error messages, and
+sets an instance-local game language preference through the original
+`refreshCurrentLocale` binding. The preference also survives application resume.
+
 ## Display size
 
-The game toolbar's **界面大小** selector offers automatic fitting and
+The game toolbar's **Display size** selector offers automatic fitting and
 50%, 75%, 100%, 125% and 150% sizes. Automatic fitting follows the available
 window or fullscreen area. Percentages use the original 1024 × 768 dimensions;
 larger frames can be viewed with the surrounding scrollbars. The picture keeps

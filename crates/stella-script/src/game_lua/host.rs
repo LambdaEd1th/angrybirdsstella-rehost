@@ -421,6 +421,32 @@ impl StellaLua {
         &self.data_root
     }
 
+    /// Prefer this host-selected language at startup and on application resume.
+    /// The original locale-refresh binding resolves it against TEXTS_BASIC;
+    /// changing a running game also reloads its original localized resources.
+    pub fn set_preferred_language(&self, language: &str) -> Result<(), ScriptError> {
+        self.resource_runtime
+            .lock()
+            .expect("resource runtime lock poisoned")
+            .preferred_languages = Some(vec![language.to_owned()]);
+        let environment = game_environment(&self.lua)?;
+        if matches!(
+            environment.raw_get::<Value>("setLocale")?,
+            Value::Function(_)
+        ) {
+            environment
+                .get::<mlua::Function>("refreshCurrentLocale")?
+                .call::<()>(())?;
+        }
+        Ok(())
+    }
+
+    /// Return the locale currently selected by the original Resources facade.
+    pub fn current_locale(&self) -> Result<String, ScriptError> {
+        let resources: mlua::Table = game_environment(&self.lua)?.get("res")?;
+        Ok(resources.get::<mlua::Function>("getLocale")?.call(())?)
+    }
+
     /// Resolve a platform-owned media request through the same safe bundle
     /// lookup used by native resource streams.
     pub fn resolve_bundle_resource(&self, requested: &str) -> Result<PathBuf, ScriptError> {

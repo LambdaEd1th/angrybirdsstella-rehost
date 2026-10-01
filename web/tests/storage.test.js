@@ -49,7 +49,7 @@ test("repository paths and three slots do not overwrite each other", () => {
 test("quota failure retains the previously stored snapshot", () => {
   const shared = storage(); const store = new SaveStore(shared, "/repo/"); store.write(1, fixture());
   shared.setItem = () => { throw new Error("QuotaExceededError"); };
-  assert.throws(() => store.write(1, emptySave()), /原存档已保留/);
+  assert.throws(() => store.write(1, emptySave()), { code: "writeError" });
   assert.equal(store.read(1).files.length, 2);
 });
 test("reject malformed formats, traversal, duplicate paths and invalid Base64", () => {
@@ -58,11 +58,11 @@ test("reject malformed formats, traversal, duplicate paths and invalid Base64", 
   assert.throws(() => validateSave({ ...fixture(), updatedAt: "broken" }));
   assert.throws(() => validateSave({ ...fixture(), files: [fixture().files[0], fixture().files[0]] }));
   for (const data of ["?===", "a", "a===", "AAAA\n"]) assert.throws(() => decodeBytes(data));
-  assert.throws(() => validateSave({ ...fixture(), files: [{ path: "large.lua", data: encodeBytes(new Uint8Array(MAX_SAVE_BYTES + 1)) }] }), /超过/);
+  assert.throws(() => validateSave({ ...fixture(), files: [{ path: "large.lua", data: encodeBytes(new Uint8Array(MAX_SAVE_BYTES + 1)) }] }), { code: "saveTooLarge" });
 });
 test("corrupt localStorage data is reported without silently overwriting it", () => {
   const shared = storage(); const store = new SaveStore(shared, "/repo/"); shared.setItem(store.key(1), "bad json");
-  assert.throws(() => store.read(1), /无法读取/); assert.equal(shared.getItem(store.key(1)), "bad json");
+  assert.throws(() => store.read(1), { code: "readError" }); assert.equal(shared.getItem(store.key(1)), "bad json");
 });
 test("import both JSON backups and native desktop save bytes", async () => {
   const backup = new File([JSON.stringify(fixture())], "save.json"); assert.equal((await importFiles([backup])).files.length, 2);

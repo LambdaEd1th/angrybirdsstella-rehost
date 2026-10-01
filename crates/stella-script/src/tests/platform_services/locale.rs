@@ -11,6 +11,44 @@ const CHILD_EXPECTED: &str = "STELLA_LOCALE_CHILD_EXPECTED";
 const CHILD_TEST: &str = "tests::platform_services::locale::shipped_locale_subprocess_probe";
 
 #[test]
+fn shipped_host_language_selection_covers_all_locales_and_survives_resume() {
+    let sandbox = ShippedDataSandbox::new("host-language-selection");
+    let table = LocalizationTable::parse(
+        &fs::read(sandbox.data_root.join("localization/TEXTS_BASIC.dat")).unwrap(),
+    )
+    .unwrap();
+    let text_index = table
+        .ids
+        .iter()
+        .position(|id| id == "TEXT_LEVEL_COMPLETE")
+        .unwrap();
+    let runtime = StellaLua::new(&sandbox.data_root).unwrap();
+    runtime.set_preferred_language("ja-JP").unwrap();
+    runtime.boot("scripts/game.lua").unwrap();
+    assert_eq!(runtime.current_locale().unwrap(), "ja_JP");
+    for (index, locale) in table.locales.iter().enumerate() {
+        runtime.set_preferred_language(locale).unwrap();
+        runtime.post_application_resumed();
+        runtime.update(1.0 / 60.0).unwrap();
+        assert_eq!(runtime.current_locale().unwrap(), *locale);
+        let translated: String = runtime
+            .lua()
+            .load("return res.getString('TEXTS_BASIC', 'TEXT_LEVEL_COMPLETE')")
+            .set_environment(game_environment(runtime.lua()).unwrap())
+            .eval()
+            .unwrap();
+        assert_eq!(
+            translated, table.translations[index][text_index],
+            "{locale}"
+        );
+    }
+    runtime.set_preferred_language("unsupported").unwrap();
+    assert_eq!(runtime.current_locale().unwrap(), "en_EN");
+    assert!(runtime.fallback_calls.lock().unwrap().is_empty());
+    assert!(runtime.compatibility_bindings.lock().unwrap().is_empty());
+}
+
+#[test]
 fn shipped_locale_subprocess_probe() {
     let Some(data_root) = std::env::var_os(CHILD_DATA) else {
         return;

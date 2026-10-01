@@ -13,7 +13,7 @@ import tomllib
 ROOT = Path(__file__).resolve().parent.parent
 EXPORTS = ["_main", "_stella_init", "_stella_frame", "_stella_packet", "_stella_error",
            "_stella_pointer", "_stella_key", "_stella_wheel", "_stella_active",
-           "_stella_save", "_stella_cancel_account", "_stella_touches", "_stella_shutdown"]
+           "_stella_save", "_stella_cancel_account", "_stella_touches", "_stella_shutdown", "_stella_set_locale"]
 
 
 def build(data: Path, output: Path) -> None:
@@ -53,7 +53,7 @@ def build(data: Path, output: Path) -> None:
         # works under /<repository>/ on GitHub Pages.
         for suffix in ("js", "wasm", "data"):
             shutil.copyfile(binary / f"stella_web.{suffix}", engine / f"stella_web.{suffix}")
-        for name in ("index.html", "style.css", "launcher.js", "storage.js", "renderer.js", "audio.js", "app-icon.png"):
+        for name in ("index.html", "style.css", "launcher.js", "storage.js", "renderer.js", "audio.js", "i18n.js", "locales.js", "app-icon.png"):
             shutil.copyfile(ROOT / "web" / name, output / name)
         shutil.copytree(ROOT / "web/assets", output / "assets", dirs_exist_ok=True)
         (output / ".nojekyll").write_text("")

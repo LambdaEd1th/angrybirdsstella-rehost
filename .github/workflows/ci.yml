@@ -65,6 +65,9 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+      - name: Test browser saves and localization
+        run: node --test web/tests/*.test.js
+
       - name: Run strict Clippy
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 

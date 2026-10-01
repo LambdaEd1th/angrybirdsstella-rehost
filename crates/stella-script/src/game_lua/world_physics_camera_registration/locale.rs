@@ -17,7 +17,13 @@ pub(super) fn install_refresh_current_locale(
         "refreshCurrentLocale",
         lua.create_function(move |lua, _: MultiValue| {
             let available = available_basic_locales(&resources, &data_root);
-            let locale = select_supported_locale(host_preferred_languages(), &available);
+            let preferred = resources
+                .lock()
+                .expect("resource runtime lock poisoned")
+                .preferred_languages
+                .clone()
+                .unwrap_or_else(host_preferred_languages);
+            let locale = select_supported_locale(preferred, &available);
             let environment = game_environment(lua)?;
             let set_locale: Function = environment.get("setLocale")?;
             set_locale.call::<()>(locale)?;

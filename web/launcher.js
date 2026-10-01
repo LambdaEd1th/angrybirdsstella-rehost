@@ -1,18 +1,42 @@
 import { SaveStore, emptySave, importFiles, restoreSave, snapshotSave, clearVirtualSave, MAX_BACKUP_BYTES } from "./storage.js";
 import { GameRenderer } from "./renderer.js";
 import { GameAudio } from "./audio.js";
+import { LOCALES, configureLanguage, language, languageIndex, setLanguage, onLanguageChange, translateDocument, t, message, formatMessage, LocalizedError } from "./i18n.js";
 
 const $ = id => document.getElementById(id);
 const basePath = new URL(".", import.meta.url).pathname;
-let store;
+let store, browserStorage;
 let storageError = "";
-try { store = new SaveStore(window.localStorage, basePath); }
-catch { storageError = "浏览器未允许本地存储。游戏仍可运行，请在退出前导出存档。"; }
+try { browserStorage = window.localStorage; store = new SaveStore(browserStorage, basePath); }
+catch { storageError = new LocalizedError("storageDisabled"); }
+configureLanguage({ storage: browserStorage, basePath, preferences: navigator.languages });
 const sessionSaves = new Map();
 let selected = 1;
 let running = null;
 let busy = false;
 let cachedModule = null;
+const localizedMessages = new Map();
+function setText(id, value) { localizedMessages.set(id, value); $(id).textContent = formatMessage(value); }
+const languageControls = [$("language"), $("game-language")];
+for (const control of languageControls) {
+  for (const locale of LOCALES) {
+    const option = document.createElement("option"); option.value = locale.id; option.textContent = locale.name; option.lang = locale.id;
+    control.append(option);
+  }
+  control.addEventListener("change", () => {
+    try {
+      if (running) engineCall(running.module, "_stella_set_locale", LOCALES.findIndex(locale => locale.id === control.value));
+      setLanguage(control.value);
+    } catch (error) { control.value = language(); status(error, true); }
+  });
+}
+function refreshLanguage() {
+  translateDocument();
+  for (const control of languageControls) control.value = language();
+  for (const [id, value] of localizedMessages) $(id).textContent = formatMessage(value);
+  refresh(); updateGameSize();
+}
+onLanguageChange(refreshLanguage);
 
 const displaySizeKey = `stella-rehost:display:v1:${basePath}:size`;
 const sizeControl = $("game-size");
@@ -53,7 +77,7 @@ const sizeObserver = new ResizeObserver(updateGameSize);
 sizeObserver.observe($("canvas-area"));
 
 function status(message, error = false) {
-  $("status").textContent = message;
+  setText("status", message);
   $("status").classList.toggle("error", error);
 }
 function readSlot(slot) { return sessionSaves.get(slot) ?? store?.read(slot) ?? null; }
@@ -61,32 +85,31 @@ function writeSlot(slot, save) {
   // Retain the latest snapshot even if a browser quota write fails, so Export
   // can recover that progress. localStorage.setItem atomically keeps old data.
   sessionSaves.set(slot, save);
-  if (!store) throw new Error(storageError);
+  if (!store) throw storageError;
   store.write(slot, save);
 }
 function refresh() {
   const slots = $("slots"); slots.replaceChildren();
   for (let slot = 1; slot <= 3; slot++) {
     let save = null, error = "";
-    try { save = readSlot(slot); } catch (value) { error = value.message; }
+    try { save = readSlot(slot); } catch (value) { error = value; }
     const button = document.createElement("button");
     button.className = `slot${slot === selected ? " selected" : ""}`;
     button.setAttribute("aria-pressed", String(slot === selected)); button.disabled = busy;
     const head = document.createElement("span"); head.className = "slot-head";
-    const number = document.createElement("span"); number.className = "slot-number"; number.textContent = `SAVE 0${slot}`;
+    const number = document.createElement("span"); number.className = "slot-number"; number.textContent = t("slotNumber", { slot: `0${slot}` });
     const check = document.createElement("span"); check.className = "slot-check"; check.textContent = "✓"; check.setAttribute("aria-hidden", "true");
     head.append(number, check);
     const title = document.createElement("span"); title.className = "slot-title";
     const icon = document.createElement("span"); icon.className = "slot-icon"; icon.textContent = save?.files.length ? "❋" : "+"; icon.setAttribute("aria-hidden", "true");
-    title.append(icon, document.createTextNode(error ? "存档读取异常" : save?.files.length ? `存档 ${slot}` : "新存档"));
+    title.append(icon, document.createTextNode(error ? t("slotCorrupt") : save?.files.length ? t("slotTitle", { slot }) : t("newSave")));
     const date = document.createElement("span"); date.className = "slot-date";
-    date.textContent = error ? "导入备份以恢复" : save?.files.length
-      ? new Intl.DateTimeFormat("zh-CN", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(save.updatedAt)) + " · 已保存"
-      : "空存档 · 尚无进度";
+    date.textContent = error ? t("restoreHint") : save?.files.length
+      ? t("savedDate", { date: new Date(save.updatedAt) }) : t("emptySlot");
     button.append(head, title, date); button.addEventListener("click", () => { selected = slot; status(storageError, !!storageError); refresh(); });
     slots.append(button);
     if (slot === selected) {
-      $("start").replaceChildren(document.createTextNode(save?.files.length ? "继续游戏 " : "开始游戏 "));
+      $("start").replaceChildren(document.createTextNode(t(save?.files.length ? "continue" : "start") + " "));
       const arrow = document.createElement("span"); arrow.textContent = "↗"; arrow.setAttribute("aria-hidden", "true"); $("start").append(arrow);
       $("start").disabled = busy || !!error;
       $("export").disabled = busy || !save?.files.length;
@@ -94,10 +117,11 @@ function refresh() {
     }
   }
   $("import").disabled = busy;
+  for (const control of languageControls) control.disabled = busy;
 }
 
 async function confirmAction(title, message) {
-  $("confirm-title").textContent = title; $("confirm-message").textContent = message;
+  setText("confirm-title", title); setText("confirm-message", message);
   const dialog = $("confirm-dialog"); dialog.returnValue = "cancel";
   dialog.showModal();
   return new Promise(resolve => dialog.addEventListener("close", () => resolve(dialog.returnValue === "confirm"), { once: true }));
@@ -108,7 +132,7 @@ async function acquireSlot(slot) {
   let release;
   const acquired = new Promise((resolve, reject) => {
     navigator.locks.request(`stella-save:${basePath}:${slot}`, { ifAvailable: true }, async lock => {
-      if (!lock) { reject(new Error("这个存档正在另一个标签页使用，请先在那里保存并返回。")); return; }
+      if (!lock) { reject(new LocalizedError("slotBusy")); return; }
       await new Promise(done => { release = done; resolve(); });
     }).catch(reject);
   });
@@ -124,17 +148,17 @@ async function receiveFiles(files) {
     const save = await importFiles(files);
     let occupied = false;
     try { occupied = !!readSlot(slot); } catch { occupied = true; }
-    if (occupied && !await confirmAction("替换当前存档？", `导入的文件将替换存档 ${slot}。建议先导出当前存档作为备份。`)) return;
+    if (occupied && !await confirmAction(message("replaceTitle"), message("replaceText", { slot }))) return;
     release = await acquireSlot(slot); writeSlot(slot, save);
-    status(`已导入到存档 ${slot}。点击“继续游戏”即可开始。`);
-  } catch (error) { status(error.message, true); }
+    status(message("imported", { slot }));
+  } catch (error) { status(error, true); }
   finally { release(); refresh(); $("save-file").value = ""; }
 }
 
 function downloadSave(save, slot) {
-  if (!save?.files.length) throw new Error("当前存档还没有可导出的进度。");
+  if (!save?.files.length) throw new LocalizedError("noProgress");
   const blob = new Blob([JSON.stringify(save, null, 2) + "\n"], { type: "application/json" });
-  if (blob.size > MAX_BACKUP_BYTES) throw new Error("存档备份过大。");
+  if (blob.size > MAX_BACKUP_BYTES) throw new LocalizedError("backupTooLarge");
   const url = URL.createObjectURL(blob); const link = document.createElement("a");
   link.href = url; link.download = `stella-save-${slot}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
   document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
@@ -142,13 +166,13 @@ function downloadSave(save, slot) {
 
 $("import").addEventListener("click", () => $("save-file").click());
 $("save-file").addEventListener("change", event => receiveFiles([...event.target.files]));
-$("export").addEventListener("click", () => { try { downloadSave(readSlot(selected), selected); status("存档备份已导出。"); } catch (error) { status(error.message, true); } });
+$("export").addEventListener("click", () => { try { downloadSave(readSlot(selected), selected); status(message("exported")); } catch (error) { status(error, true); } });
 $("reset").addEventListener("click", async () => {
   const slot = selected;
-  if (!await confirmAction("清空这个存档？", `存档 ${slot} 将被清空。请先导出备份；其他存档槽不受影响。`)) return;
+  if (!await confirmAction(message("clearTitle"), message("clearText", { slot }))) return;
   let release = () => {};
-  try { release = await acquireSlot(slot); store?.clear(slot); sessionSaves.delete(slot); status("存档槽已清空，可以重新开始。"); }
-  catch (error) { status(error.message, true); }
+  try { release = await acquireSlot(slot); store?.clear(slot); sessionSaves.delete(slot); status(message("cleared")); }
+  catch (error) { status(error, true); }
   finally { release(); refresh(); }
 });
 for (const type of ["dragenter", "dragover"]) document.addEventListener(type, event => {
@@ -180,18 +204,18 @@ function persist(game, flush = true) {
   const save = snapshotSave(game.module.FS, game.save);
   game.save = save;
   writeSlot(game.slot, save);
-  $("game-save-status").textContent = `存档 ${game.slot} · 已保存 ${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`;
+  setText("game-save-status", message("savedStatus", { slot: game.slot, time: new Date() }));
   game.saveFailure = "";
-  if (flushError) throw new Error(`已备份现有文件，但未能刷新游戏进度：${flushError.message}`);
+  if (flushError) throw new LocalizedError("flushFailed", { error: flushError });
   return save;
 }
 
 function saveOrReport(game, flush = true) {
   try { return persist(game, flush); }
   catch (error) {
-    game.saveFailure = error.message;
-    $("game-save-status").textContent = "未能保存 · 请导出备份";
-    $("game-error").textContent = error.message; $("game-error").hidden = false;
+    game.saveFailure = error;
+    setText("game-save-status", message("saveFailed"));
+    setText("game-error", error); $("game-error").hidden = false;
     return game.save;
   }
 }
@@ -200,14 +224,14 @@ function failGame(game, error) {
   if (running !== game) return;
   game.failed = true; cancelAnimationFrame(game.animation); game.audio.stop();
   saveOrReport(game);
-  $("game-error").textContent = `游戏暂停：${error.message}。可以导出存档，或保存并返回后重试。`;
+  setText("game-error", message("gamePaused", { error }));
   $("game-error").hidden = false;
 }
 
 async function startGame() {
   if (busy || running) return;
   busy = true; refresh(); status(""); $("loading").hidden = false;
-  $("loading-text").textContent = "正在下载游戏资源，首次加载可能需要一点时间…";
+  setText("loading-text", message("downloading"));
   const slot = selected;
   let release = () => {}, renderer, audio;
   try {
@@ -225,21 +249,22 @@ async function startGame() {
       preRun: [module => restoreSave(module.FS, save)],
       print: message => console.info("[Stella]", message),
       printErr: message => console.warn("[Stella]", message),
-      setStatus: message => {
-        if (!message) return;
-        const progress = message.match(/\((\d+)\/(\d+)\)/);
+      setStatus: rawStatus => {
+        if (!rawStatus) return;
+        const progress = rawStatus.match(/\((\d+)\/(\d+)\)/);
         if (progress) {
           const percent = Math.max(3, Math.min(100, Number(progress[1]) / Number(progress[2]) * 100));
           $("progress").style.width = `${percent}%`;
-          $("loading-text").textContent = `正在下载游戏资源… ${Math.floor(percent)}%`;
+          setText("loading-text", message("downloadPercent", { percent: Math.floor(percent) }));
         }
       },
       });
       cachedModule = module;
     }
-    $("loading-text").textContent = "正在启动游戏…";
+    setText("loading-text", message("starting"));
     // Give the status one paint before the synchronous Lua startup.
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    engineCall(module, "_stella_set_locale", languageIndex());
     engineCall(module, "_stella_init");
     const game = { module, renderer, audio, slot, save, release, animation: 0, last: performance.now(), lastSave: performance.now(), failed: false, saveFailure: "", cleanup: null };
     running = game;
@@ -268,7 +293,7 @@ async function startGame() {
   } catch (error) {
     renderer?.dispose(); audio?.dispose(); release();
     cachedModule?._stella_shutdown();
-    status(`无法启动游戏：${error.message}。请确认网页构建包含 engine 下的 JS、WASM 和 data 文件。`, true);
+    status(message("startFailed", { error }), true);
   } finally { busy = false; $("loading").hidden = true; refresh(); }
 }
 
@@ -318,7 +343,7 @@ function installInput(game) {
     game.last = performance.now();
   });
   listen(window, "pagehide", () => { saveOrReport(game); });
-  listen(canvas, "webglcontextlost", event => { event.preventDefault(); failGame(game, new Error("浏览器图形上下文已丢失")); });
+  listen(canvas, "webglcontextlost", event => { event.preventDefault(); failGame(game, new LocalizedError("graphicsLost")); });
   return () => listeners.forEach(remove => remove());
 }
 
@@ -328,7 +353,7 @@ function returnHome() {
   cancelAnimationFrame(game.animation); game.cleanup?.(); game.audio.dispose(); game.renderer.dispose(); game.module._stella_shutdown(); game.release();
   running = null; $("game").hidden = true; $("launcher").hidden = false;
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
-  status(game.saveFailure || "进度已保存。下次可在当前浏览器继续游戏。", !!game.saveFailure);
+  status(game.saveFailure || message("savedHome"), !!game.saveFailure);
   refresh(); $("start").focus();
 }
 
@@ -336,12 +361,12 @@ $("start").addEventListener("click", startGame);
 $("home").addEventListener("click", returnHome);
 $("fullscreen").addEventListener("click", async () => {
   try { if (document.fullscreenElement) await document.exitFullscreen(); else await $("game").requestFullscreen(); $("canvas").focus(); }
-  catch { $("game-save-status").textContent = "此浏览器暂不支持全屏"; }
+  catch { setText("game-save-status", message("fullscreenUnavailable")); }
 });
 $("backup-game").addEventListener("click", () => {
   if (!running) return;
   try { downloadSave(saveOrReport(running), running.slot); }
-  catch (error) { $("game-error").textContent = error.message; $("game-error").hidden = false; }
+  catch (error) { setText("game-error", error); $("game-error").hidden = false; }
   $("canvas").focus();
 });
 $("account-dialog").addEventListener("close", () => {
@@ -350,4 +375,4 @@ $("account-dialog").addEventListener("close", () => {
   catch (error) { failGame(running, error); }
 });
 
-refresh(); status(storageError, !!storageError);
+refreshLanguage(); status(storageError, !!storageError);

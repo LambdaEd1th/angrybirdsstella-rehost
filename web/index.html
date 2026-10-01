@@ -1,11 +1,11 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#f6f7f2">
-  <meta name="description" content="Stella Rehost 网页版启动页，支持三个独立存档槽、本地自动保存、存档导入和备份导出。">
-  <title>Stella Rehost · 网页版</title>
+  <meta name="description" data-i18n-content="metaDescription" content="Stella Rehost browser launcher with three local save slots, automatic saving, save import and backup export.">
+  <title data-i18n="pageTitle">Stella Rehost · Browser Edition</title>
   <link rel="icon" href="./app-icon.png" type="image/png" sizes="180x180">
   <link rel="apple-touch-icon" href="./app-icon.png" sizes="180x180">
   <link rel="stylesheet" href="./style.css">
@@ -13,15 +13,15 @@
 <body>
   <main id="launcher" class="page">
     <header class="header">
-      <a class="brand" href="./" aria-label="Stella Rehost 首页"><img src="./app-icon.png" width="42" height="42" alt=""><span>STELLA<small>R E H O S T</small></span></a>
-      <div class="header-meta"><span class="edition"><i></i> BROWSER EDITION</span><span class="version">v1.1.6</span></div>
+      <a class="brand" href="./" data-i18n-aria-label="homeLabel" aria-label="Stella Rehost home"><img src="./app-icon.png" width="42" height="42" alt=""><span>STELLA<small>R E H O S T</small></span></a>
+      <div class="header-meta"><span class="edition"><i></i><span data-i18n="edition">BROWSER EDITION</span></span><span class="version">v1.1.6</span><label class="language-control" for="language"><span data-i18n="language">Language</span><select id="language"></select></label></div>
     </header>
     <section class="hero" aria-labelledby="hero-title">
       <div class="hero-copy">
-        <p class="eyebrow">PLAY IN YOUR BROWSER</p>
-        <h1 id="hero-title">Angry Birds<span>Stella 网页版</span></h1>
-        <p class="intro">导入已有存档，或选择空存档开始。<br>进度自动保存在当前浏览器，可随时导出备份。</p>
-        <div class="hero-tags"><span>三个独立存档槽</span><span>本地自动保存</span><span>存档导入导出</span></div>
+        <p class="eyebrow" data-i18n="eyebrow">PLAY IN YOUR BROWSER</p>
+        <h1 id="hero-title">Angry Birds<span data-i18n="heroSubtitle">Stella for the web</span></h1>
+        <p class="intro"><span data-i18n="introLead">Import a save or choose an empty slot to begin.</span><br><span data-i18n="introDetail">Progress is saved in this browser. Export a backup whenever you like.</span></p>
+        <div class="hero-tags"><span data-i18n="tagSlots">Three save slots</span><span data-i18n="tagAuto">Automatic local saving</span><span data-i18n="tagBackup">Import &amp; export saves</span></div>
       </div>
       <div class="island-art" aria-hidden="true">
         <div class="hero-game-art"><img src="./assets/stella-splash.webp" width="1024" height="899" alt="" fetchpriority="high" decoding="async"></div>
@@ -29,37 +29,38 @@
       </div>
     </section>
     <section class="save-section" aria-labelledby="save-title">
-      <div class="section-heading"><div><p class="eyebrow">YOUR SAVE FILES</p><h2 id="save-title">选择存档</h2></div><span class="local-badge"><span aria-hidden="true">◈</span> 仅保存在这台设备</span></div>
-      <div id="slots" class="slots" role="group" aria-label="选择存档槽"></div>
+      <div class="section-heading"><div><p class="eyebrow" data-i18n="savesEyebrow">YOUR SAVE FILES</p><h2 id="save-title" data-i18n="chooseSave">Choose a save</h2></div><span class="local-badge"><span aria-hidden="true">◈</span><span data-i18n="localOnly">Stored on this device</span></span></div>
+      <div id="slots" class="slots" role="group" data-i18n-aria-label="slotsLabel" aria-label="Choose a save slot"></div>
       <div class="save-actions">
-        <button id="import" class="action"><span aria-hidden="true">↥</span> 导入存档</button>
-        <button id="export" class="action" disabled><span aria-hidden="true">↧</span> 导出备份</button>
-        <button id="reset" class="action quiet" disabled>清空当前存档</button>
-        <span class="actions-hint">也可以将存档文件拖到这里</span>
+        <button id="import" class="action"><span aria-hidden="true">↥</span><span data-i18n="importSave">Import save</span></button>
+        <button id="export" class="action" disabled><span aria-hidden="true">↧</span><span data-i18n="exportBackup">Export backup</span></button>
+        <button id="reset" class="action quiet" disabled data-i18n="clearSave">Clear selected save</button>
+        <span class="actions-hint" data-i18n="dropHint">You can also drop save files here</span>
       </div>
       <input id="save-file" type="file" accept=".json,.lua,.dat,.bin,.txt,.plist,.registry,.lock" multiple hidden>
-      <div class="launch-row"><div class="save-note"><span class="note-icon" aria-hidden="true">✓</span><p>进度自动保存在当前浏览器<small>支持 JSON 备份及桌面版存档</small></p></div><button id="start" class="primary">开始游戏 <span aria-hidden="true">↗</span></button></div>
+      <div class="launch-row"><div class="save-note"><span class="note-icon" aria-hidden="true">✓</span><p><span data-i18n="autoSaved">Progress is saved in this browser</span><small data-i18n="supportedFormats">JSON backups and desktop saves supported</small></p></div><button id="start" class="primary">Start game <span aria-hidden="true">↗</span></button></div>
       <div id="status" class="status" role="status" aria-live="polite"></div>
-      <div id="loading" class="loading" hidden><div class="loading-track"><div id="progress"></div></div><p id="loading-text">正在准备游戏…</p></div>
+      <div id="loading" class="loading" hidden><div class="loading-track"><div id="progress"></div></div><p id="loading-text" data-i18n="starting">Starting game…</p></div>
     </section>
-    <footer><span>STELLA REHOST <i>·</i> An independent offline rehost</span><span>清除浏览器数据会移除存档，请定期导出备份。</span></footer>
-    <noscript><p class="status error">请启用 JavaScript 后开始游戏。</p></noscript>
+    <footer><span>STELLA REHOST <i>·</i><span data-i18n="footerAbout">An independent offline rehost</span></span><span data-i18n="footerWarning">Clearing browser data removes saves. Export backups regularly.</span></footer>
+    <noscript><p class="status error">Enable JavaScript to start the game.</p></noscript>
   </main>
-  <section id="game" class="game-view" hidden aria-label="Stella 游戏">
+  <section id="game" class="game-view" hidden data-i18n-aria-label="gameLabel" aria-label="Stella game">
     <header class="game-toolbar">
       <span class="game-brand">STELLA <small>REHOST</small></span>
-      <span id="game-save-status" role="status">已准备就绪</span>
+      <span id="game-save-status" role="status" data-i18n="ready">Ready</span>
       <div class="game-tools">
-        <label class="game-size-control" for="game-size"><span>界面大小</span><select id="game-size" title="100% 为原始大小；超出窗口时可通过滚动条查看。"><option value="auto">自适应</option><option value="50">50%</option><option value="75">75%</option><option value="100">100%</option><option value="125">125%</option><option value="150">150%</option></select></label>
-        <button id="fullscreen">全屏</button><button id="backup-game">导出存档</button><button id="home">保存并返回</button>
+        <label class="language-control" for="game-language"><span data-i18n="language">Language</span><select id="game-language"></select></label>
+        <label class="game-size-control" for="game-size"><span data-i18n="size">Display size</span><select id="game-size" data-i18n-title="sizeHelp" title="100% is the original size. Scroll to view frames larger than the window."><option value="auto" data-i18n="autoFit">Fit to window</option><option value="50">50%</option><option value="75">75%</option><option value="100">100%</option><option value="125">125%</option><option value="150">150%</option></select></label>
+        <button id="fullscreen" data-i18n="fullscreen">Fullscreen</button><button id="backup-game" data-i18n="exportSave">Export save</button><button id="home" data-i18n="saveReturn">Save &amp; return</button>
       </div>
     </header>
-    <div id="canvas-area" class="canvas-container" data-size-mode="fit"><div id="canvas-stage" class="canvas-stage"><canvas id="canvas" width="1024" height="768" tabindex="0" aria-label="游戏画面，拖动弹弓发射，滚轮缩放，Escape 返回游戏菜单"></canvas></div></div>
-    <p class="game-tip">拖动弹弓发射 · 滚轮缩放 · Esc 打开游戏菜单</p>
+    <div id="canvas-area" class="canvas-container" data-size-mode="fit"><div id="canvas-stage" class="canvas-stage"><canvas id="canvas" width="1024" height="768" tabindex="0" data-i18n-aria-label="canvasLabel" aria-label="Game screen: drag the slingshot to launch, scroll to zoom, Escape to open the game menu"></canvas></div></div>
+    <p class="game-tip" data-i18n="gameTip">Drag to launch · Scroll to zoom · Esc for the game menu</p>
     <div id="game-error" class="game-error" role="alert" hidden></div>
   </section>
-  <dialog id="confirm-dialog"><h2 id="confirm-title"></h2><p id="confirm-message"></p><form method="dialog"><button class="action" value="cancel">取消</button><button class="primary" value="confirm">确认</button></form></dialog>
-  <dialog id="account-dialog"><h2>本地离线模式</h2><p>游戏进度保存在浏览器中。原版账号登录暂未接入网页端，你可以继续游玩并导出存档。</p><form method="dialog"><button class="primary" value="close">返回游戏</button></form></dialog>
+  <dialog id="confirm-dialog"><h2 id="confirm-title"></h2><p id="confirm-message"></p><form method="dialog"><button class="action" value="cancel" data-i18n="cancel">Cancel</button><button class="primary" value="confirm" data-i18n="confirm">Confirm</button></form></dialog>
+  <dialog id="account-dialog"><h2 data-i18n="offlineTitle">Local offline mode</h2><p data-i18n="offlineText">Progress is saved in your browser. Original account login is unavailable on the web. You can keep playing and export saves.</p><form method="dialog"><button class="primary" value="close" data-i18n="backToGame">Return to game</button></form></dialog>
   <script type="module" src="./launcher.js"></script>
 </body>
 </html>
