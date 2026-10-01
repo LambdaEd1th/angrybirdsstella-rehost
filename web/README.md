@@ -97,6 +97,11 @@ the drawable size. Pointer/touch coordinates follow the current drawable.
 The mode and custom dimensions are remembered in localStorage separately from
 game saves and isolated by the website's base path.
 
+The game view disables text selection and iOS Safari's touch callout. Canvas
+touch gestures suppress browser defaults while Pointer Events continue to
+deliver aiming and two-finger input to the game. Toolbar dimension inputs stay
+editable, and the launcher retains normal text selection.
+
 ## Saves
 
 The launcher has three save slots. Before the original scripts boot, the

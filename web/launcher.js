@@ -402,7 +402,13 @@ function installInput(game) {
     if (primary !== event.pointerId) return;
     primary = null; input(() => engineCall(game.module, "_stella_pointer", ...point(event), 0));
   });
-  listen(canvas, "contextmenu", event => event.preventDefault());
+  for (const type of ["contextmenu", "selectstart", "dragstart"]) listen(canvas, type, event => event.preventDefault());
+  // iOS Safari can start a selection/callout even when pointerdown is canceled.
+  // Keep Pointer Events as the single game input source; these listeners only
+  // suppress browser gestures, including while two fingers control the game.
+  for (const type of ["touchstart", "touchmove"]) listen(canvas, type, event => {
+    if (event.cancelable) event.preventDefault();
+  }, { passive: false });
   listen(canvas, "wheel", event => { event.preventDefault(); input(() => engineCall(game.module, "_stella_wheel", event.deltaY < 0 ? 1 : -1, +event.shiftKey, +event.ctrlKey)); }, { passive: false });
   const keys = { Escape: 0, m: 1, M: 1, "+": 2, "-": 3 };
   for (const type of ["keydown", "keyup"]) listen(canvas, type, event => {

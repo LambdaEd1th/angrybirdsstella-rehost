@@ -14,3 +14,5 @@ footer .creator-link{color:#6a806e;text-decoration:underline;text-underline-offs
 .game-tools button:focus-visible,.game-tools select:focus-visible,.custom-game-size input:focus-visible{outline:2px solid #9abb9e;outline-offset:2px}#canvas:focus-visible{outline:none}
 
 select:focus-visible{outline:2px solid #9abb9e;outline-offset:2px}:root[data-keyboard-navigation="false"] select:focus-visible{outline:none}
+
+.game-view{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}#canvas{-webkit-user-drag:none}.game-view input,.game-view textarea,.game-view [contenteditable="true"]{-webkit-user-select:text;user-select:text;-webkit-touch-callout:default}
