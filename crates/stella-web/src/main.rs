@@ -42,10 +42,23 @@ const LOCALES: [&str; 11] = [
     "ru_RU",
 ];
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 struct GameResolution {
     width: u32,
     height: u32,
+}
+
+impl GameResolution {
+    fn new(width: u32, height: u32) -> Result<Self> {
+        anyhow::ensure!(
+            width > 0
+                && height > 0
+                && width <= u32::from(u16::MAX)
+                && height <= u32::from(u16::MAX),
+            "Invalid drawable resolution"
+        );
+        Ok(Self { width, height })
+    }
 }
 
 impl Default for GameResolution {
@@ -59,6 +72,7 @@ impl Default for GameResolution {
 
 struct BrowserGame {
     runtime: StellaLua,
+    resolution: GameResolution,
     assets: AssetCatalog,
     revision: u64,
     audio_clock: AudioOutputClock,
@@ -126,10 +140,16 @@ pub extern "C" fn stella_set_locale(index: i32) -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn stella_init() -> i32 {
+pub extern "C" fn stella_init(width: u32, height: u32) -> i32 {
     boundary(|| {
+        let resolution = if width == 0 && height == 0 {
+            GameResolution::default()
+        } else {
+            GameResolution::new(width, height)?
+        };
         let root = PathBuf::from("/runtime/data");
-        let runtime = StellaLua::new_with_resolution(&root, GAME_WIDTH, GAME_HEIGHT).browser()?;
+        let runtime =
+            StellaLua::new_with_resolution(&root, resolution.width, resolution.height).browser()?;
         runtime.enable_local_services().browser()?;
         runtime
             .set_preferred_language(LANGUAGE.with(|slot| LOCALES[*slot.borrow()]))
@@ -142,6 +162,7 @@ pub extern "C" fn stella_init() -> i32 {
         GAME.with(|slot| {
             *slot.borrow_mut() = Some(BrowserGame {
                 runtime,
+                resolution,
                 assets,
                 revision: 0,
                 audio_clock: AudioOutputClock::default(),
@@ -151,6 +172,23 @@ pub extern "C" fn stella_init() -> i32 {
                 active: true,
             })
         });
+        Ok(())
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn stella_resize(width: u32, height: u32) -> i32 {
+    with_game(|game| {
+        let resolution = GameResolution::new(width, height)?;
+        if game.resolution != resolution {
+            // JavaScript installs the new WebGL drawable first, after the
+            // previous frame (including captures) has finished rendering.
+            // Use the same GameApp resolution notification as the desktop.
+            game.resolution = resolution;
+            game.runtime
+                .set_screen_resolution(width, height)
+                .browser()?;
+        }
         Ok(())
     })
 }
@@ -179,7 +217,7 @@ pub extern "C" fn stella_frame(delta: f64) -> i32 {
         game.assets
             .apply_composite_updates(game.runtime.take_composite_updates());
         game.frame = game.assets.prepare_gpu_frame_at_resolution(
-            GameResolution::default(),
+            game.resolution,
             &game.runtime.take_render_commands(),
             &game.runtime.take_text_commands(),
             &game.runtime.take_rect_commands(),
@@ -187,6 +225,7 @@ pub extern "C" fn stella_frame(delta: f64) -> i32 {
         )?;
         let mut packet = game.frame.packet(&mut game.assets, &mut game.uploaded)?;
         packet["background"] = json!(background);
+        packet["resolution"] = json!([game.resolution.width, game.resolution.height]);
         packet["clearClip"] = json!(clear_clip);
         packet["audio"] = audio_packet(&game.runtime.audio_output_state());
         packet["exit"] = json!(game.runtime.exit_requested());

@@ -70,6 +70,10 @@ export class GameRenderer {
     const gl = canvas.getContext("webgl2", { alpha: false, antialias: false, preserveDrawingBuffer: true });
     if (!gl) throw new LocalizedError("graphicsUnsupported");
     this.gl = gl;
+    const viewport = gl.getParameter(gl.MAX_VIEWPORT_DIMS);
+    const textureLimit = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+    const bufferLimit = gl.getParameter(gl.MAX_RENDERBUFFER_SIZE);
+    this.drawableLimits = { width: Math.min(viewport[0], textureLimit, bufferLimit, 65535), height: Math.min(viewport[1], textureLimit, bufferLimit, 65535) };
     this.textures = new Map();
     this.program = gl.createProgram();
     for (const [type, source] of [[gl.VERTEX_SHADER, vertexSource], [gl.FRAGMENT_SHADER, fragmentSource]]) {
@@ -101,6 +105,12 @@ export class GameRenderer {
     }
     gl.bindSampler(0, this.baseSampler); gl.bindSampler(1, this.fillSampler);
     this.upload({ name: "<stella-white>", width: 1, height: 1 }, new Uint8Array([255, 255, 255, 255]));
+  }
+  resize(width, height) {
+    const gl = this.gl;
+    if (gl.canvas.width !== width) gl.canvas.width = width;
+    if (gl.canvas.height !== height) gl.canvas.height = height;
+    if (gl.drawingBufferWidth !== width || gl.drawingBufferHeight !== height) throw new LocalizedError("graphicsCapacity");
   }
   upload(info, pixels) {
     const gl = this.gl;

@@ -51,12 +51,12 @@
       <span id="game-save-status" role="status" data-i18n="ready">Ready</span>
       <div class="game-tools">
         <label class="language-control" for="game-language"><span data-i18n="language">Language</span><select id="game-language"></select></label>
-        <label class="game-size-control" for="game-size"><span data-i18n="size">Display size</span><select id="game-size" data-i18n-title="sizeHelp" title="100% is the original size. Scroll to view frames larger than the window."><option value="auto" data-i18n="autoFit">Fit to window</option><option value="50">50%</option><option value="75">75%</option><option value="100">100%</option><option value="125">125%</option><option value="150">150%</option></select></label>
+        <label class="game-size-control" for="game-size"><span data-i18n="size">Display size</span><select id="game-size" data-i18n-title="sizeHelp" title="Resizes the game viewport. Custom width and height can be set independently."><option value="auto" data-i18n="autoFit">Fit to window</option><option value="50">50%</option><option value="75">75%</option><option value="100">100%</option><option value="125">125%</option><option value="150">150%</option><option value="custom" data-i18n="customSize">Custom</option></select></label>
+        <span id="custom-game-size" class="custom-game-size" hidden><label><span class="sr-only" data-i18n="viewportWidth">Width</span><input id="game-width" type="number" min="256" max="8192" step="1" value="1024"></label><span aria-hidden="true">×</span><label><span class="sr-only" data-i18n="viewportHeight">Height</span><input id="game-height" type="number" min="256" max="8192" step="1" value="768"></label></span>
         <button id="fullscreen" data-i18n="fullscreen">Fullscreen</button><button id="backup-game" data-i18n="exportSave">Export save</button><button id="home" data-i18n="saveReturn">Save &amp; return</button>
       </div>
     </header>
     <div id="canvas-area" class="canvas-container" data-size-mode="fit"><div id="canvas-stage" class="canvas-stage"><canvas id="canvas" width="1024" height="768" tabindex="0" data-i18n-aria-label="canvasLabel" aria-label="Game screen: drag the slingshot to launch, scroll to zoom, Escape to open the game menu"></canvas></div></div>
-    <p class="game-tip" data-i18n="gameTip">Drag to launch · Scroll to zoom · Esc for the game menu</p>
     <div id="game-error" class="game-error" role="alert" hidden></div>
   </section>
   <dialog id="confirm-dialog"><h2 id="confirm-title"></h2><p id="confirm-message"></p><form method="dialog"><button class="action" value="cancel" data-i18n="cancel">Cancel</button><button class="primary" value="confirm" data-i18n="confirm">Confirm</button></form></dialog>

@@ -14,7 +14,7 @@ import tomllib
 ROOT = Path(__file__).resolve().parent.parent
 EXPORTS = ["_main", "_stella_init", "_stella_frame", "_stella_packet", "_stella_error",
            "_stella_pointer", "_stella_key", "_stella_wheel", "_stella_active",
-           "_stella_save", "_stella_cancel_account", "_stella_touches", "_stella_shutdown", "_stella_set_locale"]
+           "_stella_save", "_stella_cancel_account", "_stella_touches", "_stella_shutdown", "_stella_set_locale", "_stella_resize"]
 
 
 def build(data: Path, output: Path) -> None:
@@ -59,8 +59,17 @@ def build(data: Path, output: Path) -> None:
         # works under /<repository>/ on GitHub Pages.
         for suffix in ("js", "wasm", "data"):
             shutil.copyfile(binary / f"stella_web.{suffix}", engine / f"stella_web.{suffix}")
-        for name in ("index.html", "style.css", "launcher.js", "storage.js", "renderer.js", "audio.js", "i18n.js", "locales.js", "app-icon.png"):
-            shutil.copyfile(ROOT / "web" / name, output / name)
+        digest = hashlib.sha256()
+        for suffix in ("js", "wasm", "data"):
+            with (engine / f"stella_web.{suffix}").open("rb") as resource:
+                digest.update(hashlib.file_digest(resource, "sha256").digest())
+        engine_version = digest.hexdigest()[:16]
+        for name in ("index.html", "style.css", "launcher.js", "display.js", "storage.js", "renderer.js", "audio.js", "i18n.js", "locales.js", "app-icon.png"):
+            if name == "launcher.js":
+                source = (ROOT / "web" / name).read_text()
+                (output / name).write_text(source.replace("__STELLA_ENGINE_VERSION__", engine_version))
+            else:
+                shutil.copyfile(ROOT / "web" / name, output / name)
         shutil.copytree(ROOT / "web/assets", output / "assets", dirs_exist_ok=True)
         (output / "fonts").mkdir(exist_ok=True)
         for name in ("OFL.txt", "README.md"):

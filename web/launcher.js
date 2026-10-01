@@ -1,10 +1,14 @@
 import { SaveStore, emptySave, importFiles, restoreSave, snapshotSave, clearVirtualSave, MAX_BACKUP_BYTES } from "./storage.js";
 import { GameRenderer } from "./renderer.js";
 import { GameAudio } from "./audio.js";
+import { ORIGINAL_SIZE, displayDimensions, drawableDimensions, canvasPoint } from "./display.js";
 import { LOCALES, configureLanguage, language, languageIndex, setLanguage, onLanguageChange, translateDocument, t, message, formatMessage, LocalizedError } from "./i18n.js";
 
 const $ = id => document.getElementById(id);
 const basePath = new URL(".", import.meta.url).pathname;
+// Filled by build.py so JavaScript, WebAssembly and preloaded data stay paired
+// when an existing browser still caches the preceding Pages deployment.
+const engineVersion = "__STELLA_ENGINE_VERSION__";
 let store, browserStorage;
 let storageError = "";
 try { browserStorage = window.localStorage; store = new SaveStore(browserStorage, basePath); }
@@ -39,31 +43,58 @@ function refreshLanguage() {
 onLanguageChange(refreshLanguage);
 
 const displaySizeKey = `stella-rehost:display:v1:${basePath}:size`;
+const customSizeKey = `stella-rehost:display:v1:${basePath}:dimensions`;
 const sizeControl = $("game-size");
+const widthControl = $("game-width"), heightControl = $("game-height");
 const displaySizes = new Set([...sizeControl.options].map(option => option.value));
 let displaySize = "auto";
+let customSize = { ...ORIGINAL_SIZE };
+let devicePixels = null;
+function validDimension(value) { return Number.isInteger(value) && value >= 256 && value <= 8192; }
 try {
   const saved = window.localStorage.getItem(displaySizeKey);
   if (displaySizes.has(saved)) displaySize = saved;
+  const dimensions = JSON.parse(window.localStorage.getItem(customSizeKey));
+  if (dimensions && validDimension(dimensions.width) && validDimension(dimensions.height)) customSize = dimensions;
 } catch { /* Display sizing remains available when storage is disabled. */ }
 sizeControl.value = displaySize;
+widthControl.value = customSize.width; heightControl.value = customSize.height;
+
+function targetResolution(renderer) {
+  const rect = $("canvas").getBoundingClientRect();
+  const pixelRatio = window.devicePixelRatio;
+  const measured = devicePixels && devicePixels.cssWidth === rect.width && devicePixels.cssHeight === rect.height && devicePixels.ratio === pixelRatio
+    ? devicePixels : undefined;
+  return drawableDimensions(rect.width, rect.height, pixelRatio, renderer.drawableLimits, measured);
+}
+
+function syncGameResolution(game) {
+  if (game.failed) return;
+  const resolution = targetResolution(game.renderer);
+  if (resolution.width === game.resolution.width && resolution.height === game.resolution.height) return;
+  game.renderer.resize(resolution.width, resolution.height);
+  engineCall(game.module, "_stella_resize", resolution.width, resolution.height);
+  game.resolution = resolution;
+}
 
 function updateGameSize() {
+  $("custom-game-size").hidden = displaySize !== "custom";
+  if ($("game").hidden) return;
   const area = $("canvas-area"), stage = $("canvas-stage"), canvas = $("canvas");
-  area.dataset.sizeMode = displaySize === "auto" ? "fit" : "scaled";
+  area.dataset.sizeMode = displaySize === "auto" ? "fit" : "sized";
   const style = getComputedStyle(area);
   const availableWidth = area.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
   const availableHeight = area.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
   if (availableWidth <= 0 || availableHeight <= 0) return;
-  const scale = displaySize === "auto"
-    ? Math.min(availableWidth / canvas.width, availableHeight / canvas.height)
-    : Number(displaySize) / 100;
-  const width = canvas.width * scale, height = canvas.height * scale;
+  const { width, height } = displayDimensions(displaySize, availableWidth, availableHeight, customSize);
   canvas.style.width = `${width}px`; canvas.style.height = `${height}px`;
   // A stage at least as large as the visible area keeps smaller frames centered
   // and larger frames reachable from their top-left corner via scrollbars.
   stage.style.width = `${Math.max(availableWidth, width)}px`;
   stage.style.height = `${Math.max(availableHeight, height)}px`;
+  if (running) {
+    try { syncGameResolution(running); } catch (error) { failGame(running, error); }
+  }
 }
 
 sizeControl.addEventListener("change", () => {
@@ -73,8 +104,42 @@ sizeControl.addEventListener("change", () => {
   $("canvas-area").scrollTo(0, 0);
   updateGameSize();
 });
+function applyCustomSize() {
+  const width = widthControl.valueAsNumber, height = heightControl.valueAsNumber;
+  if (validDimension(width) && validDimension(height)) {
+    customSize = { width, height };
+    try { window.localStorage.setItem(customSizeKey, JSON.stringify(customSize)); } catch { /* Optional preference. */ }
+    updateGameSize();
+    return true;
+  }
+  return false;
+}
+for (const control of [widthControl, heightControl]) {
+  control.addEventListener("input", applyCustomSize);
+  control.addEventListener("change", () => {
+    if (!applyCustomSize()) { widthControl.value = customSize.width; heightControl.value = customSize.height; }
+  });
+}
 const sizeObserver = new ResizeObserver(updateGameSize);
 sizeObserver.observe($("canvas-area"));
+// Prefer the browser's measured physical pixels, including fractional desktop
+// scaling. DPR remains the fallback on browsers without this observation box.
+const pixelObserver = new ResizeObserver(entries => {
+  const entry = entries[0], box = entry.devicePixelContentBoxSize?.[0];
+  if (!box || !entry.contentRect.width || !entry.contentRect.height) return;
+  devicePixels = { width: box.inlineSize, height: box.blockSize, cssWidth: entry.contentRect.width, cssHeight: entry.contentRect.height, ratio: window.devicePixelRatio };
+  if (running) {
+    try { syncGameResolution(running); } catch (error) { failGame(running, error); }
+  }
+});
+try { pixelObserver.observe($("canvas"), { box: "device-pixel-content-box" }); }
+catch { pixelObserver.observe($("canvas")); }
+window.addEventListener("resize", updateGameSize);
+function watchPixelRatio() {
+  const query = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+  query.addEventListener("change", () => { devicePixels = null; updateGameSize(); watchPixelRatio(); }, { once: true });
+}
+watchPixelRatio();
 
 function status(message, error = false) {
   setText("status", message);
@@ -242,10 +307,10 @@ async function startGame() {
     if (module) {
       clearVirtualSave(module.FS); restoreSave(module.FS, save);
     } else {
-      const { default: createStella } = await import("./engine/stella_web.js");
+      const { default: createStella } = await import(`./engine/stella_web.js?v=${engineVersion}`);
       module = await createStella({
       noInitialRun: true,
-      locateFile: name => new URL(`./engine/${name}`, import.meta.url).href,
+      locateFile: name => new URL(`./engine/${name}?v=${engineVersion}`, import.meta.url).href,
       preRun: [module => restoreSave(module.FS, save)],
       print: message => console.info("[Stella]", message),
       printErr: message => console.warn("[Stella]", message),
@@ -264,12 +329,14 @@ async function startGame() {
     setText("loading-text", message("starting"));
     // Give the status one paint before the synchronous Lua startup.
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-    engineCall(module, "_stella_set_locale", languageIndex());
-    engineCall(module, "_stella_init");
-    const game = { module, renderer, audio, slot, save, release, animation: 0, last: performance.now(), lastSave: performance.now(), failed: false, saveFailure: "", cleanup: null };
-    running = game;
     $("launcher").hidden = true; $("game").hidden = false; $("game-error").hidden = true;
     updateGameSize();
+    const resolution = targetResolution(renderer);
+    renderer.resize(resolution.width, resolution.height);
+    engineCall(module, "_stella_set_locale", languageIndex());
+    engineCall(module, "_stella_init", resolution.width, resolution.height);
+    const game = { module, renderer, resolution, audio, slot, save, release, animation: 0, last: performance.now(), lastSave: performance.now(), failed: false, saveFailure: "", cleanup: null };
+    running = game;
     $("canvas").focus();
     game.cleanup = installInput(game);
     // Always save generated device identity, including a completely new game.
@@ -278,6 +345,7 @@ async function startGame() {
       if (running !== game || game.failed) return;
       try {
         if (document.hidden || $("account-dialog").open) { game.last = now; game.animation = requestAnimationFrame(frame); return; }
+        syncGameResolution(game);
         engineCall(module, "_stella_frame", Math.min((now - game.last) / 1000, 0.1)); game.last = now;
         const packet = JSON.parse(module.UTF8ToString(module._stella_packet()));
         renderer.render(module, packet); audio.sync(module, packet.audio);
@@ -293,6 +361,7 @@ async function startGame() {
   } catch (error) {
     renderer?.dispose(); audio?.dispose(); release();
     cachedModule?._stella_shutdown();
+    running = null; $("game").hidden = true; $("launcher").hidden = false;
     status(message("startFailed", { error }), true);
   } finally { busy = false; $("loading").hidden = true; refresh(); }
 }
@@ -303,8 +372,7 @@ function installInput(game) {
   function listen(target, event, handler, options) { target.addEventListener(event, handler, options); listeners.push(() => target.removeEventListener(event, handler, options)); }
   function input(operation) { if (game.failed) return; try { operation(); } catch (error) { failGame(game, error); } }
   function point(event) {
-    const rect = canvas.getBoundingClientRect();
-    return [(event.clientX - rect.left) * 1024 / rect.width, (event.clientY - rect.top) * 768 / rect.height];
+    return canvasPoint(canvas, event);
   }
   function touches() {
     const values = [...pointers].slice(0, 2).map(([id, [x, y]]) => [id, Math.trunc(x), Math.trunc(y)]);

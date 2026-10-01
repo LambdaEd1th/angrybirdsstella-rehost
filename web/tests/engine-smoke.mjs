@@ -18,7 +18,7 @@ async function boot(save) {
   });
   function call(name, ...args) { assert.equal(module[name](...args), 0, module.UTF8ToString(module._stella_error())); }
   call("_stella_set_locale", 8); // Japanese startup, rather than an English-only boot.
-  call("_stella_init");
+  call("_stella_init", 1280, 720);
   let packet;
   for (let frame = 0; frame < 600; frame++) {
     call("_stella_frame", 1 / 60); packet = JSON.parse(module.UTF8ToString(module._stella_packet()));
@@ -26,6 +26,21 @@ async function boot(save) {
   assert.ok(packet.vertices.length > 0, "Original game must submit actual render geometry");
   assert.ok(packet.operations.some(operation => operation.count > 0), "Original game must submit draws");
   assert.equal(packet.locale, "ja_JP");
+  assert.deepEqual(packet.resolution, [1280, 720], "Boot uses the actual drawable extent");
+  for (const [width, height] of [[1429, 768], [768, 1024], [2560, 1440], [1002, 752], [1024, 768]]) {
+    call("_stella_resize", width, height);
+    call("_stella_resize", width, height); // Duplicate observations must be harmless.
+    for (let frame = 0; frame < 4; frame++) call("_stella_frame", 1 / 60);
+    packet = JSON.parse(module.UTF8ToString(module._stella_packet()));
+    assert.deepEqual(packet.resolution, [width, height]);
+    // null disables scissoring and clears the entire resized drawable.
+    assert.deepEqual(packet.clearClip ?? [0, 0, width, height], [0, 0, width, height], "Clear clipping follows the new drawable");
+    assert.ok(packet.operations.some(operation => operation.count > 0), "Arbitrary aspect changes keep drawing the original game");
+  }
+  assert.equal(module._stella_resize(0, 768), -1);
+  assert.equal(module._stella_resize(1024, 0), -1);
+  assert.equal(module._stella_resize(-1, 768), -1);
+  assert.equal(module._stella_resize(65536, 768), -1);
   for (const [index, locale] of LOCALES.entries()) {
     call("_stella_set_locale", index);
     call("_stella_active", 0); call("_stella_active", 1);
@@ -50,4 +65,4 @@ assert.ok(first.files.some(file => file.path === "stella-device-id"));
 assert.ok(first.files.some(file => file.path === "settings.lua"));
 const second = await boot(first);
 assert.equal(second.files.find(file => file.path === "stella-device-id").data, first.files.find(file => file.path === "stella-device-id").data);
-console.log(`WebAssembly boot/render/input/save/restore and all ${LOCALES.length} game languages passed (${second.files.length} AppData files).`);
+console.log(`WebAssembly boot/render/resize/input/save/restore and all ${LOCALES.length} game languages passed (${second.files.length} AppData files).`);

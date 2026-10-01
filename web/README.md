@@ -82,11 +82,20 @@ and reclip when the language changes.
 
 The game toolbar's **Display size** selector offers automatic fitting and
 50%, 75%, 100%, 125% and 150% sizes. Automatic fitting follows the available
-window or fullscreen area. Percentages use the original 1024 × 768 dimensions;
-larger frames can be viewed with the surrounding scrollbars. The picture keeps
-its 4:3 ratio, and pointer/touch coordinates follow its displayed bounds.
-The selection is remembered in localStorage separately from game saves and
-isolated by the website's base path.
+window or fullscreen area, including its aspect ratio. Percentages use the
+original 1024 × 768 dimensions; **Custom** accepts independent width and height.
+Larger frames can be viewed with the surrounding scrollbars.
+
+Each change resizes the WebGL drawing buffer to the displayed area’s physical
+pixels and calls the desktop host’s `StellaLua::set_screen_resolution` path.
+The original `resolutionChanged` callback updates the layout and cameras;
+the browser does not stretch a fixed 1024 × 768 frame. Retina/high-DPI screens,
+browser zoom and moving between displays update the drawable density. Where
+available, `device-pixel-content-box` supplies exact physical dimensions;
+other browsers use `devicePixelRatio`. WebGL viewport and texture limits bound
+the drawable size. Pointer/touch coordinates follow the current drawable.
+The mode and custom dimensions are remembered in localStorage separately from
+game saves and isolated by the website's base path.
 
 ## Saves
 
