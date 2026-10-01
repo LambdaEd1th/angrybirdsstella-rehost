@@ -5,6 +5,9 @@ import { ORIGINAL_SIZE, displayDimensions, drawableDimensions, canvasPoint } fro
 import { LOCALES, configureLanguage, language, languageIndex, setLanguage, onLanguageChange, translateDocument, t, message, formatMessage, LocalizedError } from "./i18n.js";
 
 const $ = id => document.getElementById(id);
+document.documentElement.dataset.keyboardNavigation = "false";
+document.addEventListener("keydown", event => { if (event.key === "Tab") document.documentElement.dataset.keyboardNavigation = "true"; }, true);
+document.addEventListener("pointerdown", () => { document.documentElement.dataset.keyboardNavigation = "false"; }, true);
 const basePath = new URL(".", import.meta.url).pathname;
 // Filled by build.py so JavaScript, WebAssembly and preloaded data stay paired
 // when an existing browser still caches the preceding Pages deployment.
@@ -32,6 +35,7 @@ for (const control of languageControls) {
       if (running) engineCall(running.module, "_stella_set_locale", LOCALES.findIndex(locale => locale.id === control.value));
       setLanguage(control.value);
     } catch (error) { control.value = language(); status(error, true); }
+    finally { if (running) $("canvas").focus({ preventScroll: true }); }
   });
 }
 function refreshLanguage() {
@@ -103,6 +107,7 @@ sizeControl.addEventListener("change", () => {
   catch { /* Applying the selected size does not depend on saving the preference. */ }
   $("canvas-area").scrollTo(0, 0);
   updateGameSize();
+  if (running) $("canvas").focus({ preventScroll: true });
 });
 function applyCustomSize() {
   const width = widthControl.valueAsNumber, height = heightControl.valueAsNumber;
