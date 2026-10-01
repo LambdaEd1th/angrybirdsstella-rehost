@@ -12,6 +12,9 @@ impl StellaApp {
         mut renderer: Option<&mut GpuRenderer>,
         frame_delta: Duration,
     ) -> Result<()> {
+        if let Some(renderer) = renderer.as_deref() {
+            renderer.check_device()?;
+        }
         synchronize_runtime_audio(
             &self.runtime,
             self.audio.as_mut(),
@@ -73,6 +76,9 @@ impl StellaApp {
         &mut self,
         resolution: GameResolution,
     ) -> Result<()> {
+        if let Some(renderer) = &self.renderer {
+            renderer.check_device()?;
+        }
         if resolution == self.resolution {
             return Ok(());
         }
@@ -81,7 +87,7 @@ impl StellaApp {
         self.renderer = renderer;
         result?;
         if let Some(renderer) = &mut self.renderer {
-            renderer.resize_game_target(resolution);
+            renderer.resize_game_target(resolution)?;
         }
         self.rendered_frame_ready = false;
         self.render_commands.clear();

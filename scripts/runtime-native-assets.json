@@ -1,0 +1,15 @@
+{
+  "source": "Angry Birds Stella 1.1.6 Purple.app",
+  "files": [
+    {
+      "source": "OpenSans-Regular.ttf",
+      "destination": "skynestdata/fonts/OpenSans-Regular.ttf",
+      "sha256": "e64e508b2aa2880f907e470c4550980ec4c0694d103a43f36150ac3f93189bee"
+    },
+    {
+      "source": "OpenSans-CondBold.ttf",
+      "destination": "skynestdata/fonts/OpenSans-CondBold.ttf",
+      "sha256": "a859a438018739aee16c306586d91a453c208ee500c827d9e9aa063155c8a6e8"
+    }
+  ]
+}

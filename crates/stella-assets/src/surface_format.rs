@@ -41,6 +41,25 @@ pub enum SurfaceFormat {
     Etc1Rgb4Bpp = 33,
 }
 
+impl std::fmt::Display for SurfaceFormat {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Original format-name table off_100AA5D98; other names match Debug.
+        let name = match self {
+            Self::Unknown => "UNKNOWN",
+            Self::Dxt1 => "DXT1",
+            Self::Dxt3 => "DXT3",
+            Self::Dxt5 => "DXT5",
+            Self::RgbPvrtcGl2Bpp => "RGB_PVRTC_GL_2BPP",
+            Self::RgbaPvrtcGl2Bpp => "RGBA_PVRTC_GL_2BPP",
+            Self::RgbPvrtcGl4Bpp => "RGB_PVRTC_GL_4BPP",
+            Self::RgbaPvrtcGl4Bpp => "RGBA_PVRTC_GL_4BPP",
+            Self::Etc1Rgb4Bpp => "ETC1_RGB_4BPP",
+            format => return write!(formatter, "{format:?}"),
+        };
+        formatter.write_str(name)
+    }
+}
+
 impl SurfaceFormat {
     /// Exact predicate implemented by `sub_1004DC4B8`.
     pub const fn has_alpha(self) -> bool {
@@ -99,6 +118,29 @@ impl SurfaceFormat {
             Self::A8R8G8B8 | Self::P4 | Self::P8 => Self::A8B8G8R8,
             Self::Etc1Rgb4Bpp if !etc1_supported => Self::R5G6B5,
             format => format,
+        }
+    }
+
+    /// Admit the normalized format through GLES2 helper `1005A11E4`.
+    /// Reader support alone does not make a format usable as a native Image.
+    pub const fn gl_texture_format(self, etc1_supported: bool) -> Result<Self, crate::AssetError> {
+        let format = self.for_gl_upload(etc1_supported);
+        match format {
+            Self::R8G8B8
+            | Self::B8G8R8
+            | Self::A8R8G8B8
+            | Self::A8B8G8R8
+            | Self::R5G6B5
+            | Self::L8
+            | Self::A8L8
+            | Self::R4G4B4A4
+            | Self::R5G5B5A1
+            | Self::A8
+            | Self::RgbPvrtcGl2Bpp
+            | Self::RgbaPvrtcGl2Bpp
+            | Self::RgbPvrtcGl4Bpp
+            | Self::RgbaPvrtcGl4Bpp => Ok(format),
+            _ => Err(crate::AssetError::UnsupportedTextureFormat(format)),
         }
     }
 }

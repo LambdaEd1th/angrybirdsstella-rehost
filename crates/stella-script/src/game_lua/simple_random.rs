@@ -101,7 +101,7 @@ pub(crate) fn install(lua: &Lua, globals: &Table) -> LuaResult<()> {
             let seed = native_required_string(&args, 0, "newSeedFromString")?;
             Ok(
                 seed_from_decimal_string(&seed).map_or_else(MultiValue::new, |seed| {
-                    MultiValue::from_vec(vec![Value::Integer(i64::from(seed))])
+                    MultiValue::from_vec(vec![Value::Number(f64::from(seed))])
                 }),
             )
         })?,

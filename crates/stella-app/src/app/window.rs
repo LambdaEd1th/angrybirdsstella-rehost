@@ -142,10 +142,11 @@ impl ApplicationHandler for StellaApp {
                     // the new backing extent before GameApp delivers the Lua
                     // resolution notification. Keep both wgpu targets on that
                     // side of the callback as well.
-                    if let Some(renderer) = &mut self.renderer {
-                        renderer.resize_surface(size.width, size.height);
-                    }
-                    if let Ok(resolution) = GameResolution::new(size.width, size.height)
+                    if let Some(renderer) = &mut self.renderer
+                        && let Err(error) = renderer.resize_surface(size.width, size.height)
+                    {
+                        self.fatal_error = Some(error.to_string());
+                    } else if let Ok(resolution) = GameResolution::new(size.width, size.height)
                         && resolution != self.resolution
                         && let Err(error) = self.resize_runtime_target(resolution)
                     {

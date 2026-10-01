@@ -16,7 +16,8 @@ pub(super) fn create(
     adapter: &wgpu::Adapter,
     device: &wgpu::Device,
     game_view: &wgpu::TextureView,
-    resolution: GameResolution,
+    width: u32,
+    height: u32,
 ) -> Result<WindowPresentation> {
     let Some(surface) = surface else {
         return Ok(WindowPresentation {
@@ -28,20 +29,43 @@ pub(super) fn create(
         });
     };
     let capabilities = surface.get_capabilities(adapter);
-    let format = capabilities
-        .formats
-        .iter()
-        .copied()
-        .find(|format| !format.is_srgb())
-        .or_else(|| capabilities.formats.first().copied())
-        .ok_or_else(|| anyhow!("wgpu surface exposes no formats"))?;
     let mut config = surface
-        .get_default_config(adapter, resolution.width, resolution.height)
+        .get_default_config(adapter, width, height)
         .ok_or_else(|| anyhow!("wgpu surface has no default configuration"))?;
-    config.format = format;
+    configure_color_format(&mut config, &capabilities.formats)?;
     config.present_mode = wgpu::PresentMode::AutoVsync;
     config.desired_maximum_frame_latency = 2;
     surface.configure(device, &config);
+    Ok(create_blit_presentation(device, game_view, config))
+}
+
+pub(super) fn configure_color_format(
+    config: &mut wgpu::SurfaceConfiguration,
+    formats: &[wgpu::TextureFormat],
+) -> Result<()> {
+    config.format = formats
+        .iter()
+        .copied()
+        .find(|format| !format.is_srgb())
+        .or_else(|| formats.first().copied())
+        .ok_or_else(|| anyhow!("wgpu surface exposes no formats"))?;
+    let view_format = super::super::window_target_format(config.format);
+    config.view_formats.clear();
+    if view_format != config.format {
+        // wgpu permits a surface view to differ only in sRGB interpretation.
+        // Register the alias before configuration; both window pipelines and
+        // the acquired texture view must use this same format.
+        config.view_formats.push(view_format);
+    }
+    Ok(())
+}
+
+pub(super) fn create_blit_presentation(
+    device: &wgpu::Device,
+    game_view: &wgpu::TextureView,
+    config: wgpu::SurfaceConfiguration,
+) -> WindowPresentation {
+    let format = super::super::window_target_format(config.format);
 
     let blit_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("Stella game-target blit layout"),
@@ -101,11 +125,11 @@ pub(super) fn create(
             },
         ],
     });
-    Ok(WindowPresentation {
+    WindowPresentation {
         surface_config: Some(config),
         blit_pipeline: Some(pipeline),
         blit_bind_group: Some(bind_group),
         blit_layout: Some(blit_layout),
         blit_sampler: Some(sampler),
-    })
+    }
 }

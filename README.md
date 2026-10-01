@@ -69,6 +69,11 @@ cargo run -p stella-tool -- transcode-lua input.lua output.lua
 
 ## Run the desktop rehost
 
+The browser edition can be built and deployed as a static GitHub Pages site.
+Its launcher restores one of three localStorage save slots before starting the
+original game and supports importing desktop saves and exporting JSON backups.
+See [the browser build and deployment guide](web/README.md).
+
 With the data already extracted under `runtime/data` (the desktop app uses this
 location by default):
 
@@ -295,6 +300,11 @@ and attaches a shared `SHA256SUMS` file. Each package therefore runs without a
 separate extraction step and contains its runtime instructions in
 `README.md`. `BUILD-INFO.txt` records the release version, target, source commit
 and compiler version.
+
+Publishing a release also builds and deploys its tagged browser edition to
+GitHub Pages. Both the Release workflow and releases published through GitHub's
+interface deploy Pages; ordinary pushes do not. See [the browser deployment
+guide](web/README.md) for the repository's Pages setting and manual deployment.
 
 ## Workspace layout
 

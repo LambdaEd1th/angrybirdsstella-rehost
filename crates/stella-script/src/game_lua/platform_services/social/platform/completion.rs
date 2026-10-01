@@ -10,6 +10,15 @@ impl SocialRuntime {
         // 779928 ->77998C dispatches cache assignment onto the main queue.
         // Both initial consumers are admitted before either completion caches.
         match &mut completion {
+            PlatformCompletion::AccountName {
+                lease,
+                lifetime,
+                result,
+            } if lease.is_current() && lifetime.is_current() => {
+                if let Ok(profile) = result {
+                    *result = lease.provider.publish_completed_profile(profile);
+                }
+            }
             PlatformCompletion::ServiceProfile { lease, result }
             | PlatformCompletion::Available { lease, result, .. }
             | PlatformCompletion::Checked { lease, result, .. }
@@ -23,6 +32,30 @@ impl SocialRuntime {
             _ => (),
         }
         match completion {
+            PlatformCompletion::AccountName {
+                lease,
+                lifetime,
+                result,
+            } => {
+                if !lease.is_current() || !lifetime.is_current() {
+                    return Ok(());
+                }
+                // 1000A4BF0 ignores every status except success1, then passes
+                // only User.name (+0x38), including an empty successful name.
+                let Ok(profile) = result else {
+                    return Ok(());
+                };
+                let mlua::Value::Table(account) =
+                    lua.globals().get::<mlua::Value>("SkynestAccount")?
+                else {
+                    return Ok(());
+                };
+                if let mlua::Value::Function(callback) =
+                    account.get::<mlua::Value>("onUserProfileResponse")?
+                {
+                    callback.call::<()>(profile.user.name)?;
+                }
+            }
             // 77A228 only installs the preferred account name on success.
             // It does not own the separate C++ login callback or report a
             // connection failure; that consumer performs its own profile read.

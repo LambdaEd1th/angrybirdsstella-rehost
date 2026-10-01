@@ -18,7 +18,9 @@ use super::{
 
 use crate::platform_ui_drawing as drawing;
 mod registration;
-use drawing::{Canvas, draw_image, fill, text_lines};
+#[cfg(test)]
+use drawing::text_lines_with_shadow;
+use drawing::{Canvas, LineBreak, TextLayout, draw_image, fill, text_lines, text_with_layout};
 
 pub(crate) struct AccountPainter {
     root: PathBuf,
@@ -70,6 +72,16 @@ impl AccountPainter {
         color: [u8; 4],
     ) -> Result<SystemFontRenderBinding> {
         let size = (size * self.canvas.scale).round().max(1.0) as i32;
+        self.font_at_pixel_size(runtime, name, size, color)
+    }
+
+    fn font_at_pixel_size(
+        &mut self,
+        runtime: &StellaLua,
+        name: &'static str,
+        size: i32,
+        color: [u8; 4],
+    ) -> Result<SystemFontRenderBinding> {
         let key = (name, size, color);
         if let Some(font) = self.fonts.get(&key) {
             return Ok(font.clone());
@@ -79,6 +91,31 @@ impl AccountPainter {
             .map_err(|error| anyhow!(error.to_string()))?;
         self.fonts.insert(key, font.clone());
         Ok(font)
+    }
+
+    fn fitting_font(
+        &mut self,
+        runtime: &StellaLua,
+        element: &Element,
+        text: &str,
+        width: f32,
+        color: [u8; 4],
+    ) -> Result<SystemFontRenderBinding> {
+        let normal = self.font(runtime, element.font_name, element.font_size, color)?;
+        let Some(minimum) = element.minimum_font_size else {
+            return Ok(normal);
+        };
+        if text.is_empty() || normal.native_string_width(text) as f32 <= width {
+            return Ok(normal);
+        }
+        let minimum = (minimum * self.canvas.scale).round().max(1.0) as i32;
+        for size in (minimum..normal.size).rev() {
+            let candidate = self.font_at_pixel_size(runtime, element.font_name, size, color)?;
+            if candidate.native_string_width(text) as f32 <= width {
+                return Ok(candidate);
+            }
+        }
+        self.font_at_pixel_size(runtime, element.font_name, minimum, color)
     }
 
     fn image(&mut self, name: &str) -> Result<&RgbaImage> {
@@ -205,12 +242,13 @@ impl AccountPainter {
                 if matches!(element.name, "verificationEmail" | "registrationEmail") {
                     text = state.email.text().to_owned();
                 }
-                if let Some(tag) = registration::date_tag(element.name) {
+                let date_tag = registration::date_tag(element.name);
+                if let Some(tag) = date_tag {
                     text = self.registration_date_text(state, tag, &text);
                 }
                 let image_name = if snapshot.busy && element.name == "progressImageView" {
                     Some(layout::PROGRESS_IMAGES[usize::from(progress.min(5))])
-                } else if let Some(tag) = registration::date_tag(element.name) {
+                } else if let Some(tag) = date_tag {
                     Some(if state.registration.picker == Some(tag) {
                         layout::registration::DATE_OPEN_IMAGE
                     } else if state.registration.date_errors[usize::from(tag)] {
@@ -260,15 +298,42 @@ impl AccountPainter {
                 if element.kind == Kind::Field {
                     self.field(&mut output, runtime, state, element, caret)?;
                 } else if !text.is_empty() {
-                    let font =
-                        self.font(runtime, element.font_name, element.font_size, element.color)?;
-                    text_lines(
+                    let [top, left, bottom, right] = element.content_insets;
+                    let text_rect = Rect::new(
+                        rect.x + left,
+                        rect.y + top,
+                        (rect.width - left - right).max(0.0),
+                        (rect.height - top - bottom).max(0.0),
+                    );
+                    let text_rect = self.canvas.rect(text_rect);
+                    // UIKit autoshrink is a single-line control behavior. The
+                    // two-line registration email retains its multiline layout.
+                    let selected_date = date_tag
+                        .is_none_or(|tag| state.registration.values[usize::from(tag)].is_some());
+                    let font = if element.max_lines == 1 && selected_date {
+                        self.fitting_font(runtime, element, &text, text_rect.width, element.color)?
+                    } else {
+                        self.font(runtime, element.font_name, element.font_size, element.color)?
+                    };
+                    let shadow = element.text_shadow.map(|(color, offset)| {
+                        let mut shadow_font = font.clone();
+                        shadow_font.fill_rgba = color;
+                        (
+                            shadow_font,
+                            [offset[0] * self.canvas.scale, offset[1] * self.canvas.scale],
+                        )
+                    });
+                    text_with_layout(
                         &mut output,
                         &font,
                         &text,
-                        self.canvas.rect(rect),
-                        element.alignment,
-                        element.max_lines,
+                        text_rect,
+                        TextLayout {
+                            alignment: element.alignment,
+                            max_lines: element.max_lines,
+                            line_break: element.line_break,
+                        },
+                        shadow.as_ref().map(|(font, offset)| (font, *offset)),
                     )?;
                 }
                 if !snapshot.busy
@@ -359,16 +424,11 @@ impl AccountPainter {
             state.email_editor()
         };
         let (display, cursor, selected) = editor.display(field == Field::Password);
-        let font = self.font(
-            runtime,
-            element.font_name,
-            element.font_size,
-            [0, 0, 0, 255],
-        )?;
         let rect = self.canvas.rect(layout::field_content_rect(
             state.snapshot.as_ref().expect("visible field owner").view,
             element,
         ));
+        let font = self.fitting_font(runtime, element, &display, rect.width, [0, 0, 0, 255])?;
         let mut field_pixels = Pixmap::new(
             rect.width.ceil().max(1.0) as u32,
             rect.height.ceil().max(1.0) as u32,
@@ -457,20 +517,13 @@ impl AccountPainter {
         text: &str,
     ) -> Result<Rect> {
         let font = self.font(runtime, "OpenSans", layout::ERROR_POPUP_FONT_SIZE, [255; 4])?;
-        let lines = drawing::wrap(
+        let text_size = drawing::word_wrap_size(
             &font,
             text,
-            layout::ERROR_POPUP_TEXT_CONSTRAINT[0] * self.canvas.scale,
-            2,
+            layout::ERROR_POPUP_TEXT_CONSTRAINT.map(|value| value * self.canvas.scale),
         );
-        let width = lines
-            .iter()
-            .map(|line| font.native_string_width(line))
-            .max()
-            .unwrap_or(0) as f32
-            / self.canvas.scale;
-        let height = font.label_line_height as f32 * lines.len() as f32 / self.canvas.scale;
-        let logical_rect = layout::error_popup_rect(anchor, [width, height]);
+        let logical_rect =
+            layout::error_popup_rect(anchor, text_size.map(|value| value / self.canvas.scale));
         let rect = self.canvas.rect(logical_rect);
         let scale = self.canvas.scale;
         self.image(layout::ERROR_POPUP_IMAGE)?;
@@ -485,13 +538,17 @@ impl AccountPainter {
             density,
         );
         let inset = layout::ERROR_POPUP_TEXT_TOP_INSET * scale;
-        text_lines(
+        text_with_layout(
             output,
             &font,
-            &lines.join("\n"),
+            text,
             Rect::new(rect.x, rect.y + inset, rect.width, rect.height - inset),
-            1,
-            2,
+            TextLayout {
+                alignment: 1,
+                max_lines: 2,
+                line_break: LineBreak::WordWrap,
+            },
+            None,
         )?;
         Ok(logical_rect)
     }

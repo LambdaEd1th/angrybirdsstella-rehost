@@ -105,7 +105,7 @@ fn renderer_resizes_only_the_game_target_and_retains_capture_dimensions() {
         resources::create_capture_texture(&renderer.device, "<capture:resize-test>", initial),
     );
 
-    renderer.resize_game_target(wide);
+    renderer.resize_game_target(wide).unwrap();
 
     assert_eq!(renderer.resolution, wide);
     assert_eq!(

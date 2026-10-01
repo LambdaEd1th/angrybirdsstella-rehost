@@ -342,8 +342,18 @@ impl AccountUi {
             return None;
         }
         // Active SSignInView delegate 10077005C: email Return focuses the
-        // password field; password Return resigns it. No implicit submit.
+        // password field; password Return resigns it. Every editable account
+        // nib enables Return only while its own text entry area is nonempty.
+        // No implicit submit.
         if *key == Key::Named(NamedKey::Enter) {
+            let has_text = match self.focus {
+                Some(Field::Email) => !self.email_editor().text().is_empty(),
+                Some(Field::Password) => !self.password.text().is_empty(),
+                None => false,
+            };
+            if !has_text {
+                return None;
+            }
             let sign_in = self
                 .snapshot
                 .as_ref()

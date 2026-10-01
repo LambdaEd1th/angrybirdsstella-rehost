@@ -5,23 +5,29 @@ fn tick(runtime: &StellaLua, frame: &mut usize, count: usize, stage: &str) {
     *frame += count;
 }
 
-fn pointer(runtime: &StellaLua, frame: usize, x: f64, y: f64, down: bool) {
-    eprintln!("[earned-retry-input] frame={frame} x={x} y={y} down={down}");
+fn pointer(runtime: &StellaLua, frame: usize, x: f64, y: f64, down: bool, tag: &str) {
+    eprintln!("[{tag}-input] frame={frame} x={x} y={y} down={down}");
     runtime.set_cursor(x, y, down).unwrap();
 }
 
-/// Continue the actual first-five earned progression, without seeded unlocks.
-pub(super) fn exhaust_and_refuse(runtime: &StellaLua, frame: &mut usize) {
+type State = (u32, u32, u32, u32, bool, bool, String, bool, bool, bool);
+
+fn snapshot(runtime: &StellaLua) -> Function {
     let environment = game_environment(runtime.lua()).unwrap();
-    let snapshot = runtime.lua().load(r#"return function()
+    runtime.lua().load(r#"return function()
         local goals=0 for _ in pairs(levelGoals) do goals=goals+1 end
         local available=0 for _,b in pairs(birds) do if not b.shot and not b:isLocked() then available=available+1 end end
         local popup=getGameHud():getChild('lastChancePopup')
         return goals,getRemainingBirdCount(),available,birdsShot,
             not not birdReady,flyingBird == nil,currentBirdName or '',
             not not g_levelFailed,not not g_levelCompleted,popup ~= nil and popup.visible
-    end"#).set_environment(environment.clone()).eval::<Function>().unwrap();
-    type State = (u32, u32, u32, u32, bool, bool, String, bool, bool, bool);
+    end"#).set_environment(environment.clone()).eval::<Function>().unwrap()
+}
+
+/// Continue the actual first-five earned progression, without seeded unlocks.
+pub(super) fn exhaust_to_popup(runtime: &StellaLua, frame: &mut usize, tag: &str) -> (u32, u32) {
+    let environment = game_environment(runtime.lua()).unwrap();
+    let snapshot = snapshot(runtime);
     let initial: State = snapshot.call(()).unwrap();
     assert!(initial.0 > 0);
     assert_eq!((initial.1, initial.2, initial.3), (3, 3, 0));
@@ -38,7 +44,7 @@ pub(super) fn exhaust_and_refuse(runtime: &StellaLua, frame: &mut usize) {
     loop {
         let state: State = snapshot.call(()).unwrap();
         if (*frame).is_multiple_of(120) {
-            eprintln!("[earned-retry] frame={frame} state={state:?}");
+            eprintln!("[{tag}] frame={frame} state={state:?}");
         }
         assert!(!state.8, "deliberate misses unexpectedly completed L06");
         assert!(
@@ -68,11 +74,11 @@ pub(super) fn exhaust_and_refuse(runtime: &StellaLua, frame: &mut usize) {
                 .eval()
                 .unwrap();
             if (0.0..904.0).contains(&x) && (0.0..748.0).contains(&y) {
-                pointer(runtime, *frame, x, y, true);
+                pointer(runtime, *frame, x, y, true, tag);
                 tick(runtime, frame, 1, "earned miss press");
-                pointer(runtime, *frame, x + 120.0, y + 20.0, true);
+                pointer(runtime, *frame, x + 120.0, y + 20.0, true, tag);
                 tick(runtime, frame, 60, "earned miss pull");
-                pointer(runtime, *frame, x + 120.0, y + 20.0, false);
+                pointer(runtime, *frame, x + 120.0, y + 20.0, false, tag);
                 tick(runtime, frame, 1, "earned miss release");
                 let after: State = snapshot.call(()).unwrap();
                 assert_eq!(
@@ -87,6 +93,13 @@ pub(super) fn exhaust_and_refuse(runtime: &StellaLua, frame: &mut usize) {
         tick(runtime, frame, 1, "earned bird exhaustion");
     }
     tick(runtime, frame, 180, "last chance entrance");
+    (initial.0, coins)
+}
+
+pub(super) fn exhaust_and_refuse(runtime: &StellaLua, frame: &mut usize) {
+    let (goals, coins) = exhaust_to_popup(runtime, frame, "earned-retry");
+    let environment = game_environment(runtime.lua()).unwrap();
+    let snapshot = snapshot(runtime);
     let (x, y, price, value): (f64, f64, u32, String) = runtime
         .lua()
         .load(
@@ -103,9 +116,9 @@ pub(super) fn exhaust_and_refuse(runtime: &StellaLua, frame: &mut usize) {
     assert_eq!(value, "GIVE_UP");
     assert!(price > 0);
     eprintln!("[earned-retry] popup frame={frame} giveup=({x},{y}) price={price} coins={coins}");
-    pointer(runtime, *frame, x, y, true);
+    pointer(runtime, *frame, x, y, true, "earned-retry");
     tick(runtime, frame, 1, "last chance refusal press");
-    pointer(runtime, *frame, x, y, false);
+    pointer(runtime, *frame, x, y, false, "earned-retry");
     tick(runtime, frame, 720, "last chance refusal and failed screen");
     let (x,y,failed,completed,amount,used): (f64,f64,u32,u32,u32,u32)=runtime.lua().load(r#"
         local root=menuManager:getRoot()
@@ -118,13 +131,13 @@ pub(super) fn exhaust_and_refuse(runtime: &StellaLua, frame: &mut usize) {
     "#).set_environment(environment.clone()).eval().unwrap();
     assert_eq!((failed, completed, amount, used), (1, 0, coins, 0));
     eprintln!("[earned-retry] failed frame={frame} restart=({x},{y})");
-    pointer(runtime, *frame, x, y, true);
+    pointer(runtime, *frame, x, y, true, "earned-retry");
     tick(runtime, frame, 1, "earned failed restart press");
-    pointer(runtime, *frame, x, y, false);
+    pointer(runtime, *frame, x, y, false, "earned-retry");
     tick(runtime, frame, 540, "earned failed restart");
     assert_scene(runtime, "GameScene", Some("Chapter01_L06"));
     let state: State = snapshot.call(()).unwrap();
-    assert_eq!((state.0, state.1, state.2, state.3), (initial.0, 3, 3, 0));
+    assert_eq!((state.0, state.1, state.2, state.3), (goals, 3, 3, 0));
     assert!(state.4 && !state.7 && !state.8 && !state.9);
     let result: (String,u32,u32,bool)=runtime.lua().load("return g_restartType,Coins:getAmount(),SettingsWrapper:getTimesLevelFailed('Chapter01_L06'),highscores.Chapter01_L06 == nil")
         .set_environment(environment).eval().unwrap();

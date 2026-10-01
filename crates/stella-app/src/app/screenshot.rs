@@ -10,9 +10,42 @@ impl StellaApp {
         clicks: &[(u32, f64, f64)],
         drags: &[(u32, u32, f64, f64, f64, f64)],
         evals: &[(u32, String)],
+        drag_evals: &[(u32, u32, String)],
     ) -> Result<()> {
         let mut renderer = GpuRenderer::headless(self.resolution)?;
+        let mut resolved_drags = drags.to_vec();
         for frame in 0..frames {
+            // Resolve once, at the input boundary. The held pointer follows
+            // the same interpolation/release path as a numeric scripted drag.
+            for (start, duration, source) in drag_evals {
+                if frame != *start {
+                    continue;
+                }
+                let lua = self.runtime.lua();
+                let environment = lua
+                    .globals()
+                    .get("gamelua")
+                    .map_err(|error| anyhow!("drag query environment: {error}"))?;
+                let coordinates: (Option<f64>, Option<f64>, Option<f64>, Option<f64>) = lua
+                    .load(source)
+                    .set_name("[stella-drag-query]")
+                    .set_environment(environment)
+                    .eval()
+                    .map_err(|error| anyhow!("script drag query at frame {frame}: {error}"))?;
+                match coordinates {
+                    (None, None, None, None) => {}
+                    (Some(x1), Some(y1), Some(x2), Some(y2))
+                        if [x1, y1, x2, y2].into_iter().all(f64::is_finite) =>
+                    {
+                        resolved_drags.push((*start, *duration, x1, y1, x2, y2));
+                    }
+                    _ => {
+                        return Err(anyhow!(
+                            "script drag query at frame {frame} must return four finite coordinates or nil"
+                        ));
+                    }
+                }
+            }
             for &(click_frame, x, y) in clicks {
                 if frame == click_frame {
                     self.runtime
@@ -24,7 +57,7 @@ impl StellaApp {
                         .map_err(|error| anyhow!(error.to_string()))?;
                 }
             }
-            for &(drag_frame, duration, start_x, start_y, end_x, end_y) in drags {
+            for &(drag_frame, duration, start_x, start_y, end_x, end_y) in &resolved_drags {
                 let end_frame = drag_frame.saturating_add(duration.max(1));
                 if frame >= drag_frame && frame < end_frame {
                     let progress = f64::from(frame - drag_frame) / f64::from(duration.max(1));

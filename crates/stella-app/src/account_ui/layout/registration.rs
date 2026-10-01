@@ -2,8 +2,9 @@
 //! See docs/native-account-registration-layout.md for sources and host boundaries.
 
 use super::{
-    AccountView, BACK_DOWN, BACK_IMAGE, BG, DARK, Element, GREY, Kind, LOGO, OK_DOWN, OK_IMAGE,
-    RED, Rect, SUBMIT_DOWN, SUBMIT_IMAGE, ViewLayout, cap, error_icon, field, layout,
+    AccountView, BACK_DOWN, BACK_IMAGE, BG, BUTTON_TEXT_SHADOW, DARK, Element, GREY, Kind, LOGO,
+    LineBreak, OK_DOWN, OK_IMAGE, RED, Rect, SUBMIT_DOWN, SUBMIT_IMAGE, ViewLayout,
+    WHITE_TEXT_SHADOW, cap, error_icon, field, layout,
 };
 
 pub(crate) const DATE_IMAGE: &str =
@@ -29,6 +30,8 @@ const fn date_button(
         kind: Kind::Button,
         image: Some(DATE_IMAGE),
         font_name: ".HelveticaNeueInterface-Regular",
+        minimum_font_size: Some(17.0),
+        line_break: LineBreak::Clip,
         ..Element::text(name, rect, key, fallback, 21.0)
     }
 }
@@ -61,6 +64,7 @@ const TERMS: [Element; 3] = [
     Element {
         alignment: 2,
         color: RED,
+        text_shadow: WHITE_TEXT_SHADOW,
         ..Element::text(
             "eulaLabel",
             Rect::new(280.0, 451.0, 167.0, 26.0),
@@ -72,6 +76,7 @@ const TERMS: [Element; 3] = [
     Element {
         alignment: 1,
         color: GREY,
+        text_shadow: WHITE_TEXT_SHADOW,
         ..Element::text(
             "andLabel",
             Rect::new(494.0, 451.0, 38.0, 26.0),
@@ -82,6 +87,8 @@ const TERMS: [Element; 3] = [
     },
     Element {
         color: RED,
+        text_shadow: WHITE_TEXT_SHADOW,
+        line_break: LineBreak::Clip,
         ..Element::text(
             "privacyPolicyLabel",
             Rect::new(567.0, 451.0, 138.0, 26.0),
@@ -119,6 +126,7 @@ const GENDER: [Element; 5] = [
     Element {
         alignment: 2,
         color: [12, 12, 12, 255],
+        line_break: LineBreak::Clip,
         ..Element::text(
             "genderLabel",
             Rect::new(430.0, 453.0, 157.0, 30.0),
@@ -138,6 +146,7 @@ const GENDER: [Element; 5] = [
     },
     Element {
         color: [12, 12, 12, 255],
+        line_break: LineBreak::Clip,
         ..Element::text(
             "maleGenderLabel",
             Rect::new(471.0, 458.0, 75.0, 21.0),
@@ -156,6 +165,7 @@ const GENDER: [Element; 5] = [
     },
     Element {
         color: [12, 12, 12, 255],
+        line_break: LineBreak::Clip,
         ..Element::text(
             "femaleGenderLabel",
             Rect::new(415.0, 458.0, 187.0, 21.0),
@@ -171,6 +181,8 @@ const REGISTER1: ViewLayout = layout(&[
     LOGO,
     Element {
         color: GREY,
+        minimum_font_size: Some(14.0),
+        text_shadow: WHITE_TEXT_SHADOW,
         ..Element::text(
             "dobLabel",
             Rect::new(323.0, 329.0, 300.0, 38.0),
@@ -200,6 +212,8 @@ const REGISTER1: ViewLayout = layout(&[
     Element {
         alignment: 1,
         color: GREY,
+        text_shadow: WHITE_TEXT_SHADOW,
+        line_break: LineBreak::Clip,
         ..Element::text(
             "tosLabel",
             Rect::new(260.0, 421.0, 506.0, 27.0),
@@ -213,9 +227,11 @@ const REGISTER1: ViewLayout = layout(&[
     TERMS[2],
     Element {
         text_key: Some("rovio_id_continue"),
+        content_insets: [0.0, 0.0, 2.0, 0.0],
         fallback: "CONTINUE",
         font_name: "OpenSans-CondensedBold",
         font_size: 30.0,
+        text_shadow: BUTTON_TEXT_SHADOW,
         ..Element::button(
             "continueButton",
             Rect::new(360.0, 515.0, 304.0, 54.0),
@@ -245,20 +261,26 @@ const REGISTER2: ViewLayout = layout(&[
     BG,
     // Hidden padding outlets are moved to each field's rightView, not root paint.
     LOGO,
-    field(
-        "emailTextField",
-        Rect::new(322.0, 348.0, 376.0, 38.0),
-        "rovio_id_email",
-        "Email",
-        18.0,
-    ),
-    field(
-        "passwordTextField",
-        Rect::new(321.0, 396.0, 376.0, 38.0),
-        "rovio_id_password",
-        "Password",
-        18.0,
-    ),
+    Element {
+        minimum_font_size: Some(17.0),
+        ..field(
+            "emailTextField",
+            Rect::new(322.0, 348.0, 376.0, 38.0),
+            "rovio_id_email",
+            "Email",
+            18.0,
+        )
+    },
+    Element {
+        minimum_font_size: Some(17.0),
+        ..field(
+            "passwordTextField",
+            Rect::new(321.0, 396.0, 376.0, 38.0),
+            "rovio_id_password",
+            "Password",
+            18.0,
+        )
+    },
     cap(
         "emailTextFieldLeft",
         Rect::new(317.0, 348.0, 12.0, 38.0),
@@ -291,6 +313,8 @@ const REGISTER2: ViewLayout = layout(&[
         fallback: "REGISTER",
         font_name: "OpenSans-CondensedBold",
         font_size: 30.0,
+        text_shadow: BUTTON_TEXT_SHADOW,
+        content_insets: [0.0, 0.0, 2.0, 0.0],
         ..Element::button(
             "registerButton",
             Rect::new(360.0, 515.0, 304.0, 54.0),
@@ -347,6 +371,8 @@ const THANKS: ViewLayout = layout(&[
         color: [191, 9, 30, 255],
         alignment: 1,
         font_name: "OpenSans-CondensedBold",
+        minimum_font_size: Some(26.0),
+        line_break: LineBreak::Clip,
         ..Element::text(
             "ThanksForRegisteringLabel",
             Rect::new(251.0, 245.0, 523.0, 89.0),
@@ -371,7 +397,9 @@ const THANKS: ViewLayout = layout(&[
         color: [190, 0, 26, 255],
         alignment: 1,
         max_lines: 2,
+        minimum_font_size: Some(10.0),
         text_key: None,
+        line_break: LineBreak::TruncateTail,
         // Wrapper replaces the nib's sample address; never display a fake email.
         ..Element::text(
             "registrationEmail",
@@ -392,6 +420,7 @@ const FAILURE: ViewLayout = layout(&[
         color: [188, 0, 28, 255],
         alignment: 1,
         font_name: "OpenSans-CondensedBold",
+        minimum_font_size: Some(30.0),
         ..Element::text(
             "mainLabel",
             Rect::new(414.0, 276.0, 197.0, 50.0),

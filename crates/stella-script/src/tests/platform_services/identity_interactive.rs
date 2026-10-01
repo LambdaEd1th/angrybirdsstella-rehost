@@ -5,6 +5,8 @@ use super::*;
 use mlua::Table;
 use std::time::Instant;
 
+mod profile_name;
+
 fn callbacks(runtime: &StellaLua) {
     runtime
         .execute_source(

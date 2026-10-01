@@ -350,6 +350,9 @@ fn register2_return_and_ime_follow_native_field_delegate_not_submit() {
     assert_eq!(press(&mut ui, NamedKey::Enter), None);
     assert_eq!(ui.focused(), Some(Field::Password));
     assert_eq!(press(&mut ui, NamedKey::Enter), None);
+    assert_eq!(ui.focused(), Some(Field::Password));
+    ui.text("secret");
+    assert_eq!(press(&mut ui, NamedKey::Enter), None);
     assert_eq!(ui.focused(), None);
     assert_eq!(
         ui.key(&Key::Named(NamedKey::Tab), None, ModifiersState::SHIFT),

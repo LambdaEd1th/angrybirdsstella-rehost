@@ -18,7 +18,6 @@ skrifa.workspace = true
 unicode-bidi.workspace = true
 unicode-script.workspace = true
 unicode-segmentation.workspace = true
-ureq.workspace = true
 clipper2-rust.workspace = true
 mlua.workspace = true
 lzma-rust2.workspace = true
@@ -31,3 +30,9 @@ time.workspace = true
 smallvec.workspace = true
 stella-assets = { path = "../stella-assets" }
 thiserror.workspace = true
+
+[target.'cfg(not(target_os = "emscripten"))'.dependencies]
+ureq = { workspace = true, features = ["rustls", "gzip"] }
+
+[target.'cfg(target_os = "emscripten")'.dependencies]
+ureq.workspace = true

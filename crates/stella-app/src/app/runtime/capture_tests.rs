@@ -96,6 +96,48 @@ fn assert_red_left_blue_right(rgba: &[u8]) {
 }
 
 #[test]
+fn device_loss_stops_the_next_display_callback_before_lua_update() {
+    let mut app = capture_app();
+    let mut renderer = app.renderer.take().unwrap();
+    app.execute_display_frame(Some(&mut renderer), Duration::from_millis(17))
+        .unwrap();
+    app.runtime.execute_source("assert(frame == 1)").unwrap();
+    renderer.destroy_device_for_test();
+
+    let result = app.execute_display_frame(Some(&mut renderer), Duration::from_millis(17));
+    assert_eq!(
+        result.unwrap_err().to_string(),
+        "wgpu device lost (Destroyed)"
+    );
+    app.runtime.execute_source("assert(frame == 1)").unwrap();
+    app.renderer = Some(renderer);
+    let result = app.resize_runtime_target(GameResolution::new(16, 8).unwrap());
+    assert_eq!(
+        result.unwrap_err().to_string(),
+        "wgpu device lost (Destroyed)"
+    );
+    assert_eq!(app.resolution, GameResolution::new(8, 4).unwrap());
+
+    app.runtime
+        .execute_source("paused = 0; function gamePaused() paused = paused + 1 end")
+        .unwrap();
+    app.last_tick = Instant::now() - Duration::from_millis(20);
+    app.advance();
+    assert_eq!(
+        app.fatal_error.as_deref(),
+        Some("wgpu device lost (Destroyed)")
+    );
+    let error = app.finish_screenshot_run(Ok(())).unwrap_err();
+    assert_eq!(error.to_string(), "wgpu device lost (Destroyed)");
+    app.runtime
+        // This fixture has not loaded gamelogic; native activation suppresses
+        // Lua pause until boot. The shipped-save test covers the loaded path.
+        .execute_source("assert(frame == 1); assert(paused == 0)")
+        .unwrap();
+    assert!(!app.active);
+}
+
+#[test]
 fn window_capture_frame_is_consumed_once_before_any_present_retries() {
     let mut app = capture_app();
     for _ in 0..2 {
@@ -130,7 +172,7 @@ fn screenshot_final_capture_reads_completed_frame_without_replaying_draws() {
         .unwrap()
         .as_nanos();
     let path = std::env::temp_dir().join(format!("stella-capture-final-{unique}.png"));
-    app.save_screenshot(&path, 2, &[], &[], &[]).unwrap();
+    app.save_screenshot(&path, 2, &[], &[], &[], &[]).unwrap();
     let image = image::open(&path).unwrap().to_rgba8();
     assert_eq!(image.dimensions(), (8, 4));
     assert_red_left_blue_right(image.as_raw());
@@ -264,7 +306,7 @@ fn screenshot_consumes_update_capture_after_an_ordinary_frame() {
         .unwrap()
         .as_nanos();
     let path = std::env::temp_dir().join(format!("stella-update-capture-{unique}.png"));
-    app.save_screenshot(&path, 2, &[], &[], &[]).unwrap();
+    app.save_screenshot(&path, 2, &[], &[], &[], &[]).unwrap();
     let image = image::open(&path).unwrap().to_rgba8();
     assert_red_left_blue_right(image.as_raw());
     std::fs::remove_file(path).unwrap();
@@ -423,4 +465,53 @@ fn resizing_consumes_pending_old_extent_capture_before_replacing_target() {
     }
     let capture = app.assets.captures.bindings.values().next().unwrap();
     assert_eq!((capture.width, capture.height), (8, 4));
+}
+
+#[test]
+fn screenshot_drag_query_reads_live_game_state_once_and_releases_frozen_path() {
+    let mut app = capture_app();
+    app.runtime
+        .execute_source(
+            r#"
+        targetX=10; queries=0; skipped=0; trace={}
+        function update()
+            frame=frame+1
+            trace[frame]={cursor.x,cursor.y,keyPressed.LBUTTON,keyHold.LBUTTON,keyReleased.LBUTTON}
+            targetX=targetX+100
+        end
+    "#,
+        )
+        .unwrap();
+    let path = app.runtime.data_root().join("dynamic-drag.png");
+    let queries = vec![
+        (
+            1,
+            2,
+            "queries=queries+1;return targetX,20,targetX+20,40".to_owned(),
+        ),
+        (2, 1, "skipped=skipped+1;return nil".to_owned()),
+    ];
+    app.save_screenshot(&path, 4, &[], &[], &[], &queries)
+        .unwrap();
+    app.runtime.execute_source(r#"
+        if queries~=1 or skipped~=1 then error('drag query repeated') end
+        if not trace[2][3] or not trace[3][4] or not trace[4][5] or trace[4][4] then error('drag did not press, hold and release native cursor') end
+        if trace[2][1]~=110 or trace[2][2]~=20 or trace[3][1]~=120 or trace[3][2]~=30 or trace[4][1]~=130 or trace[4][2]~=40 then error('live drag path did not freeze at input frame') end
+    "#).unwrap();
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn screenshot_drag_query_propagates_errors_and_rejects_partial_or_nonfinite_points() {
+    let mut app = capture_app();
+    let path = app.runtime.data_root().join("invalid-drag.png");
+    for source in [
+        "error('missing live target')",
+        "return 1,nil,3,4",
+        "return 0/0,2,3,4",
+    ] {
+        let result = app.save_screenshot(&path, 1, &[], &[], &[], &[(0, 1, source.to_owned())]);
+        assert!(result.is_err(), "invalid query accepted: {source}");
+        assert!(!path.exists());
+    }
 }

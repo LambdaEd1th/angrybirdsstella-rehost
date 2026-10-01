@@ -101,6 +101,425 @@ fn pixels(image: &RgbaImage, rect: Rect) -> RgbaImage {
 }
 
 #[test]
+fn native_account_window_color_preserves_raster_on_srgb_surfaces() {
+    let Some(mut fixture) = Fixture::new() else {
+        return;
+    };
+    // Compare GPU colors using the same original English strings on every
+    // host, independently of the user's system language and fallback faces.
+    fixture.painter.strings = super::super::strings::Strings::default();
+    fixture.ui.focus(Some(Field::Email));
+    fixture.ui.text("synthetic-color-check@example.invalid");
+    fixture.ui.focus(None);
+    let layer = fixture.paint();
+    let background = RgbaImage::from_fn(1024, 768, |x, y| {
+        image::Rgba([(x % 256) as u8, (y % 256) as u8, ((x + y) % 256) as u8, 255])
+    });
+    let mut renderer = crate::gpu::GpuRenderer::headless(crate::GameResolution {
+        width: 1024,
+        height: 768,
+    })
+    .unwrap();
+    let mut expected: Option<Vec<u8>> = None;
+    for format in [
+        wgpu::TextureFormat::Rgba8Unorm,
+        wgpu::TextureFormat::Rgba8UnormSrgb,
+        wgpu::TextureFormat::Bgra8Unorm,
+        wgpu::TextureFormat::Bgra8UnormSrgb,
+    ] {
+        renderer.set_window_overlay(None).unwrap();
+        renderer
+            .configure_window_target_for_test(&[format], 1024, 768)
+            .unwrap();
+        renderer.set_window_overlay(Some(&layer)).unwrap();
+        let presented = renderer.composite_window_overlay_for_test(&background);
+        if let Some(directory) = std::env::var_os("STELLA_WINDOW_COLOR_AUDIT_DIR") {
+            let directory = PathBuf::from(directory);
+            fs::create_dir_all(&directory).unwrap();
+            presented
+                .save(directory.join(format!("native-account-{format:?}.png")))
+                .unwrap();
+        }
+        if let Some(expected) = &expected {
+            let differing_channel = presented
+                .as_raw()
+                .iter()
+                .zip(expected)
+                .position(|(actual, expected)| actual != expected);
+            assert!(
+                differing_channel.is_none(),
+                "{format:?} changed original-artwork account byte {differing_channel:?}"
+            );
+        } else {
+            expected = Some(presented.into_raw());
+        }
+    }
+}
+
+#[test]
+fn native_account_autoshrink_preserves_fit_and_minimum_size() {
+    let Some(mut fixture) = Fixture::new() else {
+        return;
+    };
+    let element = layout::layout_for(AccountView::Register1)
+        .unwrap()
+        .elements
+        .iter()
+        .find(|element| element.name == "dobLabel")
+        .unwrap();
+    let width = fixture.painter.canvas.rect(element.rect).width;
+    let normal = fixture
+        .painter
+        .font(
+            &fixture.runtime,
+            element.font_name,
+            element.font_size,
+            element.color,
+        )
+        .unwrap();
+    let short = fixture
+        .painter
+        .fitting_font(&fixture.runtime, element, "DOB", width, element.color)
+        .unwrap();
+    assert_eq!(short.size, normal.size);
+
+    let mut overflow = String::new();
+    while normal.native_string_width(&overflow) as f32 <= width {
+        overflow.push('W');
+    }
+    let fitted = fixture
+        .painter
+        .fitting_font(&fixture.runtime, element, &overflow, width, element.color)
+        .unwrap();
+    assert!(fitted.size < normal.size);
+    assert!(fitted.native_string_width(&overflow) as f32 <= width);
+
+    let impossible = "W".repeat(100);
+    let minimum = fixture
+        .painter
+        .fitting_font(&fixture.runtime, element, &impossible, width, element.color)
+        .unwrap();
+    assert_eq!(minimum.size, 14);
+    assert!(minimum.native_string_width(&impossible) as f32 > width);
+
+    let sign_in = layout::layout_for(AccountView::SignIn).unwrap();
+    let field = sign_in
+        .elements
+        .iter()
+        .find(|element| element.name == "emailTextField")
+        .unwrap();
+    let field_width = fixture
+        .painter
+        .canvas
+        .rect(layout::field_content_rect(AccountView::SignIn, field))
+        .width;
+    let field_color = [0, 0, 0, 255];
+    let base = fixture
+        .painter
+        .font(
+            &fixture.runtime,
+            field.font_name,
+            field.font_size,
+            field_color,
+        )
+        .unwrap();
+    let mut email = String::new();
+    while base.native_string_width(&email) as f32 <= field_width {
+        email.push('W');
+    }
+    let fitted_field = fixture
+        .painter
+        .fitting_font(&fixture.runtime, field, &email, field_width, field_color)
+        .unwrap();
+    assert_eq!(fitted_field.size, 17);
+    assert!(fitted_field.native_string_width(&email) as f32 <= field_width);
+    fixture.ui.focus(Some(Field::Email));
+    fixture.ui.text(&email);
+    fixture.ui.focus(None);
+    let rendered = fixture.paint();
+    assert_eq!(rendered.dimensions(), (1024, 768));
+}
+
+#[test]
+fn nib_label_shadow_draws_above_text_inside_original_label_bounds() {
+    let Some(mut fixture) = Fixture::new() else {
+        return;
+    };
+    let element = native_element("forgotPasswordLabel");
+    assert_eq!(
+        element.text_shadow,
+        Some(([255, 255, 255, 255], [0.0, -1.0]))
+    );
+    assert_eq!(
+        native_element("signInButton").text_shadow,
+        Some(([128, 128, 128, 255], [0.0, -1.0]))
+    );
+    assert!(native_element("emailTextField").text_shadow.is_none());
+    let font = fixture
+        .painter
+        .font(
+            &fixture.runtime,
+            element.font_name,
+            element.font_size,
+            element.color,
+        )
+        .unwrap();
+    let mut shadow_font = font.clone();
+    shadow_font.fill_rgba = [255; 4];
+    let rect = Rect::new(25.0, 25.0, 180.0, 32.0);
+    let mut plain = Pixmap::new(240, 100).unwrap();
+    let mut shadowed = Pixmap::new(240, 100).unwrap();
+    text_lines(&mut plain, &font, "Shadow", rect, 0, 1).unwrap();
+    text_lines_with_shadow(
+        &mut shadowed,
+        &font,
+        "Shadow",
+        rect,
+        0,
+        1,
+        Some((&shadow_font, [0.0, -1.0])),
+    )
+    .unwrap();
+    let mut shadow_only = false;
+    for y in 0..100usize {
+        for x in 0..240usize {
+            let alpha = (y * 240 + x) * 4 + 3;
+            let new_alpha = shadowed.data()[alpha];
+            if plain.data()[alpha] == 0 && new_alpha != 0 {
+                shadow_only = true;
+            }
+            if !(25..205).contains(&x) || !(25..57).contains(&y) {
+                assert_eq!(new_alpha, 0, "shadow escaped UILabel clipping bounds");
+            }
+        }
+    }
+    assert!(shadow_only, "native one-point offset must add visible ink");
+}
+
+#[test]
+fn nib_label_break_modes_preserve_clipping_and_unicode_tail_prefixes() {
+    let Some(mut fixture) = Fixture::new() else {
+        return;
+    };
+    let font = fixture
+        .painter
+        .font(&fixture.runtime, "OpenSans", 21.0, [0, 0, 0, 255])
+        .unwrap();
+    let clipped = layout::layout_for(AccountView::AccountNotVerified)
+        .unwrap()
+        .elements
+        .iter()
+        .find(|element| element.name == "verificationEmailSent")
+        .unwrap();
+    let text = "Long translated account message ".repeat(6);
+    let style = TextLayout {
+        alignment: clipped.alignment,
+        max_lines: clipped.max_lines,
+        line_break: clipped.line_break,
+    };
+    // The native two-line count permits explicit newlines; mode 2 never
+    // introduces soft wraps or an ellipsis simply because the line is long.
+    assert_eq!(
+        drawing::label_lines(&font, &text, 120.0, style).as_slice(),
+        std::slice::from_ref(&text)
+    );
+    assert_eq!(
+        drawing::label_lines(&font, "first\nsecond\nthird", 120.0, style),
+        ["first", "second"]
+    );
+    let word_style = TextLayout {
+        line_break: LineBreak::WordWrap,
+        ..style
+    };
+    let wrapped = drawing::label_lines(&font, &text, 120.0, word_style);
+    assert_eq!(wrapped.len(), 2);
+    assert!(wrapped.iter().all(|line| !line.contains('…')));
+    let tailed = drawing::label_lines(
+        &font,
+        &text,
+        120.0,
+        TextLayout {
+            line_break: LineBreak::TruncateTail,
+            ..style
+        },
+    );
+    assert_eq!(tailed.len(), 2);
+    assert!(tailed[1].ends_with('…'));
+
+    // An unbroken address is soft-wrapped without inserting a space between
+    // clusters. Its final visible line must still be a prefix of the source.
+    let address = format!("{}@example.invalid", "e\u{301}👩‍🚀🇨🇳👍🏽".repeat(12));
+    for max_lines in [1, 2] {
+        let lines = drawing::label_lines(
+            &font,
+            &address,
+            160.0,
+            TextLayout {
+                max_lines,
+                line_break: LineBreak::TruncateTail,
+                ..style
+            },
+        );
+        let retained = lines.join("");
+        let prefix = retained.strip_suffix('…').unwrap();
+        assert!(address.starts_with(prefix));
+        assert!(
+            address
+                .grapheme_indices(true)
+                .any(|(at, _)| at == prefix.len()),
+            "truncation must end at a complete source grapheme"
+        );
+        assert!(
+            lines
+                .iter()
+                .all(|line| font.native_string_width(line) <= 160)
+        );
+    }
+}
+
+#[test]
+fn retained_email_labels_render_a_fitting_tail_inside_their_native_height() {
+    let Some(mut fixture) = Fixture::new() else {
+        return;
+    };
+    let destination = std::env::var_os("STELLA_ACCOUNT_LABEL_DIAGNOSTIC").map(PathBuf::from);
+    let address = format!("{}@example.invalid", "We\u{301}👩‍🚀🇨🇳".repeat(40));
+    for (view, name) in [
+        (AccountView::AccountNotVerified, "verificationEmail"),
+        (AccountView::ThanksForRegistering, "registrationEmail"),
+    ] {
+        fixture.ui.email.select_all();
+        fixture.ui.email.replace("");
+        fixture.view(view);
+        fixture.ui.dirty();
+        let background = fixture.paint();
+        let element = layout::layout_for(view)
+            .unwrap()
+            .elements
+            .iter()
+            .find(|element| element.name == name)
+            .unwrap();
+        let font = fixture
+            .painter
+            .font(
+                &fixture.runtime,
+                element.font_name,
+                element.font_size,
+                element.color,
+            )
+            .unwrap();
+        assert!(element.rect.height < (font.label_line_height * 2) as f32);
+        // Independent raster oracle: retain the longest whole-grapheme
+        // prefix whose complete glyph run plus ellipsis fits the label.
+        let mut prefix = String::new();
+        for cluster in address.graphemes(true) {
+            if font.native_string_width(&format!("{prefix}{cluster}…")) as f32 > element.rect.width
+            {
+                break;
+            }
+            prefix.push_str(cluster);
+        }
+        prefix.push('…');
+        let mut expected = Pixmap::from_vec(
+            background.as_raw().clone(),
+            tiny_skia::IntSize::from_wh(1024, 768).unwrap(),
+        )
+        .unwrap();
+        text_lines(
+            &mut expected,
+            &font,
+            &prefix,
+            element.rect,
+            element.alignment,
+            1,
+        )
+        .unwrap();
+        fixture.ui.email.replace(&address);
+        fixture.ui.dirty();
+        let actual = fixture.paint();
+        assert!(
+            actual.as_raw() == expected.data(),
+            "{name} tail raster differs"
+        );
+        if let Some(path) = &destination {
+            actual.save(path.join(format!("{name}-long.png"))).unwrap();
+            background
+                .save(path.join(format!("{name}-empty.png")))
+                .unwrap();
+        }
+    }
+}
+
+#[test]
+fn error_popup_measures_the_native_constraint_independently_of_its_two_visible_lines() {
+    let Some(mut fixture) = Fixture::new() else {
+        return;
+    };
+    let font = fixture
+        .painter
+        .font(
+            &fixture.runtime,
+            "OpenSans",
+            layout::ERROR_POPUP_FONT_SIZE,
+            [255; 4],
+        )
+        .unwrap();
+    let line_height = font.label_line_height as f32;
+    let text = "First\nSecond\nThird";
+    let mut actual = Pixmap::new(1024, 768).unwrap();
+    let rect = fixture
+        .painter
+        .error_popup(
+            &mut actual,
+            &fixture.runtime,
+            Rect::new(670.0, 280.0, 30.0, 30.0),
+            text,
+        )
+        .unwrap();
+    assert_eq!(rect.width, 312.0);
+    assert_eq!(rect.height, line_height * 3.0 + 30.0);
+    let mut expected = Pixmap::new(1024, 768).unwrap();
+    let artwork = fixture
+        .painter
+        .image(layout::ERROR_POPUP_IMAGE)
+        .unwrap()
+        .clone();
+    drawing::draw_stretched(
+        &mut expected,
+        &artwork,
+        rect,
+        layout::ERROR_POPUP_CAPS,
+        1.0,
+        fixture.painter.image_densities[layout::ERROR_POPUP_IMAGE],
+    );
+    let inset = layout::ERROR_POPUP_TEXT_TOP_INSET;
+    text_lines(
+        &mut expected,
+        &font,
+        "First\nSecond",
+        Rect::new(rect.x, rect.y + inset, rect.width, rect.height - inset),
+        1,
+        2,
+    )
+    .unwrap();
+    assert_eq!(actual.data(), expected.data());
+    let many = "One\nTwo\nThree\nFour\nFive\nSix\nSeven";
+    let measured = drawing::word_wrap_size(&font, many, layout::ERROR_POPUP_TEXT_CONSTRAINT);
+    let capacity = (layout::ERROR_POPUP_TEXT_CONSTRAINT[1] / line_height).floor();
+    assert_eq!(measured[1], capacity * line_height);
+    assert!(measured[1] > line_height * 2.0);
+    assert_eq!(
+        drawing::word_wrap_size(&font, "First", [330.0, 1.0])[1],
+        line_height
+    );
+    if let Some(path) = std::env::var_os("STELLA_ACCOUNT_LABEL_DIAGNOSTIC") {
+        actual
+            .save_png(PathBuf::from(path).join("error-popup-three-measured-two-visible.png"))
+            .unwrap();
+    }
+}
+
+#[test]
 fn delayed_password_error_renders_icon_with_normal_caps_then_submit_renders_red_caps_and_popup() {
     let Some(mut fixture) = Fixture::new() else {
         return;

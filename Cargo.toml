@@ -6,10 +6,11 @@ members = [
     "crates/stella-core",
     "crates/stella-script",
     "crates/stella-tool",
+    "crates/stella-web",
 ]
 
 [workspace.package]
-version = "0.1.0-beta3"
+version = "0.1.0-beta4"
 edition = "2024"
 license = "AGPL-3.0-or-later"
 rust-version = "1.98"
@@ -17,16 +18,22 @@ rust-version = "1.98"
 [workspace.dependencies]
 aes = "0.9.3"
 anyhow = "1.0.104"
-arboard = { version = "3.6.1", default-features = false, features = ["wayland-data-control"] }
+arboard = { version = "3.6.1", default-features = false, features = [
+    "wayland-data-control",
+] }
 base64 = { version = "0.23.1", default-features = false, features = ["std"] }
 cbc = { version = "0.2.1", features = ["alloc"] }
-clap = { version = "4.6.6", features = ["derive"] }
+clap = { version = "4.6.7", features = ["derive"] }
 image = { version = "0.25.10", default-features = false, features = ["png"] }
+png = "0.18.1"
 fontdb = "0.24.0"
 getrandom = "0.4.3"
 libc = "0.2.189"
-lzma-rust2 = { version = "0.20.1", default-features = false, features = ["std", "encoder"] }
-clipper2-rust = "1.1.0"
+lzma-rust2 = { version = "0.21.0", default-features = false, features = [
+    "std",
+    "encoder",
+] }
+clipper2-rust = "1.2.0"
 mlua = { version = "0.12.1", features = ["lua51", "vendored", "serialize"] }
 bytemuck = { version = "1.25.2", features = ["derive"] }
 pollster = "1.0.1"
@@ -40,16 +47,16 @@ harfrust = "0.13.3"
 unicode-bidi = "0.3.18"
 unicode-script = "0.5.8"
 unicode-segmentation = "1.13.3"
-ureq = "3.4.1"
-sevenz-rust2 = { version = "0.22.2", default-features = false }
+ureq = { version = "3.4.2", default-features = false }
+sevenz-rust2 = { version = "0.23.0", default-features = false }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 plist = { version = "1.10.1", default-features = false }
 quick-xml = "0.42.0"
 time = { version = "0.3.55", features = ["parsing"] }
 skrifa = "0.47.0"
-smallvec = "1.16.1"
-thiserror = "2.0.20"
+smallvec = "1.16.2"
+thiserror = "2.0.21"
 tiny-skia = "0.12.0"
 walkdir = "2.5.0"
 wgpu = "30.0.1"
@@ -64,3 +71,7 @@ winit = { version = "0.30.13", default-features = false, features = [
 lto = "thin"
 codegen-units = 1
 strip = "symbols"
+
+[profile.web]
+inherits = "release"
+panic = "abort"

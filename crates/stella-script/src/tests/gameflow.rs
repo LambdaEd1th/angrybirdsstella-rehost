@@ -110,5 +110,20 @@ mod retry;
 mod hold;
 
 mod earned_retry;
+mod last_chance;
 mod practice;
 mod progression;
+mod sixth;
+
+mod seventh;
+mod stella_route;
+
+mod eighth;
+
+mod eleventh;
+mod first_gate;
+mod mixed_birds;
+mod ninth;
+mod poppy_levels;
+mod poppy_rewards;
+mod tenth;

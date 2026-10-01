@@ -243,19 +243,32 @@ fn with_file_lock<T>(
     file: fs::File,
     operation: impl FnOnce() -> Result<T, StoreError>,
 ) -> Result<T, StoreError> {
-    file.try_lock().map_err(|_| StoreError::Io)?;
-    let mut guard = FileLock { file, held: true };
-    let result = operation();
-    guard.file.unlock().map_err(|_| StoreError::Io)?;
-    guard.held = false;
-    result
+    #[cfg(target_os = "emscripten")]
+    {
+        // Each browser module owns an isolated MEMFS. The caller already
+        // holds the shared-path Mutex; host Web Locks serialize save slots
+        // across tabs. Rust's OS file locks are unsupported on this target.
+        drop(file);
+        operation()
+    }
+    #[cfg(not(target_os = "emscripten"))]
+    {
+        file.try_lock().map_err(|_| StoreError::Io)?;
+        let mut guard = FileLock { file, held: true };
+        let result = operation();
+        guard.file.unlock().map_err(|_| StoreError::Io)?;
+        guard.held = false;
+        result
+    }
 }
 
+#[cfg(not(target_os = "emscripten"))]
 struct FileLock {
     file: fs::File,
     held: bool,
 }
 
+#[cfg(not(target_os = "emscripten"))]
 impl Drop for FileLock {
     fn drop(&mut self) {
         if self.held {

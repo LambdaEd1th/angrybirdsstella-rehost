@@ -1,0 +1,97 @@
+name: GitHub Pages
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        description: Published release tag ref to deploy
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+env:
+  RUST_TOOLCHAIN: 1.98.1
+  EMSCRIPTEN_VERSION: 6.0.1
+  RUNTIME_DATA_RELEASE: runtime-data-v1.1.6
+  RUNTIME_DATA_ARCHIVE: angry-birds-stella-runtime-data-v1.1.6-beta3.tar.gz
+  RUNTIME_DATA_SHA256: 5192e225ccec77e604e76f9b8ce7b33fda067f67fefcff4239b22376e742e879
+
+jobs:
+  build:
+    name: Build browser game
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - name: Install Rust
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+          rustup target add wasm32-unknown-emscripten
+      - name: Cache Cargo downloads
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-pages-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-pages-${{ runner.os }}-
+      - name: Install Emscripten
+        run: |
+          git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
+          "$RUNNER_TEMP/emsdk/emsdk" install "$EMSCRIPTEN_VERSION"
+          "$RUNNER_TEMP/emsdk/emsdk" activate "$EMSCRIPTEN_VERSION"
+      - name: Test browser save handling
+        run: |
+          source "$RUNNER_TEMP/emsdk/emsdk_env.sh"
+          node --test web/tests/storage.test.js
+      - name: Download and verify the existing runtime release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/runtime-data" runtime
+          gh release download "$RUNTIME_DATA_RELEASE" --repo "$GITHUB_REPOSITORY" \
+            --pattern "$RUNTIME_DATA_ARCHIVE" --dir "$RUNNER_TEMP/runtime-data"
+          echo "$RUNTIME_DATA_SHA256  $RUNNER_TEMP/runtime-data/$RUNTIME_DATA_ARCHIVE" | sha256sum --check -
+          tar -xzf "$RUNNER_TEMP/runtime-data/$RUNTIME_DATA_ARCHIVE" -C runtime
+          python3 .github/scripts/runtime_native_assets.py verify --data runtime/data
+      - name: Build complete static website
+        run: |
+          source "$RUNNER_TEMP/emsdk/emsdk_env.sh"
+          python3 web/build.py --data runtime/data --output dist/pages
+      - name: Boot WebAssembly and verify save restoration
+        run: |
+          source "$RUNNER_TEMP/emsdk/emsdk_env.sh"
+          node web/tests/engine-smoke.mjs dist/pages
+      - name: Configure Pages
+        uses: actions/configure-pages@v6
+      - name: Upload website
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: dist/pages
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Publish website
+        id: deployment
+        uses: actions/deploy-pages@v5

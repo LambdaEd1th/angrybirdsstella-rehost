@@ -13,7 +13,9 @@ enum NativeAudioSelector {
 /// selected resource member checks whether an AudioOutput exists.
 fn native_audio_selector(value: Value, function: &str) -> LuaResult<NativeAudioSelector> {
     match value {
-        Value::Integer(handle) => Ok(NativeAudioSelector::Handle(handle)),
+        Value::Integer(handle) => Ok(NativeAudioSelector::Handle(crate::lua_integer_to_i64(
+            handle,
+        ))),
         Value::Number(handle) => {
             if let Some(handle) = native_integer(&Value::Number(handle)) {
                 Ok(NativeAudioSelector::Handle(handle))

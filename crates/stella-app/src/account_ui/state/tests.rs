@@ -159,7 +159,37 @@ fn signin_return_moves_email_to_password_then_blurs_without_submission() {
     ui.sync(Some(snapshot(1, AccountView::ForgotPassword)));
     ui.focus(Some(Field::Email));
     assert_eq!(press(&mut ui, NamedKey::Enter), None);
+    assert_eq!(ui.focused(), Some(Field::Email));
+    ui.text("reset@example.invalid");
+    assert_eq!(press(&mut ui, NamedKey::Enter), None);
     assert_eq!(ui.focused(), None);
+}
+
+#[test]
+fn nib_auto_enabled_return_ignores_empty_fields_but_accepts_whitespace_text() {
+    for view in [
+        AccountView::SignIn,
+        AccountView::Register2,
+        AccountView::ForgotPassword,
+    ] {
+        let mut ui = AccountUi::default();
+        ui.sync(Some(snapshot(1, view)));
+        ui.focus(Some(Field::Email));
+        assert_eq!(press(&mut ui, NamedKey::Enter), None);
+        assert_eq!(ui.focused(), Some(Field::Email));
+        ui.text(" ");
+        assert_eq!(press(&mut ui, NamedKey::Enter), None);
+        if view == AccountView::ForgotPassword {
+            assert_eq!(ui.focused(), None);
+        } else {
+            assert_eq!(ui.focused(), Some(Field::Password));
+            assert_eq!(press(&mut ui, NamedKey::Enter), None);
+            assert_eq!(ui.focused(), Some(Field::Password));
+            ui.text(" ");
+            assert_eq!(press(&mut ui, NamedKey::Enter), None);
+            assert_eq!(ui.focused(), None);
+        }
+    }
 }
 
 #[test]

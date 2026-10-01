@@ -45,6 +45,7 @@ impl AssetCatalog {
         if let Some(image) = &region.decoded_image
             && !self.textures.contains_key(&region.texture_source)
         {
+            image.layout.pixels.gl_texture_format(true)?;
             let pixels = RgbaImage::from_raw(image.width, image.height, image.rgba.clone())
                 .ok_or_else(|| anyhow!("invalid retained native image pixels"))?;
             self.textures.insert(
@@ -93,14 +94,19 @@ impl AssetCatalog {
 fn load_texture(path: &Path) -> Result<TextureAsset> {
     let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
     use stella_assets::native_image::{ImageReaderKind, image_reader_kind};
-    match image_reader_kind(&bytes, path.extension().and_then(|value| value.to_str())) {
+    let texture = match image_reader_kind(&bytes, path.extension().and_then(|value| value.to_str()))
+    {
         ImageReaderKind::Pvr => pvr_reader::load(path, &bytes),
-        ImageReaderKind::Png => raster_reader::load_png(path, &bytes),
+        ImageReaderKind::Bmp | ImageReaderKind::Tga | ImageReaderKind::Png => {
+            raster_reader::load_native(path, &bytes)
+        }
         ImageReaderKind::Webp => raster_reader::load_webp(path, &bytes),
         ImageReaderKind::Jpeg => raster_reader::load_jpeg(path, &bytes),
         ImageReaderKind::Unsupported => Err(anyhow!(
             "unsupported native image reader for {}",
             path.display()
         )),
-    }
+    }?;
+    texture.source_layout.pixels.gl_texture_format(true)?;
+    Ok(texture)
 }

@@ -5,6 +5,8 @@ use super::*;
 mod completion;
 mod connection;
 
+pub(super) const ACCOUNT_NAME_REGISTRY_KEY: &str = "stella.social.account-name";
+
 #[derive(Clone, Copy, Debug)]
 pub(super) enum ConnectionConsumer {
     Readiness,
@@ -53,6 +55,11 @@ impl Drop for PlatformState {
 
 #[derive(Clone, Debug)]
 pub(super) enum PlatformCompletion {
+    AccountName {
+        lease: PlatformLease,
+        lifetime: IdentityLifetime,
+        result: Result<SocialPlatformProfile, SocialPlatformError>,
+    },
     ServiceProfile {
         lease: PlatformLease,
         result: Result<SocialPlatformProfile, SocialPlatformError>,
@@ -100,6 +107,47 @@ pub(super) enum PlatformCompletion {
 }
 
 impl SocialRuntime {
+    pub(super) fn request_account_profile_name(
+        &self,
+        lua: &Lua,
+        owner: (u64, u64),
+    ) -> LuaResult<()> {
+        let lifetime = self.account.identity_lifetime();
+        if !lifetime.matches_owner(owner) {
+            return Ok(());
+        }
+        let lease = self
+            .platform
+            .lock()
+            .map_err(|_| runtime_error("platform state lock poisoned"))?
+            .session
+            .clone();
+        // The native absent-platform response is a failure ignored by the
+        // account callback. This lookup never authenticates or connects.
+        let Some(lease) = lease else {
+            return Ok(());
+        };
+        match lease.provider.clone().prepare_user_profile() {
+            SocialProfileRequest::Ready(result) => self.finish_platform(
+                lua,
+                PlatformCompletion::AccountName {
+                    lease,
+                    lifetime,
+                    result,
+                },
+            ),
+            SocialProfileRequest::Pending(request) => {
+                self.spawn_online("account-name", move || {
+                    OnlineCompletion::platform(PlatformCompletion::AccountName {
+                        lease,
+                        lifetime,
+                        result: request(),
+                    })
+                })
+            }
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn platform_state_for_test(&self) -> (u32, bool, bool) {
         let state = self.platform.lock().unwrap();

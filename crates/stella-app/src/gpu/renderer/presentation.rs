@@ -3,22 +3,27 @@
 use super::super::*;
 
 impl GpuRenderer {
-    pub(crate) fn resize_surface(&mut self, width: u32, height: u32) {
+    pub(crate) fn resize_surface(&mut self, width: u32, height: u32) -> Result<()> {
+        self.check_device()?;
         if width == 0 || height == 0 {
-            return;
+            return Ok(());
         }
         if let (Some(surface), Some(config)) = (&self.surface, &mut self.surface_config)
             && (config.width != width || config.height != height)
         {
             config.width = width;
             config.height = height;
-            surface.configure(&self.device, config);
+            if self.surface_recovery.is_none() {
+                surface.configure(&self.device, config);
+            }
         }
+        self.device_state.check()
     }
 
-    pub(crate) fn resize_game_target(&mut self, resolution: GameResolution) {
+    pub(crate) fn resize_game_target(&mut self, resolution: GameResolution) -> Result<()> {
+        self.check_device()?;
         if resolution == self.resolution {
-            return;
+            return Ok(());
         }
         let (game_texture, game_view) =
             super::initialization::target::create_game_texture(&self.device, resolution);
@@ -48,53 +53,91 @@ impl GpuRenderer {
                     ],
                 }));
         }
+        self.device_state.check()
     }
 
     /// Present the completed game target without replaying its command stream.
     pub(crate) fn present_to_window(&mut self, width: u32, height: u32) -> Result<()> {
+        self.present_window_acquiring(width, height, |renderer| {
+            let surface = renderer
+                .surface
+                .as_ref()
+                .ok_or_else(|| anyhow!("window renderer has no wgpu surface"))?;
+            Ok(surface.get_current_texture())
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn present_window_with_acquire_for_test(
+        &mut self,
+        width: u32,
+        height: u32,
+        mut acquire: impl FnMut(&wgpu::Surface<'static>) -> wgpu::CurrentSurfaceTexture,
+    ) -> Result<()> {
+        self.present_window_acquiring(width, height, |renderer| {
+            let surface = renderer
+                .surface
+                .as_ref()
+                .ok_or_else(|| anyhow!("window renderer has no wgpu surface"))?;
+            Ok(acquire(surface))
+        })
+    }
+
+    fn present_window_acquiring(
+        &mut self,
+        width: u32,
+        height: u32,
+        acquire: impl FnMut(&mut Self) -> Result<wgpu::CurrentSurfaceTexture>,
+    ) -> Result<()> {
+        self.check_device()?;
         if width == 0 || height == 0 {
             return Ok(());
         }
-        self.resize_surface(width, height);
-        let surface = self
-            .surface
-            .as_ref()
-            .ok_or_else(|| anyhow!("window renderer has no wgpu surface"))?;
-        let output = match surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(output)
-            | wgpu::CurrentSurfaceTexture::Suboptimal(output) => output,
-            wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
-                if let Some(config) = &self.surface_config {
-                    surface.configure(&self.device, config);
-                }
-                match surface.get_current_texture() {
-                    wgpu::CurrentSurfaceTexture::Success(output)
-                    | wgpu::CurrentSurfaceTexture::Suboptimal(output) => output,
-                    status => {
-                        return Err(anyhow!("acquire reconfigured wgpu surface: {status:?}"));
-                    }
-                }
-            }
-            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
-                return Ok(());
-            }
-            wgpu::CurrentSurfaceTexture::Validation => {
-                return Err(anyhow!("wgpu surface acquisition validation error"));
-            }
+        self.resize_surface(width, height)?;
+        let pending = self.surface_recovery.take();
+        let frame = super::surface_acquisition::acquire_window_frame(
+            self,
+            pending,
+            acquire,
+            |renderer, recovery| renderer.recover_window_surface(recovery, width, height),
+        )?;
+        self.surface_recovery = frame.pending_recovery;
+        let Some(output) = frame.texture else {
+            return self.device_state.check();
         };
-        let view = output
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
+        self.device_state.check()?;
+        let view = super::window_target_view(&output.texture);
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Stella surface blit encoder"),
             });
+        self.encode_window_game(&mut encoder, &view, width, height)?;
+        // Skynest's native UIView is a sibling above the EAGL view, not part
+        // of its drawable. Composite only onto the acquired window surface.
+        self.encode_window_overlay(&mut encoder, &view, width, height);
+        self.queue.submit([encoder.finish()]);
+        self.device_state.check()?;
+        if let Some(window) = &self.surface_window {
+            // Wayland ties its next redraw callback to the actual present.
+            window.pre_present_notify();
+        }
+        self.queue.present(output);
+        self.device_state.check()
+    }
+
+    pub(super) fn encode_window_game(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        width: u32,
+        height: u32,
+    ) -> Result<()> {
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Stella letterbox presentation pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
+                    view,
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
@@ -130,11 +173,6 @@ impl GpuRenderer {
             );
             pass.draw(0..3, 0..1);
         }
-        // Skynest's native UIView is a sibling above the EAGL view, not part
-        // of its drawable. Composite only onto the acquired window surface.
-        self.encode_window_overlay(&mut encoder, &view, width, height);
-        self.queue.submit([encoder.finish()]);
-        self.queue.present(output);
         Ok(())
     }
 
@@ -152,6 +190,7 @@ impl GpuRenderer {
     /// after normal window presentation so it captures that exact frame
     /// without traversing Lua or issuing the scene draw a second time.
     pub(crate) fn read_game_rgba(&self) -> Result<Vec<u8>> {
+        self.check_device()?;
         let unpadded_bytes_per_row = self.resolution.width * 4;
         let alignment = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
         let bytes_per_row = unpadded_bytes_per_row.div_ceil(alignment) * alignment;
@@ -196,6 +235,7 @@ impl GpuRenderer {
         self.device
             .poll(wgpu::PollType::wait_indefinitely())
             .context("wait for Stella screenshot readback")?;
+        self.device_state.check()?;
         receiver
             .recv()
             .context("receive Stella screenshot map result")?
@@ -218,5 +258,28 @@ impl GpuRenderer {
             pixel[3] = 255;
         }
         Ok(rgba)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn device_loss_during_acquisition_stops_surface_recovery() {
+        let size = GameResolution::new(8, 4).unwrap();
+        let mut renderer = GpuRenderer::headless(size).unwrap();
+        let mut acquisitions = 0;
+        let result = renderer.present_window_acquiring(8, 4, |renderer| {
+            acquisitions += 1;
+            renderer.destroy_device_for_test();
+            Ok(wgpu::CurrentSurfaceTexture::Lost)
+        });
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "wgpu device lost (Destroyed)"
+        );
+        assert_eq!(acquisitions, 1);
+        assert_eq!(renderer.resolution, size);
     }
 }

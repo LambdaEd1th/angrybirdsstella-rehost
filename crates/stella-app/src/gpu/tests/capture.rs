@@ -443,7 +443,7 @@ fn captured_images_keep_pixels_and_native_dimensions_across_drawable_resize() {
         .render_offscreen(&assets, &first, [0, 0, 0])
         .unwrap();
     let generation = assets.captures.bindings[source].source.clone();
-    renderer.resize_game_target(resized);
+    renderer.resize_game_target(resized).unwrap();
     let next = assets
         .prepare_gpu_frame_at_resolution(resized, &[draw(0, "CAP", 8.0, 4.0)], &[], &[], &[])
         .unwrap();

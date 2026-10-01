@@ -12,6 +12,11 @@ fn pointer(runtime: &StellaLua, frame: usize, x: f64, y: f64, down: bool) {
 }
 
 pub(super) fn next_level(runtime: &StellaLua, frame: &mut usize, expected: &str) {
+    click_next(runtime, frame);
+    assert_scene(runtime, "GameScene", Some(expected));
+}
+
+pub(super) fn click_next(runtime: &StellaLua, frame: &mut usize) {
     let deadline = *frame + 1800;
     let environment = game_environment(runtime.lua()).unwrap();
     let button=runtime.lua().load(r#"return function()
@@ -36,7 +41,6 @@ pub(super) fn next_level(runtime: &StellaLua, frame: &mut usize, expected: &str)
     tick(runtime, frame, 1, "next level press");
     pointer(runtime, *frame, x, y, false);
     tick(runtime, frame, 360, "next level transition");
-    assert_scene(runtime, "GameScene", Some(expected));
 }
 
 #[test]
@@ -111,6 +115,10 @@ pub(super) fn complete_practice(runtime: &StellaLua, frame: &mut usize, level: &
         }
         if s.get::<bool>("won").unwrap() {
             won = true;
+            break;
+        }
+        if goals == 0 && releasing.is_none() {
+            // Gameplay input is finished; let the original ending logic settle.
             break;
         }
         if let Some(at) = releasing {
@@ -204,6 +212,27 @@ pub(super) fn complete_practice(runtime: &StellaLua, frame: &mut usize, level: &
             }
         }
         tick(runtime, frame, 1, "practice flight");
+    }
+    if !won && releasing.is_none() {
+        let state: Table = snapshot.call(()).unwrap();
+        if state.get::<u32>("goals").unwrap() == 0 {
+            // Original LevelEndLogic waits for scoreAddedTime < 0 or more
+            // than 12 seconds without goals. A late final hit must still get
+            // that authored settlement period after the input budget expires.
+            let settle_deadline = *frame + 1200;
+            let timers: (Option<f64>, Option<f64>, bool) = runtime.lua().load("return g_levelEndLogic:getTimeWithoutLevelGoals(),g_levelEndLogic:getScoreAddedTime(),not not g_levelEndLogic.preventLevelEnding")
+                .set_environment(environment.clone()).eval().unwrap();
+            eprintln!("[practice] settling cleared goals frame={frame} timers={timers:?}");
+            while *frame < settle_deadline {
+                let state: Table = snapshot.call(()).unwrap();
+                assert_eq!(state.get::<u32>("goals").unwrap(), 0);
+                if state.get::<bool>("won").unwrap() {
+                    won = true;
+                    break;
+                }
+                tick(runtime, frame, 1, "practice original no-goal settlement");
+            }
+        }
     }
     eprintln!(
         "[practice] end level={level} frame={frame} won={won} shots={shots} ability_inputs={}",

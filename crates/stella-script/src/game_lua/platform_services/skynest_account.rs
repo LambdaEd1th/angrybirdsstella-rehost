@@ -1101,7 +1101,7 @@ fn notify_login_success(lua: &Lua, state: &Arc<Mutex<OfflineState>>) -> LuaResul
     // 1000A3FB8 synchronously publishes the account-login event before flags
     // and Lua onLoginSuccess. It is distinct from the delayed SDK session event.
     super::social::dispatch_account_login(lua)?;
-    let (id, name, connected_to_social_network, is_guest) = {
+    let (id, name, connected_to_social_network, is_guest, identity_owner) = {
         let mut state = state
             .lock()
             .map_err(|_| runtime_error("Skynest state lock poisoned"))?;
@@ -1129,6 +1129,7 @@ fn notify_login_success(lua: &Lua, state: &Arc<Mutex<OfflineState>>) -> LuaResul
                 .unwrap_or_else(|| "Stella Player".to_owned()),
             connected,
             profile.as_ref().is_none_or(ProfileResponse::is_guest),
+            state.identity_session.storage_lifetime(),
         )
     };
     let account = match lua.globals().get::<Value>("SkynestAccount")? {
@@ -1143,8 +1144,16 @@ fn notify_login_success(lua: &Lua, state: &Arc<Mutex<OfflineState>>) -> LuaResul
     details.set("isConnectedToSocialNetwork", connected_to_social_network)?;
     details.set("isGuest", is_guest)?;
     details.set("id", id)?;
+    let request_name = connected_to_social_network && name.is_empty();
     details.set("name", name)?;
-    on_success.call::<()>((is_guest, details))
+    on_success.call::<()>((is_guest, details))?;
+    // 1000A4124 calls Lua first. Only a connected, empty social name then
+    // requests Facebook's profile (fixed enum 1 at1000A4184), even when the
+    // selected external account belongs to a different network.
+    if request_name {
+        super::social::dispatch_account_name_lookup(lua, identity_owner)?;
+    }
+    Ok(())
 }
 
 fn notify_login_unavailable(lua: &Lua, state: &Arc<Mutex<OfflineState>>) -> LuaResult<()> {

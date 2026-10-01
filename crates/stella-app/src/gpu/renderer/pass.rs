@@ -82,6 +82,7 @@ impl GpuRenderer {
         frame: &PreparedFrame,
         background_color: Option<[u8; 3]>,
     ) -> Result<()> {
+        self.check_device()?;
         if frame.resolution != self.resolution {
             return Err(anyhow!(
                 "prepared frame is {}x{}, renderer target is {}x{}",
@@ -231,6 +232,7 @@ impl GpuRenderer {
             operation_index += 1;
         }
         self.queue.submit([encoder.finish()]);
+        self.device_state.check()?;
         // Wgpu retains submitted resources until GPU work completes. Images
         // discarded by native capture(... on a released sheet) have no owner
         // beyond this operation; do not accumulate one allocation per call.

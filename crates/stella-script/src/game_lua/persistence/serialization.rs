@@ -142,7 +142,7 @@ fn write_indent(output: &mut Vec<u8>, indent: usize) {
 
 fn numeric_key(value: &Value) -> Option<i64> {
     match value {
-        Value::Integer(value) if *value >= 1 => Some(*value),
+        Value::Integer(value) if *value >= 1 => Some(crate::lua_integer_to_i64(*value)),
         Value::Number(value)
             if value.is_finite()
                 && *value >= 1.0

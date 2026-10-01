@@ -5,10 +5,22 @@ use stella_assets::surface_format::SurfaceFormat;
 
 mod batch;
 mod capture;
+mod device_loss;
 mod geometry;
+mod native_images;
 mod program;
 mod sprites;
 mod text;
+
+impl GpuRenderer {
+    /// Exercise wgpu's actual loss callback, after completing submitted work.
+    pub(crate) fn destroy_device_for_test(&self) {
+        self.device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .unwrap();
+        self.device.destroy();
+    }
+}
 
 fn alpha_texture(width: u32, height: u32) -> TextureAsset {
     TextureAsset::new(

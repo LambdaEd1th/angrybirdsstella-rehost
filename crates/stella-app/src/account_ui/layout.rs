@@ -7,7 +7,7 @@ use stella_script::AccountView;
 
 pub(crate) mod registration;
 
-pub(crate) use crate::platform_ui_drawing::Rect;
+pub(crate) use crate::platform_ui_drawing::{LineBreak, Rect};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Kind {
@@ -33,12 +33,19 @@ pub(crate) struct Element {
     pub fallback: &'static str,
     pub font_name: &'static str,
     pub font_size: f32,
+    /// Nib UIAdjustsFontSizeToFit plus its minimum point size, when enabled.
+    pub minimum_font_size: Option<f32>,
     pub color: [u8; 4],
+    /// Nib UILabel/UIButton title shadow color and point offset, if present.
+    pub text_shadow: Option<([u8; 4], [f32; 2])>,
     /// NSTextAlignment: 0 left, 1 center, 2 right.
     pub alignment: u8,
     pub max_lines: u32,
+    pub line_break: LineBreak,
     /// UIImageView contentMode; 1 is aspect-fit, 0 is scale-to-fill.
     pub content_mode: u8,
+    /// UIKit UIContentEdgeInsets in top, left, bottom, right order.
+    pub content_insets: [f32; 4],
     pub hidden: bool,
 }
 
@@ -56,10 +63,14 @@ impl Element {
             fallback: "",
             font_name: "OpenSans",
             font_size: 0.0,
+            minimum_font_size: None,
             color: [255; 4],
+            text_shadow: None,
             alignment: 0,
             max_lines: 1,
+            line_break: LineBreak::Clip,
             content_mode: 0,
+            content_insets: [0.0; 4],
             hidden: false,
         }
     }
@@ -74,6 +85,7 @@ impl Element {
             kind: Kind::Button,
             pressed_image: Some(pressed),
             alignment: 1,
+            line_break: LineBreak::WordWrap,
             ..Self::image(name, rect, image)
         }
     }
@@ -92,6 +104,9 @@ impl Element {
             fallback,
             font_size: size,
             color: [0, 0, 0, 255],
+            // Most nib labels explicitly archive NSLineBreakByWordWrapping.
+            // Clipping and UILabel's implicit truncating-tail default override this.
+            line_break: LineBreak::WordWrap,
             ..Self::image(name, rect, "")
         }
     }
@@ -109,6 +124,8 @@ pub(crate) struct ViewLayout {
 const RED: [u8; 4] = [175, 10, 26, 255];
 const GREY: [u8; 4] = [75, 74, 76, 255];
 const DARK: [u8; 4] = [14, 6, 17, 255];
+const WHITE_TEXT_SHADOW: Option<([u8; 4], [f32; 2])> = Some(([255, 255, 255, 255], [0.0, -1.0]));
+const BUTTON_TEXT_SHADOW: Option<([u8; 4], [f32; 2])> = Some(([128, 128, 128, 255], [0.0, -1.0]));
 const BG: Element = Element::image(
     "background",
     Rect::new(212.0, 163.0, 600.0, 450.0),
@@ -179,23 +196,31 @@ const SIGN_IN: ViewLayout = layout(&[
     },
     // Hidden padding UIButtons are reparented as UITextField.rightView by awakeFromNib.
     // They reserve 30 points on the right; they do not paint in the root view.
-    field(
-        "emailTextField",
-        Rect::new(321.0, 276.0, 376.0, 38.0),
-        "rovio_id_email",
-        "Email",
-        18.0,
-    ),
-    field(
-        "passwordTextField",
-        Rect::new(323.0, 328.0, 376.0, 38.0),
-        "rovio_id_password",
-        "Password",
-        18.0,
-    ),
+    Element {
+        minimum_font_size: Some(17.0),
+        ..field(
+            "emailTextField",
+            Rect::new(321.0, 276.0, 376.0, 38.0),
+            "rovio_id_email",
+            "Email",
+            18.0,
+        )
+    },
+    Element {
+        minimum_font_size: Some(17.0),
+        ..field(
+            "passwordTextField",
+            Rect::new(323.0, 328.0, 376.0, 38.0),
+            "rovio_id_password",
+            "Password",
+            18.0,
+        )
+    },
     // awakeFromNib changes only this label's width to its measured text width.
     Element {
         color: RED,
+        text_shadow: WHITE_TEXT_SHADOW,
+        line_break: LineBreak::Clip,
         ..Element::text(
             "forgotPasswordLabel",
             Rect::new(322.0, 367.0, 446.0, 45.0),
@@ -209,6 +234,8 @@ const SIGN_IN: ViewLayout = layout(&[
         fallback: "SIGN IN",
         font_name: "OpenSans-CondensedBold",
         font_size: 28.0,
+        text_shadow: BUTTON_TEXT_SHADOW,
+        content_insets: [0.0, 0.0, 2.0, 0.0],
         ..Element::button(
             "signInButton",
             Rect::new(361.0, 463.0, 302.0, 54.0),
@@ -219,6 +246,8 @@ const SIGN_IN: ViewLayout = layout(&[
     // Original SHVBox bounds: (257,525,511,42). It reflows these localized labels.
     Element {
         alignment: 2,
+        minimum_font_size: Some(12.0),
+        text_shadow: WHITE_TEXT_SHADOW,
         ..Element::text(
             "dontHaveAccountLabel",
             Rect::new(331.0, 525.0, 225.0, 42.0),
@@ -229,6 +258,8 @@ const SIGN_IN: ViewLayout = layout(&[
     },
     Element {
         color: RED,
+        minimum_font_size: Some(12.0),
+        text_shadow: WHITE_TEXT_SHADOW,
         ..Element::text(
             "registerLabel",
             Rect::new(564.0, 525.0, 130.0, 42.0),
@@ -283,6 +314,7 @@ const FORGOT_PASSWORD: ViewLayout = layout(&[
         color: RED,
         alignment: 1,
         font_name: "OpenSans-CondensedBold",
+        text_shadow: WHITE_TEXT_SHADOW,
         ..Element::text(
             "mainLabel",
             Rect::new(240.0, 245.0, 545.0, 87.0),
@@ -294,6 +326,7 @@ const FORGOT_PASSWORD: ViewLayout = layout(&[
     Element {
         color: GREY,
         alignment: 1,
+        text_shadow: WHITE_TEXT_SHADOW,
         ..Element::text(
             "enterEmailAddressLabel",
             Rect::new(260.0, 306.0, 505.0, 67.0),
@@ -331,6 +364,8 @@ const FORGOT_PASSWORD: ViewLayout = layout(&[
         fallback: "SEND REQUEST",
         font_name: "OpenSans-CondensedBold",
         font_size: 28.0,
+        text_shadow: BUTTON_TEXT_SHADOW,
+        content_insets: [0.0, 0.0, 2.0, 0.0],
         ..Element::button(
             "sendRequestButton",
             Rect::new(361.0, 463.0, 302.0, 54.0),
@@ -377,6 +412,7 @@ const fn help(
             color: GREY,
             alignment: 1,
             max_lines: 3,
+            text_shadow: WHITE_TEXT_SHADOW,
             ..Element::text(
                 "label",
                 Rect::new(290.0, 493.0, 448.0, 86.0),
@@ -417,21 +453,30 @@ const NETWORK_FAILURE: ViewLayout = layout(&[
         BACK_DOWN,
     ),
     LOGO,
-    Element::image(
-        "globe",
-        Rect::new(612.0, 333.0, 125.0, 150.0),
-        "skynestdata/images/identity/connect_globe.png",
-    ),
-    Element::image(
-        "phone",
-        Rect::new(311.0, 333.0, 100.0, 150.0),
-        "skynestdata/images/identity/connect_phone.png",
-    ),
-    Element::image(
-        "notConnected",
-        Rect::new(473.0, 362.0, 78.0, 66.0),
-        "skynestdata/images/identity/not_connected.png",
-    ),
+    Element {
+        content_mode: 1,
+        ..Element::image(
+            "globe",
+            Rect::new(612.0, 333.0, 125.0, 150.0),
+            "skynestdata/images/identity/connect_globe.png",
+        )
+    },
+    Element {
+        content_mode: 1,
+        ..Element::image(
+            "phone",
+            Rect::new(311.0, 333.0, 100.0, 150.0),
+            "skynestdata/images/identity/connect_phone.png",
+        )
+    },
+    Element {
+        content_mode: 1,
+        ..Element::image(
+            "notConnected",
+            Rect::new(473.0, 362.0, 78.0, 66.0),
+            "skynestdata/images/identity/not_connected.png",
+        )
+    },
 ]);
 
 const NOT_VERIFIED: ViewLayout = layout(&[
@@ -472,6 +517,7 @@ const NOT_VERIFIED: ViewLayout = layout(&[
         color: DARK,
         alignment: 1,
         max_lines: 2,
+        line_break: LineBreak::Clip,
         ..Element::text(
             "verificationEmailSent",
             Rect::new(243.0, 349.0, 537.0, 74.0),
@@ -485,6 +531,7 @@ const NOT_VERIFIED: ViewLayout = layout(&[
         color: DARK,
         alignment: 1,
         text_key: None,
+        line_break: LineBreak::TruncateTail,
         ..Element::text(
             "verificationEmail",
             Rect::new(236.0, 425.0, 544.0, 37.0),

@@ -84,8 +84,14 @@ impl ResourceRuntime {
         if let Some(source) = texture_sources
             .last()
             .filter(|source| !source.starts_with("<capture:"))
-            && let Ok(bytes) = std::fs::read(image_source_path(source))
-            && let Ok(dimensions) = stella_assets::native_image::image_dimensions(&bytes)
+            && let path = image_source_path(source)
+            && let Ok(bytes) = std::fs::read(path)
+            && let Ok(dimensions) = stella_assets::native_image::image_dimensions_with_extension(
+                &bytes,
+                std::path::Path::new(path)
+                    .extension()
+                    .and_then(|value| value.to_str()),
+            )
         {
             self.sprite_sheet_image_dimensions
                 .insert(owner.to_owned(), dimensions);

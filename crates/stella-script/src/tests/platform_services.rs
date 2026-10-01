@@ -7511,7 +7511,7 @@ fn recovered_resource_lifecycle_bindings_return_no_lua_values() {
                 locale_before = res.getLocale()
                 locale_with_extra = res.getLocale(false)
                 system_results = select("#", res.createSystemFont(
-                    "SYSTEM_FONT", "Arial", 12, 255, 255, 255, 255
+                    "SYSTEM_FONT", "ArialRoundedMTBold", 12, 255, 255, 255, 255
                 ))
                 res.useFont("SYSTEM_FONT")
                 system_width = res.getStringWidth("AVATAR")
@@ -7527,7 +7527,7 @@ fn recovered_resource_lifecycle_bindings_return_no_lua_values() {
                 preserved_system_width = res.getStringWidth("AVATAR")
                 system_optional_types_are_probes = pcall(
                     res.createSystemFont,
-                    "PROBED_SYSTEM_FONT", "Arial", 12,
+                    "PROBED_SYSTEM_FONT", "ArialRoundedMTBold", 12,
                     255, 255, 255, 255, "not-a-style"
                 )
                 forced_missing_system_fails = not pcall(
@@ -7535,7 +7535,7 @@ fn recovered_resource_lifecycle_bindings_return_no_lua_values() {
                     255, 255, 255, 255, 0, true
                 )
                 unavailable_style_fails = not pcall(
-                    res.createSystemFont, "BAD_STYLE", "Arial", 12,
+                    res.createSystemFont, "BAD_STYLE", "ArialRoundedMTBold", 12,
                     255, 255, 255, 255, 1
                 )
                 fonts_after = res.getAvailableSystemFonts()
@@ -7546,11 +7546,11 @@ fn recovered_resource_lifecycle_bindings_return_no_lua_values() {
                     end
                 end
                 stroked_system_results = select("#", res.createSystemFontWithStroke(
-                    "SYSTEM_FONT_STROKE", "Arial", 12,
+                    "SYSTEM_FONT_STROKE", "ArialRoundedMTBold", 12,
                     255, 255, 255, 255, 0, 2, 0, 0, 255, 0
                 ))
                 short_system_font_fails = not pcall(
-                    res.createSystemFont, "BAD_SYSTEM_FONT", "Arial", 12
+                    res.createSystemFont, "BAD_SYSTEM_FONT", "ArialRoundedMTBold", 12
                 )
                 text_group_results = select("#", res.createTextGroupSet("localization/TEXTS.dat"))
                 compo_results = select("#", res.createCompoSpriteSet("images/UI.dat"))

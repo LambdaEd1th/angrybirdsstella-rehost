@@ -703,6 +703,17 @@ fn rotated_native_pivot_and_non_uniform_scale_reach_gpu_vertices_exactly() {
 
 #[test]
 fn downloaded_avatar_retains_distinct_file_generations_through_gpu_submission() {
+    assert_downloaded_avatar_generations(None);
+}
+
+#[test]
+fn indexed_tga_avatar_generations_remain_opaque_through_gpu_submission() {
+    for rle in [false, true] {
+        assert_downloaded_avatar_generations(Some(rle));
+    }
+}
+
+fn assert_downloaded_avatar_generations(indexed_tga: Option<bool>) {
     let root = std::env::temp_dir().join(format!(
         "stella-avatar-gpu-{}",
         std::time::SystemTime::now()
@@ -711,15 +722,51 @@ fn downloaded_avatar_retains_distinct_file_generations_through_gpu_submission() 
             .as_nanos()
     ));
     std::fs::create_dir_all(&root).unwrap();
-    let path = root.join("opaque");
+    let path = root.join(if indexed_tga.is_some() {
+        "opaque.tga"
+    } else {
+        "opaque"
+    });
     let mut commands = Vec::new();
     for (index, color) in [[255, 0, 0, 255], [0, 0, 255, 255]].into_iter().enumerate() {
-        RgbaImage::from_pixel(17, 13, image::Rgba(color))
-            .save_with_format(&path, image::ImageFormat::Png)
-            .unwrap();
-        let decoded =
-            stella_assets::native_image::decode_native_image(&std::fs::read(&path).unwrap(), None)
+        if let Some(rle) = indexed_tga {
+            let mut bytes = vec![0u8; 18];
+            bytes[1] = 1;
+            bytes[2] = if rle { 9 } else { 1 };
+            bytes[5..7].copy_from_slice(&1u16.to_le_bytes());
+            bytes[7] = 32;
+            bytes[12..14].copy_from_slice(&17u16.to_le_bytes());
+            bytes[14..16].copy_from_slice(&13u16.to_le_bytes());
+            bytes[16] = 8;
+            bytes[17] = 0x28;
+            bytes.extend_from_slice(&[color[2], color[1], color[0], 0]);
+            if rle {
+                for _ in 0..13 {
+                    bytes.extend_from_slice(&[0x90, 0]);
+                }
+            } else {
+                bytes.resize(bytes.len() + 17 * 13, 0);
+            }
+            std::fs::write(&path, bytes).unwrap();
+        } else {
+            RgbaImage::from_pixel(17, 13, image::Rgba(color))
+                .save_with_format(&path, image::ImageFormat::Png)
                 .unwrap();
+        }
+        let decoded = stella_assets::native_image::decode_native_image(
+            &std::fs::read(&path).unwrap(),
+            path.extension().and_then(|value| value.to_str()),
+        )
+        .unwrap();
+        if indexed_tga.is_some() {
+            assert_eq!(
+                decoded.layout,
+                stella_assets::native_image::ImageSurfaceLayout {
+                    pixels: stella_assets::surface_format::SurfaceFormat::P8,
+                    palette: Some(stella_assets::surface_format::SurfaceFormat::X8B8G8R8),
+                }
+            );
+        }
         let source = stella_assets::image_source::sheet_image_source(
             index as u64 + 1,
             0,

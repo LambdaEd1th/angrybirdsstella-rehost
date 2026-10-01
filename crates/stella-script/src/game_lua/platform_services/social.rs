@@ -705,6 +705,13 @@ pub(super) fn install(
         friends_store::LOGIN_REGISTRY_KEY,
         lua.create_function(move |lua, ()| login_runtime.initialize_friends_store(lua))?,
     )?;
+    let name_runtime = runtime.clone();
+    lua.set_named_registry_value(
+        platform::ACCOUNT_NAME_REGISTRY_KEY,
+        lua.create_function(move |lua, owner: (u64, u64)| {
+            name_runtime.request_account_profile_name(lua, owner)
+        })?,
+    )?;
     let logout_runtime = runtime.clone();
     lua.set_named_registry_value(
         friends_store::LOGOUT_REGISTRY_KEY,
@@ -828,6 +835,15 @@ pub(super) fn dispatch_account_login(lua: &Lua) -> LuaResult<()> {
         lua.named_registry_value::<Option<mlua::Function>>(friends_store::LOGIN_REGISTRY_KEY)?
     {
         callback.call::<()>(())?;
+    }
+    Ok(())
+}
+
+pub(super) fn dispatch_account_name_lookup(lua: &Lua, owner: (u64, u64)) -> LuaResult<()> {
+    if let Some(callback) =
+        lua.named_registry_value::<Option<mlua::Function>>(platform::ACCOUNT_NAME_REGISTRY_KEY)?
+    {
+        callback.call::<()>(owner)?;
     }
     Ok(())
 }

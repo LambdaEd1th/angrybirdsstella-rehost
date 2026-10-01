@@ -3,6 +3,34 @@
 use super::*;
 use stella_assets::ka3d::FontGlyph;
 
+struct SystemFontSandbox {
+    root: std::path::PathBuf,
+    runtime: StellaLua,
+}
+
+impl SystemFontSandbox {
+    fn new() -> Self {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "stella-system-text-{}-{unique}",
+            std::process::id()
+        ));
+        let data = root.join("data");
+        std::fs::create_dir_all(&data).unwrap();
+        let runtime = StellaLua::new(data).unwrap();
+        Self { root, runtime }
+    }
+}
+
+impl Drop for SystemFontSandbox {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
 fn font(texture: &str, width: i16) -> BitmapFont {
     BitmapFont {
         texture: texture.to_owned(),
@@ -185,13 +213,13 @@ fn font_v2_utf32_glyphs_reach_the_wgpu_quad_path() {
 
 #[test]
 fn system_text_builds_premultiplied_label_and_uses_native_stroke_anchor_geometry() {
-    let data_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data");
-    let runtime = StellaLua::new(data_root).unwrap();
+    let sandbox = SystemFontSandbox::new();
+    let runtime = &sandbox.runtime;
     runtime
         .execute_source(
             r#"
                 res.createSystemFontWithStroke(
-                    "SYSTEM", "Arial", 24,
+                    "SYSTEM", "ArialRoundedMTBold", 24,
                     255, 200, 50, 10, 0, 2, 255, 5, 100, 200
                 )
                 res.useFont("SYSTEM")
@@ -343,9 +371,27 @@ fn system_text_builds_premultiplied_label_and_uses_native_stroke_anchor_geometry
 
 #[test]
 fn system_text_rasterizes_each_coretext_fallback_face_with_its_own_em_scale() {
-    let data_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data");
-    let runtime = StellaLua::new(data_root).unwrap();
-    if runtime
+    let sandbox = SystemFontSandbox::new();
+    let runtime = &sandbox.runtime;
+    let environment = runtime.lua().globals().get("gamelua").unwrap();
+    let names: Vec<String> = runtime
+        .lua()
+        .load("return res.getAvailableSystemFonts()")
+        .set_environment(environment)
+        .eval()
+        .unwrap();
+    if !["ArialRoundedMTBold", "LucidaGrande"]
+        .iter()
+        .all(|required| names.iter().any(|name| name == required))
+    {
+        // The recovered two-face CoreText contract needs these actual faces.
+        // A portable replacement may cover Hebrew in its primary face.
+        eprintln!(
+            "CoreText fallback raster regression requires ArialRoundedMTBold and LucidaGrande; skipped"
+        );
+        return;
+    }
+    runtime
         .execute_source(
             r#"
                 res.createSystemFont(
@@ -356,11 +402,7 @@ fn system_text_rasterizes_each_coretext_fallback_face_with_its_own_em_scale() {
                 res.drawString("MISSING_GROUP", "abc אבג 123", 10, 20)
             "#,
         )
-        .is_err()
-    {
-        // Match UIKit's named-face dependency on non-Apple CI hosts.
-        return;
-    }
+        .unwrap();
     let command = runtime.take_text_commands().remove(0);
     let TextFontBinding::System(binding) = command.font_binding.as_ref().unwrap() else {
         panic!("system font submission lost its native kind");
@@ -395,16 +437,16 @@ fn system_text_rasterizes_each_coretext_fallback_face_with_its_own_em_scale() {
 
 #[test]
 fn last_system_font_release_separates_same_hash_deferred_label_lifetimes() {
-    let data_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data");
-    let runtime = StellaLua::new(data_root).unwrap();
+    let sandbox = SystemFontSandbox::new();
+    let runtime = &sandbox.runtime;
     runtime
         .execute_source(
             r#"
-                res.createSystemFont("SYSTEM", "Arial", 24, 255, 10, 20, 30)
+                res.createSystemFont("SYSTEM", "ArialRoundedMTBold", 24, 255, 10, 20, 30)
                 res.useFont("SYSTEM")
                 res.drawString("MISSING_GROUP", "Same", 10, 20)
                 res.releaseFont("SYSTEM")
-                res.createSystemFont("SYSTEM", "Arial", 24, 255, 10, 20, 30)
+                res.createSystemFont("SYSTEM", "ArialRoundedMTBold", 24, 255, 10, 20, 30)
                 res.useFont("SYSTEM")
                 res.drawString("MISSING_GROUP", "Same", 10, 20)
             "#,

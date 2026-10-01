@@ -36,6 +36,18 @@ fn platform_system_fonts() -> &'static PlatformSystemFonts {
         // UIKit returns face/PostScript names after traversing font families.
         let mut database = fontdb::Database::new();
         database.load_system_fonts();
+        #[cfg(target_os = "emscripten")]
+        {
+            // MEMFS has no operating-system font catalog. Retain actual bytes
+            // instead of relying on fontdb's platform mmap-backed file source.
+            for name in ["OpenSans-Regular.ttf", "OpenSans-CondBold.ttf"] {
+                if let Ok(bytes) = std::fs::read(format!("/runtime/data/skynestdata/fonts/{name}"))
+                {
+                    database.load_font_data(bytes);
+                }
+            }
+            database.set_sans_serif_family("Open Sans");
+        }
         #[cfg(target_os = "macos")]
         database.load_fonts_dir("/System/Library/AssetsV2/com_apple_MobileAsset_Font8");
         let names = native_available_font_names(database.faces().filter_map(|face| {
@@ -116,6 +128,8 @@ fn ios_menu_system_font_compatibility_face(database: &fontdb::Database) -> Optio
         fontdb::Family::Name("Liberation Sans"),
         fontdb::Family::Name("DejaVu Sans"),
         fontdb::Family::Name("Noto Sans"),
+        #[cfg(target_os = "emscripten")]
+        fontdb::Family::Name("Open Sans Condensed"),
         fontdb::Family::SansSerif,
     ];
     database
@@ -265,7 +279,14 @@ fn platform_ui_regular_face(database: &fontdb::Database) -> Option<fontdb::ID> {
         "Noto Sans",
     ];
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    let names = ["Liberation Sans", "DejaVu Sans", "Noto Sans", "Arial"];
+    let names = [
+        "Liberation Sans",
+        "DejaVu Sans",
+        "Noto Sans",
+        "Arial",
+        #[cfg(target_os = "emscripten")]
+        "Open Sans",
+    ];
     names
         .into_iter()
         .map(fontdb::Family::Name)

@@ -269,7 +269,7 @@ impl SocialRuntime {
             // later file replacement and deferred command execution.
             let bytes = std::fs::read(&path).map_err(runtime_error)?;
             let image = Arc::new(
-                stella_assets::native_image::decode_native_image(
+                stella_assets::native_image::decode_native_texture(
                     &bytes,
                     path.extension().and_then(|s| s.to_str()),
                 )

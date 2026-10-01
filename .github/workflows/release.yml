@@ -184,6 +184,8 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: write
+    outputs:
+      published: ${{ steps.release.outputs.published }}
     steps:
       - name: Check out packaging scripts
         uses: actions/checkout@v7
@@ -264,6 +266,7 @@ jobs:
           cat SHA256SUMS
 
       - name: Create or update GitHub Release
+        id: release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -286,3 +289,19 @@ jobs:
               --title "Angry Birds Stella: Rehost $RELEASE_TAG" \
               "${release_options[@]}"
           fi
+          release_draft=$(gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft')
+          if [[ "$release_draft" == "false" ]]; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  pages:
+    name: Deploy release to GitHub Pages
+    needs: publish
+    if: needs.publish.outputs.published == 'true'
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/pages.yml
+    with:
+      ref: ${{ format('refs/tags/{0}', github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name) }}

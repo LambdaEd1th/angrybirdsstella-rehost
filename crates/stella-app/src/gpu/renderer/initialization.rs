@@ -11,6 +11,95 @@ mod window;
 const STELLA_WGPU_BACKENDS: wgpu::Backends = wgpu::Backends::PRIMARY;
 
 impl GpuRenderer {
+    #[cfg(test)]
+    pub(crate) fn configure_window_target_for_test(
+        &mut self,
+        formats: &[wgpu::TextureFormat],
+        width: u32,
+        height: u32,
+    ) -> Result<()> {
+        // Exercise the production format selection and pipeline creation on
+        // a copyable substitute surface, without requiring a display server.
+        let mut config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format: GAME_FORMAT,
+            color_space: wgpu::SurfaceColorSpace::Auto,
+            width,
+            height,
+            present_mode: wgpu::PresentMode::AutoVsync,
+            desired_maximum_frame_latency: 2,
+            alpha_mode: wgpu::CompositeAlphaMode::Opaque,
+            view_formats: Vec::new(),
+        };
+        window::configure_color_format(&mut config, formats)?;
+        let presentation = window::create_blit_presentation(&self.device, &self.game_view, config);
+        self.replace_window_presentation(presentation);
+        Ok(())
+    }
+
+    fn replace_window_presentation(&mut self, presentation: window::WindowPresentation) {
+        if let Some(config) = &presentation.surface_config {
+            self.reconfigure_window_overlay(super::window_target_format(config.format));
+        }
+        self.surface_config = presentation.surface_config;
+        self.blit_pipeline = presentation.blit_pipeline;
+        self.blit_bind_group = presentation.blit_bind_group;
+        self.blit_layout = presentation.blit_layout;
+        self.blit_sampler = presentation.blit_sampler;
+    }
+
+    pub(super) fn recover_window_surface(
+        &mut self,
+        recovery: super::surface_acquisition::SurfaceRecovery,
+        width: u32,
+        height: u32,
+    ) -> Result<()> {
+        use super::surface_acquisition::SurfaceRecovery;
+
+        self.check_device()?;
+        match recovery {
+            SurfaceRecovery::Reconfigure => {
+                let surface = self
+                    .surface
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("window renderer has no wgpu surface"))?;
+                let config = self
+                    .surface_config
+                    .as_mut()
+                    .ok_or_else(|| anyhow!("window renderer has no surface configuration"))?;
+                config.width = width;
+                config.height = height;
+                surface.configure(&self.device, config);
+            }
+            SurfaceRecovery::Recreate => {
+                let window = self
+                    .surface_window
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("window renderer has no window for surface recovery"))?;
+                // Release the lost surface before attaching its replacement to
+                // the same native window. No acquired frame survives here.
+                self.surface = None;
+                let surface = self
+                    .instance
+                    .create_surface(Arc::clone(window))
+                    .context("recreate lost wgpu surface")?;
+                let presentation = window::create(
+                    Some(&surface),
+                    &self.adapter,
+                    &self.device,
+                    &self.game_view,
+                    width,
+                    height,
+                )?;
+                self.replace_window_presentation(presentation);
+                self.surface = Some(surface);
+                // Game/capture allocations and uploaded UI pixels belong to
+                // the healthy device, independently of the window surface.
+            }
+        }
+        self.device_state.check()
+    }
+
     pub(crate) fn for_window(window: Arc<Window>, resolution: GameResolution) -> Result<Self> {
         pollster::block_on(Self::new(Some(window), resolution))
     }
@@ -27,7 +116,8 @@ impl GpuRenderer {
             ..wgpu::InstanceDescriptor::new_without_display_handle()
         });
         let surface = window
-            .map(|window| instance.create_surface(window))
+            .as_ref()
+            .map(|window| instance.create_surface(Arc::clone(window)))
             .transpose()
             .context("create wgpu surface")?;
         let adapter = instance
@@ -46,6 +136,7 @@ impl GpuRenderer {
             })
             .await
             .context("request wgpu device")?;
+        let device_state = super::device_state::DeviceState::register(&device);
 
         let target::NativeTarget {
             game_texture,
@@ -89,13 +180,24 @@ impl GpuRenderer {
             blit_bind_group,
             blit_layout,
             blit_sampler,
-        } = window::create(surface.as_ref(), &adapter, &device, &game_view, resolution)?;
+        } = window::create(
+            surface.as_ref(),
+            &adapter,
+            &device,
+            &game_view,
+            resolution.width,
+            resolution.height,
+        )?;
 
-        Ok(Self {
-            _instance: instance,
+        let renderer = Self {
+            instance,
+            adapter,
+            surface_window: window,
             surface,
             surface_config,
+            surface_recovery: None,
             device,
+            device_state,
             queue,
             resolution,
             game_texture,
@@ -125,7 +227,9 @@ impl GpuRenderer {
             blit_layout,
             blit_sampler,
             window_overlay: None,
-        })
+        };
+        renderer.check_device()?;
+        Ok(renderer)
     }
 }
 

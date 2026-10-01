@@ -153,6 +153,62 @@ mod tests {
     }
 
     #[test]
+    fn device_loss_exit_persists_shipped_rewards_and_keeps_the_gpu_error() {
+        let Some(sandbox) = ShippedDataSandbox::new("device-loss-save") else {
+            return;
+        };
+        let mut app = StellaApp::new_with_missing_global_diagnostics(
+            sandbox.data_root.clone(),
+            GameResolution::default(),
+            false,
+            PlatformServiceOptions {
+                local_services: true,
+                ..PlatformServiceOptions::default()
+            },
+        )
+        .unwrap();
+        assert!(app.runtime.gamelogic_loaded());
+        execute_diagnostic_source(
+            &app.runtime,
+            r#"
+                settings.iap = { gained = {}, used = {}, sync = {} }
+                settings.pendingRewards = {}
+                Coins:setPendingReward("StarReward_15", 66, "Level end")
+                Coins:grantPendingRewards()
+                loadTableFromFile("settings.lua", "lossSaveBefore")
+                assert(lossSaveBefore.iap.gained.coins == 66)
+                assert(lossSaveBefore.pendingRewards.coins.StarReward_15.amount == 66)
+                lossSaveUpdates = 0
+                function update() lossSaveUpdates = lossSaveUpdates + 1 end
+            "#,
+        )
+        .unwrap();
+        let mut renderer = GpuRenderer::headless(app.resolution).unwrap();
+        renderer.destroy_device_for_test();
+        let result = app.execute_display_frame(Some(&mut renderer), Duration::from_millis(17));
+        assert_eq!(
+            result.as_ref().unwrap_err().to_string(),
+            "wgpu device lost (Destroyed)"
+        );
+        let error = app.finish_screenshot_run(result).unwrap_err();
+        assert_eq!(error.to_string(), "wgpu device lost (Destroyed)");
+        assert!(!app.active);
+        execute_diagnostic_source(
+            &app.runtime,
+            r#"
+                assert(lossSaveUpdates == 0)
+                loadTableFromFile("settings.lua", "lossSaveAfter")
+                assert(lossSaveAfter.iap.gained.coins == 66)
+                assert(next(lossSaveAfter.pendingRewards.coins) == nil)
+                settings = lossSaveAfter
+                Coins:grantPendingRewards()
+                assert(Coins:getAmount() == 66)
+            "#,
+        )
+        .unwrap();
+    }
+
+    #[test]
     fn screenshot_exit_persists_cleared_rewards_and_preserves_failures() {
         let Some(sandbox) = ShippedDataSandbox::new("screenshot-rewards") else {
             return;

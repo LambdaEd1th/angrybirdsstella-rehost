@@ -18,7 +18,7 @@ pub(crate) fn value_string(value: &Value) -> Option<String> {
 
 pub(crate) fn native_integer(value: &Value) -> Option<i64> {
     match value {
-        Value::Integer(value) => Some(*value),
+        Value::Integer(value) => Some(crate::lua_integer_to_i64(*value)),
         // Purple's VM has a distinct integer tag. Stock Lua 5.1 stores the
         // i64 handles returned by mlua as numbers, so retain only exactly
         // integral values at this compatibility boundary.

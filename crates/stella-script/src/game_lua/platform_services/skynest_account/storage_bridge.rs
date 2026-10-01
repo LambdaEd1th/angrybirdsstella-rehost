@@ -20,6 +20,10 @@ impl IdentityLifetime {
         self.session
             .storage_lifetime_is_current(self.epoch, self.generation)
     }
+
+    pub(in super::super) fn matches_owner(&self, owner: (u64, u64)) -> bool {
+        (self.epoch, self.generation) == owner && self.is_current()
+    }
 }
 
 impl std::fmt::Debug for IdentityLifetime {

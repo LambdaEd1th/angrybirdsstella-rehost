@@ -45,8 +45,14 @@ pub enum AssetError {
     InvalidWebp,
     #[error("invalid JPEG image: {0}")]
     InvalidJpeg(&'static str),
+    #[error("invalid BMP image: {0}")]
+    InvalidBmp(&'static str),
+    #[error("invalid TGA image: {0}")]
+    InvalidTga(&'static str),
     #[error("unsupported native image reader")]
     UnsupportedImageReader,
+    #[error("Unsupported texture format: {0}")]
+    UnsupportedTextureFormat(surface_format::SurfaceFormat),
     #[error("invalid KA3D resource: {0}")]
     InvalidKa3d(&'static str),
     #[error("invalid Lua chunk: {0}")]

@@ -82,49 +82,175 @@ pub(crate) fn fill(output: &mut Pixmap, rect: Rect, color: [u8; 4]) {
     }
 }
 
+/// NSLineBreakMode values used by the original account labels.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum LineBreak {
+    WordWrap,
+    Clip,
+    TruncateTail,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct TextLayout {
+    pub alignment: u8,
+    pub max_lines: u32,
+    pub line_break: LineBreak,
+}
+
+struct WrappedLine<'a> {
+    text: &'a str,
+    /// The original paragraph suffix, without inserting spaces at soft wraps.
+    remainder: &'a str,
+}
+
+fn word_wrapped_lines<'a>(
+    font: &SystemFontRenderBinding,
+    text: &'a str,
+    width: f32,
+) -> Vec<WrappedLine<'a>> {
+    let mut lines = Vec::new();
+    for paragraph in text.split('\n') {
+        let (mut start, mut end) = (0, 0);
+        let line = |start, end| WrappedLine {
+            text: paragraph[start..end].trim_end(),
+            remainder: &paragraph[start..],
+        };
+        for (offset, piece) in paragraph.split_word_bound_indices() {
+            let candidate = &paragraph[start..offset + piece.len()];
+            if start < end && font.native_string_width(candidate) as f32 > width {
+                lines.push(line(start, end));
+                start = offset;
+                end = offset;
+            }
+            // CJK/long unbroken strings also obey the field's geometry.
+            for (cluster_offset, cluster) in piece.grapheme_indices(true) {
+                let offset = offset + cluster_offset;
+                let next = offset + cluster.len();
+                if start < end && font.native_string_width(&paragraph[start..next]) as f32 > width {
+                    lines.push(line(start, end));
+                    start = offset;
+                    end = offset;
+                }
+                if start < end || !cluster.chars().all(char::is_whitespace) {
+                    end = next;
+                } else {
+                    start = next;
+                    end = next;
+                }
+            }
+        }
+        lines.push(line(start, end));
+    }
+    lines
+}
+
+fn truncate_tail(font: &SystemFontRenderBinding, text: &str, width: f32, force: bool) -> String {
+    if !force && font.native_string_width(text) as f32 <= width {
+        return text.to_owned();
+    }
+    let text = text.trim_end();
+    let mut end = 0;
+    // Only shape prefixes that can still be visible, instead of repeatedly
+    // shaping an arbitrarily long hidden suffix while removing one cluster.
+    for (offset, cluster) in text.grapheme_indices(true) {
+        let next = offset + cluster.len();
+        let prefix = text[..next].trim_end();
+        if font.native_string_width(&format!("{prefix}…")) as f32 > width {
+            break;
+        }
+        end = next;
+    }
+    format!("{}…", text[..end].trim_end())
+}
+
+pub(crate) fn label_lines(
+    font: &SystemFontRenderBinding,
+    text: &str,
+    width: f32,
+    layout: TextLayout,
+) -> Vec<String> {
+    if layout.line_break == LineBreak::Clip || layout.max_lines == 1 {
+        let paragraphs: Vec<_> = text.split('\n').collect();
+        return paragraphs
+            .iter()
+            .take(if layout.max_lines == 0 {
+                usize::MAX
+            } else {
+                layout.max_lines as usize
+            })
+            .enumerate()
+            .map(|(index, line)| {
+                if layout.line_break == LineBreak::TruncateTail {
+                    truncate_tail(font, line, width, index + 1 < paragraphs.len())
+                } else {
+                    (*line).to_owned()
+                }
+            })
+            .collect();
+    }
+    let wrapped = word_wrapped_lines(font, text, width);
+    let count = if layout.max_lines == 0 {
+        wrapped.len()
+    } else {
+        wrapped.len().min(layout.max_lines as usize)
+    };
+    wrapped
+        .iter()
+        .take(count)
+        .enumerate()
+        .map(|(index, line)| {
+            if layout.line_break == LineBreak::TruncateTail
+                && index + 1 == count
+                && count < wrapped.len()
+            {
+                truncate_tail(font, line.remainder, width, true)
+            } else {
+                line.text.to_owned()
+            }
+        })
+        .collect()
+}
+
 pub(crate) fn wrap(
     font: &SystemFontRenderBinding,
     text: &str,
     width: f32,
     limit: u32,
 ) -> Vec<String> {
-    let mut lines = Vec::new();
-    for paragraph in text.split('\n') {
-        let mut line = String::new();
-        for piece in paragraph.split_word_bounds() {
-            let candidate = format!("{line}{piece}");
-            if !line.is_empty() && font.native_string_width(&candidate) as f32 > width {
-                lines.push(line.trim_end().to_owned());
-                line.clear();
-            }
-            // CJK/long unbroken strings also obey the field's geometry.
-            for cluster in piece.graphemes(true) {
-                if !line.is_empty()
-                    && font.native_string_width(&format!("{line}{cluster}")) as f32 > width
-                {
-                    lines.push(line.trim_end().to_owned());
-                    line.clear();
-                }
-                if !line.is_empty() || !cluster.chars().all(char::is_whitespace) {
-                    line.push_str(cluster);
-                }
-            }
-        }
-        lines.push(line);
+    label_lines(
+        font,
+        text,
+        width,
+        TextLayout {
+            alignment: 0,
+            max_lines: limit,
+            line_break: LineBreak::TruncateTail,
+        },
+    )
+}
+
+/// NSString's constrained measurement is independent of UILabel.numberOfLines.
+pub(crate) fn word_wrap_size(
+    font: &SystemFontRenderBinding,
+    text: &str,
+    constraint: [f32; 2],
+) -> [f32; 2] {
+    if text.is_empty() {
+        return [0.0; 2];
     }
-    if limit > 0 && lines.len() > limit as usize {
-        lines.truncate(limit as usize);
-        let last = lines.last_mut().expect("nonzero limit");
-        while !last.is_empty() && font.native_string_width(&format!("{last}…")) as f32 > width {
-            let start = last
-                .grapheme_indices(true)
-                .next_back()
-                .map_or(0, |(i, _)| i);
-            last.truncate(start);
-        }
-        last.push('…');
-    }
-    lines
+    let line_height = font.label_line_height.max(1) as f32;
+    let limit = (constraint[1] / line_height).floor().max(1.0) as usize;
+    let lines = word_wrapped_lines(font, text, constraint[0]);
+    let visible = &lines[..lines.len().min(limit)];
+    let width = visible
+        .iter()
+        .map(|line| font.native_string_width(line.text))
+        .max()
+        .unwrap_or(0) as f32;
+    [
+        width.min(constraint[0]).max(0.0),
+        line_height * visible.len() as f32,
+    ]
 }
 
 pub(crate) fn text_lines(
@@ -135,19 +261,61 @@ pub(crate) fn text_lines(
     align: u8,
     limit: u32,
 ) -> Result<()> {
+    text_lines_with_shadow(output, font, text, rect, align, limit, None)
+}
+
+/// UILabel draws its unblurred shadow behind the text, clipped to the same
+/// label bounds. The offset is in drawable pixels after logical UI scaling.
+pub(crate) fn text_lines_with_shadow(
+    output: &mut Pixmap,
+    font: &SystemFontRenderBinding,
+    text: &str,
+    rect: Rect,
+    align: u8,
+    limit: u32,
+    shadow: Option<(&SystemFontRenderBinding, [f32; 2])>,
+) -> Result<()> {
+    text_with_layout(
+        output,
+        font,
+        text,
+        rect,
+        TextLayout {
+            alignment: align,
+            max_lines: limit,
+            line_break: if limit == 1 {
+                LineBreak::Clip
+            } else {
+                LineBreak::TruncateTail
+            },
+        },
+        shadow,
+    )
+}
+
+pub(crate) fn text_with_layout(
+    output: &mut Pixmap,
+    font: &SystemFontRenderBinding,
+    text: &str,
+    rect: Rect,
+    mut layout: TextLayout,
+    shadow: Option<(&SystemFontRenderBinding, [f32; 2])>,
+) -> Result<()> {
     if rect.width <= 0.0 || rect.height <= 0.0 {
         return Ok(());
     }
-    let lines = if limit == 1 {
-        vec![text.split('\n').next().unwrap_or("").to_owned()]
+    let line_height = font.label_line_height.max(1) as f32;
+    let capacity = (rect.height / line_height).floor().max(1.0) as u32;
+    layout.max_lines = if layout.max_lines == 0 {
+        capacity
     } else {
-        wrap(font, text, rect.width, limit)
+        layout.max_lines.min(capacity)
     };
-    let line_height = font.label_line_height as f32;
+    let lines = label_lines(font, text, rect.width, layout);
     let mut y = rect.y + (rect.height - lines.len() as f32 * line_height) * 0.5;
     for line in lines {
         if let Some(label) = crate::assets::rasterize_system_label(font, &line, "LEFT", "TOP")? {
-            let x = match align {
+            let x = match layout.alignment {
                 1 => rect.x + (rect.width - label.image.width() as f32) * 0.5,
                 2 => rect.x + rect.width - label.image.width() as f32,
                 _ => rect.x,
@@ -164,6 +332,24 @@ pub(crate) fn text_lines(
                 label.image.width(),
                 label.image.height(),
             ) {
+                if let Some((shadow_font, [offset_x, offset_y])) = shadow
+                    && let Some(shadow_label) =
+                        crate::assets::rasterize_system_label(shadow_font, &line, "LEFT", "TOP")?
+                    && let Some(shadow_pixels) = PixmapRef::from_bytes(
+                        shadow_label.image.as_raw(),
+                        shadow_label.image.width(),
+                        shadow_label.image.height(),
+                    )
+                {
+                    label_view.draw_pixmap(
+                        (x - rect.x + offset_x).round() as i32,
+                        (y - rect.y + offset_y).round() as i32,
+                        shadow_pixels,
+                        &PixmapPaint::default(),
+                        Transform::identity(),
+                        None,
+                    );
+                }
                 label_view.draw_pixmap(
                     (x - rect.x).round() as i32,
                     (y - rect.y).round() as i32,

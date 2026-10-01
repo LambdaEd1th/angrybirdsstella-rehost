@@ -95,10 +95,14 @@ struct GpuTexture {
 }
 
 pub(crate) struct GpuRenderer {
-    _instance: wgpu::Instance,
+    instance: wgpu::Instance,
+    adapter: wgpu::Adapter,
+    surface_window: Option<Arc<Window>>,
     surface: Option<wgpu::Surface<'static>>,
     surface_config: Option<wgpu::SurfaceConfiguration>,
+    surface_recovery: Option<renderer::surface_acquisition::SurfaceRecovery>,
     device: wgpu::Device,
+    device_state: renderer::device_state::DeviceState,
     queue: wgpu::Queue,
     resolution: GameResolution,
     game_texture: wgpu::Texture,

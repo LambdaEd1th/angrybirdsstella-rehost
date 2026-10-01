@@ -74,6 +74,10 @@ struct Args {
     /// Repeatable deterministic drag encoded as `frame,duration,x1,y1,x2,y2`.
     #[arg(long = "script-drag", value_name = "FRAME,DURATION,X1,Y1,X2,Y2")]
     script_drags: Vec<String>,
+    /// Resolve four drag coordinates from game Lua once at the scheduled frame.
+    /// Return nil to skip the drag; finite coordinates use normal host input.
+    #[arg(long = "script-drag-eval", value_name = "FRAME,DURATION,SOURCE")]
+    script_drag_evals: Vec<String>,
     /// Repeatable diagnostic Lua injection encoded as `frame,source`.
     #[arg(long = "script-eval", value_name = "FRAME,SOURCE")]
     script_evals: Vec<String>,
@@ -262,6 +266,24 @@ pub(super) fn run() -> Result<()> {
                 fields[5].parse().context("invalid script drag end y")?,
             ));
         }
+        let mut drag_evals = Vec::new();
+        for encoded in &args.script_drag_evals {
+            let fields = encoded.splitn(3, ',').collect::<Vec<_>>();
+            if fields.len() != 3 {
+                return Err(anyhow!(
+                    "invalid --script-drag-eval {encoded:?}; expected frame,duration,source"
+                ));
+            }
+            drag_evals.push((
+                fields[0]
+                    .parse()
+                    .context("invalid script drag eval frame")?,
+                fields[1]
+                    .parse()
+                    .context("invalid script drag eval duration")?,
+                fields[2].to_owned(),
+            ));
+        }
         let mut evals = Vec::new();
         for encoded in &args.script_evals {
             let Some((frame, source)) = encoded.split_once(',') else {
@@ -281,6 +303,7 @@ pub(super) fn run() -> Result<()> {
                 &clicks,
                 &drags,
                 &evals,
+                &drag_evals,
             )?;
             if args.list_missing {
                 let missing = app.runtime.missing_globals();

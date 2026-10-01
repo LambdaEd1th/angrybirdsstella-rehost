@@ -25,6 +25,14 @@ impl GpuRenderer {
         self.window_overlay.is_some()
     }
 
+    pub(super) fn reconfigure_window_overlay(&mut self, format: wgpu::TextureFormat) {
+        if let Some(overlay) = &mut self.window_overlay {
+            // A replacement surface may advertise a different format. Keep
+            // the UI allocation and its uploaded pixels; retarget its pipeline.
+            overlay.pipeline = create_pipeline(&self.device, &overlay.layout, format);
+        }
+    }
+
     /// Replace the window UI with top-left-origin, premultiplied RGBA8 pixels.
     ///
     /// Call only when the host UI is dirty. Same-size updates reuse the GPU
@@ -37,6 +45,7 @@ impl GpuRenderer {
             self.window_overlay = None;
             return Ok(());
         };
+        self.check_device()?;
         let (width, height) = image.dimensions();
         if width == 0 || height == 0 {
             return Err(anyhow!("window overlay must have a nonzero extent"));
@@ -58,10 +67,9 @@ impl GpuRenderer {
                 );
             }
         } else {
-            let format = self
-                .surface_config
-                .as_ref()
-                .map_or(GAME_FORMAT, |config| config.format);
+            let format = self.surface_config.as_ref().map_or(GAME_FORMAT, |config| {
+                super::window_target_format(config.format)
+            });
             self.window_overlay = Some(WindowOverlay::new(&self.device, width, height, format));
         }
         let overlay = self
@@ -87,7 +95,7 @@ impl GpuRenderer {
                 depth_or_array_layers: 1,
             },
         );
-        Ok(())
+        self.device_state.check()
     }
 
     pub(super) fn encode_window_overlay(
@@ -135,40 +143,7 @@ impl WindowOverlay {
                 resources::sampler_layout_entry(1),
             ],
         });
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Stella window overlay pipeline layout"),
-            bind_group_layouts: &[Some(&layout)],
-            immediate_size: 0,
-        });
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Stella window overlay shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../../blit.wgsl").into()),
-        });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Stella premultiplied native window UI compositor"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("blit_vertex"),
-                compilation_options: Default::default(),
-                buffers: &[],
-            },
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("blit_fragment"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
+        let pipeline = create_pipeline(device, &layout, format);
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("Stella window overlay linear sampler"),
             mag_filter: wgpu::FilterMode::Linear,
@@ -187,6 +162,47 @@ impl WindowOverlay {
             pipeline,
         }
     }
+}
+
+fn create_pipeline(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    format: wgpu::TextureFormat,
+) -> wgpu::RenderPipeline {
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("Stella window overlay pipeline layout"),
+        bind_group_layouts: &[Some(layout)],
+        immediate_size: 0,
+    });
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("Stella window overlay shader"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("../../blit.wgsl").into()),
+    });
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("Stella premultiplied native window UI compositor"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("blit_vertex"),
+            compilation_options: Default::default(),
+            buffers: &[],
+        },
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("blit_fragment"),
+            compilation_options: Default::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        multiview_mask: None,
+        cache: None,
+    })
 }
 
 fn create_texture(device: &wgpu::Device, width: u32, height: u32) -> wgpu::Texture {

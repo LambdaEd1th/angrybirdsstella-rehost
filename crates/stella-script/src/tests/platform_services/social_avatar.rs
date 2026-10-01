@@ -1,10 +1,107 @@
 use super::*;
 
+macro_rules! native_png_fixture {
+    ($name:literal) => {
+        include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../stella-assets/src/native_image/png/fixtures/",
+            $name
+        ))
+        .to_vec()
+    };
+}
+
 // Deterministic 17x13 RGBA PNG. Full pixel decoding is tested, with no bundled
 // avatar or filename extension available to stand in for the downloaded file.
 fn avatar_png() -> Vec<u8> {
     use base64::Engine;
     base64::engine::general_purpose::STANDARD.decode("iVBORw0KGgoAAAANSUhEUgAAABEAAAANCAYAAABPeYUaAAAAGElEQVR4nGMQtj2/llLMMGrIqCGjhpCFAd1JjSwPI2qaAAAAAElFTkSuQmCC").unwrap()
+}
+
+fn avatar_bmp() -> Vec<u8> {
+    let mut bytes = vec![0u8; 58];
+    bytes[..2].copy_from_slice(b"BM");
+    bytes[2..6].copy_from_slice(&58u32.to_le_bytes());
+    bytes[10..14].copy_from_slice(&54u32.to_le_bytes());
+    bytes[14..18].copy_from_slice(&40u32.to_le_bytes());
+    bytes[18..22].copy_from_slice(&1i32.to_le_bytes());
+    bytes[22..26].copy_from_slice(&1i32.to_le_bytes());
+    bytes[26..28].copy_from_slice(&1u16.to_le_bytes());
+    bytes[28..30].copy_from_slice(&24u16.to_le_bytes());
+    bytes[54..58].copy_from_slice(&[7, 31, 203, 0]);
+    bytes
+}
+
+fn avatar_tga() -> Vec<u8> {
+    let mut bytes = vec![0u8; 18];
+    bytes[2] = 2;
+    bytes[12..14].copy_from_slice(&1u16.to_le_bytes());
+    bytes[14..16].copy_from_slice(&1u16.to_le_bytes());
+    bytes[16] = 32;
+    bytes[17] = 0x28;
+    bytes.extend_from_slice(&[7, 31, 203, 117]);
+    bytes
+}
+
+fn avatar_indexed_tga(rle: bool) -> Vec<u8> {
+    let mut bytes = vec![0u8; 18];
+    bytes[1] = 1;
+    bytes[2] = if rle { 9 } else { 1 };
+    bytes[5..7].copy_from_slice(&1u16.to_le_bytes());
+    bytes[7] = 32;
+    bytes[12..14].copy_from_slice(&1u16.to_le_bytes());
+    bytes[14..16].copy_from_slice(&1u16.to_le_bytes());
+    bytes[16] = 8;
+    bytes[17] = 0x28;
+    bytes.extend_from_slice(&[7, 31, 203, 117]);
+    if rle {
+        bytes.push(0x80);
+    }
+    bytes.push(0);
+    bytes
+}
+
+fn avatar_scanline_tga(depth: u8) -> Vec<u8> {
+    let mut bytes = vec![0u8; 18];
+    bytes[2] = 10;
+    bytes[12..14].copy_from_slice(&2u16.to_le_bytes());
+    bytes[14..16].copy_from_slice(&2u16.to_le_bytes());
+    bytes[16] = depth;
+    bytes[17] = 0x10; // Bottom origin, horizontal bit ignored, no attribute bits.
+    bytes.push(2);
+    for pixel in [[7, 31, 203, 41], [83, 17, 29, 173], [255; 4]] {
+        bytes.extend_from_slice(&pixel[..usize::from(depth / 8)]);
+    }
+    bytes.push(1);
+    for pixel in [[19, 211, 61, 0], [151, 43, 97, 255]] {
+        bytes.extend_from_slice(&pixel[..usize::from(depth / 8)]);
+    }
+    bytes
+}
+
+fn avatar_native_bmp(dib: u32, indexed: bool) -> Vec<u8> {
+    let offset = 14 + dib as usize + if indexed { 12 } else { 0 };
+    let mut bytes = vec![0; offset];
+    bytes[..2].copy_from_slice(b"BM");
+    bytes[10..14].copy_from_slice(&(offset as u32).to_le_bytes());
+    bytes[14..18].copy_from_slice(&dib.to_le_bytes());
+    bytes[18..22].copy_from_slice(&0x10002u32.to_le_bytes());
+    bytes[22..26].copy_from_slice(&0x10002u32.to_le_bytes());
+    bytes[26..28].copy_from_slice(&1u16.to_le_bytes());
+    bytes[28..30].copy_from_slice(&(if indexed { 8u16 } else { 24 }).to_le_bytes());
+    if indexed {
+        bytes[46..50].copy_from_slice(&3u32.to_le_bytes());
+        bytes[14 + dib as usize..]
+            .copy_from_slice(&[7, 31, 203, 0, 83, 17, 29, 173, 19, 211, 61, 0]);
+        bytes.extend_from_slice(&[200, 1, 91, 92, 2, 0, 93, 94]);
+    } else {
+        bytes.extend_from_slice(&[
+            7, 31, 203, 83, 17, 29, 91, 92, 19, 211, 61, 151, 43, 97, 93, 94,
+        ]);
+    }
+    let length = bytes.len() as u32;
+    bytes[2..6].copy_from_slice(&length.to_le_bytes());
+    bytes
 }
 
 fn setup_avatar_runtime(runtime: &StellaLua, url: &str) {
@@ -125,6 +222,184 @@ fn social_avatar_online_coalesces_accounts_decodes_second_call_and_retains_pixel
 }
 
 #[test]
+fn social_avatar_downloaded_bmp_and_tga_publish_real_pixels_and_native_layouts() {
+    use stella_assets::{native_image::ImageSurfaceLayout, surface_format::SurfaceFormat};
+    let clear = [0; 4];
+    let white = [255; 4];
+    let gray_pixels = [
+        clear, white, clear, white, white, white, clear, white, clear, clear, clear, clear, white,
+        white, clear,
+    ]
+    .concat();
+    for (name, bytes, suffix, expected_size, expected_pixels, expected_layout) in [
+        (
+            "bmp-misnamed-png",
+            avatar_bmp(),
+            "png",
+            (1, 1),
+            vec![203, 31, 7, 255],
+            ImageSurfaceLayout::direct(SurfaceFormat::R8G8B8),
+        ),
+        (
+            "tga",
+            avatar_tga(),
+            "tga",
+            (1, 1),
+            vec![203, 31, 7, 117],
+            ImageSurfaceLayout::direct(SurfaceFormat::A8R8G8B8),
+        ),
+        (
+            "tga-indexed-raw",
+            avatar_indexed_tga(false),
+            "tga",
+            (1, 1),
+            vec![203, 31, 7, 255],
+            ImageSurfaceLayout {
+                pixels: SurfaceFormat::P8,
+                palette: Some(SurfaceFormat::X8B8G8R8),
+            },
+        ),
+        (
+            "tga-indexed-rle",
+            avatar_indexed_tga(true),
+            "tga",
+            (1, 1),
+            vec![203, 31, 7, 255],
+            ImageSurfaceLayout {
+                pixels: SurfaceFormat::P8,
+                palette: Some(SurfaceFormat::X8B8G8R8),
+            },
+        ),
+        (
+            "tga-24-native-scanlines",
+            avatar_scanline_tga(24),
+            "tga",
+            (2, 2),
+            vec![
+                61, 211, 19, 255, 97, 43, 151, 255, 203, 31, 7, 255, 29, 17, 83, 255,
+            ],
+            ImageSurfaceLayout::direct(SurfaceFormat::R8G8B8),
+        ),
+        (
+            "tga-32-native-scanlines",
+            avatar_scanline_tga(32),
+            "tga",
+            (2, 2),
+            vec![
+                61, 211, 19, 0, 97, 43, 151, 255, 203, 31, 7, 41, 29, 17, 83, 173,
+            ],
+            ImageSurfaceLayout::direct(SurfaceFormat::A8R8G8B8),
+        ),
+        (
+            "bmp-native-info-low-words",
+            avatar_native_bmp(40, false),
+            "png",
+            (2, 2),
+            vec![
+                61, 211, 19, 255, 97, 43, 151, 255, 203, 31, 7, 255, 29, 17, 83, 255,
+            ],
+            ImageSurfaceLayout::direct(SurfaceFormat::R8G8B8),
+        ),
+        (
+            "bmp-native-os2-palette",
+            avatar_native_bmp(64, true),
+            "png",
+            (2, 2),
+            vec![
+                61, 211, 19, 255, 203, 31, 7, 255, 0, 0, 0, 255, 29, 17, 83, 255,
+            ],
+            ImageSurfaceLayout {
+                pixels: SurfaceFormat::P8,
+                palette: Some(SurfaceFormat::X8B8G8R8),
+            },
+        ),
+        (
+            "png-native-gray-expanded-alpha",
+            native_png_fixture!("gray1-trns.png"),
+            "png",
+            (5, 3),
+            gray_pixels.clone(),
+            ImageSurfaceLayout::direct(SurfaceFormat::A8L8),
+        ),
+        (
+            "png-native-gray-adam7-expanded-alpha",
+            native_png_fixture!("gray1-trns-adam7.png"),
+            "png",
+            (5, 3),
+            gray_pixels,
+            ImageSurfaceLayout::direct(SurfaceFormat::A8L8),
+        ),
+        (
+            "png-native-low-bit-palette-direct",
+            native_png_fixture!("palette4-opaque.png"),
+            "png",
+            (3, 2),
+            vec![
+                61, 211, 19, 255, 29, 17, 83, 255, 203, 31, 7, 255, 203, 31, 7, 255, 61, 211, 19,
+                255, 29, 17, 83, 255,
+            ],
+            ImageSurfaceLayout::direct(SurfaceFormat::B8G8R8),
+        ),
+        (
+            "png-native-eight-bit-palette-white",
+            native_png_fixture!("palette8-alpha.png"),
+            "png",
+            (3, 2),
+            vec![
+                255, 255, 255, 255, 29, 17, 83, 173, 203, 31, 7, 0, 203, 31, 7, 0, 61, 211, 19,
+                255, 29, 17, 83, 173,
+            ],
+            ImageSurfaceLayout {
+                pixels: SurfaceFormat::P8,
+                palette: Some(SurfaceFormat::A8R8G8B8),
+            },
+        ),
+    ] {
+        let sandbox = ShippedDataSandbox::new(name);
+        let (asset_root, asset_rx, asset_worker) = spawn_sequence_responses(vec![(200, bytes)]);
+        let asset_url = format!("{asset_root}.{suffix}");
+        let (url, connect_rx, connect_worker) =
+            spawn_sequence_responses(vec![(200, connect_response(&asset_url))]);
+        let runtime = StellaLua::new(&sandbox.data_root).unwrap();
+        setup_avatar_runtime(&runtime, &url);
+        connect_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        connect_worker.join().unwrap();
+        runtime
+            .execute_source("_G.SocialManager.native_loadAvatar('own')")
+            .unwrap();
+        asset_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        asset_worker.join().unwrap();
+        let env = game_environment(runtime.lua()).unwrap();
+        let cached = env.get::<mlua::Table>("avatar_cached").unwrap();
+        for _ in 0..500 {
+            runtime.update(1.0 / 60.0).unwrap();
+            if cached.raw_len() == 1 {
+                break;
+            }
+            thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(cached.raw_len(), 1);
+        runtime
+            .execute_source("_G.SocialManager.native_loadAvatar('own')")
+            .unwrap();
+        assert_eq!(
+            env.get::<mlua::Table>("avatar_loaded").unwrap().raw_len(),
+            1
+        );
+        let retained = runtime
+            .resource_runtime
+            .lock()
+            .unwrap()
+            .active_atlas_catalog_region("AVATAR_own", runtime.data_root())
+            .unwrap();
+        let image = retained.decoded_image.as_ref().unwrap();
+        assert_eq!((image.width, image.height), expected_size);
+        assert_eq!(image.rgba, expected_pixels);
+        assert_eq!(image.layout, expected_layout);
+    }
+}
+
+#[test]
 fn social_avatar_online_download_failure_is_silent_and_retry_uses_real_pixels() {
     let sandbox = ShippedDataSandbox::new("social-avatar-retry");
     let (asset_url, asset_rx, asset_worker) =
@@ -213,6 +488,105 @@ fn social_avatar_online_corrupt_pixels_never_publish_image_loaded() {
             .active_native_sprite_metrics("AVATAR_own")
             .is_none()
     );
+}
+
+#[test]
+fn social_avatar_readable_unsupported_textures_stay_cached_without_success() {
+    let mut tga16 = avatar_tga();
+    tga16[16] = 16;
+    tga16[17] = 0x20;
+    tga16.truncate(18);
+    tga16.extend_from_slice(&[0, 0x7c]);
+    let mut bmp16 = avatar_bmp();
+    bmp16[28..30].copy_from_slice(&16u16.to_le_bytes());
+    bmp16[54..58].copy_from_slice(&[0, 0x7c, 0, 0]);
+    let mut bmp32 = avatar_bmp();
+    bmp32[28..30].copy_from_slice(&32u16.to_le_bytes());
+    for (name, suffix, bytes, readable, reason) in [
+        (
+            "social-tga16-rejected",
+            "tga",
+            tga16,
+            true,
+            "Unsupported texture format: R5G5B5",
+        ),
+        (
+            "social-bmp16-rejected",
+            "bmp",
+            bmp16,
+            true,
+            "Unsupported texture format: R5G5B5",
+        ),
+        (
+            "social-bmp32-rejected",
+            "bmp",
+            bmp32,
+            true,
+            "Unsupported texture format: X8R8G8B8",
+        ),
+        (
+            "social-png-gray-key-rejected",
+            "png",
+            native_png_fixture!("gray8-key.png"),
+            false,
+            "native color-key transparency has no alpha table",
+        ),
+        (
+            "social-png-rgb-key-rejected",
+            "png",
+            native_png_fixture!("rgb8-key.png"),
+            false,
+            "native color-key transparency has no alpha table",
+        ),
+    ] {
+        assert_eq!(
+            stella_assets::native_image::decode_native_image(&bytes, Some(suffix)).is_ok(),
+            readable
+        );
+        let sandbox = ShippedDataSandbox::new(name);
+        let (asset_url, asset_rx, asset_worker) = spawn_sequence_responses(vec![(200, bytes)]);
+        let (url, connect_rx, connect_worker) = spawn_sequence_responses(vec![(
+            200,
+            connect_response(&format!("{asset_url}.{suffix}")),
+        )]);
+        let runtime = StellaLua::new(&sandbox.data_root).unwrap();
+        setup_avatar_runtime(&runtime, &url);
+        connect_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        connect_worker.join().unwrap();
+        runtime
+            .execute_source("_G.SocialManager.native_loadAvatar('own')")
+            .unwrap();
+        asset_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        asset_worker.join().unwrap();
+        let env = game_environment(runtime.lua()).unwrap();
+        let cached = env.get::<mlua::Table>("avatar_cached").unwrap();
+        for _ in 0..500 {
+            runtime.update(1.0 / 60.0).unwrap();
+            if cached.raw_len() == 1 {
+                break;
+            }
+            thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(cached.raw_len(), 1);
+        for _ in 0..2 {
+            let error = runtime
+                .execute_source("_G.SocialManager.native_loadAvatar('own')")
+                .unwrap_err();
+            assert!(error.to_string().contains(reason), "{error}");
+        }
+        assert_eq!(
+            env.get::<mlua::Table>("avatar_loaded").unwrap().raw_len(),
+            0
+        );
+        assert!(
+            runtime
+                .resource_runtime
+                .lock()
+                .unwrap()
+                .active_native_sprite_metrics("AVATAR_own")
+                .is_none()
+        );
+    }
 }
 
 #[test]

@@ -1,16 +1,21 @@
 use super::*;
 use std::path::Path;
 
+pub(super) fn load_native(path: &Path, bytes: &[u8]) -> Result<TextureAsset> {
+    let decoded = stella_assets::native_image::decode_native_texture(
+        bytes,
+        path.extension().and_then(|value| value.to_str()),
+    )
+    .with_context(|| format!("decode native image {}", path.display()))?;
+    let image = RgbaImage::from_raw(decoded.width, decoded.height, decoded.rgba)
+        .ok_or_else(|| anyhow!("invalid native image pixels for {}", path.display()))?;
+    Ok(TextureAsset::with_native_layout(image, decoded.layout))
+}
+
 pub(super) fn load_jpeg(path: &Path, bytes: &[u8]) -> Result<TextureAsset> {
     let layout = stella_assets::native_image::jpeg_surface_layout(bytes)
         .with_context(|| format!("probe JPEG {}", path.display()))?;
     decode(path, bytes, image::ImageFormat::Jpeg, layout)
-}
-
-pub(super) fn load_png(path: &Path, bytes: &[u8]) -> Result<TextureAsset> {
-    let layout = stella_assets::native_image::png_surface_layout(bytes)
-        .with_context(|| format!("probe native PNG layout for {}", path.display()))?;
-    decode(path, bytes, image::ImageFormat::Png, layout)
 }
 
 pub(super) fn load_webp(path: &Path, bytes: &[u8]) -> Result<TextureAsset> {

@@ -89,5 +89,17 @@ pub enum ScriptError {
     Lua(#[from] LuaError),
 }
 
+/// Lua 5.1's lua_Integer is ptrdiff_t, hence 32-bit in the browser ABI.
+pub(crate) fn lua_integer_to_i64(value: mlua::Integer) -> i64 {
+    #[cfg(target_pointer_width = "32")]
+    {
+        i64::from(value)
+    }
+    #[cfg(target_pointer_width = "64")]
+    {
+        value
+    }
+}
+
 #[cfg(test)]
 mod tests;

@@ -1,0 +1,23 @@
+[package]
+name = "stella-web"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "stella-web"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+anyhow.workspace = true
+bytemuck.workspace = true
+image = { workspace = true, features = ["webp"] }
+serde_json.workspace = true
+skrifa.workspace = true
+tiny-skia.workspace = true
+unicode-segmentation.workspace = true
+stella-assets = { path = "../stella-assets" }
+stella-script = { path = "../stella-script" }
