@@ -64,10 +64,12 @@ def build(data: Path, output: Path) -> None:
             with (engine / f"stella_web.{suffix}").open("rb") as resource:
                 digest.update(hashlib.file_digest(resource, "sha256").digest())
         engine_version = digest.hexdigest()[:16]
+        version = tomllib.loads((ROOT / "Cargo.toml").read_text())["workspace"]["package"]["version"]
         for name in ("index.html", "style.css", "launcher.js", "display.js", "storage.js", "renderer.js", "audio.js", "i18n.js", "locales.js", "app-icon.png"):
-            if name == "launcher.js":
+            if name in ("index.html", "launcher.js"):
                 source = (ROOT / "web" / name).read_text()
-                (output / name).write_text(source.replace("__STELLA_ENGINE_VERSION__", engine_version))
+                source = source.replace("__STELLA_ENGINE_VERSION__", engine_version)
+                (output / name).write_text(source.replace("__STELLA_APP_VERSION__", version))
             else:
                 shutil.copyfile(ROOT / "web" / name, output / name)
         shutil.copytree(ROOT / "web/assets", output / "assets", dirs_exist_ok=True)
@@ -76,7 +78,6 @@ def build(data: Path, output: Path) -> None:
             shutil.copyfile(fonts / name, output / "fonts" / name)
         (output / ".nojekyll").write_text("")
         (output / "package.json").write_text('{"type":"module"}\n')
-        version = tomllib.loads((ROOT / "Cargo.toml").read_text())["workspace"]["package"]["version"]
         try:
             commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
         except (OSError, subprocess.CalledProcessError):

@@ -5,6 +5,8 @@ This is a real browser host of the existing Rust/Lua game, using
 and native frame expansion, including bitmap text, composites, terrain, shaders
 and framebuffer captures. Web Audio plays the original clips; the existing
 device-independent audio clock maintains Lua playback lifetimes.
+The homepage version badge is filled from `workspace.package.version` in the
+root `Cargo.toml` at build time, matching `build-info.json`.
 
 The launcher, favicon and Apple touch icon use the original 180 × 180
 `Purple.app/Icon-180.png`, copied unchanged to `web/app-icon.png`.
