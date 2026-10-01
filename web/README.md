@@ -8,6 +8,10 @@ device-independent audio clock maintains Lua playback lifetimes.
 The homepage version badge is filled from `workspace.package.version` in the
 root `Cargo.toml` at build time, matching `build-info.json`.
 
+The launcher and game toolbar offer light, dark and system themes. The system
+mode follows live device appearance changes. The choice is stored under
+`stella-rehost:theme:v1:<site-base-path>` and applied before the stylesheet loads.
+
 The launcher, favicon and Apple touch icon use the original 180 × 180
 `Purple.app/Icon-180.png`, copied unchanged to `web/app-icon.png`.
 The hero uses the original `SPLASHES_SHEET_3.webp`, copied unchanged to

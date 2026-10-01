@@ -15,6 +15,7 @@ export const LOCALES = [
 
 export const MESSAGES = {
   ja: {
+    theme: "外観", themeSystem: "システム", themeLight: "ライト", themeDark: "ダーク",
     customSize: "カスタム", viewportWidth: "幅", viewportHeight: "高さ",
     graphicsCapacity: "シーンが端末の描画容量を超えています。", missingTexture: "ゲームのテクスチャがありません：{name}",
     pageTitle: "Stella Rehost · ブラウザ版", metaDescription: "3つのローカルセーブ、自動保存、セーブのインポートとバックアップのエクスポートに対応した Stella Rehost のブラウザ版起動ページ。",
@@ -41,6 +42,7 @@ export const MESSAGES = {
     fullscreenUnavailable: "このブラウザでは全画面を利用できません", graphicsUnsupported: "このブラウザまたは端末は WebGL2 に対応していません。最新のデスクトップブラウザをお試しください。", graphicsLost: "ブラウザのグラフィックスコンテキストが失われました",
   },
   ko: {
+    theme: "테마", themeSystem: "시스템", themeLight: "라이트", themeDark: "다크",
     customSize: "사용자 지정", viewportWidth: "너비", viewportHeight: "높이",
     graphicsCapacity: "장면이 기기의 그래픽 처리 용량을 초과합니다.", missingTexture: "게임 텍스처가 없습니다: {name}",
     pageTitle: "Stella Rehost · 웹 버전", metaDescription: "저장 슬롯 3개, 자동 저장, 저장 파일 가져오기와 백업 내보내기를 지원하는 Stella Rehost 웹 실행 페이지입니다.",
@@ -67,6 +69,7 @@ export const MESSAGES = {
     fullscreenUnavailable: "이 브라우저에서는 전체 화면을 사용할 수 없습니다", graphicsUnsupported: "현재 브라우저 또는 기기가 WebGL2를 지원하지 않습니다. 최신 데스크톱 브라우저를 사용해 보세요.", graphicsLost: "브라우저의 그래픽 컨텍스트가 손실되었습니다",
   },
   ru: {
+    theme: "Тема", themeSystem: "Система", themeLight: "Светлая", themeDark: "Тёмная",
     customSize: "Свой размер", viewportWidth: "Ширина", viewportHeight: "Высота",
     graphicsCapacity: "Сцена превышает графические возможности устройства.", missingTexture: "Отсутствует текстура игры: {name}",
     pageTitle: "Stella Rehost · Веб-версия", metaDescription: "Запуск Stella Rehost в браузере: три локальных сохранения, автосохранение, импорт и экспорт резервных копий.",
@@ -93,6 +96,7 @@ export const MESSAGES = {
     fullscreenUnavailable: "Полноэкранный режим недоступен в этом браузере", graphicsUnsupported: "Браузер или устройство не поддерживает WebGL2. Попробуйте современный браузер на компьютере.", graphicsLost: "Браузер потерял графический контекст",
   },
   fr: {
+    theme: "Apparence", themeSystem: "Système", themeLight: "Clair", themeDark: "Sombre",
     customSize: "Personnalisé", viewportWidth: "Largeur", viewportHeight: "Hauteur",
     graphicsCapacity: "La scène dépasse la capacité graphique de cet appareil.", missingTexture: "Texture du jeu manquante : {name}",
     pageTitle: "Stella Rehost · Version web", metaDescription: "Lanceur web Stella Rehost avec trois emplacements de sauvegarde locale, sauvegarde automatique, importation et exportation.",
@@ -119,6 +123,7 @@ export const MESSAGES = {
     fullscreenUnavailable: "Le plein écran est indisponible dans ce navigateur", graphicsUnsupported: "Ce navigateur ou appareil ne prend pas en charge WebGL2. Essayez un navigateur PC récent.", graphicsLost: "Le navigateur a perdu son contexte graphique",
   },
   it: {
+    theme: "Tema", themeSystem: "Sistema", themeLight: "Chiaro", themeDark: "Scuro",
     customSize: "Personalizzato", viewportWidth: "Larghezza", viewportHeight: "Altezza",
     graphicsCapacity: "La scena supera la capacità grafica del dispositivo.", missingTexture: "Texture del gioco mancante: {name}",
     pageTitle: "Stella Rehost · Versione web", metaDescription: "Avvio web di Stella Rehost con tre slot di salvataggio locali, salvataggio automatico, importazione ed esportazione di backup.",
@@ -145,6 +150,7 @@ export const MESSAGES = {
     fullscreenUnavailable: "Schermo intero non disponibile in questo browser", graphicsUnsupported: "Il browser o dispositivo non supporta WebGL2. Prova un browser desktop aggiornato.", graphicsLost: "Il browser ha perso il contesto grafico",
   },
   de: {
+    theme: "Design", themeSystem: "System", themeLight: "Hell", themeDark: "Dunkel",
     customSize: "Benutzerdefiniert", viewportWidth: "Breite", viewportHeight: "Höhe",
     graphicsCapacity: "Die Szene überschreitet die Grafikkapazität dieses Geräts.", missingTexture: "Fehlende Spieltextur: {name}",
     pageTitle: "Stella Rehost · Webversion", metaDescription: "Stella Rehost im Browser mit drei lokalen Spielständen, automatischem Speichern sowie Import und Export von Sicherungen.",
@@ -171,6 +177,7 @@ export const MESSAGES = {
     fullscreenUnavailable: "Vollbild ist in diesem Browser nicht verfügbar", graphicsUnsupported: "Dieser Browser oder dieses Gerät unterstützt WebGL2 nicht. Versuche einen aktuellen Desktop-Browser.", graphicsLost: "Der Browser hat den Grafikkontext verloren",
   },
   es: {
+    theme: "Tema", themeSystem: "Sistema", themeLight: "Claro", themeDark: "Oscuro",
     customSize: "Personalizado", viewportWidth: "Ancho", viewportHeight: "Alto",
     graphicsCapacity: "La escena supera la capacidad gráfica del dispositivo.", missingTexture: "Falta una textura del juego: {name}",
     pageTitle: "Stella Rehost · Versión web", metaDescription: "Inicio de Stella Rehost en el navegador con tres espacios locales, guardado automático, importación y exportación de copias.",
@@ -197,6 +204,7 @@ export const MESSAGES = {
     fullscreenUnavailable: "La pantalla completa no está disponible en este navegador", graphicsUnsupported: "Este navegador o dispositivo no admite WebGL2. Prueba un navegador de escritorio actualizado.", graphicsLost: "El navegador ha perdido el contexto gráfico",
   },
   "pt-BR": {
+    theme: "Tema", themeSystem: "Sistema", themeLight: "Claro", themeDark: "Escuro",
     customSize: "Personalizado", viewportWidth: "Largura", viewportHeight: "Altura",
     graphicsCapacity: "A cena ultrapassa a capacidade gráfica do dispositivo.", missingTexture: "Textura do jogo ausente: {name}",
     pageTitle: "Stella Rehost · Versão web", metaDescription: "Início do Stella Rehost no navegador com três espaços locais, salvamento automático, importação e exportação de backups.",
@@ -223,6 +231,7 @@ export const MESSAGES = {
     fullscreenUnavailable: "Tela cheia indisponível neste navegador", graphicsUnsupported: "Este navegador ou dispositivo não suporta WebGL2. Tente um navegador desktop atualizado.", graphicsLost: "O navegador perdeu o contexto gráfico",
   },
   en: {
+    theme: "Theme", themeSystem: "System", themeLight: "Light", themeDark: "Dark",
     customSize: "Custom", viewportWidth: "Width", viewportHeight: "Height",
     graphicsCapacity: "The scene exceeds the graphics device’s rendering capacity.", missingTexture: "Missing game texture: {name}",
     pageTitle: "Stella Rehost · Browser Edition", metaDescription: "Stella Rehost browser launcher with three local save slots, automatic saving, save import and backup export.",
@@ -249,6 +258,7 @@ export const MESSAGES = {
     fullscreenUnavailable: "Fullscreen is unavailable in this browser", graphicsUnsupported: "This browser or device does not support WebGL2. Try a current desktop browser.", graphicsLost: "The browser lost its graphics context",
   },
   "zh-Hans": {
+    theme: "主题", themeSystem: "跟随系统", themeLight: "浅色", themeDark: "深色",
     customSize: "自定义", viewportWidth: "宽度", viewportHeight: "高度",
     graphicsCapacity: "场景超过显卡的绘制容量。", missingTexture: "缺少游戏纹理：{name}",
     pageTitle: "Stella Rehost · 网页版", metaDescription: "Stella Rehost 网页版启动页，支持三个独立存档槽、本地自动保存、存档导入和备份导出。",
@@ -275,6 +285,7 @@ export const MESSAGES = {
     fullscreenUnavailable: "此浏览器暂不支持全屏", graphicsUnsupported: "当前浏览器或设备不支持 WebGL2，请尝试新版桌面浏览器。", graphicsLost: "浏览器图形上下文已丢失",
   },
   "zh-Hant": {
+    theme: "主題", themeSystem: "跟隨系統", themeLight: "淺色", themeDark: "深色",
     customSize: "自訂", viewportWidth: "寬度", viewportHeight: "高度",
     graphicsCapacity: "場景超過顯示卡的繪製容量。", missingTexture: "缺少遊戲材質：{name}",
     pageTitle: "Stella Rehost · 網頁版", metaDescription: "Stella Rehost 網頁版啟動頁，支援三個獨立存檔槽、本機自動儲存、存檔匯入及備份匯出。",

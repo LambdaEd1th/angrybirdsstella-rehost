@@ -6,6 +6,7 @@
   <meta name="theme-color" content="#f6f7f2">
   <meta name="description" data-i18n-content="metaDescription" content="Stella Rehost browser launcher with three local save slots, automatic saving, save import and backup export.">
   <title data-i18n="pageTitle">Stella Rehost · Browser Edition</title>
+  <script src="./theme.js"></script>
   <link rel="icon" href="./app-icon.png" type="image/png" sizes="180x180">
   <link rel="apple-touch-icon" href="./app-icon.png" sizes="180x180">
   <link rel="stylesheet" href="./style.css">
@@ -14,7 +15,7 @@
   <main id="launcher" class="page">
     <header class="header">
       <a class="brand" href="./" data-i18n-aria-label="homeLabel" aria-label="Stella Rehost home"><img src="./app-icon.png" width="42" height="42" alt=""><span>STELLA<small>R E H O S T</small></span></a>
-      <div class="header-meta"><span class="edition"><i></i><span data-i18n="edition">BROWSER EDITION</span></span><span class="version">v__STELLA_APP_VERSION__</span><label class="language-control" for="language"><span data-i18n="language">Language</span><select id="language"></select></label></div>
+      <div class="header-meta"><span class="edition"><i></i><span data-i18n="edition">BROWSER EDITION</span></span><span class="version">v__STELLA_APP_VERSION__</span><label class="language-control" for="language"><span data-i18n="language">Language</span><select id="language"></select></label><label class="language-control theme-control" for="theme"><span data-i18n="theme">Theme</span><select id="theme" data-theme-control><option value="system" data-i18n="themeSystem">System</option><option value="light" data-i18n="themeLight">Light</option><option value="dark" data-i18n="themeDark">Dark</option></select></label></div>
     </header>
     <section class="hero" aria-labelledby="hero-title">
       <div class="hero-copy">
@@ -51,6 +52,7 @@
       <span id="game-save-status" role="status" data-i18n="ready">Ready</span>
       <div class="game-tools">
         <label class="language-control" for="game-language"><span data-i18n="language">Language</span><select id="game-language"></select></label>
+        <label class="language-control theme-control" for="game-theme"><span data-i18n="theme">Theme</span><select id="game-theme" data-theme-control><option value="system" data-i18n="themeSystem">System</option><option value="light" data-i18n="themeLight">Light</option><option value="dark" data-i18n="themeDark">Dark</option></select></label>
         <label class="game-size-control" for="game-size"><span data-i18n="size">Display size</span><select id="game-size" data-i18n-title="sizeHelp" title="Resizes the game viewport. Custom width and height can be set independently."><option value="auto" data-i18n="autoFit">Fit to window</option><option value="50">50%</option><option value="75">75%</option><option value="100">100%</option><option value="125">125%</option><option value="150">150%</option><option value="custom" data-i18n="customSize">Custom</option></select></label>
         <span id="custom-game-size" class="custom-game-size" hidden><label><span class="sr-only" data-i18n="viewportWidth">Width</span><input id="game-width" type="number" min="256" max="8192" step="1" value="1024"></label><span aria-hidden="true">×</span><label><span class="sr-only" data-i18n="viewportHeight">Height</span><input id="game-height" type="number" min="256" max="8192" step="1" value="768"></label></span>
         <button id="fullscreen" data-i18n="fullscreen">Fullscreen</button><button id="backup-game" data-i18n="exportSave">Export save</button><button id="home" data-i18n="saveReturn">Save &amp; return</button>

@@ -65,7 +65,7 @@ def build(data: Path, output: Path) -> None:
                 digest.update(hashlib.file_digest(resource, "sha256").digest())
         engine_version = digest.hexdigest()[:16]
         version = tomllib.loads((ROOT / "Cargo.toml").read_text())["workspace"]["package"]["version"]
-        for name in ("index.html", "style.css", "launcher.js", "display.js", "storage.js", "renderer.js", "audio.js", "i18n.js", "locales.js", "app-icon.png"):
+        for name in ("index.html", "style.css", "theme.js", "launcher.js", "display.js", "storage.js", "renderer.js", "audio.js", "i18n.js", "locales.js", "app-icon.png"):
             if name in ("index.html", "launcher.js"):
                 source = (ROOT / "web" / name).read_text()
                 source = source.replace("__STELLA_ENGINE_VERSION__", engine_version)
