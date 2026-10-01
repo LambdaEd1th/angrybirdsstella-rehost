@@ -426,11 +426,21 @@ impl StellaLua {
     /// changing a running game also reloads its original localized resources
     /// and relays out the current UI's cached localized text.
     pub fn set_preferred_language(&self, language: &str) -> Result<(), ScriptError> {
+        let environment = game_environment(&self.lua)?;
+        // fonts.lua::setLocale reloads these three localized bitmap faces.
+        // Text's default/fixed fonts retain the already-resolved name, whereas
+        // its function-backed fonts are refreshed by the original layout.
+        let localized_font = environment.raw_get::<Value>("getLocalizedFont")?;
+        let mut previous_fonts = Vec::new();
+        if let Value::Function(resolve) = &localized_font {
+            for name in ["FONT_CRIMSON_BASIC", "FONT_NAMES", "FONT_STELLA_DARK"] {
+                previous_fonts.push((name, resolve.call::<String>(name)?));
+            }
+        }
         self.resource_runtime
             .lock()
             .expect("resource runtime lock poisoned")
             .preferred_languages = Some(vec![language.to_owned()]);
-        let environment = game_environment(&self.lua)?;
         if matches!(
             environment.raw_get::<Value>("setLocale")?,
             Value::Function(_)
@@ -438,6 +448,12 @@ impl StellaLua {
             environment
                 .get::<mlua::Function>("refreshCurrentLocale")?
                 .call::<()>(())?;
+            let mut fonts = std::collections::HashMap::new();
+            if let Value::Function(resolve) = localized_font {
+                for (source, previous) in previous_fonts {
+                    fonts.insert(previous, resolve.call::<String>(source)?);
+                }
+            }
             // Restore formatter inputs after layout refreshes the localized
             // fonts, then use the original formatter/clip methods. The
             // formatter also measures width and needs its font selected.
@@ -445,8 +461,15 @@ impl StellaLua {
                 frame: &mlua::Table,
                 select_font: &mlua::Function,
                 resources: &Arc<Mutex<ResourceRuntime>>,
+                fonts: &std::collections::HashMap<String, String>,
             ) -> mlua::Result<()> {
-                let font = frame.get::<Value>("font")?;
+                let mut font = frame.get::<Value>("font")?;
+                if let Value::String(name) = &font
+                    && let Some(replacement) = fonts.get(name.to_str()?.as_ref())
+                {
+                    frame.set("font", replacement.as_str())?;
+                    font = frame.get("font")?;
+                }
                 if matches!(font, Value::String(_)) {
                     // The original selector lazily creates localized faces.
                     select_font.call::<()>(font)?;
@@ -477,7 +500,7 @@ impl StellaLua {
                 }
                 if let Value::Table(children) = frame.raw_get::<Value>("children")? {
                     for child in children.sequence_values::<mlua::Table>() {
-                        reclip_text(&child?, select_font, resources)?;
+                        reclip_text(&child?, select_font, resources, fonts)?;
                     }
                 }
                 Ok(())
@@ -499,6 +522,7 @@ impl StellaLua {
                     &root,
                     &environment.get::<mlua::Function>("setFont")?,
                     &self.resource_runtime,
+                    &fonts,
                 )?;
             }
         }

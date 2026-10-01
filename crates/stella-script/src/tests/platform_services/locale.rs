@@ -48,6 +48,10 @@ fn shipped_host_language_change_retranslates_cached_text_and_fonts() {
         menuManager.currentRoot:addChild(label)
         label.text = "17030"
         label:clip()
+        local heading = ui.Text:new{
+            name = "hostLocaleHeadingProbe", text = "TEXT_LEVEL_COMPLETE", substitutes = {"1"}
+        }
+        menuManager.currentRoot:addChild(heading)
     "#,
         )
         .unwrap();
