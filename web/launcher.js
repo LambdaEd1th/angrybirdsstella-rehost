@@ -1,4 +1,5 @@
-import { SaveStore, emptySave, importFiles, restoreSave, snapshotSave, clearVirtualSave, MAX_BACKUP_BYTES } from "./storage.js";
+import { SaveStore, emptySave, restoreSave, snapshotSave, clearVirtualSave } from "./storage.js";
+import { importFiles, createBackup } from "./backup.js";
 import { GameRenderer } from "./renderer.js";
 import { GameAudio } from "./audio.js";
 import { installInput } from "./input.js";
@@ -216,6 +217,7 @@ async function acquireSlot(slot) {
 
 async function receiveFiles(files) {
   if (busy || running || !files.length) return;
+  busy = true; refresh();
   const slot = selected;
   let release = () => {};
   try {
@@ -226,15 +228,14 @@ async function receiveFiles(files) {
     release = await acquireSlot(slot); writeSlot(slot, save);
     status(message("imported", { slot }));
   } catch (error) { status(error, true); }
-  finally { release(); refresh(); $("save-file").value = ""; }
+  finally { release(); busy = false; refresh(); $("save-file").value = ""; }
 }
 
 function downloadSave(save, slot) {
   if (!save?.files.length) throw new LocalizedError("noProgress");
-  const blob = new Blob([JSON.stringify(save, null, 2) + "\n"], { type: "application/json" });
-  if (blob.size > MAX_BACKUP_BYTES) throw new LocalizedError("backupTooLarge");
+  const blob = new Blob([createBackup(save)], { type: "application/zip" });
   const url = URL.createObjectURL(blob); const link = document.createElement("a");
-  link.href = url; link.download = `stella-save-${slot}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+  link.href = url; link.download = `stella-save-${slot}-${new Date().toISOString().replace(/[:.]/g, "-")}.zip`;
   document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 

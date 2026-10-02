@@ -38,8 +38,8 @@
         <button id="reset" class="action quiet" disabled data-i18n="clearSave">Clear selected save</button>
         <span class="actions-hint" data-i18n="dropHint">You can also drop save files here</span>
       </div>
-      <input id="save-file" type="file" accept=".json,.lua,.dat,.bin,.txt,.plist,.registry,.lock" multiple hidden>
-      <div class="launch-row"><div class="save-note"><span class="note-icon" aria-hidden="true">✓</span><p><span data-i18n="autoSaved">Progress is saved in this browser</span><small data-i18n="supportedFormats">JSON backups and desktop saves supported</small></p></div><button id="start" class="primary">Start game <span aria-hidden="true">↗</span></button></div>
+      <input id="save-file" type="file" accept=".zip,application/zip,application/x-zip-compressed" hidden>
+      <div class="launch-row"><div class="save-note"><span class="note-icon" aria-hidden="true">✓</span><p><span data-i18n="autoSaved">Progress is saved in this browser</span><small data-i18n="supportedFormats">ZIP saves containing the appdata/ folder</small></p></div><button id="start" class="primary">Start game <span aria-hidden="true">↗</span></button></div>
       <div id="status" class="status" role="status" aria-live="polite"></div>
       <div id="loading" class="loading" hidden><div class="loading-track"><div id="progress"></div></div><p id="loading-text" data-i18n="starting">Starting game…</p></div>
     </section>

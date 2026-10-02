@@ -19,7 +19,7 @@ test("every shipped language covers every message and preserves interpolation fi
 test("page labels, attributes and dynamic messages all have translations", async () => {
   const html = await readFile(new URL("../index.html", import.meta.url), "utf8");
   const keys = [...html.matchAll(/data-i18n(?:-[a-z-]+)?="([^"]+)"/g)].map(match => match[1]);
-  for (const file of ["launcher.js", "storage.js", "renderer.js"]) {
+  for (const file of ["launcher.js", "storage.js", "backup.js", "renderer.js"]) {
     const source = await readFile(new URL(`../${file}`, import.meta.url), "utf8");
     keys.push(...[...source.matchAll(/\b(?:message|t|LocalizedError)\("([^"]+)"/g)].map(match => match[1]));
   }

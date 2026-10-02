@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { SaveStore, emptySave, encodeBytes, decodeBytes, validateSave, safePath, importFiles, restoreSave, snapshotSave, clearVirtualSave, SAVE_ROOT, MAX_SAVE_BYTES } from "../storage.js";
+import { SaveStore, emptySave, encodeBytes, decodeBytes, validateSave, safePath, restoreSave, snapshotSave, clearVirtualSave, SAVE_ROOT, MAX_SAVE_BYTES } from "../storage.js";
+import { createBackup, importFiles } from "../backup.js";
 
 function storage() {
   const values = new Map();
@@ -24,12 +25,12 @@ function filesystem() {
   };
 }
 
-test("binary files and stable device identity survive export/import and MEMFS restoration", () => {
+test("binary files and stable device identity survive ZIP export/import and MEMFS restoration", async () => {
   const first = fixture(); const FS = filesystem(); restoreSave(FS, first);
   assert.deepEqual(FS.readFile(`${SAVE_ROOT}/settings.lua`), decodeBytes(first.files[0].data));
   FS.mkdirTree(`${SAVE_ROOT}/nested`); FS.writeFile(`${SAVE_ROOT}/nested/progress.bin`, new Uint8Array([10, 0, 255]));
   const save = snapshotSave(FS, first); assert.equal(save.createdAt, first.createdAt);
-  const second = filesystem(); restoreSave(second, JSON.parse(JSON.stringify(save)));
+  const second = filesystem(); restoreSave(second, await importFiles([new File([createBackup(save)], "save.zip")]));
   assert.deepEqual(second.readFile(`${SAVE_ROOT}/nested/progress.bin`), new Uint8Array([10, 0, 255]));
   assert.deepEqual(second.readFile(`${SAVE_ROOT}/stella-device-id`), FS.readFile(`${SAVE_ROOT}/stella-device-id`));
 });
@@ -63,12 +64,4 @@ test("reject malformed formats, traversal, duplicate paths and invalid Base64", 
 test("corrupt localStorage data is reported without silently overwriting it", () => {
   const shared = storage(); const store = new SaveStore(shared, "/repo/"); shared.setItem(store.key(1), "bad json");
   assert.throws(() => store.read(1), { code: "readError" }); assert.equal(shared.getItem(store.key(1)), "bad json");
-});
-test("import both JSON backups and native desktop save bytes", async () => {
-  const backup = new File([JSON.stringify(fixture())], "save.json"); assert.equal((await importFiles([backup])).files.length, 2);
-  const native = new File([new Uint8Array([0, 128, 255])], "highscores.lua");
-  assert.deepEqual(decodeBytes((await importFiles([native])).files[0].data), new Uint8Array([0, 128, 255]));
-  await assert.rejects(importFiles([new File(["invalid"], "save.json")]));
-  await assert.rejects(importFiles([new File(["{}"], "unrelated.json")]));
-  await assert.rejects(importFiles([new File(["console.log(1)"], "script.js")]));
 });

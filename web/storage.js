@@ -55,32 +55,6 @@ export function validateSave(value) {
   return { format: SAVE_FORMAT, version: 1, createdAt: value.createdAt, updatedAt: value.updatedAt, files };
 }
 
-export async function importFiles(files) {
-  if (!files.length) throw new LocalizedError("noFiles");
-  if (files.reduce((sum, file) => sum + file.size, 0) > MAX_BACKUP_BYTES) {
-    throw new LocalizedError("filesTooLarge");
-  }
-  if (files.length === 1 && files[0].name.toLowerCase().endsWith(".json")) {
-    const text = await files[0].text();
-    let value;
-    try { value = JSON.parse(text); } catch { throw new LocalizedError("invalidJSON"); }
-    if (value?.format === SAVE_FORMAT) return validateSave(value);
-    // A desktop service JSON is also a legitimate individual AppData file.
-    if (!/^stella-[a-z-]+\.json$/.test(files[0].name)) {
-      throw new LocalizedError("notBackup");
-    }
-  }
-  const save = emptySave();
-  for (const file of files) {
-    const path = safePath(file.name);
-    if (!/\.(lua|json|dat|bin|txt|plist|registry)$/i.test(path) && !/^stella-[a-z-]+(?:\.registry\.lock)?$/.test(path)) {
-      throw new LocalizedError("selectSaveFiles");
-    }
-    save.files.push({ path, data: encodeBytes(new Uint8Array(await file.arrayBuffer())) });
-  }
-  return validateSave(save);
-}
-
 export class SaveStore {
   constructor(storage, basePath) {
     this.storage = storage;

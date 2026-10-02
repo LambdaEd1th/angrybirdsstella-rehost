@@ -146,22 +146,34 @@ page, exporting, or returning to the launcher also invoke the original
 persistence callbacks to flush pending Lua progress before snapshotting it.
 
 The localStorage key is `stella-rehost:v1:<site-base-path>:slot:<1|2|3>`, isolating
-repositories that share the same GitHub Pages origin. Import a JSON backup made
-by the launcher, or select desktop AppData files together (`settings.lua`,
-`highscores.lua`, `stella-device-id`, `stella-services.json`, etc.). Importing
-individual files replaces the selected slot; export its existing contents first
-if you want to preserve them. Binary data is Base64 encoded losslessly. A
-backup has the form:
+repositories that share the same GitHub Pages origin. Backups use ZIP-only
+import/export. Exported
+archives contain exactly one top-level folder, `appdata/`, holding the original
+file bytes and relative paths. No manifest or JSON wrapper is added:
 
-```json
-{
-  "format": "stella-rehost-save",
-  "version": 1,
-  "createdAt": "2026-10-01T00:00:00.000Z",
-  "updatedAt": "2026-10-01T00:00:00.000Z",
-  "files": [{ "path": "settings.lua", "data": "...base64..." }]
-}
+```text
+stella-save-1-<date>.zip
+└── appdata/
+    ├── settings.lua
+    ├── highscores.lua
+    ├── stella-device-id
+    ├── stella-services.json
+    └── ...
 ```
+
+Unzip the backup, replace the desired AppData files, then ZIP the `appdata/`
+folder and import that single ZIP. Desktop AppData can be packaged the same
+way. Import replaces the complete selected slot, including device identity;
+export its current contents first if you want a separate backup. JSON backup
+files and loose individual files are no longer accepted. Existing browser
+slots remain readable and can be exported directly as ZIP. The private
+localStorage snapshot still encodes binary files losslessly as Base64.
+
+ZIP imports preserve nested files, accept stored/DEFLATE entries, verify CRC32
+and reject duplicate paths, traversal, symlinks, entries outside `appdata/`,
+unsupported archives and oversized contents before writing the slot. The
+vendored MIT-licensed fflate codec is included in the Pages artifact, with no
+CDN dependency.
 
 Save data is limited to 3 MB before encoding to fit typical localStorage
 quotas. A failed write retains the older stored snapshot and offers export of

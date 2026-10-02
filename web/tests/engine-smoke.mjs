@@ -3,6 +3,7 @@ import { resolve, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { readFile } from "node:fs/promises";
 import { restoreSave, snapshotSave } from "../storage.js";
+import { createBackup, importFiles } from "../backup.js";
 import { LOCALES } from "../locales.js";
 
 const artifact = resolve(process.argv[2] ?? "dist/pages");
@@ -93,6 +94,8 @@ async function boot(save) {
 const first = await boot(null);
 assert.ok(first.files.some(file => file.path === "stella-device-id"));
 assert.ok(first.files.some(file => file.path === "settings.lua"));
-const second = await boot(first);
+const restored = await importFiles([new File([createBackup(first)], "save.zip")]);
+assert.deepEqual(new Map(restored.files.map(file => [file.path, file.data])), new Map(first.files.map(file => [file.path, file.data])), "ZIP preserves every original AppData byte");
+const second = await boot(restored);
 assert.equal(second.files.find(file => file.path === "stella-device-id").data, first.files.find(file => file.path === "stella-device-id").data);
-console.log(`WebAssembly boot/render/resize/input/save/restore and all ${LOCALES.length} game languages passed (${second.files.length} AppData files).`);
+console.log(`WebAssembly boot/render/resize/input/save/ZIP restore and all ${LOCALES.length} game languages passed (${second.files.length} AppData files).`);
