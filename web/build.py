@@ -12,9 +12,10 @@ import tempfile
 import tomllib
 
 ROOT = Path(__file__).resolve().parent.parent
-EXPORTS = ["_main", "_stella_init", "_stella_frame", "_stella_packet", "_stella_error",
+EXPORTS = ["_main", "_malloc", "_free", "_stella_init", "_stella_frame", "_stella_flush", "_stella_packet", "_stella_error",
            "_stella_pointer", "_stella_key", "_stella_wheel", "_stella_active",
-           "_stella_save", "_stella_cancel_account", "_stella_touches", "_stella_shutdown", "_stella_set_locale", "_stella_resize"]
+           "_stella_save", "_stella_cancel_account", "_stella_touches", "_stella_touch", "_stella_shutdown", "_stella_set_locale", "_stella_resize", "_stella_audio_packet",
+           "_stella_account_frame", "_stella_account_packet", "_stella_account_pointer", "_stella_account_control", "_stella_account_key", "_stella_account_wheel", "_stella_account_focus", "_stella_account_edit", "_stella_account_editor"]
 
 
 def build(data: Path, output: Path) -> None:
@@ -65,7 +66,7 @@ def build(data: Path, output: Path) -> None:
                 digest.update(hashlib.file_digest(resource, "sha256").digest())
         engine_version = digest.hexdigest()[:16]
         version = tomllib.loads((ROOT / "Cargo.toml").read_text())["workspace"]["package"]["version"]
-        for name in ("index.html", "style.css", "theme.js", "launcher.js", "display.js", "storage.js", "renderer.js", "audio.js", "i18n.js", "locales.js", "app-icon.png"):
+        for name in ("index.html", "style.css", "theme.js", "launcher.js", "display.js", "storage.js", "renderer.js", "audio.js", "lifecycle.js", "input.js", "account.js", "i18n.js", "locales.js", "app-icon.png"):
             if name in ("index.html", "launcher.js"):
                 source = (ROOT / "web" / name).read_text()
                 source = source.replace("__STELLA_ENGINE_VERSION__", engine_version)

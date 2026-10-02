@@ -1,9 +1,10 @@
-use stella_script::{AccountUiAction, AccountUiSnapshot, AccountView, StellaLua};
-use winit::keyboard::{Key, ModifiersState, NamedKey};
-
 use super::editor::Editor;
+use super::keyboard::{Key, ModifiersState, NamedKey};
+use stella_script::{AccountUiAction, AccountUiSnapshot, AccountView, StellaLua};
 
+#[path = "state/registration.rs"]
 mod registration;
+#[path = "state/validation.rs"]
 mod validation;
 pub(super) use registration::Registration;
 use validation::Validation;
@@ -60,6 +61,44 @@ impl AccountUi {
 
     pub(crate) fn focused(&self) -> Option<Field> {
         self.focus
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn host_editor(&self, field: Field) -> Option<(&str, usize, usize, bool)> {
+        let view = self.snapshot.as_ref()?.view;
+        match (view, field) {
+            (AccountView::SignIn | AccountView::Register2, Field::Password) => {
+                Some(self.password.host_state())
+            }
+            (
+                AccountView::SignIn | AccountView::Register2 | AccountView::ForgotPassword,
+                Field::Email,
+            ) => Some(self.email_editor().host_state()),
+            _ => None,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn set_host_editor(
+        &mut self,
+        field: Field,
+        text: &str,
+        start: usize,
+        end: usize,
+        backward: bool,
+    ) {
+        if self.busy() || self.host_editor(field).is_none() {
+            return;
+        }
+        self.focus(Some(field));
+        if self
+            .editor_mut()
+            .is_some_and(|editor| editor.set_host_state(text, start, end, backward))
+        {
+            self.clear_field_error();
+            self.edit_validation_field();
+        }
+        self.dirty();
     }
 
     pub(crate) fn sync(&mut self, next: Option<AccountUiSnapshot>) -> bool {
@@ -545,4 +584,5 @@ impl AccountUi {
 }
 
 #[cfg(test)]
+#[path = "state/tests.rs"]
 mod tests;

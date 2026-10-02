@@ -324,13 +324,17 @@ fn ensure_directory(path: &Path) -> Result<(), CacheError> {
 }
 
 fn private_options() -> OpenOptions {
-    let mut options = OpenOptions::new();
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
+        let mut options = OpenOptions::new();
         options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+        options
     }
-    options
+    #[cfg(not(unix))]
+    {
+        OpenOptions::new()
+    }
 }
 
 pub(super) fn cache_basename(url: &str) -> String {

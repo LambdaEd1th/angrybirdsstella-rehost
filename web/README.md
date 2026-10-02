@@ -108,6 +108,34 @@ touch gestures suppress browser defaults while Pointer Events continue to
 deliver aiming and two-finger input to the game. Toolbar dimension inputs stay
 editable, and the launcher retains normal text selection.
 
+Rendering follows the original update → pending drawing/captures → host clear
+→ Lua draw sequence. Update-time captures survive Lua draw's command reset and
+resource release/recreation. The two prepared streams retain their own pixel
+and geometry buffers until WebGL consumes them. Clear color and clip are
+latched before Lua draw, using the desktop renderer's signed wrapping scissor.
+Disabling Lua draw still executes update captures and the host clear.
+
+Pause/resume, persistence and account/locale callbacks flush their drawing
+without clearing the framebuffer. Resizing first completes pending calls on
+the old drawable, then changes its size; resolution callbacks address the new
+target. Existing capture textures retain their original dimensions. Captures
+use native bottom-up RGB pixels, with orientation already encoded in sprite
+UVs. The shader does not apply another vertical flip.
+
+After building, `node web/tests/frame-smoke.mjs dist/pages` runs eight capture,
+clear and resize cases through the production WebAssembly host. The companion
+`frame-capture.mjs` runs the same cases with actual WebGL pixel assertions in a
+browser. Fixtures wrap the original startup inside MEMFS only. These diagnostic
+targets verify capture behavior; original-device screenshot parity remains
+unverified.
+
+The host retains every active touch in native event order. Lua exposes the
+first two, while pinch zoom runs only when exactly two fingers are down;
+adding a third ends the pinch baseline. Releasing or cancelling the primary
+finger leaves the other fingers in the touch list without moving the aim
+cursor. A new finger can become primary on its next press. Losing pointer
+capture releases at the last received position, including outside the canvas.
+
 ## Saves
 
 The launcher has three save slots. Before the original scripts boot, the
@@ -145,9 +173,11 @@ different base path can make local progress unavailable.
 ## Verification
 
 ```sh
-node --test web/tests/storage.test.js
+node --test web/tests/*.test.js
 node web/tests/engine-smoke.mjs dist/pages
-cargo clippy -p stella-web -- -D warnings
+node web/tests/frame-smoke.mjs dist/pages
+node web/tests/account-smoke.mjs dist/pages
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo fmt --all -- --check
 ```
 
@@ -157,12 +187,44 @@ second WebAssembly instance from that snapshot and verifies persistent identity.
 Also verify play, backup import/export, reload restoration and responsive layout
 in the browser after rebuilding.
 
-The browser uses the offline local providers. Native account dialogs return to
-the game with an explanatory browser dialog; desktop-compatible remote service
-endpoints, native sharing, and platform store integrations are not exposed by
-this host. Fonts use the shipped Open Sans faces in the browser instead of the
+CI runs strict Clippy with `-D warnings` for macOS ARM64, Windows x86_64/ARM64,
+Linux x86_64/ARM64 and Emscripten WebAssembly. Desktop targets check the complete
+workspace, every Cargo target and all features; WebAssembly checks `stella-web`
+and its dependencies with the pinned Emscripten SDK.
+
+The browser uses the offline local providers. Native account views now reuse
+the desktop Rust controller, original iPad PNGs, Open Sans fonts and all eleven
+UI localizations. Login, registration, birthday selectors, help, required-field
+errors, two-second editing checks, password reset and cancellation are routed
+through the native account API. Requests without a configured compatible
+provider show the native network-error page; no account success is invented.
+Remote service configuration, native sharing and platform store integrations
+are not exposed by this host. Fonts use the shipped Open Sans faces in the browser instead of the
 host operating system's fonts, with the bundled OFL-licensed
 [Noto Sans CJK collection](fonts/README.md) supplying Chinese, Japanese and Korean
 glyphs missing from Open Sans (including the score panel's player name).
 Proprietary runtime resources retain their existing licensing; this browser host
 does not change it.
+
+Canvas and account-form focus, plus page visibility, share one application
+activation boundary. Native account presentation keeps the game/audio lifetime
+active and clears pending game input. Its private premultiplied CPU image is
+shown on a separate Canvas2D surface above the game, excluded from game textures
+and captures. Transparent browser controls provide accessibility and IME;
+native Return switches/resigns fields without submitting. Tab traverses the
+browser controls, and secure copy/cut is blocked while explicit paste is allowed.
+Canceled/replaced owners clear DOM editors and private image allocations;
+owner/page/busy tokens reject obsolete input across a cached engine restart.
+An inactive game submits no gameplay/render frames, drops
+pointer ownership without inventing release input, and resets frame timing on
+resume. Audio reconciles the original Lua pause/resume callbacks immediately,
+even when the browser will not deliver another animation frame. Stopped output
+retains live sound sources and freezes their Web Audio cursors. The original
+scripts still stop and recreate background music; removed handles and replaced
+audio outputs retire their physical sources. Both native output and host
+activation must be enabled before physical playback resumes.
+
+`node web/tests/account-smoke.mjs <artifact>` executes eight production-WASM
+account regressions and all eleven original UI languages in isolated MEMFS.
+Real browser focus, keyboard/IME delivery and visual comparison still require
+browser/device verification; diagnostic rasters are not original-device goldens.

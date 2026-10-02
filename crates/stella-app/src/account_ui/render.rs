@@ -17,6 +17,7 @@ use super::{
 };
 
 use crate::platform_ui_drawing as drawing;
+#[path = "render/registration.rs"]
 mod registration;
 #[cfg(test)]
 use drawing::text_lines_with_shadow;
@@ -37,6 +38,44 @@ pub(crate) struct AccountPainter {
 impl AccountPainter {
     pub(crate) fn invalidate(&mut self) {
         self.last = None;
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn set_languages(&mut self, preferences: &[String]) {
+        self.strings = Strings::load(&self.root, preferences);
+        self.hit_regions.clear();
+        self.hit_owner = None;
+        self.invalidate();
+    }
+
+    /// Credential-free accessibility controls over the private pixel surface.
+    #[allow(dead_code)]
+    pub(crate) fn controls(&self, state: &AccountUi) -> Vec<(&'static str, Rect, String)> {
+        self.hit_regions
+            .iter()
+            .map(|(name, rect)| {
+                let element = self
+                    .hit_owner
+                    .and_then(
+                        |(_, view, busy)| {
+                            if busy { None } else { layout::layout_for(view) }
+                        },
+                    )
+                    .and_then(|view| view.elements.iter().find(|e| e.name == *name));
+                let label = element.map_or_else(
+                    || (*name).to_owned(),
+                    |e| {
+                        e.text_key
+                            .map_or(e.fallback, |key| self.strings.get(key, e.fallback))
+                            .to_owned()
+                    },
+                );
+                let label = self
+                    .registration_control_label(state, name)
+                    .unwrap_or(label);
+                (*name, self.canvas.rect(*rect), label)
+            })
+            .collect()
     }
 
     pub(crate) fn new(root: PathBuf, runtime: &StellaLua) -> Self {
@@ -651,4 +690,5 @@ impl AccountPainter {
 }
 
 #[cfg(test)]
+#[path = "render/tests.rs"]
 mod tests;

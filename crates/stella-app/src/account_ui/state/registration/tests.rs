@@ -50,7 +50,7 @@ fn press(ui: &mut AccountUi, key: NamedKey) -> Option<Command> {
 }
 
 fn shortcut(ui: &mut AccountUi, key: &str, modifier: ModifiersState) -> Option<Command> {
-    ui.key(&Key::Character(key.into()), None, modifier)
+    ui.key(&Key::Character(key), None, modifier)
 }
 
 fn enter(ui: &mut AccountUi, field: Field, value: &str) {
@@ -230,11 +230,7 @@ fn picker_keys_consume_input_and_escape_closes_without_filling_an_untouched_fiel
     let mut ui = ui(AccountView::Register1);
     click(&mut ui, Some("dayTextField"));
     assert_eq!(
-        ui.key(
-            &Key::Character("a".into()),
-            Some("a"),
-            ModifiersState::empty()
-        ),
+        ui.key(&Key::Character("a"), Some("a"), ModifiersState::empty()),
         None
     );
     assert_eq!(press(&mut ui, NamedKey::Tab), None);

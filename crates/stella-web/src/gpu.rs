@@ -14,6 +14,10 @@ use program::{NativeProgram, native_sprite_program};
 
 const WHITE_TEXTURE: &str = "<stella-white>";
 
+pub(super) fn clear_scissor(edges: Option<[i32; 4]>, resolution: GameResolution) -> [u32; 4] {
+    frame::native_scissor(edges, resolution)
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct GpuVertex {

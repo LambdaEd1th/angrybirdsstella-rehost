@@ -3,6 +3,29 @@
 use super::*;
 use crate::account_ui::{Command, Field};
 
+fn account_key(key: &winit::keyboard::Key) -> crate::account_ui::keyboard::Key<'_> {
+    use crate::account_ui::keyboard::{Key, NamedKey};
+    use winit::keyboard::NamedKey as WindowKey;
+    match key {
+        winit::keyboard::Key::Character(text) => Key::Character(text),
+        winit::keyboard::Key::Named(key) => Key::Named(match key {
+            WindowKey::Escape => NamedKey::Escape,
+            WindowKey::Tab => NamedKey::Tab,
+            WindowKey::Enter => NamedKey::Enter,
+            WindowKey::ArrowLeft => NamedKey::ArrowLeft,
+            WindowKey::ArrowRight => NamedKey::ArrowRight,
+            WindowKey::ArrowUp => NamedKey::ArrowUp,
+            WindowKey::ArrowDown => NamedKey::ArrowDown,
+            WindowKey::Home => NamedKey::Home,
+            WindowKey::End => NamedKey::End,
+            WindowKey::Backspace => NamedKey::Backspace,
+            WindowKey::Delete => NamedKey::Delete,
+            _ => return Key::Other,
+        }),
+        _ => Key::Other,
+    }
+}
+
 impl StellaApp {
     pub(super) fn synchronize_account_ui(&mut self) -> Result<()> {
         self.synchronize_app_rating_ui()?;
@@ -259,9 +282,13 @@ impl StellaApp {
             WindowEvent::KeyboardInput { event, .. } => {
                 if event.state == ElementState::Pressed
                     && let Some(command) = self.account_ui.key(
-                        &event.logical_key,
+                        &account_key(&event.logical_key),
                         event.text.as_deref(),
-                        self.modifiers,
+                        crate::account_ui::keyboard::ModifiersState::new(
+                            self.modifiers.shift_key(),
+                            self.modifiers.control_key(),
+                            self.modifiers.super_key(),
+                        ),
                     )
                 {
                     self.account_command(command)?;

@@ -4,7 +4,7 @@
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
-    ffi::CString,
+    ffi::{CStr, CString},
     fs,
     path::PathBuf,
     sync::Arc,
@@ -28,10 +28,18 @@ use stella_script::{
 
 // These modules contain no window/device dependencies. Sharing them preserves
 // atlas pivots, bitmap text, Dirt, painter order and capture generations.
+mod account;
+#[allow(dead_code, unused_imports)]
+#[path = "../../stella-app/src/account_ui.rs"]
+mod account_ui;
 #[allow(dead_code, unused_imports)]
 #[path = "../../stella-app/src/assets/mod.rs"]
 mod assets;
 mod gpu;
+mod input;
+#[allow(dead_code, unused_imports)]
+#[path = "../../stella-app/src/platform_ui_drawing.rs"]
+mod platform_ui_drawing;
 use assets::*;
 
 const GAME_WIDTH: u32 = 1024;
@@ -77,9 +85,13 @@ struct BrowserGame {
     revision: u64,
     audio_clock: AudioOutputClock,
     uploaded: HashSet<String>,
+    before_clear: gpu::PreparedFrame,
     frame: gpu::PreparedFrame,
     packet: CString,
+    audio_packet: CString,
     active: bool,
+    touches: input::BrowserTouches,
+    account: account::BrowserAccount,
 }
 
 thread_local! {
@@ -129,8 +141,9 @@ pub extern "C" fn stella_set_locale(index: i32) -> i32 {
         let index = usize::try_from(index).context("Invalid language index")?;
         let locale = LOCALES.get(index).context("Unsupported language index")?;
         GAME.with(|slot| -> Result<()> {
-            if let Some(game) = slot.borrow().as_ref() {
+            if let Some(game) = slot.borrow_mut().as_mut() {
                 game.runtime.set_preferred_language(locale).browser()?;
+                game.account.set_language(locale);
             }
             Ok(())
         })?;
@@ -159,6 +172,8 @@ pub extern "C" fn stella_init(width: u32, height: u32) -> i32 {
         runtime.post_application_resumed();
         runtime.set_application_audio_active(true).browser()?;
         let assets = AssetCatalog::load(root.join("images/1024x768"), root.join("fonts/1024x768"))?;
+        let account =
+            account::BrowserAccount::new(&runtime, LANGUAGE.with(|slot| LOCALES[*slot.borrow()]));
         GAME.with(|slot| {
             *slot.borrow_mut() = Some(BrowserGame {
                 runtime,
@@ -167,9 +182,13 @@ pub extern "C" fn stella_init(width: u32, height: u32) -> i32 {
                 revision: 0,
                 audio_clock: AudioOutputClock::default(),
                 uploaded: HashSet::new(),
+                before_clear: gpu::PreparedFrame::default(),
                 frame: gpu::PreparedFrame::default(),
                 packet: CString::new("{}").unwrap(),
+                audio_packet: CString::new("{}").unwrap(),
                 active: true,
+                touches: input::BrowserTouches::default(),
+                account,
             })
         });
         Ok(())
@@ -181,6 +200,10 @@ pub extern "C" fn stella_resize(width: u32, height: u32) -> i32 {
     with_game(|game| {
         let resolution = GameResolution::new(width, height)?;
         if game.resolution != resolution {
+            anyhow::ensure!(
+                !game.runtime.has_frame_commands(),
+                "Flush pending render commands before resizing the drawable"
+            );
             // JavaScript installs the new WebGL drawable first, after the
             // previous frame (including captures) has finished rendering.
             // Use the same GameApp resolution notification as the desktop.
@@ -201,36 +224,33 @@ pub extern "C" fn stella_frame(delta: f64) -> i32 {
         } else {
             0.0
         });
-        let state = game.runtime.audio_output_state();
-        let transitions = game.audio_clock.synchronize(&state, elapsed);
-        game.runtime.apply_audio_playback_transitions(&transitions);
+        game.synchronize_audio_clock(elapsed);
         if game.active {
             game.runtime.update(elapsed.as_secs_f64()).browser()?;
         }
+        game.synchronize_account()?;
+        // GameLua::draw clears its queues. Consume the complete immediate
+        // stream first, including scheduler/update captures and the resources
+        // they retain before draw can release or recreate those resources.
+        game.before_clear = game.prepare_render_stream()?;
+        let before_clear = game
+            .before_clear
+            .packet(&mut game.assets, &mut game.uploaded)?;
         let background = game.runtime.background_color();
         let clear_clip = game.runtime.framebuffer_clip_rect();
         game.runtime.draw().browser()?;
-        if let Some(snapshot) = game.runtime.sprite_catalog_snapshot_since(game.revision) {
-            game.revision = snapshot.revision;
-            game.assets.apply_sprite_catalog_snapshot(snapshot)?;
-        }
-        game.assets
-            .apply_composite_updates(game.runtime.take_composite_updates());
-        game.frame = game.assets.prepare_gpu_frame_at_resolution(
-            game.resolution,
-            &game.runtime.take_render_commands(),
-            &game.runtime.take_text_commands(),
-            &game.runtime.take_rect_commands(),
-            &game.runtime.take_capture_commands(),
-        )?;
+        game.synchronize_audio_clock(Duration::ZERO);
+        game.frame = game.prepare_render_stream()?;
         let mut packet = game.frame.packet(&mut game.assets, &mut game.uploaded)?;
+        packet["beforeClear"] = before_clear;
         packet["background"] = json!(background);
         packet["resolution"] = json!([game.resolution.width, game.resolution.height]);
         packet["clearClip"] = json!(clear_clip);
+        packet["clearScissor"] = json!(gpu::clear_scissor(clear_clip, game.resolution));
         packet["audio"] = audio_packet(&game.runtime.audio_output_state());
         packet["exit"] = json!(game.runtime.exit_requested());
-        // Browser account modals have a cancel ingress instead of leaving the
-        // game trapped behind an unavailable native UIKit view.
+        // The private account presentation is transferred separately, so it
+        // cannot enter the game stream or capture textures.
         packet["account"] = json!(game.runtime.account_ui().map(|view| view.id));
         packet["locale"] = json!(game.runtime.current_locale().browser()?);
         if let Some(prompt) = game.runtime.app_rating_prompt() {
@@ -264,6 +284,63 @@ fn audio_packet(state: &stella_script::AudioOutputState) -> serde_json::Value {
     json!({"generation": state.generation, "started": state.started, "playbacks": playbacks})
 }
 
+impl BrowserGame {
+    fn synchronize_account(&mut self) -> Result<()> {
+        if self.account.sync(&self.runtime, self.resolution)? {
+            self.touches.clear();
+        }
+        Ok(())
+    }
+    fn prepare_render_stream(&mut self) -> Result<gpu::PreparedFrame> {
+        if let Some(snapshot) = self.runtime.sprite_catalog_snapshot_since(self.revision) {
+            self.revision = snapshot.revision;
+            self.assets.apply_sprite_catalog_snapshot(snapshot)?;
+        }
+        self.assets
+            .apply_composite_updates(self.runtime.take_composite_updates());
+        self.assets.prepare_gpu_frame_at_resolution(
+            self.resolution,
+            &self.runtime.take_render_commands(),
+            &self.runtime.take_text_commands(),
+            &self.runtime.take_rect_commands(),
+            &self.runtime.take_capture_commands(),
+        )
+    }
+
+    fn synchronize_audio_clock(&mut self, elapsed: Duration) {
+        let state = self.runtime.audio_output_state();
+        let transitions = self.audio_clock.synchronize(&state, elapsed);
+        self.runtime.apply_audio_playback_transitions(&transitions);
+    }
+}
+
+/// Complete calls made outside the display callback without clearing the
+/// target. The host must render this packet before replacing the drawable.
+#[unsafe(no_mangle)]
+pub extern "C" fn stella_flush() -> i32 {
+    with_game(|game| {
+        game.before_clear = gpu::PreparedFrame::default();
+        game.frame = game.prepare_render_stream()?;
+        let packet = game.frame.packet(&mut game.assets, &mut game.uploaded)?;
+        game.packet = CString::new(serde_json::to_vec(&packet)?)?;
+        Ok(())
+    })
+}
+
+/// Lifecycle events must reconcile physical players even when no frame runs.
+#[unsafe(no_mangle)]
+pub extern "C" fn stella_audio_packet() -> *const std::ffi::c_char {
+    let mut pointer = std::ptr::null();
+    with_game(|game| {
+        game.audio_packet = CString::new(serde_json::to_vec(&audio_packet(
+            &game.runtime.audio_output_state(),
+        ))?)?;
+        pointer = game.audio_packet.as_ptr();
+        Ok(())
+    });
+    pointer
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn stella_packet() -> *const std::ffi::c_char {
     GAME.with(|slot| {
@@ -275,7 +352,24 @@ pub extern "C" fn stella_packet() -> *const std::ffi::c_char {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn stella_pointer(x: f64, y: f64, down: i32) -> i32 {
-    with_game(|game| game.runtime.set_cursor(x, y, down != 0).browser())
+    with_game(|game| {
+        if game.runtime.account_ui().is_none() {
+            game.runtime.set_cursor(x, y, down != 0).browser()?;
+        }
+        Ok(())
+    })
+}
+
+/// Preserve the full native touch vector. Lua publishes its first two entries,
+/// but GameApp's pinch state tests the uncapped vector for exactly two touches.
+#[unsafe(no_mangle)]
+pub extern "C" fn stella_touch(phase: i32, id: u32, x: f64, y: f64) -> i32 {
+    with_game(|game| {
+        if game.runtime.account_ui().is_none() {
+            game.touches.event(&game.runtime, phase, id, x, y)?;
+        }
+        Ok(())
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -289,16 +383,21 @@ pub extern "C" fn stella_touches(
     y2: i32,
 ) -> i32 {
     with_game(|game| {
+        if game.runtime.account_ui().is_some() {
+            return Ok(());
+        }
         let touches = [(u64::from(id1), x1, y1), (u64::from(id2), x2, y2)];
-        game.runtime
-            .set_touches(&touches[..count.clamp(0, 2) as usize])
-            .browser()
+        game.touches
+            .replace(&game.runtime, &touches[..count.clamp(0, 2) as usize])
     })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn stella_key(code: i32, down: i32) -> i32 {
     with_game(|game| {
+        if game.runtime.account_ui().is_some() {
+            return Ok(());
+        }
         let name = match code {
             0 => "KEY_BACK",
             1 => "KEY_MENU",
@@ -313,6 +412,9 @@ pub extern "C" fn stella_key(code: i32, down: i32) -> i32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn stella_wheel(delta: i32, shift: i32, control: i32) -> i32 {
     with_game(|game| {
+        if game.runtime.account_ui().is_some() {
+            return Ok(());
+        }
         game.runtime
             .mouse_wheel(delta, shift != 0, control != 0)
             .browser()
@@ -326,12 +428,14 @@ pub extern "C" fn stella_active(active: i32) -> i32 {
             return Ok(());
         }
         game.runtime.set_application_active(active != 0).browser()?;
-        game.runtime
-            .set_application_audio_active(active != 0)
-            .browser()?;
+        game.touches.clear();
         if active != 0 {
             game.runtime.post_application_resumed();
         }
+        game.runtime
+            .set_application_audio_active(active != 0)
+            .browser()?;
+        game.synchronize_audio_clock(Duration::ZERO);
         game.active = active != 0;
         Ok(())
     })
@@ -364,6 +468,130 @@ pub extern "C" fn stella_cancel_account() -> i32 {
         }
         Ok(())
     })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn stella_account_frame(now: f64) -> i32 {
+    with_game(|game| {
+        if game
+            .account
+            .frame(&game.runtime, game.resolution, now, game.active)?
+        {
+            game.touches.clear();
+        }
+        Ok(())
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn stella_account_packet() -> *const std::ffi::c_char {
+    GAME.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .map_or(std::ptr::null(), |game| game.account.packet())
+    })
+}
+
+fn with_account(token: u32, operation: impl FnOnce(&mut BrowserGame) -> Result<()>) -> i32 {
+    with_game(|game| {
+        game.synchronize_account()?;
+        if game.active && game.account.accepts(token) {
+            operation(game)?;
+        }
+        Ok(())
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn stella_account_pointer(
+    token: u32,
+    phase: i32,
+    x: f32,
+    y: f32,
+    extend: i32,
+) -> i32 {
+    with_account(token, |game| {
+        game.account
+            .pointer(&game.runtime, phase, x, y, extend != 0)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn stella_account_key(token: u32, code: i32, shift: i32) -> i32 {
+    let names = [
+        "Escape",
+        "Enter",
+        "Tab",
+        "ArrowUp",
+        "ArrowDown",
+        "Home",
+        "End",
+    ];
+    with_account(token, |game| {
+        if let Some(name) = usize::try_from(code).ok().and_then(|code| names.get(code)) {
+            game.account.key(&game.runtime, name, shift != 0)?;
+        }
+        Ok(())
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn stella_account_wheel(token: u32, rows: i32) -> i32 {
+    with_account(token, |game| {
+        game.account.wheel(rows);
+        Ok(())
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn stella_account_focus(token: u32, field: i32) -> i32 {
+    with_account(token, |game| {
+        game.account.focus(field);
+        Ok(())
+    })
+}
+
+/// # Safety
+/// `name` must point to a valid, NUL-terminated UTF-8 string for this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn stella_account_control(token: u32, name: *const std::ffi::c_char) -> i32 {
+    with_account(token, |game| {
+        let name = unsafe { CStr::from_ptr(name) }
+            .to_str()
+            .context("Invalid account control")?;
+        game.account.control(&game.runtime, name)
+    })
+}
+
+/// # Safety
+/// `value` must point to a valid, NUL-terminated UTF-8 JSON string for this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn stella_account_edit(
+    token: u32,
+    field: i32,
+    value: *const std::ffi::c_char,
+) -> i32 {
+    with_account(token, |game| {
+        let value = unsafe { CStr::from_ptr(value) }
+            .to_str()
+            .map_err(|_| anyhow!("Invalid account editor input"))?;
+        let value =
+            serde_json::from_str(value).map_err(|_| anyhow!("Invalid account editor input"))?;
+        game.account.edit(field, &value);
+        Ok(())
+    })
+}
+
+/// Private editor transfer, consumed only by live input elements. It is never
+/// exposed in public frame packets, diagnostics, Lua globals or save data.
+#[unsafe(no_mangle)]
+pub extern "C" fn stella_account_editor(token: u32, field: i32) -> *const std::ffi::c_char {
+    let mut pointer = std::ptr::null();
+    with_account(token, |game| {
+        pointer = game.account.editor(field)?;
+        Ok(())
+    });
+    pointer
 }
 
 fn main() {}

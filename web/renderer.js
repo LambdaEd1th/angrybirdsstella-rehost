@@ -21,8 +21,6 @@ uniform sampler2D uBase;
 uniform sampler2D uFill;
 uniform highp sampler2D uDraws;
 uniform int uDrawWidth;
-uniform bool uBaseCaptured;
-uniform bool uFillCaptured;
 in vec2 vUv;
 in vec2 vSource;
 flat in uint vDraw;
@@ -31,20 +29,19 @@ vec4 state(int offset) {
   int index = int(vDraw) * 4 + offset;
   return texelFetch(uDraws, ivec2(index % uDrawWidth, index / uDrawWidth), 0);
 }
-vec2 orient(vec2 uv, bool captured) { return captured ? vec2(uv.x, 1.0 - uv.y) : uv; }
 void main() {
   vec4 header = state(0), diffuse = state(1), params = state(2), fill = state(3);
   int sourceMode = int(header.z + 0.5), shaderMode = int(header.w + 0.5);
   vec4 color;
   if (sourceMode == 2) color = diffuse;
-  else if (sourceMode == 3) color = texture(uFill, orient(vUv, uFillCaptured));
+  else if (sourceMode == 3) color = texture(uFill, vUv);
   else if (sourceMode == 1) {
-    vec4 mask = texture(uBase, orient(vUv, uBaseCaptured));
+    vec4 mask = texture(uBase, vUv);
     float magnitude = max(abs(header.y), 0.000001);
     float scale = header.y >= 0.0 ? magnitude : -magnitude;
-    color = texture(uFill, orient(vSource / scale / max(fill.xy, vec2(1.0)), uFillCaptured));
+    color = texture(uFill, vSource / scale / max(fill.xy, vec2(1.0)));
     color.a *= mask.a;
-  } else color = texture(uBase, orient(vUv, uBaseCaptured));
+  } else color = texture(uBase, vUv);
   if (sourceMode != 2 && shaderMode != 0) {
     if (shaderMode == 4) color *= diffuse;
     else {
@@ -85,7 +82,7 @@ export class GameRenderer {
     gl.linkProgram(this.program);
     if (!gl.getProgramParameter(this.program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(this.program));
     gl.useProgram(this.program);
-    this.locations = Object.fromEntries(["uBase", "uFill", "uDraws", "uDrawWidth", "uBaseCaptured", "uFillCaptured"]
+    this.locations = Object.fromEntries(["uBase", "uFill", "uDraws", "uDrawWidth"]
       .map(name => [name, gl.getUniformLocation(this.program, name)]));
     gl.uniform1i(this.locations.uBase, 0); gl.uniform1i(this.locations.uFill, 1); gl.uniform1i(this.locations.uDraws, 2);
     this.vao = gl.createVertexArray(); gl.bindVertexArray(this.vao);
@@ -118,7 +115,7 @@ export class GameRenderer {
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, info.width, info.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    this.textures.set(info.name, { texture, captured: false });
+    this.textures.set(info.name, { texture });
   }
   render(module, packet) {
     const gl = this.gl;
@@ -126,6 +123,23 @@ export class GameRenderer {
     gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
     gl.useProgram(this.program);
     gl.bindVertexArray(this.vao);
+    if (packet.beforeClear) this.renderStream(module, packet.beforeClear);
+    if (packet.background) {
+      // Rust resolves the same signed, wrapping GL scissor as the desktop.
+      // Update-time draws/captures have already consumed the old pixels.
+      this.setClip(packet.clearScissor);
+      gl.clearColor(...packet.background.map(value => value / 255), 1);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+    }
+    this.renderStream(module, packet);
+  }
+  setClip(clip) {
+    const gl = this.gl;
+    if (clip) { gl.enable(gl.SCISSOR_TEST); gl.scissor(clip[0], gl.canvas.height - clip[1] - clip[3], clip[2], clip[3]); }
+    else gl.disable(gl.SCISSOR_TEST);
+  }
+  renderStream(module, packet) {
+    const gl = this.gl;
     for (const info of packet.textures) {
       this.upload(info, module.HEAPU8.subarray(info.pointer, info.pointer + info.length));
     }
@@ -140,35 +154,28 @@ export class GameRenderer {
     gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, this.draws);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, width, height, 0, gl.RGBA, gl.FLOAT, uniforms);
     gl.uniform1i(this.locations.uDrawWidth, width);
-    const setClip = clip => {
-      if (clip) { gl.enable(gl.SCISSOR_TEST); gl.scissor(clip[0], gl.canvas.height - clip[1] - clip[3], clip[2], clip[3]); }
-      else gl.disable(gl.SCISSOR_TEST);
-    };
-    // The original clear inherits the previous frame's framebuffer scissor.
-    const clip = packet.clearClip;
-    setClip(clip ? [Math.max(0, clip[0]), Math.max(0, clip[1]), Math.max(0, Math.min(gl.canvas.width, clip[2]) - Math.max(0, clip[0])), Math.max(0, Math.min(gl.canvas.height, clip[3]) - Math.max(0, clip[1]))] : null);
-    gl.clearColor(...packet.background.map(value => value / 255), 1); gl.clear(gl.COLOR_BUFFER_BIT);
     for (const operation of packet.operations) {
       if (operation.capture) {
         const texture = gl.createTexture(); gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, texture);
         gl.copyTexImage2D(gl.TEXTURE_2D, 0, gl.RGB, 0, 0, gl.canvas.width, gl.canvas.height, 0);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-        this.textures.set(operation.capture, { texture, captured: true });
+        // Native capture is bottom-up RGB. Sprite flags already compensate
+        // its UV orientation; the shader must sample those coordinates once.
+        this.textures.set(operation.capture, { texture });
         continue;
       }
-      setClip(operation.scissor);
+      this.setClip(operation.scissor);
       if (operation.program === 0 || operation.program === 2) gl.disable(gl.BLEND);
       else {
         gl.enable(gl.BLEND);
         const factor = operation.program === 3 ? gl.ONE : gl.SRC_ALPHA;
         gl.blendFuncSeparate(factor, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
       }
-      for (const [unit, name, captured] of [[0, operation.base, "uBaseCaptured"], [1, operation.fill, "uFillCaptured"]]) {
+      for (const [unit, name] of [[0, operation.base], [1, operation.fill]]) {
         const entry = this.textures.get(name);
         if (!entry) throw new LocalizedError("missingTexture", { name });
         gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, entry.texture);
-        gl.uniform1i(this.locations[captured], entry.captured ? 1 : 0);
       }
       gl.drawArrays(gl.TRIANGLES, operation.first, operation.count);
     }

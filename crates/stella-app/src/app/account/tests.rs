@@ -341,8 +341,11 @@ fn real_signin_artwork_masks_passwords_and_cancel_removes_gpu_layer_without_game
     ime(&mut app, Ime::Commit("abcdefgh".to_owned()));
     let first_password = paint(&mut app, 0.0);
     assert_eq!(
-        app.account_ui
-            .key(&Key::Character("a".into()), None, ModifiersState::CONTROL),
+        app.account_ui.key(
+            &account_key(&Key::Character("a".into())),
+            None,
+            crate::account_ui::keyboard::ModifiersState::CONTROL
+        ),
         None
     );
     ime(&mut app, Ime::Commit("87654321".to_owned()));

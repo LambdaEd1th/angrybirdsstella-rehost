@@ -444,11 +444,7 @@ fn help_and_other_non_input_views_do_not_focus_or_edit_hidden_credentials() {
             ui.text("hidden edit");
             ui.preedit("hidden composition", Some((0, 5)));
             assert_eq!(
-                ui.key(
-                    &Key::Character("x".into()),
-                    Some("x"),
-                    ModifiersState::empty()
-                ),
+                ui.key(&Key::Character("x"), Some("x"), ModifiersState::empty()),
                 None
             );
             assert_eq!(press(&mut ui, NamedKey::Backspace), None);
@@ -469,9 +465,8 @@ fn help_and_other_non_input_views_do_not_focus_or_edit_hidden_credentials() {
 fn clipboard_shortcuts_require_explicit_input_and_never_export_secure_selection() {
     let mut ui = AccountUi::default();
     ui.sync(Some(snapshot(1, AccountView::SignIn)));
-    let shortcut = |ui: &mut AccountUi, key: &str, modifier| {
-        ui.key(&Key::Character(key.into()), None, modifier)
-    };
+    let shortcut =
+        |ui: &mut AccountUi, key: &str, modifier| ui.key(&Key::Character(key), None, modifier);
     for modifier in [ModifiersState::CONTROL, ModifiersState::SUPER] {
         assert_eq!(shortcut(&mut ui, "v", modifier), None);
         enter(&mut ui, Field::Email, "mail@example.invalid");
@@ -515,7 +510,7 @@ fn ime_owns_navigation_and_clipboard_until_commit_or_escape() {
     }
     for key in ["c", "x", "v"] {
         assert_eq!(
-            ui.key(&Key::Character(key.into()), None, ModifiersState::SUPER),
+            ui.key(&Key::Character(key), None, ModifiersState::SUPER),
             None
         );
     }
@@ -541,7 +536,7 @@ fn desktop_reverse_tab_starts_last_field_and_caret_motion_retains_validation_err
     ui.email_error = Some(EMAIL_INVALID);
     press(&mut ui, NamedKey::ArrowLeft);
     assert_eq!(ui.email_error, Some(EMAIL_INVALID));
-    ui.key(&Key::Character("a".into()), None, ModifiersState::CONTROL);
+    ui.key(&Key::Character("a"), None, ModifiersState::CONTROL);
     assert_eq!(ui.email_error, Some(EMAIL_INVALID));
     press(&mut ui, NamedKey::Delete);
     assert_eq!(ui.email_error, None);

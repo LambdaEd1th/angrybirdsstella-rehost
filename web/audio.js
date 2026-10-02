@@ -5,8 +5,27 @@ export class GameAudio {
     this.playbacks = new Map();
     this.cache = new Map();
     this.generation = null;
+    this.active = true;
+    this.started = true;
+    this.requestedActive = null;
+    this.contextTransition = Promise.resolve();
     // Constructed directly in the Start click so browser autoplay permits audio.
-    this.context?.resume().catch(() => {});
+    this.synchronizeContext();
+  }
+  setActive(active) {
+    this.active = active;
+    return this.synchronizeContext();
+  }
+  synchronizeContext() {
+    const context = this.context, active = this.active && this.started;
+    if (!context || this.requestedActive === active) return this.contextTransition;
+    this.requestedActive = active;
+    // Queue each transition immediately. Awaiting a previous resume could
+    // leave a background suspend behind a browser's pending autoplay grant.
+    this.contextTransition = context[active ? "resume" : "suspend"]().catch(() => {
+      if (this.context === context && this.requestedActive === active) this.requestedActive = null;
+    });
+    return this.contextTransition;
   }
   prepare(module, source) {
     if (!this.context || !source) return Promise.resolve(null);
@@ -58,11 +77,14 @@ export class GameAudio {
   sync(module, state) {
     if (!this.context) return;
     if (this.generation !== state.generation) { this.stop(); this.cache.clear(); this.generation = state.generation; }
-    const live = new Set(state.started ? state.playbacks.map(playback => playback.handle) : []);
+    this.started = state.started;
+    this.synchronizeContext();
+    // Purple stopOutput retains live instances. Suspending the context also
+    // freezes their cursors; only Lua removal or output replacement retires them.
+    const live = new Set(state.playbacks.map(playback => playback.handle));
     for (const [handle, entry] of this.playbacks) {
-      if (!live.has(handle)) { entry.node?.stop(); this.playbacks.delete(handle); }
+      if (!live.has(handle)) { this.retire(entry); this.playbacks.delete(handle); }
     }
-    if (!state.started) return;
     for (const playback of state.playbacks) {
       let entry = this.playbacks.get(playback.handle);
       if (!entry) {
@@ -75,7 +97,7 @@ export class GameAudio {
           node.buffer = buffer; node.loop = owner.playback.loop;
           gain.gain.value = Math.max(0, owner.playback.volume);
           node.connect(gain); gain.connect(this.context.destination);
-          owner.node = node; owner.gain = gain; node.start();
+          node.start(); owner.node = node; owner.gain = gain;
         }).catch(() => {});
       }
       entry.playback = playback;
@@ -83,6 +105,7 @@ export class GameAudio {
       if (entry.gain) entry.gain.gain.value = Math.max(0, playback.volume);
     }
   }
-  stop() { for (const entry of this.playbacks.values()) entry.node?.stop(); this.playbacks.clear(); }
+  retire(entry) { entry.node?.stop(); entry.node?.disconnect(); entry.gain?.disconnect(); }
+  stop() { for (const entry of this.playbacks.values()) this.retire(entry); this.playbacks.clear(); }
   dispose() { this.stop(); this.context?.close().catch(() => {}); this.context = null; this.cache.clear(); }
 }

@@ -18,6 +18,7 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   RUST_TOOLCHAIN: 1.98.1
+  EMSCRIPTEN_VERSION: 6.0.1
 
 jobs:
   quality:
@@ -145,7 +146,7 @@ jobs:
 
       - name: Install Rust target
         run: |
-          rustup toolchain install ${{ env.RUST_TOOLCHAIN }} --profile minimal
+          rustup toolchain install ${{ env.RUST_TOOLCHAIN }} --profile minimal --component clippy
           rustup target add ${{ matrix.target }} --toolchain ${{ env.RUST_TOOLCHAIN }}
           rustup default ${{ env.RUST_TOOLCHAIN }}
 
@@ -158,7 +159,42 @@ jobs:
           key: cargo-check-${{ runner.os }}-${{ runner.arch }}-${{ matrix.target }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: cargo-check-${{ runner.os }}-${{ runner.arch }}-${{ matrix.target }}-
 
-      - name: Check workspace for target
+      - name: Run strict Clippy for target
         env:
           RUSTFLAGS: ${{ contains(matrix.target, 'windows-msvc') && '-C target-feature=+crt-static' || '' }}
-        run: cargo check --workspace --all-targets --locked --target ${{ matrix.target }}
+        run: cargo clippy --workspace --all-targets --all-features --locked --target ${{ matrix.target }} -- -D warnings
+
+  web-check:
+    name: Check WebAssembly
+    needs: quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Install Rust target
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component clippy
+          rustup target add wasm32-unknown-emscripten --toolchain "$RUST_TOOLCHAIN"
+          rustup default "$RUST_TOOLCHAIN"
+
+      - name: Cache Cargo downloads
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-check-web-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-check-web-${{ runner.os }}-
+
+      - name: Install Emscripten
+        run: |
+          git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
+          "$RUNNER_TEMP/emsdk/emsdk" install "$EMSCRIPTEN_VERSION"
+          "$RUNNER_TEMP/emsdk/emsdk" activate "$EMSCRIPTEN_VERSION"
+
+      - name: Run strict Clippy for target
+        run: |
+          source "$RUNNER_TEMP/emsdk/emsdk_env.sh"
+          cargo clippy -p stella-web --all-targets --all-features --locked --target wasm32-unknown-emscripten -- -D warnings

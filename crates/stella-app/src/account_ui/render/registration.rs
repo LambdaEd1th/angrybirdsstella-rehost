@@ -13,6 +13,36 @@ pub(super) fn date_tag(name: &str) -> Option<u8> {
 }
 
 impl AccountPainter {
+    pub(super) fn registration_control_label(
+        &self,
+        state: &AccountUi,
+        name: &str,
+    ) -> Option<String> {
+        if let Some(tag) = date_tag(name) {
+            return state.registration.values[usize::from(tag)]
+                .map(|value| self.date_value_text(tag, value));
+        }
+        let tag = state.registration.picker?;
+        let offset = match name {
+            "pickerRowMinus2" => -2,
+            "pickerRowMinus1" => -1,
+            "pickerRow0" => 0,
+            "pickerRowPlus1" => 1,
+            "pickerRowPlus2" => 2,
+            name if native::DATE_PICKERS
+                .iter()
+                .any(|picker| picker.name == name) =>
+            {
+                return Some("Date picker".into());
+            }
+            _ => return None,
+        };
+        Some(self.date_value_text(
+            tag,
+            state.registration.row + offset + if tag == 2 { 1900 } else { 1 },
+        ))
+    }
+
     pub(super) fn registration_group_rects(
         &mut self,
         runtime: &StellaLua,

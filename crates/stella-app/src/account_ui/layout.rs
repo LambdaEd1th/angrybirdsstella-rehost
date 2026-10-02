@@ -5,6 +5,7 @@
 
 use stella_script::AccountView;
 
+#[path = "layout/registration.rs"]
 pub(crate) mod registration;
 
 pub(crate) use crate::platform_ui_drawing::{LineBreak, Rect};

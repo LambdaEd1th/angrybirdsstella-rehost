@@ -651,7 +651,7 @@ fn caret_and_selection_are_not_edits_but_actual_deletion_is() {
     key(&mut ui, NamedKey::Home);
     key(&mut ui, NamedKey::Backspace); // No content to delete at start.
     key(&mut ui, NamedKey::End);
-    ui.key(&Key::Character("a".into()), None, ModifiersState::CONTROL);
+    ui.key(&Key::Character("a"), None, ModifiersState::CONTROL);
     assert_eq!(ui.validation.deadlines, deadlines);
     assert_eq!(ui.validation.generation, generation);
     assert_eq!(ui.email_error, Some(WRONG_EMAIL));

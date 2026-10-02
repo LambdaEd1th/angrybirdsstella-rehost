@@ -1,7 +1,9 @@
 import { SaveStore, emptySave, importFiles, restoreSave, snapshotSave, clearVirtualSave, MAX_BACKUP_BYTES } from "./storage.js";
 import { GameRenderer } from "./renderer.js";
 import { GameAudio } from "./audio.js";
-import { ORIGINAL_SIZE, displayDimensions, drawableDimensions, canvasPoint } from "./display.js";
+import { installInput } from "./input.js";
+import { BrowserAccountUI } from "./account.js";
+import { ORIGINAL_SIZE, displayDimensions, drawableDimensions } from "./display.js";
 import { LOCALES, configureLanguage, language, languageIndex, setLanguage, onLanguageChange, translateDocument, t, message, formatMessage, LocalizedError } from "./i18n.js";
 
 const $ = id => document.getElementById(id);
@@ -22,6 +24,7 @@ let selected = 1;
 let running = null;
 let busy = false;
 let cachedModule = null;
+function focusGame() { if (running?.accountVisible) running.account.focus(); else $("canvas").focus({ preventScroll: true }); }
 const localizedMessages = new Map();
 function setText(id, value) { localizedMessages.set(id, value); $(id).textContent = formatMessage(value); }
 const languageControls = [$("language"), $("game-language")];
@@ -35,7 +38,7 @@ for (const control of languageControls) {
       if (running) engineCall(running.module, "_stella_set_locale", LOCALES.findIndex(locale => locale.id === control.value));
       setLanguage(control.value);
     } catch (error) { control.value = language(); status(error, true); }
-    finally { if (running) $("canvas").focus({ preventScroll: true }); }
+    finally { if (running) focusGame(); }
   });
 }
 function refreshLanguage() {
@@ -76,6 +79,7 @@ function syncGameResolution(game) {
   if (game.failed) return;
   const resolution = targetResolution(game.renderer);
   if (resolution.width === game.resolution.width && resolution.height === game.resolution.height) return;
+  flushGameRendering(game);
   game.renderer.resize(resolution.width, resolution.height);
   engineCall(game.module, "_stella_resize", resolution.width, resolution.height);
   game.resolution = resolution;
@@ -107,7 +111,7 @@ sizeControl.addEventListener("change", () => {
   catch { /* Applying the selected size does not depend on saving the preference. */ }
   $("canvas-area").scrollTo(0, 0);
   updateGameSize();
-  if (running) $("canvas").focus({ preventScroll: true });
+  if (running) focusGame();
 });
 function applyCustomSize() {
   const width = widthControl.valueAsNumber, height = heightControl.valueAsNumber;
@@ -264,6 +268,15 @@ window.addEventListener("storage", event => {
 
 function engineCall(module, name, ...args) {
   if (module[name](...args) !== 0) throw new Error(module.UTF8ToString(module._stella_error()));
+  // Native platform/Lua callbacks may draw while the display link is paused.
+  if (running?.module === module && !running.failed && ["_stella_active", "_stella_save", "_stella_cancel_account", "_stella_set_locale"].includes(name)) {
+    flushGameRendering(running);
+  }
+}
+
+function flushGameRendering(game) {
+  engineCall(game.module, "_stella_flush");
+  game.renderer.render(game.module, JSON.parse(game.module.UTF8ToString(game.module._stella_packet())));
 }
 
 function persist(game, flush = true) {
@@ -292,7 +305,7 @@ function saveOrReport(game, flush = true) {
 
 function failGame(game, error) {
   if (running !== game) return;
-  game.failed = true; cancelAnimationFrame(game.animation); game.audio.stop();
+  game.failed = true; cancelAnimationFrame(game.animation); game.audio.setActive(false); game.audio.stop();
   saveOrReport(game);
   setText("game-error", message("gamePaused", { error }));
   $("game-error").hidden = false;
@@ -342,21 +355,20 @@ async function startGame() {
     engineCall(module, "_stella_init", resolution.width, resolution.height);
     const game = { module, renderer, resolution, audio, slot, save, release, animation: 0, last: performance.now(), lastSave: performance.now(), failed: false, saveFailure: "", cleanup: null };
     running = game;
+    game.account = new BrowserAccountUI(game, { root: $("account-dialog"), gameCanvas: $("canvas"), engineCall, failGame, saveOrReport });
     $("canvas").focus();
-    game.cleanup = installInput(game);
+    game.cleanup = installInput(game, { canvas: $("canvas"), accountDialog: $("account-dialog"), engineCall, failGame, saveOrReport });
     // Always save generated device identity, including a completely new game.
     saveOrReport(game, false);
     function frame(now) {
       if (running !== game || game.failed) return;
       try {
-        if (document.hidden || $("account-dialog").open) { game.last = now; game.animation = requestAnimationFrame(frame); return; }
+        if (!game.lifecycle.active) { game.account.refresh(now); game.last = now; game.animation = requestAnimationFrame(frame); return; }
         syncGameResolution(game);
         engineCall(module, "_stella_frame", Math.min((now - game.last) / 1000, 0.1)); game.last = now;
         const packet = JSON.parse(module.UTF8ToString(module._stella_packet()));
         renderer.render(module, packet); audio.sync(module, packet.audio);
-        if (packet.account !== null && !$("account-dialog").open) {
-          engineCall(module, "_stella_active", 0); saveOrReport(game, false); $("account-dialog").showModal();
-        }
+        game.account.refresh(now);
         if (now - game.lastSave > 15000) { saveOrReport(game, false); game.lastSave = now; }
         if (packet.exit) { returnHome(); return; }
         game.animation = requestAnimationFrame(frame);
@@ -371,65 +383,11 @@ async function startGame() {
   } finally { busy = false; $("loading").hidden = true; refresh(); }
 }
 
-function installInput(game) {
-  const canvas = $("canvas"), listeners = [], pointers = new Map();
-  let primary = null;
-  function listen(target, event, handler, options) { target.addEventListener(event, handler, options); listeners.push(() => target.removeEventListener(event, handler, options)); }
-  function input(operation) { if (game.failed) return; try { operation(); } catch (error) { failGame(game, error); } }
-  function point(event) {
-    return canvasPoint(canvas, event);
-  }
-  function touches() {
-    const values = [...pointers].slice(0, 2).map(([id, [x, y]]) => [id, Math.trunc(x), Math.trunc(y)]);
-    input(() => engineCall(game.module, "_stella_touches", values.length, ...(values[0] ?? [0, 0, 0]), ...(values[1] ?? [0, 0, 0])));
-  }
-  listen(canvas, "pointerdown", event => {
-    if (event.button !== 0) return;
-    event.preventDefault(); canvas.focus(); canvas.setPointerCapture(event.pointerId);
-    if (event.pointerType !== "mouse") pointers.set(event.pointerId, point(event));
-    touches();
-    if (primary === null) primary = event.pointerId;
-    if (primary === event.pointerId) input(() => engineCall(game.module, "_stella_pointer", ...point(event), 1));
-  });
-  listen(canvas, "pointermove", event => {
-    if (pointers.has(event.pointerId)) { pointers.set(event.pointerId, point(event)); touches(); }
-    if (primary !== null && primary !== event.pointerId) return;
-    input(() => engineCall(game.module, "_stella_pointer", ...point(event), primary === event.pointerId ? 1 : 0));
-  });
-  for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) listen(canvas, type, event => {
-    pointers.delete(event.pointerId);
-    touches();
-    if (primary !== event.pointerId) return;
-    primary = null; input(() => engineCall(game.module, "_stella_pointer", ...point(event), 0));
-  });
-  for (const type of ["contextmenu", "selectstart", "dragstart"]) listen(canvas, type, event => event.preventDefault());
-  // iOS Safari can start a selection/callout even when pointerdown is canceled.
-  // Keep Pointer Events as the single game input source; these listeners only
-  // suppress browser gestures, including while two fingers control the game.
-  for (const type of ["touchstart", "touchmove"]) listen(canvas, type, event => {
-    if (event.cancelable) event.preventDefault();
-  }, { passive: false });
-  listen(canvas, "wheel", event => { event.preventDefault(); input(() => engineCall(game.module, "_stella_wheel", event.deltaY < 0 ? 1 : -1, +event.shiftKey, +event.ctrlKey)); }, { passive: false });
-  const keys = { Escape: 0, m: 1, M: 1, "+": 2, "-": 3 };
-  for (const type of ["keydown", "keyup"]) listen(canvas, type, event => {
-    if (Object.hasOwn(keys, event.key)) { event.preventDefault(); input(() => engineCall(game.module, "_stella_key", keys[event.key], +(type === "keydown"))); }
-  });
-  listen(canvas, "blur", () => { primary = null; pointers.clear(); input(() => engineCall(game.module, "_stella_active", 0)); saveOrReport(game, false); });
-  listen(canvas, "focus", () => { input(() => engineCall(game.module, "_stella_active", 1)); game.last = performance.now(); });
-  listen(document, "visibilitychange", () => {
-    input(() => engineCall(game.module, "_stella_active", document.hidden ? 0 : 1));
-    if (document.hidden) saveOrReport(game, false);
-    game.last = performance.now();
-  });
-  listen(window, "pagehide", () => { saveOrReport(game); });
-  listen(canvas, "webglcontextlost", event => { event.preventDefault(); failGame(game, new LocalizedError("graphicsLost")); });
-  return () => listeners.forEach(remove => remove());
-}
 
 function returnHome() {
   const game = running; if (!game) return;
   saveOrReport(game);
-  cancelAnimationFrame(game.animation); game.cleanup?.(); game.audio.dispose(); game.renderer.dispose(); game.module._stella_shutdown(); game.release();
+  cancelAnimationFrame(game.animation); game.cleanup?.(); game.account.dispose(); game.audio.dispose(); game.renderer.dispose(); game.module._stella_shutdown(); game.release();
   running = null; $("game").hidden = true; $("launcher").hidden = false;
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   status(game.saveFailure || message("savedHome"), !!game.saveFailure);
@@ -439,19 +397,13 @@ function returnHome() {
 $("start").addEventListener("click", startGame);
 $("home").addEventListener("click", returnHome);
 $("fullscreen").addEventListener("click", async () => {
-  try { if (document.fullscreenElement) await document.exitFullscreen(); else await $("game").requestFullscreen(); $("canvas").focus(); }
+  try { if (document.fullscreenElement) await document.exitFullscreen(); else await $("game").requestFullscreen(); focusGame(); }
   catch { setText("game-save-status", message("fullscreenUnavailable")); }
 });
 $("backup-game").addEventListener("click", () => {
   if (!running) return;
   try { downloadSave(saveOrReport(running), running.slot); }
   catch (error) { setText("game-error", error); $("game-error").hidden = false; }
-  $("canvas").focus();
+  focusGame();
 });
-$("account-dialog").addEventListener("close", () => {
-  if (!running) return;
-  try { engineCall(running.module, "_stella_cancel_account"); engineCall(running.module, "_stella_active", 1); $("canvas").focus(); }
-  catch (error) { failGame(running, error); }
-});
-
 refreshLanguage(); status(storageError, !!storageError);

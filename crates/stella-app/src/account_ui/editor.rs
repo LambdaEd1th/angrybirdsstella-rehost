@@ -26,6 +26,52 @@ impl Editor {
         self.cursor
     }
 
+    /// Browser text inputs own IME/clipboard delivery and report UTF-16
+    /// offsets. Keep the shared renderer's committed grapheme invariants.
+    #[allow(dead_code)]
+    pub(super) fn host_state(&self) -> (&str, usize, usize, bool) {
+        let selected = self.selection();
+        (
+            &self.value,
+            self.value[..selected.start].encode_utf16().count(),
+            self.value[..selected.end].encode_utf16().count(),
+            self.cursor < self.anchor,
+        )
+    }
+
+    #[allow(dead_code)]
+    pub(super) fn set_host_state(
+        &mut self,
+        value: &str,
+        start: usize,
+        end: usize,
+        backward: bool,
+    ) -> bool {
+        let offset = |target| {
+            let mut units = 0;
+            let mut clean_bytes = 0;
+            for ch in value.chars() {
+                if units + ch.len_utf16() > target {
+                    break;
+                }
+                units += ch.len_utf16();
+                if !ch.is_control() {
+                    clean_bytes += ch.len_utf8();
+                }
+            }
+            clean_bytes
+        };
+        let (start, end) = (offset(start), offset(end));
+        let clean: String = value.chars().filter(|ch| !ch.is_control()).collect();
+        let changed = self.value != clean;
+        self.value = clean;
+        let start = grapheme_boundary_before(&self.value, start);
+        let end = grapheme_boundary_before(&self.value, end);
+        (self.anchor, self.cursor) = if backward { (end, start) } else { (start, end) };
+        self.clear_preedit();
+        changed
+    }
+
     pub(super) fn replace(&mut self, text: &str) {
         let text: String = text.chars().filter(|ch| !ch.is_control()).collect();
         let selected = self.selection();
@@ -142,6 +188,21 @@ fn char_boundary(text: &str, index: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn browser_utf16_offsets_preserve_clusters_selection_and_control_filtering() {
+        let mut editor = Editor::default();
+        assert!(editor.set_host_state("A👩‍🚀e\u{301}中", 2, 6, false));
+        assert_eq!(editor.host_state(), ("A👩‍🚀e\u{301}中", 1, 6, false));
+        assert!(!editor.set_host_state("A👩‍🚀e\u{301}中", 6, 8, true));
+        assert_eq!(editor.host_state(), ("A👩‍🚀e\u{301}中", 6, 8, true));
+        editor.replace("文");
+        assert_eq!(editor.text(), "A👩‍🚀文中");
+        assert!(editor.set_host_state("A\nB\0C", 3, 5, false));
+        assert_eq!(editor.host_state(), ("ABC", 2, 3, false));
+        assert!(editor.set_host_state("👩‍🚀", 1, usize::MAX, true));
+        assert_eq!(editor.host_state(), ("👩‍🚀", 0, 5, true));
+    }
 
     #[test]
     fn editing_never_splits_unicode_clusters_or_selected_ranges() {

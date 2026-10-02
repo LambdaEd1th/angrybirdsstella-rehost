@@ -303,4 +303,5 @@ impl AccountUi {
 }
 
 #[cfg(test)]
+#[path = "validation/tests.rs"]
 mod tests;

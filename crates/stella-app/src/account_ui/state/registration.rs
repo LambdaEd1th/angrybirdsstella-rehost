@@ -231,4 +231,5 @@ impl AccountUi {
 }
 
 #[cfg(test)]
+#[path = "registration/tests.rs"]
 mod tests;
