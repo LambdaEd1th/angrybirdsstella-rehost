@@ -15,6 +15,8 @@ export const LOCALES = [
 
 export const MESSAGES = {
   ja: {
+    achievements: "実績", leaderboards: "ランキング", gamerServicesLocal: "この端末の記録", gamerServicesUnavailable: "この環境では Game Center を利用できません。", noAchievements: "実績はまだ解除されていません。", noScores: "スコアはまだ記録されていません。", achievementUnlocked: "解除済み",
+    screenshotPreview: "画像プレビュー", shareImage: "画像を共有", saveImage: "画像を保存", closePreview: "完了", shareImageFailed: "共有できません。画像を保存できます。",
     emptyArchive: "appdata/ フォルダーにセーブファイルがありません。",
     theme: "外観", themeSystem: "システム", themeLight: "ライト", themeDark: "ダーク",
     customSize: "カスタム", viewportWidth: "幅", viewportHeight: "高さ",
@@ -43,6 +45,8 @@ export const MESSAGES = {
     fullscreenUnavailable: "このブラウザでは全画面を利用できません", graphicsUnsupported: "このブラウザまたは端末は WebGL2 に対応していません。最新のデスクトップブラウザをお試しください。", graphicsLost: "ブラウザのグラフィックスコンテキストが失われました",
   },
   ko: {
+    achievements: "도전 과제", leaderboards: "순위표", gamerServicesLocal: "이 기기의 기록", gamerServicesUnavailable: "이 환경에서는 Game Center를 사용할 수 없습니다.", noAchievements: "아직 달성한 도전 과제가 없습니다.", noScores: "아직 기록된 점수가 없습니다.", achievementUnlocked: "달성",
+    screenshotPreview: "이미지 미리보기", shareImage: "이미지 공유", saveImage: "이미지 저장", closePreview: "완료", shareImageFailed: "공유할 수 없습니다. 이미지를 저장할 수 있습니다.",
     emptyArchive: "appdata/ 폴더에 저장 파일이 없습니다.",
     theme: "테마", themeSystem: "시스템", themeLight: "라이트", themeDark: "다크",
     customSize: "사용자 지정", viewportWidth: "너비", viewportHeight: "높이",
@@ -71,6 +75,8 @@ export const MESSAGES = {
     fullscreenUnavailable: "이 브라우저에서는 전체 화면을 사용할 수 없습니다", graphicsUnsupported: "현재 브라우저 또는 기기가 WebGL2를 지원하지 않습니다. 최신 데스크톱 브라우저를 사용해 보세요.", graphicsLost: "브라우저의 그래픽 컨텍스트가 손실되었습니다",
   },
   ru: {
+    achievements: "Достижения", leaderboards: "Таблицы лидеров", gamerServicesLocal: "Результаты на этом устройстве", gamerServicesUnavailable: "Game Center недоступен на этой платформе.", noAchievements: "Пока нет разблокированных достижений.", noScores: "Пока нет сохранённых результатов.", achievementUnlocked: "Разблокировано",
+    screenshotPreview: "Предпросмотр изображения", shareImage: "Поделиться изображением", saveImage: "Сохранить изображение", closePreview: "Готово", shareImageFailed: "Обмен недоступен. Вы можете сохранить изображение.",
     emptyArchive: "В папке appdata/ нет файлов сохранения.",
     theme: "Тема", themeSystem: "Система", themeLight: "Светлая", themeDark: "Тёмная",
     customSize: "Свой размер", viewportWidth: "Ширина", viewportHeight: "Высота",
@@ -99,6 +105,8 @@ export const MESSAGES = {
     fullscreenUnavailable: "Полноэкранный режим недоступен в этом браузере", graphicsUnsupported: "Браузер или устройство не поддерживает WebGL2. Попробуйте современный браузер на компьютере.", graphicsLost: "Браузер потерял графический контекст",
   },
   fr: {
+    achievements: "Succès", leaderboards: "Classements", gamerServicesLocal: "Résultats sur cet appareil", gamerServicesUnavailable: "Game Center est indisponible sur cette plateforme.", noAchievements: "Aucun succès débloqué.", noScores: "Aucun score enregistré.", achievementUnlocked: "Débloqué",
+    screenshotPreview: "Aperçu de l’image", shareImage: "Partager l’image", saveImage: "Enregistrer l’image", closePreview: "Terminé", shareImageFailed: "Le partage est indisponible. Vous pouvez enregistrer l’image.",
     emptyArchive: "Le dossier appdata/ ne contient aucun fichier de sauvegarde.",
     theme: "Apparence", themeSystem: "Système", themeLight: "Clair", themeDark: "Sombre",
     customSize: "Personnalisé", viewportWidth: "Largeur", viewportHeight: "Hauteur",
@@ -127,6 +135,8 @@ export const MESSAGES = {
     fullscreenUnavailable: "Le plein écran est indisponible dans ce navigateur", graphicsUnsupported: "Ce navigateur ou appareil ne prend pas en charge WebGL2. Essayez un navigateur PC récent.", graphicsLost: "Le navigateur a perdu son contexte graphique",
   },
   it: {
+    achievements: "Obiettivi", leaderboards: "Classifiche", gamerServicesLocal: "Risultati su questo dispositivo", gamerServicesUnavailable: "Game Center non è disponibile su questa piattaforma.", noAchievements: "Nessun obiettivo sbloccato.", noScores: "Nessun punteggio registrato.", achievementUnlocked: "Sbloccato",
+    screenshotPreview: "Anteprima immagine", shareImage: "Condividi immagine", saveImage: "Salva immagine", closePreview: "Fine", shareImageFailed: "La condivisione non è disponibile. Puoi salvare l’immagine.",
     emptyArchive: "La cartella appdata/ non contiene file di salvataggio.",
     theme: "Tema", themeSystem: "Sistema", themeLight: "Chiaro", themeDark: "Scuro",
     customSize: "Personalizzato", viewportWidth: "Larghezza", viewportHeight: "Altezza",
@@ -155,6 +165,8 @@ export const MESSAGES = {
     fullscreenUnavailable: "Schermo intero non disponibile in questo browser", graphicsUnsupported: "Il browser o dispositivo non supporta WebGL2. Prova un browser desktop aggiornato.", graphicsLost: "Il browser ha perso il contesto grafico",
   },
   de: {
+    achievements: "Erfolge", leaderboards: "Bestenlisten", gamerServicesLocal: "Ergebnisse auf diesem Gerät", gamerServicesUnavailable: "Game Center ist auf dieser Plattform nicht verfügbar.", noAchievements: "Noch keine Erfolge freigeschaltet.", noScores: "Noch keine Punktzahlen gespeichert.", achievementUnlocked: "Freigeschaltet",
+    screenshotPreview: "Bildvorschau", shareImage: "Bild teilen", saveImage: "Bild speichern", closePreview: "Fertig", shareImageFailed: "Teilen ist nicht verfügbar. Du kannst das Bild speichern.",
     emptyArchive: "Der Ordner appdata/ enthält keine Spielstanddateien.",
     theme: "Design", themeSystem: "System", themeLight: "Hell", themeDark: "Dunkel",
     customSize: "Benutzerdefiniert", viewportWidth: "Breite", viewportHeight: "Höhe",
@@ -183,6 +195,8 @@ export const MESSAGES = {
     fullscreenUnavailable: "Vollbild ist in diesem Browser nicht verfügbar", graphicsUnsupported: "Dieser Browser oder dieses Gerät unterstützt WebGL2 nicht. Versuche einen aktuellen Desktop-Browser.", graphicsLost: "Der Browser hat den Grafikkontext verloren",
   },
   es: {
+    achievements: "Logros", leaderboards: "Clasificaciones", gamerServicesLocal: "Resultados en este dispositivo", gamerServicesUnavailable: "Game Center no está disponible en esta plataforma.", noAchievements: "Aún no hay logros desbloqueados.", noScores: "Aún no hay puntuaciones registradas.", achievementUnlocked: "Desbloqueado",
+    screenshotPreview: "Vista previa", shareImage: "Compartir imagen", saveImage: "Guardar imagen", closePreview: "Listo", shareImageFailed: "No se puede compartir. Puedes guardar la imagen.",
     emptyArchive: "La carpeta appdata/ no contiene archivos de partida.",
     theme: "Tema", themeSystem: "Sistema", themeLight: "Claro", themeDark: "Oscuro",
     customSize: "Personalizado", viewportWidth: "Ancho", viewportHeight: "Alto",
@@ -211,6 +225,8 @@ export const MESSAGES = {
     fullscreenUnavailable: "La pantalla completa no está disponible en este navegador", graphicsUnsupported: "Este navegador o dispositivo no admite WebGL2. Prueba un navegador de escritorio actualizado.", graphicsLost: "El navegador ha perdido el contexto gráfico",
   },
   "pt-BR": {
+    achievements: "Conquistas", leaderboards: "Placares", gamerServicesLocal: "Resultados neste dispositivo", gamerServicesUnavailable: "O Game Center não está disponível nesta plataforma.", noAchievements: "Nenhuma conquista desbloqueada.", noScores: "Nenhuma pontuação registrada.", achievementUnlocked: "Desbloqueada",
+    screenshotPreview: "Prévia da imagem", shareImage: "Compartilhar imagem", saveImage: "Salvar imagem", closePreview: "Concluir", shareImageFailed: "Não é possível compartilhar. Você pode salvar a imagem.",
     emptyArchive: "A pasta appdata/ não contém arquivos de jogo salvo.",
     theme: "Tema", themeSystem: "Sistema", themeLight: "Claro", themeDark: "Escuro",
     customSize: "Personalizado", viewportWidth: "Largura", viewportHeight: "Altura",
@@ -239,6 +255,8 @@ export const MESSAGES = {
     fullscreenUnavailable: "Tela cheia indisponível neste navegador", graphicsUnsupported: "Este navegador ou dispositivo não suporta WebGL2. Tente um navegador desktop atualizado.", graphicsLost: "O navegador perdeu o contexto gráfico",
   },
   en: {
+    achievements: "Achievements", leaderboards: "Leaderboards", gamerServicesLocal: "Records on this device", gamerServicesUnavailable: "Game Center is unavailable on this platform.", noAchievements: "No achievements unlocked yet.", noScores: "No scores posted yet.", achievementUnlocked: "Unlocked",
+    screenshotPreview: "Image preview", shareImage: "Share image", saveImage: "Save image", closePreview: "Done", shareImageFailed: "Sharing is unavailable. You can still save the image.",
     emptyArchive: "The appdata/ folder contains no save files.",
     theme: "Theme", themeSystem: "System", themeLight: "Light", themeDark: "Dark",
     customSize: "Custom", viewportWidth: "Width", viewportHeight: "Height",
@@ -267,6 +285,8 @@ export const MESSAGES = {
     fullscreenUnavailable: "Fullscreen is unavailable in this browser", graphicsUnsupported: "This browser or device does not support WebGL2. Try a current desktop browser.", graphicsLost: "The browser lost its graphics context",
   },
   "zh-Hans": {
+    achievements: "成就", leaderboards: "排行榜", gamerServicesLocal: "此设备上的记录", gamerServicesUnavailable: "此平台无法使用 Game Center。", noAchievements: "尚未解锁成就。", noScores: "尚未记录分数。", achievementUnlocked: "已解锁",
+    screenshotPreview: "图片预览", shareImage: "分享图片", saveImage: "保存图片", closePreview: "完成", shareImageFailed: "暂时无法分享，仍可保存图片。",
     emptyArchive: "appdata/ 文件夹中没有存档文件。",
     theme: "主题", themeSystem: "跟随系统", themeLight: "浅色", themeDark: "深色",
     customSize: "自定义", viewportWidth: "宽度", viewportHeight: "高度",
@@ -295,6 +315,8 @@ export const MESSAGES = {
     fullscreenUnavailable: "此浏览器暂不支持全屏", graphicsUnsupported: "当前浏览器或设备不支持 WebGL2，请尝试新版桌面浏览器。", graphicsLost: "浏览器图形上下文已丢失",
   },
   "zh-Hant": {
+    achievements: "成就", leaderboards: "排行榜", gamerServicesLocal: "此裝置上的紀錄", gamerServicesUnavailable: "此平台無法使用 Game Center。", noAchievements: "尚未解鎖成就。", noScores: "尚未記錄分數。", achievementUnlocked: "已解鎖",
+    screenshotPreview: "圖片預覽", shareImage: "分享圖片", saveImage: "儲存圖片", closePreview: "完成", shareImageFailed: "暫時無法分享，仍可儲存圖片。",
     emptyArchive: "appdata/ 資料夾中沒有存檔檔案。",
     theme: "主題", themeSystem: "跟隨系統", themeLight: "淺色", themeDark: "深色",
     customSize: "自訂", viewportWidth: "寬度", viewportHeight: "高度",

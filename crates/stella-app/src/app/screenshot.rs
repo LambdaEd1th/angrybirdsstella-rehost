@@ -85,20 +85,13 @@ impl StellaApp {
             // later update can capture/draw onto an earlier ordinary frame,
             // even if that earlier frame contained no capture of its own.
             self.execute_display_frame(Some(&mut renderer), DISPLAY_LINK_STEP)?;
-            if !self.screenshot_share_requests.is_empty() {
-                let screenshot_shares = std::mem::take(&mut self.screenshot_share_requests);
-                let rgba = renderer.read_game_rgba()?;
-                super::sharing::stage_screenshot_shares(
-                    &screenshot_shares,
-                    &rgba,
-                    self.resolution,
-                )?;
-            }
+            super::sharing::stage_captured_screenshot_shares(&renderer.take_screenshot_shares())?;
         }
         let rgba = if frames > 0 {
             // Never replay a consumed stream after capture rebinding.
             renderer.read_game_rgba()?
         } else {
+            self.screenshot_share_requests = self.runtime.take_screenshot_share_requests();
             self.synchronize_sprite_catalog()?;
             self.assets
                 .apply_composite_updates(self.runtime.take_composite_updates());
@@ -108,15 +101,18 @@ impl StellaApp {
                 &mut self.rect_commands,
                 &mut self.capture_commands,
             );
-            let frame = self.assets.prepare_gpu_frame_at_resolution(
+            let frame = self.assets.prepare_gpu_frame_with_shares_at_resolution(
                 self.resolution,
                 &self.render_commands,
                 &self.text_commands,
                 &self.rect_commands,
                 &self.capture_commands,
+                &self.screenshot_share_requests,
             )?;
             renderer.render_to_rgba(&self.assets, &frame, self.background_color)?
         };
+        super::sharing::stage_captured_screenshot_shares(&renderer.take_screenshot_shares())?;
+        self.screenshot_share_requests.clear();
         if let Some(parent) = destination
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())

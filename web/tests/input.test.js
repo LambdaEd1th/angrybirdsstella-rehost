@@ -6,7 +6,7 @@ const inputModule = process.env.STELLA_INPUT_MODULE
   ? pathToFileURL(process.env.STELLA_INPUT_MODULE) : new URL("../input.js", import.meta.url);
 const { installInput } = await import(inputModule);
 
-function host(accountDialog = { open: false }, ratingDialog = null) {
+function host(accountDialog = { open: false }, ratingDialog = null, sharingDialog = null, gamerServicesDialog = null) {
   const document = new EventTarget(), window = new EventTarget(), canvas = new EventTarget();
   const calls = [], failures = [], captures = new Set();
   let nativeTouches = [];
@@ -46,7 +46,7 @@ function host(accountDialog = { open: false }, ratingDialog = null) {
   };
   const game = { module, failed: false, audio: { setActive() {}, sync() {} } };
   const cleanup = installInput(game, {
-    canvas, document, window, accountDialog, ratingDialog,
+    canvas, document, window, accountDialog, ratingDialog, sharingDialog, gamerServicesDialog,
     engineCall: (module, name, ...args) => { calls.push([name, ...args]); assert.equal(module[name](...args), 0); },
     failGame: (_, error) => { failures.push(error); game.failed = true; },
     saveOrReport: () => {},
@@ -61,6 +61,31 @@ function host(accountDialog = { open: false }, ratingDialog = null) {
   return { canvas, document, game, calls, captures, cleanup, pointer,
     touches: () => nativeTouches, cursorCalls: () => calls.filter(call => call[0] === "_stella_pointer") };
 }
+
+test("gamer controller keeps native lifetime active while suppressing captured game input", () => {
+  const dialog = new EventTarget(), button = {};
+  dialog.hidden = false; dialog.contains = element => element === button;
+  const h = host(undefined, null, null, dialog); h.pointer("pointerdown", 11, 10, 20);
+  h.game.gamerServicesVisible = true; h.game.resetInput(); const before = h.calls.length;
+  const blur = new Event("blur"); Object.assign(blur, { relatedTarget: button }); h.canvas.dispatchEvent(blur);
+  h.document.activeElement = button; dialog.dispatchEvent(new Event("focusin"));
+  h.pointer("pointerup", 11, 10, 20); h.pointer("pointerdown", 12, 30, 40);
+  assert.equal(h.game.lifecycle.active, true); assert.equal(h.calls.length, before); assert.equal(h.captures.size, 0);
+  h.cleanup();
+});
+
+test("image preview owns focus without pausing and blocks underlying game input", () => {
+  const preview = new EventTarget(), button = {};
+  preview.hidden = false; preview.contains = element => element === preview || element === button;
+  const h = host(undefined, null, preview); h.game.sharingVisible = true;
+  const blur = new Event("blur"); Object.assign(blur, { relatedTarget: button }); h.canvas.dispatchEvent(blur);
+  preview.dispatchEvent(new Event("focusin"));
+  h.pointer("pointerdown", 9, 10, 20);
+  const key = new Event("keydown", { cancelable: true }); Object.assign(key, { key: "Escape" }); h.canvas.dispatchEvent(key);
+  const wheel = new Event("wheel", { cancelable: true }); Object.assign(wheel, { deltaY: 1 }); h.canvas.dispatchEvent(wheel);
+  assert.equal(h.game.lifecycle.active, true); assert.equal(h.calls.length, 0); assert.equal(h.captures.size, 0);
+  h.cleanup();
+});
 
 test("focus transfers into the native account form without application/audio pause", () => {
   const root = new EventTarget(), email = {};

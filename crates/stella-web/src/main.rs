@@ -20,8 +20,8 @@ use stella_assets::ka3d::{
 use stella_script::{
     AudioAssetSource, AudioOutputClock, BoundCompositePart, CaptureRenderCommand,
     ColorMeshTopology, ColorProgram, DirtRenderCommand, MaskedTextureBinding, RectRenderCommand,
-    RenderCommand, RenderQuad, RenderTriangle, SpriteCatalogRegion, SpriteCatalogSnapshot,
-    SpriteGeometrySubmission, SpriteShader, StellaLua, SystemFontLayoutFace,
+    RenderCommand, RenderQuad, RenderTriangle, ScreenshotShareRequest, SpriteCatalogRegion,
+    SpriteCatalogSnapshot, SpriteGeometrySubmission, SpriteShader, StellaLua, SystemFontLayoutFace,
     SystemFontRenderBinding, SystemFontShapedLine, TextFontBinding, TextProjection3D,
     TextRenderCommand,
 };
@@ -97,6 +97,8 @@ struct BrowserGame {
     account: account::BrowserAccount,
     rating: rating::BrowserRating,
     platform_packet: CString,
+    share_preview: bool,
+    gamer_services_preview: bool,
 }
 
 thread_local! {
@@ -196,6 +198,8 @@ pub extern "C" fn stella_init(width: u32, height: u32) -> i32 {
                 account,
                 rating: rating::BrowserRating::default(),
                 platform_packet: CString::new("[]").unwrap(),
+                share_preview: false,
+                gamer_services_preview: false,
             })
         });
         Ok(())
@@ -265,7 +269,6 @@ pub extern "C" fn stella_frame(delta: f64) -> i32 {
         // External actions are drained separately, including calls made from
         // UI callbacks while the display link is paused. Rating never supplies
         // an answer until a user invokes one of the retained alert's buttons.
-        game.runtime.take_screenshot_share_requests();
         game.runtime.take_analytics_events();
         game.packet = CString::new(serde_json::to_vec(&packet)?)?;
         Ok(())
@@ -299,7 +302,18 @@ impl BrowserGame {
     }
 
     fn game_input_available(&self) -> bool {
-        self.runtime.account_ui().is_none() && self.runtime.app_rating_prompt().is_none()
+        !self.share_preview
+            && !self.gamer_services_preview
+            && self.runtime.account_ui().is_none()
+            && self.runtime.app_rating_prompt().is_none()
+    }
+
+    fn clear_preview_input(&mut self) -> Result<()> {
+        self.runtime.clear_platform_input_for_modal().browser()?;
+        self.touches.clear();
+        self.account.cancel_pointer();
+        self.rating.cancel_pointer();
+        Ok(())
     }
 
     fn synchronize_account(&mut self) -> Result<()> {
@@ -315,12 +329,13 @@ impl BrowserGame {
         }
         self.assets
             .apply_composite_updates(self.runtime.take_composite_updates());
-        self.assets.prepare_gpu_frame_at_resolution(
+        self.assets.prepare_gpu_frame_with_shares_at_resolution(
             self.resolution,
             &self.runtime.take_render_commands(),
             &self.runtime.take_text_commands(),
             &self.runtime.take_rect_commands(),
             &self.runtime.take_capture_commands(),
+            &self.runtime.take_screenshot_share_requests(),
         )
     }
 
@@ -329,6 +344,34 @@ impl BrowserGame {
         let transitions = self.audio_clock.synchronize(&state, elapsed);
         self.runtime.apply_audio_playback_transitions(&transitions);
     }
+}
+
+/// Browser-owned counterpart of UIDocumentInteractionController's preview.
+/// It owns input while the native game/audio lifetime continues beneath it.
+#[unsafe(no_mangle)]
+pub extern "C" fn stella_share_preview(open: i32) -> i32 {
+    with_game(|game| {
+        let open = open != 0;
+        if open && !game.share_preview {
+            game.clear_preview_input()?;
+        }
+        game.share_preview = open;
+        Ok(())
+    })
+}
+
+/// Portable owner of the Game Center presentation boundary. Native display
+/// listeners post OverlayState; they do not authenticate or answer Lua.
+#[unsafe(no_mangle)]
+pub extern "C" fn stella_gamer_services_preview(open: i32) -> i32 {
+    with_game(|game| {
+        let open = open != 0;
+        if open && !game.gamer_services_preview {
+            game.clear_preview_input()?;
+        }
+        game.gamer_services_preview = open;
+        Ok(())
+    })
 }
 
 /// Complete calls made outside the display callback without clearing the
@@ -515,7 +558,11 @@ fn with_account(token: u32, operation: impl FnOnce(&mut BrowserGame) -> Result<(
     with_game(|game| {
         game.synchronize_account()?;
         game.synchronize_rating()?;
-        if game.active && game.runtime.app_rating_prompt().is_none() && game.account.accepts(token)
+        if game.active
+            && !game.share_preview
+            && !game.gamer_services_preview
+            && game.runtime.app_rating_prompt().is_none()
+            && game.account.accepts(token)
         {
             operation(game)?;
         }
@@ -635,7 +682,11 @@ pub extern "C" fn stella_rating_packet() -> *const std::ffi::c_char {
 fn with_rating(token: u32, operation: impl FnOnce(&mut BrowserGame) -> Result<()>) -> i32 {
     with_game(|game| {
         game.synchronize_rating()?;
-        if game.active && game.rating.accepts(token) {
+        if game.active
+            && !game.share_preview
+            && !game.gamer_services_preview
+            && game.rating.accepts(token)
+        {
             operation(game)?;
             game.synchronize_rating()?;
         }
@@ -689,7 +740,7 @@ pub extern "C" fn stella_platform_packet() -> *const std::ffi::c_char {
                 PlatformActionRequest::OpenUrl { url } => json!({"kind":"openUrl","url":url}),
                 PlatformActionRequest::OpenAppStoreProduct { product_id, product_type } => json!({"kind":"appStoreProduct","productId":product_id,"productType":product_type}),
                 PlatformActionRequest::PlayVideo { path } => json!({"kind":"video","path":path}),
-                PlatformActionRequest::ShowGamerServices { view, entries } => json!({"kind":"gamerServices","view":match view { GamerServicesView::Achievements=>"achievements", GamerServicesView::Leaderboards=>"leaderboards" },"entries":entries}),
+                PlatformActionRequest::ShowGamerServices { view, entries, local_provider } => json!({"kind":"gamerServices","view":match view { GamerServicesView::Achievements=>"achievements", GamerServicesView::Leaderboards=>"leaderboards" },"entries":entries,"localProvider":local_provider}),
             }
         }).collect();
         game.platform_packet = CString::new(serde_json::to_vec(&actions)?)?;

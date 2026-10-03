@@ -2,11 +2,11 @@ import { GameLifecycle } from "./lifecycle.js";
 import { canvasPoint } from "./display.js";
 import { LocalizedError } from "./i18n.js";
 
-export function installInput(game, { canvas, accountDialog, ratingDialog = null, engineCall, failGame, saveOrReport, document = globalThis.document, window = globalThis.window }) {
+export function installInput(game, { canvas, accountDialog, ratingDialog = null, sharingDialog = null, gamerServicesDialog = null, engineCall, failGame, saveOrReport, document = globalThis.document, window = globalThis.window }) {
   const listeners = [], pointers = new Map();
   let primary = null;
   function listen(target, event, handler, options) { target.addEventListener(event, handler, options); listeners.push(() => target.removeEventListener(event, handler, options)); }
-  const modalVisible = () => game.accountVisible || game.ratingVisible;
+  const modalVisible = () => game.accountVisible || game.ratingVisible || game.sharingVisible || game.gamerServicesVisible;
   function input(operation) { if (game.failed || !game.lifecycle.active || modalVisible()) return; try { operation(); } catch (error) { failGame(game, error); } }
   function resetPointers() {
     const captured = [...pointers.keys()];
@@ -14,7 +14,7 @@ export function installInput(game, { canvas, accountDialog, ratingDialog = null,
     for (const id of captured) if (canvas.hasPointerCapture(id)) canvas.releasePointerCapture(id);
   }
   game.resetInput = resetPointers;
-  const dialogs = [accountDialog, ratingDialog].filter(Boolean);
+  const dialogs = [accountDialog, ratingDialog, sharingDialog, gamerServicesDialog].filter(Boolean);
   function ownsFocus(element) { return element === canvas || dialogs.some(dialog => !dialog.hidden && dialog.contains?.(element)); }
   game.lifecycle = new GameLifecycle({
     focused: ownsFocus(document.activeElement), visible: !document.hidden, modal: false,

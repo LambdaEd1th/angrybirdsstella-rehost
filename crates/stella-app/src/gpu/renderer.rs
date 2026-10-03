@@ -5,6 +5,7 @@ pub(in crate::gpu) mod device_state;
 pub(in crate::gpu) mod initialization;
 mod pass;
 mod presentation;
+mod readback;
 mod streams;
 pub(in crate::gpu) mod surface_acquisition;
 mod textures;

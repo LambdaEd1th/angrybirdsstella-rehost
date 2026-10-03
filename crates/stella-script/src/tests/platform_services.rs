@@ -469,10 +469,12 @@ fn local_gamer_services_publish_platform_views_from_persisted_state() {
             PlatformActionRequest::ShowGamerServices {
                 view: GamerServicesView::Achievements,
                 entries: vec![("ACH_VIEW".to_owned(), "Unlocked".to_owned())],
+                local_provider: true,
             },
             PlatformActionRequest::ShowGamerServices {
                 view: GamerServicesView::Leaderboards,
                 entries: vec![("LEVEL_VIEW".to_owned(), "902.5".to_owned())],
+                local_provider: true,
             },
         ]
     );
@@ -483,6 +485,27 @@ fn local_gamer_services_publish_platform_views_from_persisted_state() {
             "FusionGamerServices.showAchievements(); FusionGamerServices.showLeaderboards()",
         )
         .unwrap();
+    assert_eq!(
+        disconnected.take_platform_action_requests(),
+        vec![
+            PlatformActionRequest::ShowGamerServices {
+                view: GamerServicesView::Achievements,
+                entries: vec![],
+                local_provider: false,
+            },
+            PlatformActionRequest::ShowGamerServices {
+                view: GamerServicesView::Leaderboards,
+                entries: vec![],
+                local_provider: false,
+            },
+        ]
+    );
+    let authenticated: bool = disconnected
+        .lua()
+        .load("return FusionGamerServices.isLocalPlayerAuthenticated()")
+        .eval()
+        .unwrap();
+    assert!(!authenticated);
     assert!(disconnected.take_platform_action_requests().is_empty());
 }
 
@@ -1354,11 +1377,13 @@ fn screenshot_share_queues_native_temp_names_titles_and_wrap_order() {
         runtime.take_screenshot_share_requests(),
         vec![
             ScreenshotShareRequest {
+                order: 0,
                 sequence: 1,
                 filename: "Stella_Screenshot1.png".to_owned(),
                 title: "first title".to_owned(),
             },
             ScreenshotShareRequest {
+                order: 1,
                 sequence: 2,
                 filename: "Stella_Screenshot2.png".to_owned(),
                 title: "second title".to_owned(),
@@ -1374,6 +1399,7 @@ fn screenshot_share_queues_native_temp_names_titles_and_wrap_order() {
     assert_eq!(
         second_runtime.take_screenshot_share_requests(),
         vec![ScreenshotShareRequest {
+            order: 0,
             sequence: 3,
             filename: "Stella_Screenshot3.png".to_owned(),
             title: "next runtime".to_owned(),
@@ -1387,6 +1413,7 @@ fn screenshot_share_queues_native_temp_names_titles_and_wrap_order() {
     assert_eq!(
         runtime.take_screenshot_share_requests(),
         vec![ScreenshotShareRequest {
+            order: 2,
             sequence: i32::MIN,
             filename: "Stella_Screenshot-2147483648.png".to_owned(),
             title: "signed wrapped".to_owned(),
@@ -1400,6 +1427,7 @@ fn screenshot_share_queues_native_temp_names_titles_and_wrap_order() {
     assert_eq!(
         runtime.take_screenshot_share_requests(),
         vec![ScreenshotShareRequest {
+            order: 3,
             sequence: 0,
             filename: "Stella_Screenshot0.png".to_owned(),
             title: "zero wrapped".to_owned(),

@@ -20,6 +20,7 @@ impl AssetCatalog {
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn prepare_gpu_frame_at_resolution(
         &mut self,
         resolution: GameResolution,
@@ -27,6 +28,25 @@ impl AssetCatalog {
         text_commands: &[TextRenderCommand],
         rect_commands: &[RectRenderCommand],
         capture_commands: &[CaptureRenderCommand],
+    ) -> Result<PreparedFrame> {
+        self.prepare_gpu_frame_with_shares_at_resolution(
+            resolution,
+            commands,
+            text_commands,
+            rect_commands,
+            capture_commands,
+            &[],
+        )
+    }
+
+    pub(crate) fn prepare_gpu_frame_with_shares_at_resolution(
+        &mut self,
+        resolution: GameResolution,
+        commands: &[RenderCommand],
+        text_commands: &[TextRenderCommand],
+        rect_commands: &[RectRenderCommand],
+        capture_commands: &[CaptureRenderCommand],
+        screenshot_shares: &[ScreenshotShareRequest],
     ) -> Result<PreparedFrame> {
         if resolution.width > u32::from(u16::MAX) || resolution.height > u32::from(u16::MAX) {
             return Err(anyhow!(
@@ -41,6 +61,7 @@ impl AssetCatalog {
             Sprite,
             Text,
             Capture,
+            ScreenshotShare,
         }
 
         let mut frame = PreparedFrame {
@@ -49,7 +70,7 @@ impl AssetCatalog {
         };
         // RenderBridge allocates one monotonically increasing native draw
         // order before appending to each typed queue. Purple consumes that
-        // immediate order directly. Merge the four already-sorted queues in
+        // immediate order directly. Merge the five already-sorted queues in
         // O(n) instead of rebuilding and sorting a combined command vector on
         // every frame. The rank preserves the old deterministic tie order for
         // synthetic tests that manually reuse an order value.
@@ -77,6 +98,12 @@ impl AssetCatalog {
         let mut sprite_index = 0usize;
         let mut text_index = 0usize;
         let mut capture_index = 0usize;
+        let mut share_index = 0usize;
+        debug_assert!(
+            screenshot_shares
+                .windows(2)
+                .all(|pair| pair[0].order <= pair[1].order)
+        );
 
         let trace_render = std::env::var_os("STELLA_TRACE_RENDER").is_some();
         if trace_render {
@@ -102,6 +129,9 @@ impl AssetCatalog {
                 capture_commands
                     .get(capture_index)
                     .map(|command| (command.order, 3_u8, FrameCommand::Capture)),
+                screenshot_shares
+                    .get(share_index)
+                    .map(|command| (command.order, 4_u8, FrameCommand::ScreenshotShare)),
             ]
             .into_iter()
             .flatten()
@@ -110,6 +140,12 @@ impl AssetCatalog {
                 break;
             };
             match command {
+                FrameCommand::ScreenshotShare => {
+                    frame.operations.push(PreparedOperation::ScreenshotShare(
+                        screenshot_shares[share_index].clone(),
+                    ));
+                    share_index += 1;
+                }
                 FrameCommand::Rect => {
                     let command = &rect_commands[rect_index];
                     rect_index += 1;

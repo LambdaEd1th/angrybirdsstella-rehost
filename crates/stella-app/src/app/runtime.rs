@@ -103,12 +103,13 @@ impl StellaApp {
         let Some(renderer) = &mut self.renderer else {
             return Ok(());
         };
-        let frame = self.assets.prepare_gpu_frame_at_resolution(
+        let frame = self.assets.prepare_gpu_frame_with_shares_at_resolution(
             self.resolution,
             &self.render_commands,
             &self.text_commands,
             &self.rect_commands,
             &self.capture_commands,
+            &self.screenshot_share_requests,
         )?;
         renderer.render_offscreen_with_clip(
             &self.assets,
@@ -117,6 +118,7 @@ impl StellaApp {
             self.frame_clear_clip,
         )?;
         self.capture_commands.clear();
+        self.screenshot_share_requests.clear();
         self.rendered_frame_ready = true;
         Ok(())
     }
@@ -136,10 +138,9 @@ impl StellaApp {
             return Ok(());
         };
         renderer.present_to_window(size.width, size.height)?;
-        if !self.screenshot_share_requests.is_empty() {
-            let rgba = renderer.read_game_rgba()?;
-            let requests = std::mem::take(&mut self.screenshot_share_requests);
-            let paths = super::sharing::stage_screenshot_shares(&requests, &rgba, self.resolution)?;
+        let screenshots = renderer.take_screenshot_shares();
+        if !screenshots.is_empty() {
+            let paths = super::sharing::stage_captured_screenshot_shares(&screenshots)?;
             for path in paths {
                 if let Err(error) =
                     super::platform_actions::launch_external_target(path.to_string_lossy().as_ref())

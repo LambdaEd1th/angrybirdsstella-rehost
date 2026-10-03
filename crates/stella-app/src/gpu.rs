@@ -61,6 +61,15 @@ struct PreparedDraw {
 enum PreparedOperation {
     Draw(usize),
     Capture(String),
+    ScreenshotShare(ScreenshotShareRequest),
+}
+
+/// Pixels owned by one native share call, independent of subsequent draws,
+/// presentation overlays and drawable resizes. Rows are top-down RGBA8.
+pub(crate) struct ScreenshotShareCapture {
+    pub(crate) request: ScreenshotShareRequest,
+    pub(crate) resolution: GameResolution,
+    pub(crate) rgba: Vec<u8>,
 }
 
 #[derive(Default)]
@@ -107,6 +116,7 @@ pub(crate) struct GpuRenderer {
     resolution: GameResolution,
     game_texture: wgpu::Texture,
     game_view: wgpu::TextureView,
+    screenshot_shares: Vec<ScreenshotShareCapture>,
     capture_pipeline: wgpu::RenderPipeline,
     capture_layout: wgpu::BindGroupLayout,
     capture_bind_group: wgpu::BindGroup,

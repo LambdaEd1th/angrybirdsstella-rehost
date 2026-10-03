@@ -9,6 +9,7 @@ mod device_loss;
 mod geometry;
 mod native_images;
 mod program;
+mod sharing;
 mod sprites;
 mod text;
 

@@ -189,6 +189,80 @@ fn advance_checked(app: &mut StellaApp) -> Vec<u8> {
 }
 
 #[test]
+fn shares_from_update_draw_and_resize_use_their_own_framebuffer_boundaries() {
+    let mut app = capture_app();
+    app.runtime
+        .execute_source(
+            r#"
+        frame = 0
+        function update()
+            frame = frame + 1
+            if frame == 2 then native_shareScreenShot("previous frame") end
+        end
+        function resolutionChanged() end
+        function draw()
+            drawRect(1, 0, 0, 1, 0, 0, 8, 4, true)
+            native_shareScreenShot("red in draw")
+            drawRect(0, 1, 0, 1, 0, 0, 8, 4, true)
+        end
+    "#,
+        )
+        .unwrap();
+    advance_checked(&mut app);
+    advance_checked(&mut app);
+    let shares = app.renderer.as_mut().unwrap().take_screenshot_shares();
+    assert_eq!(
+        shares
+            .iter()
+            .map(|s| s.request.title.as_str())
+            .collect::<Vec<_>>(),
+        ["red in draw", "previous frame", "red in draw"]
+    );
+    for (index, share) in shares.iter().enumerate() {
+        let expected = if index == 1 {
+            [0, 255, 0, 255]
+        } else {
+            [255, 0, 0, 255]
+        };
+        assert!(share.rgba.as_chunks::<4>().0.iter().all(|p| *p == expected));
+        assert_eq!(share.resolution, GameResolution::new(8, 4).unwrap());
+    }
+    app.runtime
+        .execute_source(r#"native_shareScreenShot("before resize")"#)
+        .unwrap();
+    assert!(app.runtime.has_frame_commands());
+    app.resize_runtime_target(GameResolution::new(16, 8).unwrap())
+        .unwrap();
+    let share = app
+        .renderer
+        .as_mut()
+        .unwrap()
+        .take_screenshot_shares()
+        .pop()
+        .unwrap();
+    assert_eq!(share.request.title, "before resize");
+    assert_eq!(share.resolution, GameResolution::new(8, 4).unwrap());
+    assert!(
+        share
+            .rgba
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .all(|p| *p == [0, 255, 0, 255])
+    );
+    assert!(!app.runtime.has_frame_commands());
+    app.render_game_frame_if_needed().unwrap();
+    app.render_game_frame_if_needed().unwrap();
+    assert!(
+        app.renderer
+            .as_mut()
+            .unwrap()
+            .take_screenshot_shares()
+            .is_empty()
+    );
+}
+
+#[test]
 fn update_draws_and_capture_execute_before_the_implicit_frame_clear() {
     let mut app = capture_app();
     app.runtime

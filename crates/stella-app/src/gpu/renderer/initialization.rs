@@ -190,6 +190,7 @@ impl GpuRenderer {
         )?;
 
         let renderer = Self {
+            screenshot_shares: Vec::new(),
             instance,
             adapter,
             surface_window: window,

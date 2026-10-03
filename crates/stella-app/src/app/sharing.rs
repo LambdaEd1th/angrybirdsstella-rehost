@@ -2,6 +2,20 @@
 
 use super::*;
 
+pub(super) fn stage_captured_screenshot_shares(
+    captures: &[crate::gpu::ScreenshotShareCapture],
+) -> Result<Vec<PathBuf>> {
+    let mut paths = Vec::with_capacity(captures.len());
+    for capture in captures {
+        paths.extend(stage_screenshot_shares(
+            std::slice::from_ref(&capture.request),
+            &capture.rgba,
+            capture.resolution,
+        )?);
+    }
+    Ok(paths)
+}
+
 /// Materialize the framebuffer files that Purple hands to its platform share
 /// service. A pure Rust desktop host has no portable system share sheet, so
 /// these files remain in the platform temporary directory for the user or a
@@ -54,11 +68,12 @@ mod tests {
         let sequence = i32::try_from(std::process::id()).unwrap();
         let filename = format!("Stella_Screenshot{sequence}.png");
         let request = ScreenshotShareRequest {
+            order: 0,
             sequence,
             filename: filename.clone(),
             title: "share title".to_owned(),
         };
-        let rgba = [255, 0, 0, 255, 0, 255, 0, 255];
+        let rgba = [255, 0, 0, 64, 0, 255, 0, 0];
         let paths = stage_screenshot_shares(
             &[request],
             &rgba,
@@ -78,6 +93,7 @@ mod tests {
     #[test]
     fn rejects_a_framebuffer_with_the_wrong_extent() {
         let request = ScreenshotShareRequest {
+            order: 0,
             sequence: 1,
             filename: "Stella_Screenshot1.png".to_owned(),
             title: String::new(),

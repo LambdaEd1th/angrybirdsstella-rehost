@@ -14,7 +14,7 @@ export class BrowserRatingUI {
     root.replaceChildren(this.canvas, this.controls);
     const listen = (type, handler, options) => { root.addEventListener(type, handler, options); this.listeners.push(() => root.removeEventListener(type, handler, options)); };
     listen("pointerdown", event => {
-      if (event.button !== 0 || this.primary !== null || game.failed || this.token === null) return;
+      if (event.button !== 0 || this.primary !== null || game.failed || game.sharingVisible || game.gamerServicesVisible || this.token === null) return;
       event.preventDefault();
       if (!game.lifecycle.active) {
         // Owned focus resumes the native lifetime and invalidates old input.
@@ -55,7 +55,7 @@ export class BrowserRatingUI {
   }
 
   run(operation) {
-    if (this.game.failed || !this.game.lifecycle.active || this.token === null) return;
+    if (this.game.failed || !this.game.lifecycle.active || this.game.sharingVisible || this.game.gamerServicesVisible || this.token === null) return;
     try {
       operation(); this.refresh();
       // Native flags are saved on close before the advisory OS launch. This
@@ -122,12 +122,16 @@ export class BrowserRatingUI {
     this.accountDialog.inert = true;
   }
 
-  focus() { (this.buttons.get(this.packet?.focus) || this.root).focus({ preventScroll: true }); }
+  focus() {
+    if (this.game.sharingVisible) { this.game.sharing.focus(); return; }
+    if (this.game.gamerServicesVisible) { this.game.gamerServices.focus(); return; }
+    (this.buttons.get(this.packet?.focus) || this.root).focus({ preventScroll: true });
+  }
 
   hide(restoreFocus = true) {
     if (this.root.hidden && this.token === null) return;
     const focused = this.root.contains(this.document.activeElement), wasVisible = this.game.ratingVisible;
-    this.game.ratingVisible = false; this.accountDialog.inert = false;
+    this.game.ratingVisible = false; this.accountDialog.inert = !!(this.game.sharingVisible || this.game.gamerServicesVisible);
     // Transfer focus before hiding; Chromium otherwise emits focusout(null)
     // and spuriously pauses/resumes the native game and audio.
     if (focused && restoreFocus) {

@@ -26,6 +26,7 @@ fn escape_html(value: &str) -> String {
 fn stage_gamer_services_view(
     view: GamerServicesView,
     entries: &[(String, String)],
+    local_provider: bool,
 ) -> Result<PathBuf> {
     let (filename, heading, empty) = match view {
         GamerServicesView::Achievements => (
@@ -39,7 +40,9 @@ fn stage_gamer_services_view(
             "No scores posted yet.",
         ),
     };
-    let rows = if entries.is_empty() {
+    let rows = if !local_provider {
+        "<p class=empty>Game Center is unavailable on this platform.</p>".to_owned()
+    } else if entries.is_empty() {
         format!("<p class=empty>{empty}</p>")
     } else {
         let items = entries
@@ -54,12 +57,17 @@ fn stage_gamer_services_view(
             .collect::<String>();
         format!("<table><tbody>{items}</tbody></table>")
     };
+    let scope = if local_provider {
+        "Records on this device"
+    } else {
+        "Game Center"
+    };
     let document = format!(
         "<!doctype html><meta charset=utf-8><title>Angry Birds Stella: Rehost — {heading}</title>\
          <style>body{{font:18px system-ui;background:#251746;color:#fff;max-width:760px;margin:48px auto;padding:0 24px}}\
          h1{{color:#ff8fe2}}table{{width:100%;border-collapse:collapse;background:#fff1;border-radius:14px;overflow:hidden}}\
          td{{padding:14px 18px;border-bottom:1px solid #fff2}}td:last-child{{text-align:right;color:#ffe36a}}\
-         .empty{{padding:22px;background:#fff1;border-radius:14px}}</style><h1>{heading}</h1>{rows}"
+         .empty{{padding:22px;background:#fff1;border-radius:14px}}</style><h1>{heading}</h1><p>{scope}</p>{rows}"
     );
     let destination = std::env::temp_dir().join(filename);
     fs::write(&destination, document)
@@ -118,10 +126,12 @@ impl StellaApp {
                     .resolve_bundle_resource(&path)
                     .map(|path| path.to_string_lossy().into_owned())
                     .map_err(|error| anyhow!(error.to_string())),
-                PlatformActionRequest::ShowGamerServices { view, entries } => {
-                    stage_gamer_services_view(view, &entries)
-                        .map(|path| path.to_string_lossy().into_owned())
-                }
+                PlatformActionRequest::ShowGamerServices {
+                    view,
+                    entries,
+                    local_provider,
+                } => stage_gamer_services_view(view, &entries, local_provider)
+                    .map(|path| path.to_string_lossy().into_owned()),
             };
             let result = target.and_then(|target| launch_external_target(&target));
             if let Err(error) = result {
@@ -150,6 +160,7 @@ mod tests {
         let path = stage_gamer_services_view(
             GamerServicesView::Leaderboards,
             &[("<LEVEL&1>".to_owned(), "902.5".to_owned())],
+            true,
         )
         .unwrap();
         let html = fs::read_to_string(&path).unwrap();

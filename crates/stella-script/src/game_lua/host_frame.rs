@@ -351,6 +351,7 @@ impl StellaLua {
             bridge.text_commands.clear();
             bridge.rect_commands.clear();
             bridge.capture_commands.clear();
+            bridge.screenshot_share_requests.clear();
             bridge.next_draw_order = 0;
             // GameLua::draw (sub_100061BF8) tests +0xCC before looking up
             // the Lua callback. Keep the deferred queues empty on this frame,

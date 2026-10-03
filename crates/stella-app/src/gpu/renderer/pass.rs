@@ -125,6 +125,7 @@ impl GpuRenderer {
             a: 1.0,
         });
         let mut operation_index = 0usize;
+        let mut screenshot_readbacks = Vec::new();
         let mut target_initialized = false;
         while operation_index < frame.operations.len() || !target_initialized {
             let first_draw_operation = operation_index;
@@ -199,9 +200,17 @@ impl GpuRenderer {
                 drop(pass);
                 target_initialized = true;
             }
-            let Some(PreparedOperation::Capture(name)) = frame.operations.get(operation_index)
-            else {
+            let Some(operation) = frame.operations.get(operation_index) else {
                 break;
+            };
+            if let PreparedOperation::ScreenshotShare(request) = operation {
+                screenshot_readbacks
+                    .push((request.clone(), self.encode_game_readback(&mut encoder)));
+                operation_index += 1;
+                continue;
+            }
+            let PreparedOperation::Capture(name) = operation else {
+                unreachable!("consecutive draws were consumed by the render pass");
             };
             let captured = self
                 .textures
@@ -233,6 +242,14 @@ impl GpuRenderer {
         }
         self.queue.submit([encoder.finish()]);
         self.device_state.check()?;
+        for (request, readback) in screenshot_readbacks {
+            let rgba = self.finish_game_readback(readback)?;
+            self.screenshot_shares.push(ScreenshotShareCapture {
+                request,
+                resolution: self.resolution,
+                rgba,
+            });
+        }
         // Wgpu retains submitted resources until GPU work completes. Images
         // discarded by native capture(... on a released sheet) have no owner
         // beyond this operation; do not accumulate one allocation per call.

@@ -186,71 +186,18 @@ impl GpuRenderer {
         self.read_game_rgba()
     }
 
-    /// Read the already-rendered game target. Screenshot sharing calls this
-    /// after normal window presentation so it captures that exact frame
-    /// without traversing Lua or issuing the scene draw a second time.
+    /// Read the already-rendered target for an opaque display screenshot.
+    /// Native sharing uses ordered copies with the original RGBA alpha.
     pub(crate) fn read_game_rgba(&self) -> Result<Vec<u8>> {
         self.check_device()?;
-        let unpadded_bytes_per_row = self.resolution.width * 4;
-        let alignment = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-        let bytes_per_row = unpadded_bytes_per_row.div_ceil(alignment) * alignment;
-        let buffer_size = u64::from(bytes_per_row) * u64::from(self.resolution.height);
-        let readback = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Stella screenshot readback"),
-            size: buffer_size,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Stella screenshot copy encoder"),
+                label: Some("Stella display screenshot copy encoder"),
             });
-        encoder.copy_texture_to_buffer(
-            wgpu::TexelCopyTextureInfo {
-                texture: &self.game_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::TexelCopyBufferInfo {
-                buffer: &readback,
-                layout: wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(bytes_per_row),
-                    rows_per_image: Some(self.resolution.height),
-                },
-            },
-            wgpu::Extent3d {
-                width: self.resolution.width,
-                height: self.resolution.height,
-                depth_or_array_layers: 1,
-            },
-        );
+        let readback = self.encode_game_readback(&mut encoder);
         self.queue.submit([encoder.finish()]);
-        let (sender, receiver) = mpsc::channel();
-        readback.map_async(wgpu::MapMode::Read, .., move |result| {
-            let _ = sender.send(result);
-        });
-        self.device
-            .poll(wgpu::PollType::wait_indefinitely())
-            .context("wait for Stella screenshot readback")?;
-        self.device_state.check()?;
-        receiver
-            .recv()
-            .context("receive Stella screenshot map result")?
-            .context("map Stella screenshot buffer")?;
-        let mapped = readback
-            .get_mapped_range(..)
-            .context("get mapped Stella screenshot bytes")?;
-        let mut rgba = Vec::with_capacity(
-            (u64::from(unpadded_bytes_per_row) * u64::from(self.resolution.height)) as usize,
-        );
-        for row in mapped.chunks_exact(bytes_per_row as usize) {
-            rgba.extend_from_slice(&row[..unpadded_bytes_per_row as usize]);
-        }
-        drop(mapped);
-        readback.unmap();
+        let mut rgba = self.finish_game_readback(readback)?;
         // The EAGL drawable is presented as an opaque screen even though
         // glBlendFunc also evolves its unused alpha channel. PNG consumers do
         // use alpha, so normalize it to the visible framebuffer contract.

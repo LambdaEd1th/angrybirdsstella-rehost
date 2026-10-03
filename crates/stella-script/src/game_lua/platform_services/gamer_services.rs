@@ -182,15 +182,12 @@ impl GamerServicesRuntime {
     }
 
     fn show(&self, view: GamerServicesView) {
-        let entries = {
+        let (entries, local_provider) = {
             let state = self
                 .state
                 .lock()
                 .expect("gamer-services state lock poisoned");
-            if !state.local_provider || !state.authenticated {
-                return;
-            }
-            match view {
+            let entries = match view {
                 GamerServicesView::Achievements => state
                     .document
                     .achievements
@@ -203,13 +200,21 @@ impl GamerServicesRuntime {
                     .iter()
                     .map(|(id, score)| (id.clone(), score.to_string()))
                     .collect(),
-            }
+            };
+            (entries, state.local_provider)
         };
+        // Both native presentation leaves unconditionally forward through
+        // GameCenter to its controller constructor, even while signed out.
+        // Showing a controller neither authenticates nor fabricates records.
         self.render
             .lock()
             .expect("render bridge lock poisoned")
             .platform_action_requests
-            .push(PlatformActionRequest::ShowGamerServices { view, entries });
+            .push(PlatformActionRequest::ShowGamerServices {
+                view,
+                entries,
+                local_provider,
+            });
     }
 }
 

@@ -8,6 +8,7 @@ export function dispatchPlatformActions(game, { window = globalThis.window } = {
     try {
       if (action.kind === "openUrl") window.open(action.url, "_blank", "noopener,noreferrer");
       else if (action.kind === "appStoreProduct") window.open(`https://apps.apple.com/app/id${action.productId}`, "_blank", "noopener,noreferrer");
+      else if (action.kind === "gamerServices" && game.gamerServices) game.gamerServices.enqueue(action);
       else {
         // Media/Game Center presentation still needs a browser provider. Keep
         // their complete payload available to an embedding host at the boundary.

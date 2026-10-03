@@ -17,7 +17,9 @@ export function installRatingFixture(module, { account = false, fresh = true, lo
     function createStartUpAssets()
       startup()
       function update()
-        if isKeyHold("LBUTTON") or isKeyPressed("KEY_BACK") or isKeyPressed("KEY_MENU") then
+        -- This fixture replaces the normal update wrapper which populates
+        -- g_key* queries. Read the live native publication instead.
+        if gamelua.keyHold.LBUTTON or gamelua.keyPressed.KEY_BACK or gamelua.keyPressed.KEY_MENU then
           error("Rating modal let game input through")
         end
       end

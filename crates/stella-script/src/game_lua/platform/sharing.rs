@@ -65,9 +65,11 @@ pub(super) fn install_screenshot(
                 *sequence
             };
             let mut bridge = share_bridge.lock().expect("render bridge lock poisoned");
+            let order = bridge.allocate_draw_order();
             bridge
                 .screenshot_share_requests
                 .push(ScreenshotShareRequest {
+                    order,
                     sequence,
                     filename: format!("Stella_Screenshot{sequence}.png"),
                     title,

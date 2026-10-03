@@ -167,6 +167,7 @@ impl StellaLua {
             || !bridge.text_commands.is_empty()
             || !bridge.rect_commands.is_empty()
             || !bridge.capture_commands.is_empty()
+            || !bridge.screenshot_share_requests.is_empty()
     }
 
     /// Report whether the current immediate-order stream contains a framebuffer
@@ -222,8 +223,9 @@ impl StellaLua {
         )
     }
 
-    /// Drain `GameLua::shareScreenShot` requests in native call order. The
-    /// platform host owns framebuffer readback and temporary-file lifetime.
+    /// Drain screenshot readbacks with their positions in the immediate stream.
+    /// Consume these alongside draws before resetting the stream or drawable.
+    /// The platform host owns the captured pixels and temporary-file lifetime.
     pub fn take_screenshot_share_requests(&self) -> Vec<ScreenshotShareRequest> {
         std::mem::take(
             &mut self

@@ -72,6 +72,11 @@ export class GameRenderer {
     const bufferLimit = gl.getParameter(gl.MAX_RENDERBUFFER_SIZE);
     this.drawableLimits = { width: Math.min(viewport[0], textureLimit, bufferLimit, 65535), height: Math.min(viewport[1], textureLimit, bufferLimit, 65535) };
     this.textures = new Map();
+    // The native RGBA drawable is presented through an opaque view. Keep its
+    // alpha in a separate attachment; alpha:false default buffers discard it.
+    this.framebuffer = gl.createFramebuffer();
+    this.framebufferTexture = gl.createTexture();
+    this.framebufferSize = null;
     this.program = gl.createProgram();
     for (const [type, source] of [[gl.VERTEX_SHADER, vertexSource], [gl.FRAGMENT_SHADER, fragmentSource]]) {
       const shader = gl.createShader(type);
@@ -102,12 +107,23 @@ export class GameRenderer {
     }
     gl.bindSampler(0, this.baseSampler); gl.bindSampler(1, this.fillSampler);
     this.upload({ name: "<stella-white>", width: 1, height: 1 }, new Uint8Array([255, 255, 255, 255]));
+    this.resize(gl.canvas.width, gl.canvas.height);
   }
   resize(width, height) {
     const gl = this.gl;
     if (gl.canvas.width !== width) gl.canvas.width = width;
     if (gl.canvas.height !== height) gl.canvas.height = height;
     if (gl.drawingBufferWidth !== width || gl.drawingBufferHeight !== height) throw new LocalizedError("graphicsCapacity");
+    if (this.framebufferSize?.[0] === width && this.framebufferSize?.[1] === height) return;
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.framebufferTexture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.framebuffer);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.framebufferTexture, 0);
+    if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) throw new LocalizedError("graphicsCapacity");
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    this.framebufferSize = [width, height];
   }
   upload(info, pixels) {
     const gl = this.gl;
@@ -120,10 +136,12 @@ export class GameRenderer {
   render(module, packet) {
     const gl = this.gl;
     if (gl.isContextLost()) throw new LocalizedError("graphicsLost");
+    const screenshots = [];
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.framebuffer);
     gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
     gl.useProgram(this.program);
     gl.bindVertexArray(this.vao);
-    if (packet.beforeClear) this.renderStream(module, packet.beforeClear);
+    if (packet.beforeClear) this.renderStream(module, packet.beforeClear, screenshots);
     if (packet.background) {
       // Rust resolves the same signed, wrapping GL scissor as the desktop.
       // Update-time draws/captures have already consumed the old pixels.
@@ -131,14 +149,21 @@ export class GameRenderer {
       gl.clearColor(...packet.background.map(value => value / 255), 1);
       gl.clear(gl.COLOR_BUFFER_BIT);
     }
-    this.renderStream(module, packet);
+    this.renderStream(module, packet, screenshots);
+    // Present RGB without replaying the stream or modifying captured alpha.
+    gl.disable(gl.SCISSOR_TEST);
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, this.framebuffer);
+    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+    gl.blitFramebuffer(0, 0, gl.canvas.width, gl.canvas.height, 0, 0, gl.canvas.width, gl.canvas.height, gl.COLOR_BUFFER_BIT, gl.NEAREST);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return screenshots;
   }
   setClip(clip) {
     const gl = this.gl;
     if (clip) { gl.enable(gl.SCISSOR_TEST); gl.scissor(clip[0], gl.canvas.height - clip[1] - clip[3], clip[2], clip[3]); }
     else gl.disable(gl.SCISSOR_TEST);
   }
-  renderStream(module, packet) {
+  renderStream(module, packet, screenshots) {
     const gl = this.gl;
     for (const info of packet.textures) {
       this.upload(info, module.HEAPU8.subarray(info.pointer, info.pointer + info.length));
@@ -155,6 +180,17 @@ export class GameRenderer {
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, width, height, 0, gl.RGBA, gl.FLOAT, uniforms);
     gl.uniform1i(this.locations.uDrawWidth, width);
     for (const operation of packet.operations) {
+      if (operation.share) {
+        const width = gl.canvas.width, height = gl.canvas.height, rowBytes = width * 4;
+        const pixels = new Uint8Array(rowBytes * height);
+        gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+        if (gl.isContextLost()) throw new LocalizedError("graphicsLost");
+        if (gl.getError() !== gl.NO_ERROR) throw new LocalizedError("graphicsCapacity");
+        const rgba = new Uint8Array(pixels.length);
+        for (let row = 0; row < height; row++) rgba.set(pixels.subarray(row * rowBytes, (row + 1) * rowBytes), (height - row - 1) * rowBytes);
+        screenshots.push({ request: operation.share, width, height, rgba });
+        continue;
+      }
       if (operation.capture) {
         const texture = gl.createTexture(); gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, texture);
         gl.copyTexImage2D(gl.TEXTURE_2D, 0, gl.RGB, 0, 0, gl.canvas.width, gl.canvas.height, 0);
@@ -170,7 +206,9 @@ export class GameRenderer {
       else {
         gl.enable(gl.BLEND);
         const factor = operation.program === 3 ? gl.ONE : gl.SRC_ALPHA;
-        gl.blendFuncSeparate(factor, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+        // Native GL_State uses glBlendFunc: both RGB and alpha take the same
+        // source factor, including SRC_ALPHA for plain/masked geometry.
+        gl.blendFunc(factor, gl.ONE_MINUS_SRC_ALPHA);
       }
       for (const [unit, name] of [[0, operation.base], [1, operation.fill]]) {
         const entry = this.textures.get(name);
@@ -188,6 +226,7 @@ export class GameRenderer {
     const gl = this.gl;
     for (const entry of this.textures.values()) gl.deleteTexture(entry.texture);
     this.textures.clear(); gl.deleteTexture(this.draws); gl.deleteBuffer(this.vertices);
+    gl.deleteFramebuffer(this.framebuffer); gl.deleteTexture(this.framebufferTexture);
     gl.deleteSampler(this.baseSampler); gl.deleteSampler(this.fillSampler); gl.deleteProgram(this.program);
     gl.deleteVertexArray(this.vao);
   }

@@ -5,6 +5,8 @@ import { GameAudio } from "./audio.js";
 import { installInput } from "./input.js";
 import { BrowserAccountUI } from "./account.js";
 import { BrowserRatingUI } from "./rating.js";
+import { BrowserScreenshotUI } from "./sharing.js";
+import { BrowserGamerServicesUI } from "./gamer-services.js";
 import { dispatchPlatformActions } from "./platform-actions.js";
 import { ORIGINAL_SIZE, displayDimensions, drawableDimensions } from "./display.js";
 import { LOCALES, configureLanguage, language, languageIndex, setLanguage, onLanguageChange, translateDocument, t, message, formatMessage, LocalizedError } from "./i18n.js";
@@ -27,7 +29,7 @@ let selected = 1;
 let running = null;
 let busy = false;
 let cachedModule = null;
-function focusGame() { if (running?.ratingVisible) running.rating.focus(); else if (running?.accountVisible) running.account.focus(); else $("canvas").focus({ preventScroll: true }); }
+function focusGame() { if (running?.sharingVisible) running.sharing.focus(); else if (running?.gamerServicesVisible) running.gamerServices.focus(); else if (running?.ratingVisible) running.rating.focus(); else if (running?.accountVisible) running.account.focus(); else $("canvas").focus({ preventScroll: true }); }
 const localizedMessages = new Map();
 function setText(id, value) { localizedMessages.set(id, value); $(id).textContent = formatMessage(value); }
 const languageControls = [$("language"), $("game-language")];
@@ -279,7 +281,8 @@ function engineCall(module, name, ...args) {
 
 function flushGameRendering(game) {
   engineCall(game.module, "_stella_flush");
-  game.renderer.render(game.module, JSON.parse(game.module.UTF8ToString(game.module._stella_packet())));
+  const screenshots = game.renderer.render(game.module, JSON.parse(game.module.UTF8ToString(game.module._stella_packet())));
+  game.sharing?.enqueue(screenshots);
 }
 
 function persist(game, flush = true) {
@@ -360,20 +363,23 @@ async function startGame() {
     running = game;
     game.account = new BrowserAccountUI(game, { root: $("account-dialog"), gameCanvas: $("canvas"), engineCall, failGame, saveOrReport });
     game.rating = new BrowserRatingUI(game, { root: $("rating-dialog"), gameCanvas: $("canvas"), accountDialog: $("account-dialog"), engineCall, failGame, saveOrReport, dispatchActions: () => dispatchPlatformActions(game) });
+    game.sharing = new BrowserScreenshotUI(game, { root: $("sharing-dialog"), gameCanvas: $("canvas"), accountDialog: $("account-dialog"), ratingDialog: $("rating-dialog"), engineCall });
+    game.gamerServices = new BrowserGamerServicesUI(game, { root: $("gamer-services-dialog"), gameCanvas: $("canvas"), accountDialog: $("account-dialog"), ratingDialog: $("rating-dialog"), engineCall });
     $("canvas").focus();
-    game.cleanup = installInput(game, { canvas: $("canvas"), accountDialog: $("account-dialog"), ratingDialog: $("rating-dialog"), engineCall, failGame, saveOrReport });
+    game.cleanup = installInput(game, { canvas: $("canvas"), accountDialog: $("account-dialog"), ratingDialog: $("rating-dialog"), sharingDialog: $("sharing-dialog"), gamerServicesDialog: $("gamer-services-dialog"), engineCall, failGame, saveOrReport });
     // Always save generated device identity, including a completely new game.
     saveOrReport(game, false);
     function frame(now) {
       if (running !== game || game.failed) return;
       try {
-        if (!game.lifecycle.active) { game.account.refresh(now); game.rating.refresh(); game.last = now; game.animation = requestAnimationFrame(frame); return; }
+        if (!game.lifecycle.active) { game.account.refresh(now); game.rating.refresh(); game.gamerServices.refresh(); game.sharing.refresh(); game.last = now; game.animation = requestAnimationFrame(frame); return; }
         syncGameResolution(game);
         engineCall(module, "_stella_frame", Math.min((now - game.last) / 1000, 0.1)); game.last = now;
         const packet = JSON.parse(module.UTF8ToString(module._stella_packet()));
-        renderer.render(module, packet); audio.sync(module, packet.audio);
+        const screenshots = renderer.render(module, packet); audio.sync(module, packet.audio);
         game.account.refresh(now);
         game.rating.refresh(); dispatchPlatformActions(game);
+        game.sharing.enqueue(screenshots); game.gamerServices.refresh(); game.sharing.refresh();
         if (now - game.lastSave > 15000) { saveOrReport(game, false); game.lastSave = now; }
         if (packet.exit) { returnHome(); return; }
         game.animation = requestAnimationFrame(frame);
@@ -392,7 +398,7 @@ async function startGame() {
 function returnHome() {
   const game = running; if (!game) return;
   saveOrReport(game);
-  cancelAnimationFrame(game.animation); game.cleanup?.(); game.rating.dispose(); game.account.dispose(); game.audio.dispose(); game.renderer.dispose(); game.module._stella_shutdown(); game.release();
+  cancelAnimationFrame(game.animation); game.cleanup?.(); game.sharing.dispose(); game.gamerServices.dispose(); game.rating.dispose(); game.account.dispose(); game.audio.dispose(); game.renderer.dispose(); game.module._stella_shutdown(); game.release();
   running = null; $("game").hidden = true; $("launcher").hidden = false;
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   status(game.saveFailure || message("savedHome"), !!game.saveFailure);

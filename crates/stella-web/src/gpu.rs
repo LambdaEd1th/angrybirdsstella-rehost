@@ -49,6 +49,7 @@ struct PreparedDraw {
 enum PreparedOperation {
     Draw(usize),
     Capture(String),
+    ScreenshotShare(ScreenshotShareRequest),
 }
 
 #[derive(Default)]
@@ -90,6 +91,9 @@ impl PreparedFrame {
         }
         let operations = self.operations.iter().map(|operation| match operation {
             PreparedOperation::Capture(name) => json!({"capture": name}),
+            PreparedOperation::ScreenshotShare(request) => json!({"share": {
+                "sequence": request.sequence, "filename": request.filename, "title": request.title
+            }}),
             PreparedOperation::Draw(index) => {
                 let draw = &self.draws[*index];
                 let pair = &self.texture_pairs[draw.texture_pair];

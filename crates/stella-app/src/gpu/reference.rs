@@ -113,7 +113,7 @@ impl PreparedFrame {
             .iter()
             .filter_map(|operation| match operation {
                 PreparedOperation::Capture(name) => Some(name.as_str()),
-                PreparedOperation::Draw(_) => None,
+                PreparedOperation::Draw(_) | PreparedOperation::ScreenshotShare(_) => None,
             })
             .collect::<HashSet<_>>();
         for name in &self.required_textures {
@@ -125,6 +125,9 @@ impl PreparedFrame {
         }
         for operation in &self.operations {
             match operation {
+                // This test-only RGB display facade has no platform share sink.
+                // Readback leaves its framebuffer and texture bindings intact.
+                PreparedOperation::ScreenshotShare(_) => {}
                 PreparedOperation::Capture(name) => {
                     // GL captures its lower-left framebuffer row into texture
                     // row zero. glCopyTexImage2D(GL_RGB) discards framebuffer

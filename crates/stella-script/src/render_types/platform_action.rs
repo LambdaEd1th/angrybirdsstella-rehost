@@ -40,5 +40,8 @@ pub enum PlatformActionRequest {
     ShowGamerServices {
         view: GamerServicesView,
         entries: Vec<(String, String)>,
+        /// Records belong to the explicitly enabled portable local provider.
+        /// A signed-out native presentation must not imply authentication.
+        local_provider: bool,
     },
 }

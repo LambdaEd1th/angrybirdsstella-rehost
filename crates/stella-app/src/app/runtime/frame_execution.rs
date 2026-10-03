@@ -51,8 +51,6 @@ impl StellaApp {
             self.submit_render_stream(renderer, Some(self.background_color))?;
             self.rendered_frame_ready = true;
         }
-        self.screenshot_share_requests
-            .extend(self.runtime.take_screenshot_share_requests());
         Ok(())
     }
 
@@ -94,6 +92,7 @@ impl StellaApp {
         self.text_commands.clear();
         self.rect_commands.clear();
         self.capture_commands.clear();
+        self.screenshot_share_requests.clear();
         self.resolution = resolution;
         // Callbacks caused by the resolution notification see the new target;
         // the old-size captures above have already consumed their old pixels.
@@ -104,6 +103,7 @@ impl StellaApp {
     }
 
     fn collect_render_stream(&mut self) -> Result<()> {
+        self.screenshot_share_requests = self.runtime.take_screenshot_share_requests();
         self.synchronize_sprite_catalog()?;
         self.assets
             .apply_composite_updates(self.runtime.take_composite_updates());
@@ -121,12 +121,13 @@ impl StellaApp {
         renderer: &mut GpuRenderer,
         clear: Option<[u8; 3]>,
     ) -> Result<()> {
-        let frame = self.assets.prepare_gpu_frame_at_resolution(
+        let frame = self.assets.prepare_gpu_frame_with_shares_at_resolution(
             self.resolution,
             &self.render_commands,
             &self.text_commands,
             &self.rect_commands,
             &self.capture_commands,
+            &self.screenshot_share_requests,
         )?;
         if let Some(background) = clear {
             renderer.render_offscreen_with_clip(
@@ -139,6 +140,7 @@ impl StellaApp {
             renderer.render_before_clear(&self.assets, &frame)?;
         }
         self.capture_commands.clear();
+        self.screenshot_share_requests.clear();
         Ok(())
     }
 }
