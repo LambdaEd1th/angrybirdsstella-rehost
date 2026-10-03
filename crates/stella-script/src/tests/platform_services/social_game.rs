@@ -11,13 +11,13 @@ use std::{
     time::Instant,
 };
 
-struct Sandbox {
+pub(super) struct Sandbox {
     root: std::path::PathBuf,
-    data_root: std::path::PathBuf,
+    pub(super) data_root: std::path::PathBuf,
 }
 
 impl Sandbox {
-    fn new(label: &str) -> Self {
+    pub(super) fn new(label: &str) -> Self {
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -80,14 +80,14 @@ impl SocialPlatformProvider for CachedFacebook {
     }
 }
 
-struct Rule {
+pub(super) struct Rule {
     route: &'static str,
     status: u16,
     body: String,
-    hold: Option<mpsc::Receiver<()>>,
+    pub(super) hold: Option<mpsc::Receiver<()>>,
 }
 
-fn rule(route: &'static str, status: u16, body: &str) -> Rule {
+pub(super) fn rule(route: &'static str, status: u16, body: &str) -> Rule {
     Rule {
         route,
         status,
@@ -143,16 +143,17 @@ fn read_request(stream: &mut TcpStream) -> String {
     }
 }
 
-struct Server {
-    origin: String,
+pub(super) struct Server {
+    pub(super) origin: String,
     requests: mpsc::Receiver<String>,
     stop: Arc<AtomicBool>,
     thread: Option<thread::JoinHandle<()>>,
     profiles: Arc<AtomicUsize>,
+    sessions: Arc<AtomicUsize>,
 }
 
 impl Server {
-    fn new(linked: bool, rules: Vec<Rule>) -> Self {
+    pub(super) fn new(linked: bool, rules: Vec<Rule>) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
         let origin = format!("http://{}/proxy", listener.local_addr().unwrap());
@@ -161,9 +162,11 @@ impl Server {
         let (tx, requests) = mpsc::channel();
         let profiles = Arc::new(AtomicUsize::new(0));
         let fetched_profiles = profiles.clone();
+        let sessions = Arc::new(AtomicUsize::new(0));
+        let acquired_sessions = sessions.clone();
         let worker = thread::spawn(move || {
             let mut rules = VecDeque::from(rules);
-            let mut sessions = 0;
+            let mut session_count = 0;
             let mut held = Vec::new();
             while !stopped.load(Ordering::Acquire) {
                 let mut stream = match listener.accept() {
@@ -176,7 +179,10 @@ impl Server {
                 };
                 let request = read_request(&mut stream);
                 let route = request.lines().next().unwrap();
-                if route.contains("/leaderboard/1.0/") {
+                if route.contains("/leaderboard/1.0/")
+                    || route.starts_with("POST /proxy/storage/1.0/state ")
+                    || route.starts_with("GET /proxy/storage/1.0/state?")
+                {
                     let rule = rules.pop_front().expect("unexpected native game request");
                     assert!(route.starts_with(rule.route), "{route}");
                     tx.send(request).unwrap();
@@ -189,8 +195,9 @@ impl Server {
                         reply(&mut stream, rule.status, &rule.body);
                     }
                 } else if route.starts_with("POST /proxy/session/1/apps/game-fixture/sessions ") {
-                    sessions += 1;
-                    let body=json!({"userAuth":{"accessToken":if sessions==1 {"synthetic-game-access"} else {"renewed-game-access"},"refreshToken":"synthetic-game-refresh","expiresIn":3600},"segments":[8,2],"config":{},"profile":profile(linked,sessions>1)}).to_string();
+                    session_count += 1;
+                    acquired_sessions.fetch_add(1, Ordering::AcqRel);
+                    let body=json!({"userAuth":{"accessToken":if session_count==1 {"synthetic-game-access"} else {"renewed-game-access"},"refreshToken":"synthetic-game-refresh","expiresIn":3600},"segments":[8,2],"config":{},"profile":profile(linked,session_count>1)}).to_string();
                     reply(&mut stream, 200, &body);
                 } else if route.starts_with("GET /proxy/identity/2.0/friends ") {
                     reply(&mut stream, 503, "");
@@ -201,9 +208,15 @@ impl Server {
                     assert_eq!(connection["externalAttributes"]["userId"], "facebook-own");
                     reply(&mut stream, 204, "");
                 } else if route.starts_with("GET /proxy/identity/3.0/profile/own ") {
-                    reply(&mut stream, 200, &profile(linked, sessions > 1).to_string());
+                    reply(
+                        &mut stream,
+                        200,
+                        &profile(linked, session_count > 1).to_string(),
+                    );
                     fetched_profiles.fetch_add(1, Ordering::AcqRel);
-                } else if route.starts_with("POST /proxy/storage/2.0/states/query ") {
+                } else if route.starts_with("POST /proxy/storage/2.0/states/query ")
+                    || route.starts_with("POST /proxy/storage/1.0/states/query ")
+                {
                     reply(&mut stream, 200, r#"{"result":[]}"#);
                 } else if route.contains("/log/") {
                     reply(&mut stream, 200, "");
@@ -227,14 +240,19 @@ impl Server {
             stop,
             thread: Some(worker),
             profiles,
+            sessions,
         }
     }
 
-    fn request(&self) -> String {
+    pub(super) fn request(&self) -> String {
         self.requests.recv_timeout(Duration::from_secs(5)).unwrap()
     }
 
-    fn finish(mut self) {
+    pub(super) fn session_requests(&self) -> usize {
+        self.sessions.load(Ordering::Acquire)
+    }
+
+    pub(super) fn finish(mut self) {
         self.stop.store(true, Ordering::Release);
         self.thread.take().unwrap().join().unwrap();
     }
@@ -246,7 +264,7 @@ impl Drop for Server {
     }
 }
 
-fn runtime(sandbox: &Sandbox, server: &Server, linked: bool) -> StellaLua {
+pub(super) fn runtime(sandbox: &Sandbox, server: &Server, linked: bool) -> StellaLua {
     let runtime = StellaLua::new(sandbox.data_root.clone()).unwrap();
     runtime
         .set_identity_url(&format!("{}/identity/2.0", server.origin))
@@ -271,7 +289,7 @@ fn runtime(sandbox: &Sandbox, server: &Server, linked: bool) -> StellaLua {
     runtime
 }
 
-fn wait(runtime: &StellaLua, predicate: impl Fn(&mlua::Table) -> bool) {
+pub(super) fn wait(runtime: &StellaLua, predicate: impl Fn(&mlua::Table) -> bool) {
     let env = game_environment(runtime.lua()).unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
@@ -284,7 +302,7 @@ fn wait(runtime: &StellaLua, predicate: impl Fn(&mlua::Table) -> bool) {
     }
 }
 
-fn login(runtime: &StellaLua, linked: bool) {
+pub(super) fn login(runtime: &StellaLua, linked: bool) {
     runtime
         .execute_source("_G.SkynestAccount.native_login(false,false,false)")
         .unwrap();
@@ -324,7 +342,7 @@ fn header(request: &str, name: &str) -> Option<String> {
         })
 }
 
-fn decode(request: &str, access: &str) -> String {
+pub(super) fn decode(request: &str, access: &str) -> String {
     use aes::{
         Aes128,
         cipher::{BlockModeDecrypt, KeyIvInit, block_padding::Pkcs7},

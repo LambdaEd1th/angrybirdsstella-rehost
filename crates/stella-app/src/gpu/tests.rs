@@ -6,6 +6,7 @@ use stella_assets::surface_format::SurfaceFormat;
 mod batch;
 mod capture;
 mod device_loss;
+mod file_images;
 mod geometry;
 mod native_images;
 mod program;

@@ -28,8 +28,8 @@ pub(super) fn install(
                     .lock()
                     .expect("resource runtime lock poisoned");
                 let binding = resources
-                    .active_masked_texture_source(&texture, &data_root)
-                    .map_or(MaskedTextureBinding::Missing, MaskedTextureBinding::Source);
+                    .active_masked_texture_binding(&texture, &data_root)
+                    .unwrap_or(MaskedTextureBinding::Missing);
                 (
                     resources.active_atlas_catalog_region(&sprite, &data_root),
                     binding,

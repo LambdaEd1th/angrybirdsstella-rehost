@@ -1,7 +1,25 @@
 use super::*;
 use std::path::Path;
 
-use stella_assets::{native_image::ImageSurfaceLayout, surface_format::SurfaceFormat};
+use super::captures::ResolvedTexture;
+use stella_assets::{
+    native_image::{DecodedNativeImage, ImageSurfaceLayout},
+    surface_format::SurfaceFormat,
+};
+
+// A renderer can outlive a catalog replacement. Its upload cache therefore
+// needs a process-unique physical generation, independent of catalog counters.
+static NEXT_FILE_TEXTURE_GENERATION: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(1);
+
+/// Logical Image owners share immutable uploads only when the decoded pixels
+/// and native surface layout match. Physical keys never alias an owner that
+/// capture can later mutate.
+#[derive(Default)]
+pub(crate) struct FileImageCatalog {
+    pub(crate) bindings: HashMap<String, ResolvedTexture>,
+    versions: HashMap<String, Vec<String>>,
+}
 
 mod pvr_reader;
 mod raster_reader;
@@ -42,24 +60,74 @@ impl TextureAsset {
 
 impl AssetCatalog {
     pub(crate) fn retain_decoded_image(&mut self, region: &SpriteCatalogRegion) -> Result<()> {
-        if let Some(image) = &region.decoded_image
-            && !self.textures.contains_key(&region.texture_source)
-        {
-            image.layout.pixels.gl_texture_format(true)?;
-            let pixels = RgbaImage::from_raw(image.width, image.height, image.rgba.clone())
-                .ok_or_else(|| anyhow!("invalid retained native image pixels"))?;
-            self.textures.insert(
-                region.texture_source.clone(),
-                TextureAsset::with_native_layout(pixels, image.layout),
-            );
+        if let Some(image) = &region.decoded_image {
+            self.retain_native_image(&region.texture_source, image)?;
         }
         Ok(())
     }
+
+    pub(crate) fn retain_native_image(
+        &mut self,
+        source: &str,
+        image: &DecodedNativeImage,
+    ) -> Result<()> {
+        if self.file_images.bindings.contains_key(source) {
+            return Ok(());
+        }
+        image.layout.pixels.gl_texture_format(true)?;
+        let path = stella_assets::image_source::image_source_path(source);
+        let shared = self
+            .file_images
+            .versions
+            .get(path)
+            .and_then(|versions| {
+                versions.iter().find(|key| {
+                    self.textures.get(*key).is_some_and(|texture| {
+                        texture.width() == image.width
+                            && texture.height() == image.height
+                            && texture.source_layout == image.layout
+                            && texture.image.as_raw() == &image.rgba
+                    })
+                })
+            })
+            .cloned();
+        let physical = if let Some(shared) = shared {
+            shared
+        } else {
+            let pixels = RgbaImage::from_raw(image.width, image.height, image.rgba.clone())
+                .ok_or_else(|| anyhow!("invalid retained native image pixels"))?;
+            let generation =
+                NEXT_FILE_TEXTURE_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let key = format!("<file-image-generation:{generation}>{path}");
+            self.textures.insert(
+                key.clone(),
+                TextureAsset::with_native_layout(pixels, image.layout),
+            );
+            self.file_images
+                .versions
+                .entry(path.to_owned())
+                .or_default()
+                .push(key.clone());
+            key
+        };
+        self.file_images.bindings.insert(
+            source.to_owned(),
+            ResolvedTexture {
+                source: physical,
+                width: image.width,
+                height: image.height,
+                surface_format: image.layout.pixels.for_gl_upload(true),
+            },
+        );
+        Ok(())
+    }
+
     pub(crate) fn texture(&mut self, name: &str) -> Result<&TextureAsset> {
         let resolved = self
             .captures
             .bindings
             .get(name)
+            .or_else(|| self.file_images.bindings.get(name))
             .map(|image| image.source.clone());
         // Native Images have independent write identities. Their initial
         // immutable file pixels can still share one upload until capture

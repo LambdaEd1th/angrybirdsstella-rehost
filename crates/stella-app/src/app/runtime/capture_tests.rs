@@ -45,6 +45,7 @@ fn capture_app() -> StellaApp {
             textures: HashMap::new(),
             system_labels: SystemLabelPool::default(),
             captures: CapturedTextureCatalog::default(),
+            file_images: Default::default(),
         },
         render_commands: Vec::new(),
         text_commands: Vec::new(),

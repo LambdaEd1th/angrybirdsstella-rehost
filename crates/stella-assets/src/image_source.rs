@@ -7,7 +7,17 @@ pub fn sheet_image_source(sheet_identity: u64, texture_index: usize, path: &str)
     format!("<image:sheet:{sheet_identity}:{texture_index}>{path}")
 }
 
+pub fn font_image_source(identity: u64, path: &str) -> String {
+    format!("<image:font:{identity}>{path}")
+}
+
 pub fn image_source_path(source: &str) -> &str {
+    if let Some(suffix) = source.strip_prefix("<image:font:")
+        && let Some((identity, path)) = suffix.split_once('>')
+        && identity.parse::<u64>().is_ok()
+    {
+        return path;
+    }
     let Some(suffix) = source.strip_prefix("<image:sheet:") else {
         return source;
     };
@@ -34,6 +44,9 @@ mod tests {
             assert_eq!(image_source_path(&first), path);
             assert_ne!(first, sheet_image_source(8, 0, path));
             assert_ne!(first, sheet_image_source(7, 1, path));
+            let font = font_image_source(7, path);
+            assert_eq!(image_source_path(&font), path);
+            assert_ne!(font, font_image_source(8, path));
         }
         for source in ["normal.png", "<capture:image:1>", "<image:sheet:x:0>file"] {
             assert_eq!(image_source_path(source), source);

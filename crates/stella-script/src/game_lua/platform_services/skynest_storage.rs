@@ -98,6 +98,7 @@ struct AccountStatesResponse {
 struct ServiceError {
     status: Option<u16>,
     message: &'static str,
+    native_code: Option<u8>,
 }
 
 enum OnlineCompletion {
@@ -108,14 +109,14 @@ enum OnlineCompletion {
     },
     SaveCloudSettingsConflict(Result<StoredValue, ServiceError>),
     SetKey {
-        request_id: u64,
+        request_id: Option<u64>,
         key: String,
         value: String,
         config: OnlineConfig,
         result: Result<StoredHash, ServiceError>,
     },
     SetKeyConflict {
-        request_id: u64,
+        request_id: Option<u64>,
         key: String,
         result: Result<StoredValue, ServiceError>,
     },
@@ -178,6 +179,67 @@ pub(crate) struct SkynestStorageRuntime {
 }
 
 impl SkynestStorageRuntime {
+    pub(in crate::game_lua::platform_services) fn request_social_set_progress(
+        &self,
+        value: String,
+    ) -> LuaResult<bool> {
+        let (config, owner) = self.online_config()?;
+        let Some(config) = config else {
+            return Ok(false);
+        };
+        let hash = self
+            .online_cache
+            .borrow()
+            .hashes
+            .get("progress")
+            .cloned()
+            .unwrap_or_default();
+        self.spawn_online(owner, move || {
+            let result = request_set(&config, "progress", &value, &hash);
+            OnlineCompletion::SetKey {
+                request_id: None,
+                key: "progress".to_owned(),
+                value,
+                config,
+                result,
+            }
+        })?;
+        Ok(true)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cached_key_for_test(&self, key: &str) -> (Option<String>, Option<String>) {
+        let cache = self.online_cache.borrow();
+        (cache.keys.get(key).cloned(), cache.hashes.get(key).cloned())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cached_key_probe_for_test(
+        &self,
+        key: &str,
+    ) -> impl Fn() -> (Option<String>, Option<String>) + use<> {
+        let cache = self.online_cache.clone();
+        let key = key.to_owned();
+        move || {
+            let cache = cache.borrow();
+            (
+                cache.keys.get(&key).cloned(),
+                cache.hashes.get(&key).cloned(),
+            )
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn retained_callback_count_for_test(&self) -> usize {
+        self.callbacks.borrow().len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn online_completion_count_probe(&self) -> impl Fn() -> usize + use<> {
+        let queue = self.online_completions.clone();
+        move || queue.lock().unwrap().len()
+    }
+
     pub(in crate::game_lua::platform_services) fn request_social_progress(
         &self,
         lua: &Lua,

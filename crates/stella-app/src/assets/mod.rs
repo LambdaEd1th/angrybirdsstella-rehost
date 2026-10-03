@@ -15,7 +15,7 @@ pub(super) use system_font::{
     SystemLabelPool, native_system_label_hash, native_system_label_horizontal_anchor,
     native_system_label_offset, native_system_label_vertical_anchor, rasterize_system_label,
 };
-pub(super) use texture::TextureAsset;
+pub(super) use texture::{FileImageCatalog, TextureAsset};
 
 pub(super) use transform::{
     composite_child_transform, native_project_clip, render_command_transform, text_glyph_transform,
@@ -37,6 +37,7 @@ pub(super) struct AssetCatalog {
     pub(super) textures: HashMap<String, TextureAsset>,
     pub(super) system_labels: SystemLabelPool,
     pub(super) captures: CapturedTextureCatalog,
+    pub(super) file_images: FileImageCatalog,
 }
 
 #[cfg(test)]

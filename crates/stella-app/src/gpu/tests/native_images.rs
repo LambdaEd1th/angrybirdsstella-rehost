@@ -11,6 +11,7 @@ fn catalog(root: PathBuf) -> AssetCatalog {
         textures: HashMap::new(),
         system_labels: SystemLabelPool::default(),
         captures: Default::default(),
+        file_images: Default::default(),
     }
 }
 

@@ -177,6 +177,9 @@ impl AssetCatalog {
                 FrameCommand::Capture => {
                     let command = &capture_commands[capture_index];
                     capture_index += 1;
+                    if let Some(image) = &command.decoded_image {
+                        self.retain_native_image(&command.texture_source, image)?;
+                    }
                     let (texture, retired) = self.prepare_capture_texture(
                         &command.texture_source,
                         resolution,

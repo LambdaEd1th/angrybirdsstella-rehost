@@ -322,6 +322,7 @@ fn mixed_draw_command_classes_share_one_native_submission_sequence() {
             order: 2,
             name: "ORDER_CAPTURE".to_owned(),
             texture_source: "<capture:image:1>".to_owned(),
+            decoded_image: None,
             temporary: false,
         }]
     );

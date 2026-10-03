@@ -8900,3 +8900,5 @@ fn fallback_audit_distinguishes_missing_data_reads_from_invoked_native_methods()
 mod social_avatar;
 mod social_friends_store;
 mod social_game;
+mod social_lua;
+mod social_progress;

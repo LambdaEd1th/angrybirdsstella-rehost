@@ -15,6 +15,7 @@ fn native_color_mesh_reaches_gpu_as_one_triangle_fan_draw() {
         textures: HashMap::new(),
         system_labels: SystemLabelPool::default(),
         captures: Default::default(),
+        file_images: Default::default(),
     };
     let vertices = vec![[10.0, 20.0], [30.0, 20.0], [40.0, 40.0], [5.0, 50.0]];
     let command = RectRenderCommand {
@@ -57,6 +58,7 @@ fn native_triangle_list_reaches_gpu_without_fan_reindexing() {
         textures: HashMap::new(),
         system_labels: SystemLabelPool::default(),
         captures: Default::default(),
+        file_images: Default::default(),
     };
     let vertices = vec![
         [10.0, 10.0],
@@ -139,6 +141,7 @@ fn dirt_mesh_uses_constructor_time_texture_pointers_after_catalog_shadowing() {
         textures: HashMap::new(),
         system_labels: SystemLabelPool::default(),
         captures: Default::default(),
+        file_images: Default::default(),
     };
     let triangle = vec![RenderTriangle {
         vertices: [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],

@@ -401,6 +401,7 @@ fn string_3d_uses_text_group_key_and_current_font_like_resource_draw_string() {
         TextFontBinding::Bitmap {
             font,
             texture_source,
+            ..
         } => {
             assert_eq!(font.glyphs[0].width, 6);
             assert!(texture_source.ends_with("font-atlas.pvr"));
@@ -476,6 +477,7 @@ fn submitted_text_keeps_constructed_font_and_texture_after_replace_and_release()
         TextFontBinding::Bitmap {
             font,
             texture_source,
+            ..
         } => {
             assert_eq!(font.glyphs[0].width, 3);
             assert_eq!(font.texture, "first.pvr");
@@ -488,6 +490,7 @@ fn submitted_text_keeps_constructed_font_and_texture_after_replace_and_release()
         TextFontBinding::Bitmap {
             font,
             texture_source,
+            ..
         } => (font, texture_source),
         TextFontBinding::System(_) => panic!("test font is a bitmap IFont"),
     };
@@ -1496,7 +1499,9 @@ fn selected_object_submission_retains_both_native_image_pointers() {
             .ends_with("first/first.pvr")
     );
     match command.masked_texture_binding().unwrap() {
-        MaskedTextureBinding::Source(source) => assert!(source.ends_with("first/first.pvr")),
+        MaskedTextureBinding::Source(source) | MaskedTextureBinding::Retained { source, .. } => {
+            assert!(source.ends_with("first/first.pvr"))
+        }
         MaskedTextureBinding::Missing => panic!("mask image was resolved at submission"),
     }
     drop(bridge);

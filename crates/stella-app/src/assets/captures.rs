@@ -21,7 +21,12 @@ pub(crate) struct CapturedTextureCatalog {
 
 impl AssetCatalog {
     pub(crate) fn resolve_gpu_texture(&mut self, logical_source: &str) -> Result<ResolvedTexture> {
-        if let Some(texture) = self.captures.bindings.get(logical_source) {
+        if let Some(texture) = self
+            .captures
+            .bindings
+            .get(logical_source)
+            .or_else(|| self.file_images.bindings.get(logical_source))
+        {
             return Ok(texture.clone());
         }
         let source = if self.textures.contains_key(logical_source) {

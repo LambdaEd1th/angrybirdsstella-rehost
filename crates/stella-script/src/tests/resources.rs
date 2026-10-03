@@ -6,7 +6,8 @@ fn shipped_gamelogic_owns_initial_screen_physics_scale_and_script_clocks() {
     if !data_root.join("scripts_common/gamelogic.lua").is_file() {
         return;
     }
-    let runtime = StellaLua::new(data_root).unwrap();
+    let sandbox = ShippedDataSandbox::new("game-lua-initial-clocks");
+    let runtime = StellaLua::new(&sandbox.data_root).unwrap();
     let globals = runtime.lua().globals();
     let environment = game_environment(runtime.lua()).unwrap();
 

@@ -95,7 +95,12 @@ pub(crate) fn ensure_dirt_component(
         let resolve = |name: &str| {
             resources
                 .active_atlas_catalog_region(name, data_root)
-                .map(|region| MaskedTextureBinding::Source(region.texture_source.clone()))
+                .map(|region| {
+                    MaskedTextureBinding::with_image(
+                        region.texture_source.clone(),
+                        region.decoded_image.clone(),
+                    )
+                })
                 .unwrap_or(MaskedTextureBinding::Missing)
         };
         (resolve(&background), resolve(&foreground))

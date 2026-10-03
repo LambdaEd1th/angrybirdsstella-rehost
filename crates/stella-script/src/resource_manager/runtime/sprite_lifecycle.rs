@@ -30,7 +30,7 @@ impl ResourceRuntime {
         self.sprite_sheet_image_dimensions
             .insert(owner.to_owned(), [image.width, image.height]);
         self.sprite_sheet_decoded_images
-            .insert(owner.to_owned(), image);
+            .insert(owner.to_owned(), vec![Some(image)]);
         self.cache_sprite_sheet_host_bindings(owner, data_root);
     }
     /// Publish a single image-backed sprite directly into the active resource
@@ -226,6 +226,7 @@ impl ResourceRuntime {
     /// `sub_1004578BC` + `sub_10046AF40` path selected by
     /// `releaseSpriteSheet(path, true)`.
     pub(crate) fn deactivate_sprite_sheet_value(&mut self, owner: &str) {
+        self.sprite_sheet_decoded_images.remove(owner);
         self.sprite_sheet_image_dimensions.remove(owner);
         self.sprite_sheet_texture_sources.remove(owner);
         self.sprite_sheet_catalog_regions.remove(owner);

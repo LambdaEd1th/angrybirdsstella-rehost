@@ -13,6 +13,7 @@ fn catalog() -> AssetCatalog {
         textures: HashMap::new(),
         system_labels: Default::default(),
         captures: Default::default(),
+        file_images: Default::default(),
     }
 }
 
@@ -41,6 +42,7 @@ fn capture(order: u64, source: &str) -> CaptureRenderCommand {
         name: "CAP".to_owned(),
         texture_source: source.to_owned(),
         temporary: false,
+        decoded_image: None,
     }
 }
 
@@ -233,7 +235,15 @@ fn lua_capture_keeps_same_file_images_and_reloaded_sheet_owners_independent() {
         1,
         "unmodified owners share immutable PNG bytes"
     );
-    assert!(assets.textures.contains_key(image_path.to_str().unwrap()));
+    let physical = &assets.file_images.bindings[sources[0]].source;
+    assert!(assets.textures.contains_key(physical));
+    for source in &sources {
+        assert_eq!(&assets.file_images.bindings[*source].source, physical);
+        assert_ne!(
+            *source, physical,
+            "shared pixels cannot alias a mutable owner"
+        );
+    }
     let mut renderer = GpuRenderer::headless(size).unwrap();
     let rgba = renderer
         .render_to_rgba(&assets, &frame, [0, 0, 255])

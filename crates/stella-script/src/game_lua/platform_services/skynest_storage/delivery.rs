@@ -206,17 +206,25 @@ pub(crate) fn dispatch_online_completion(
                         result: request_get(&config, &conflict_key),
                     })
                 {
-                    runtime.remove_callback(lua, request_id)?;
+                    if let Some(request_id) = request_id {
+                        runtime.remove_callback(lua, request_id)?;
+                    }
                     return Err(error);
                 }
                 return Ok(());
             }
-            if let Ok(result) = result {
-                let mut cache = runtime.online_cache.borrow_mut();
-                cache.keys.insert(key.clone(), value);
-                cache.hashes.insert(key, result.hash);
+            match result {
+                Ok(result) => {
+                    let mut cache = runtime.online_cache.borrow_mut();
+                    cache.keys.insert(key.clone(), value);
+                    cache.hashes.insert(key, result.hash);
+                }
+                Err(error) if request_id.is_none() => report_progress_error(error_code(&error)),
+                Err(_) => {}
             }
-            if let Some(callback) = runtime.take_callback(request_id) {
+            if let Some(request_id) = request_id
+                && let Some(callback) = runtime.take_callback(request_id)
+            {
                 call_retained(lua, callback, ())?;
             }
         }
@@ -225,16 +233,25 @@ pub(crate) fn dispatch_online_completion(
             key,
             result,
         } => {
-            if let Ok(remote) = result {
-                // Native updates the conflict GET's hash, not the submitted
-                // local value or a separate decoded-value cache.
-                runtime
-                    .online_cache
-                    .borrow_mut()
-                    .hashes
-                    .insert(key, remote.hash);
+            match result {
+                Ok(remote) => {
+                    // Native updates the conflict GET's hash, not the submitted
+                    // local value or a separate decoded-value cache.
+                    runtime
+                        .online_cache
+                        .borrow_mut()
+                        .hashes
+                        .insert(key, remote.hash);
+                    if request_id.is_none() {
+                        report_progress_error(3);
+                    }
+                }
+                Err(error) if request_id.is_none() => report_progress_error(error_code(&error)),
+                Err(_) => {}
             }
-            if let Some(callback) = runtime.take_callback(request_id) {
+            if let Some(request_id) = request_id
+                && let Some(callback) = runtime.take_callback(request_id)
+            {
                 // 1000BBD90 ignores key/error/local/remote and calls with no args.
                 call_retained(lua, callback, ())?;
             }
@@ -284,9 +301,18 @@ pub(crate) fn dispatch_online_completion(
     Ok(())
 }
 
+fn report_progress_error(code: u8) {
+    // Native 1000C3F64 logs key/error/local/remote without notifying Lua.
+    // Keep the error category while excluding private progress contents.
+    eprintln!("SocialManager: Error setting progress: {code}.");
+}
+
 /// 1007097E4: HTTP transport (-1) is provider code 5; authentication statuses
 /// are ordinary code 4, not a special reason to suppress cloud completion.
 fn error_code(error: &ServiceError) -> u8 {
+    if let Some(code) = error.native_code {
+        return code;
+    }
     match error.status {
         None => 5,
         Some(400) => 1,

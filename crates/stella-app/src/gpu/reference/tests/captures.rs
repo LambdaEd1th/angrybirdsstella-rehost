@@ -76,6 +76,7 @@ fn capture(order: u64) -> CaptureRenderCommand {
         name: "FULL".to_owned(),
         texture_source: SHEET.to_owned(),
         temporary: false,
+        decoded_image: None,
     }
 }
 
@@ -239,6 +240,7 @@ fn reference_capture_temporary_image_does_not_restore_a_released_sheet() {
                 name: "RELEASED".to_owned(),
                 texture_source: "<capture:released-image>".to_owned(),
                 temporary: true,
+                decoded_image: None,
             }],
         )
         .unwrap();

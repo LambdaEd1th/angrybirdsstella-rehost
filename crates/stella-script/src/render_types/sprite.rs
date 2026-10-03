@@ -23,7 +23,7 @@ pub struct SpriteCatalogSnapshot {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpriteCatalogRegion {
-    /// Downloaded Images own decoded pixels at native construction time.
+    /// File and downloaded Images own pixels at native construction time.
     /// Retain them through deferred draws and aliases, independently of disk.
     pub decoded_image: Option<Arc<stella_assets::native_image::DecodedNativeImage>>,
     /// Deterministic host identity for the retained native `SpriteSheet*`.
@@ -118,6 +118,36 @@ pub enum MaskedTextureBinding {
     /// host keeps the command/order record but must never bind a later image.
     Missing,
     Source(String),
+    Retained {
+        source: String,
+        image: Arc<stella_assets::native_image::DecodedNativeImage>,
+    },
+}
+
+impl MaskedTextureBinding {
+    pub(crate) fn with_image(
+        source: String,
+        image: Option<Arc<stella_assets::native_image::DecodedNativeImage>>,
+    ) -> Self {
+        match image {
+            Some(image) => Self::Retained { source, image },
+            None => Self::Source(source),
+        }
+    }
+
+    pub fn source(&self) -> Option<&str> {
+        match self {
+            Self::Missing => None,
+            Self::Source(source) | Self::Retained { source, .. } => Some(source),
+        }
+    }
+
+    pub fn image(&self) -> Option<&Arc<stella_assets::native_image::DecodedNativeImage>> {
+        match self {
+            Self::Retained { image, .. } => Some(image),
+            Self::Missing | Self::Source(_) => None,
+        }
+    }
 }
 
 /// Retained inputs for Purple's optional alpha-masked texture branch.

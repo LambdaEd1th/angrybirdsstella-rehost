@@ -6,13 +6,13 @@ use std::{
     sync::Arc,
 };
 
-use stella_assets::image_source::{image_source_path, sheet_image_source};
+use stella_assets::image_source::{font_image_source, image_source_path, sheet_image_source};
 use stella_assets::ka3d::CompositePart;
 
 use super::{ResourceRuntime, SpriteResourceEntry, SpriteResourceKind};
 use crate::{
-    BoundCompositePart, CompositeSpriteOwner, SharedSpriteName, SpriteCatalogRegion,
-    SpriteCatalogSnapshot,
+    BoundCompositePart, CompositeSpriteOwner, MaskedTextureBinding, SharedSpriteName,
+    SpriteCatalogRegion, SpriteCatalogSnapshot,
     resource_manager::{NativeSpriteMetrics, SpriteGeometry, native_composite_metrics_from_parts},
 };
 
@@ -25,7 +25,16 @@ impl ResourceRuntime {
             return;
         };
         let descriptor = self.bitmap_font_descriptor_paths.get(owner);
-        let texture_source = resolve_texture_source(data_root, descriptor, &font.texture);
+        let path = resolve_texture_source(data_root, descriptor, &font.texture);
+        let identity = self.next_bitmap_font_image_identity;
+        self.next_bitmap_font_image_identity += 1;
+        let texture_source = font_image_source(identity, &path);
+        if let Some(image) = self.snapshot_file_image(&texture_source) {
+            self.bitmap_font_decoded_images
+                .insert(owner.to_owned(), image);
+        } else {
+            self.bitmap_font_decoded_images.remove(owner);
+        }
         self.bitmap_font_texture_sources
             .insert(owner.to_owned(), texture_source);
     }
@@ -35,7 +44,7 @@ impl ResourceRuntime {
     /// Native draw calls retain pointers to those resources; they do not
     /// canonicalize the texture filename again for every submitted sprite.
     pub(crate) fn cache_sprite_sheet_host_bindings(&mut self, owner: &str, data_root: &Path) {
-        let (texture_sources, regions_by_index) = {
+        let texture_sources = {
             let Some(sheet) = self.sprite_sheet_values.get(owner) else {
                 return;
             };
@@ -49,7 +58,7 @@ impl ResourceRuntime {
             // even when its filename matches another record or an older
             // sheet. Preserve that identity across captures and retained
             // aliases; only the file reader may unwrap the actual path.
-            let texture_sources = sheet
+            sheet
                 .textures
                 .iter()
                 .enumerate()
@@ -61,27 +70,53 @@ impl ResourceRuntime {
                         sheet_image_source(native_sheet_id, texture_index, &path)
                     }
                 })
-                .collect::<Vec<_>>();
-            let regions_by_index = sheet
+                .collect::<Vec<_>>()
+        };
+        let decoded_images = self
+            .sprite_sheet_decoded_images
+            .get(owner)
+            .cloned()
+            .unwrap_or_else(|| {
+                texture_sources
+                    .iter()
+                    .map(|source| {
+                        if source.starts_with("<capture:") {
+                            None
+                        } else {
+                            self.snapshot_file_image(source)
+                        }
+                    })
+                    .collect()
+            });
+        let regions_by_index = {
+            let sheet = &self.sprite_sheet_values[owner];
+            let native_sheet_id = self
+                .sprite_sheet_identities
+                .get(owner)
+                .copied()
+                .unwrap_or(0);
+            sheet
                 .sprites
                 .iter()
                 .enumerate()
                 .map(|(index, sprite)| {
                     let texture_index = *sheet.sprite_texture_indices.get(index)?;
                     Some(Arc::new(SpriteCatalogRegion {
-                        decoded_image: self.sprite_sheet_decoded_images.get(owner).cloned(),
+                        decoded_image: decoded_images.get(texture_index).cloned().flatten(),
                         native_sheet_id,
                         texture_source: texture_sources.get(texture_index)?.clone(),
                         sprite: sprite.clone(),
                     }))
                 })
-                .collect::<Vec<_>>();
-            (texture_sources, regions_by_index)
+                .collect::<Vec<_>>()
         };
 
         // Image dimensions belong to the successful sheet construction, not
         // to the active global sprite (which another sheet can shadow).
-        if let Some(source) = texture_sources
+        if let Some(image) = decoded_images.last().and_then(Option::as_ref) {
+            self.sprite_sheet_image_dimensions
+                .insert(owner.to_owned(), [image.width, image.height]);
+        } else if let Some(source) = texture_sources
             .last()
             .filter(|source| !source.starts_with("<capture:"))
             && let path = image_source_path(source)
@@ -96,6 +131,8 @@ impl ResourceRuntime {
             self.sprite_sheet_image_dimensions
                 .insert(owner.to_owned(), dimensions);
         }
+        self.sprite_sheet_decoded_images
+            .insert(owner.to_owned(), decoded_images);
 
         // Resources+0x588 stores the concrete Sprite pointer in every stack
         // entry. Bind the same immutable owner once at sheet construction so
@@ -150,7 +187,12 @@ impl ResourceRuntime {
             .find(|(_, sprite)| sprite.name == name)?;
         let texture_index = *sheet.sprite_texture_indices.get(index)?;
         Some(Arc::new(SpriteCatalogRegion {
-            decoded_image: self.sprite_sheet_decoded_images.get(owner).cloned(),
+            decoded_image: self
+                .sprite_sheet_decoded_images
+                .get(owner)
+                .and_then(|images| images.get(texture_index))
+                .cloned()
+                .flatten(),
             native_sheet_id: self
                 .sprite_sheet_identities
                 .get(owner)
@@ -274,11 +316,21 @@ impl ResourceRuntime {
         Some((label, region))
     }
 
+    #[cfg(test)]
     pub(crate) fn active_masked_texture_source(
         &self,
         name: &str,
         data_root: &Path,
     ) -> Option<String> {
+        self.active_masked_texture_binding(name, data_root)
+            .and_then(|binding| binding.source().map(str::to_owned))
+    }
+
+    pub(crate) fn active_masked_texture_binding(
+        &self,
+        name: &str,
+        data_root: &Path,
+    ) -> Option<MaskedTextureBinding> {
         let direct = self.sprite_sheet_values.contains_key(name).then_some(name);
         let normalized;
         let owner = if let Some(owner) = direct {
@@ -296,7 +348,14 @@ impl ResourceRuntime {
             .textures
             .len()
             .checked_sub(1)?;
-        self.sprite_sheet_image_source(owner, texture_index, data_root)
+        let source = self.sprite_sheet_image_source(owner, texture_index, data_root)?;
+        let image = self
+            .sprite_sheet_decoded_images
+            .get(owner)
+            .and_then(|images| images.get(texture_index))
+            .cloned()
+            .flatten();
+        Some(MaskedTextureBinding::with_image(source, image))
     }
 
     fn sprite_sheet_image_source(

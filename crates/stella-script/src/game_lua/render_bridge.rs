@@ -66,6 +66,7 @@ impl RenderBridge {
         name: String,
         texture_source: String,
         temporary: bool,
+        decoded_image: Option<Arc<stella_assets::native_image::DecodedNativeImage>>,
     ) {
         let order = self.allocate_draw_order();
         self.capture_commands.push(CaptureRenderCommand {
@@ -73,6 +74,7 @@ impl RenderBridge {
             name,
             texture_source,
             temporary,
+            decoded_image,
         });
     }
 }

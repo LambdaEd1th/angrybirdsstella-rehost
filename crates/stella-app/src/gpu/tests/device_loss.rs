@@ -13,6 +13,7 @@ fn device_loss_rejects_render_readback_overlay_and_presentation() {
         textures: HashMap::new(),
         system_labels: SystemLabelPool::default(),
         captures: CapturedTextureCatalog::default(),
+        file_images: Default::default(),
     };
     let frame = PreparedFrame {
         resolution: size,

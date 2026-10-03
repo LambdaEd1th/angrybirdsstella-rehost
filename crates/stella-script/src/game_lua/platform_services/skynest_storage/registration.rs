@@ -119,7 +119,7 @@ pub(in super::super) fn install(
                 if let Err(error) = set_runtime.spawn_online(owner, move || {
                     let result = request_set(&config, &key, &value, &hash);
                     OnlineCompletion::SetKey {
-                        request_id,
+                        request_id: Some(request_id),
                         key: queued_key,
                         value: queued_value,
                         config,

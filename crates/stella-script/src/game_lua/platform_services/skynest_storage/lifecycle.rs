@@ -74,10 +74,12 @@ impl SkynestStorageRuntime {
 impl OnlineCompletion {
     pub(super) fn request_id(&self) -> Option<u64> {
         match self {
-            Self::SetKey { request_id, .. }
-            | Self::SetKeyConflict { request_id, .. }
-            | Self::GetKey { request_id, .. }
-            | Self::GetKeyForAccountIds { request_id, .. } => Some(*request_id),
+            Self::SetKey { request_id, .. } | Self::SetKeyConflict { request_id, .. } => {
+                *request_id
+            }
+            Self::GetKey { request_id, .. } | Self::GetKeyForAccountIds { request_id, .. } => {
+                Some(*request_id)
+            }
             Self::LoadCloudSettings(_)
             | Self::SaveCloudSettings { .. }
             | Self::SaveCloudSettingsConflict(_) => None,

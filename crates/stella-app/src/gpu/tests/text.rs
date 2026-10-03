@@ -60,6 +60,7 @@ fn projected_text_keeps_homogeneous_vertices_crossing_the_camera_plane() {
         textures: HashMap::from([(texture_source.clone(), alpha_texture(8, 8))]),
         system_labels: SystemLabelPool::default(),
         captures: Default::default(),
+        file_images: Default::default(),
     };
     let projection = TextProjection3D {
         x: 0.0,
@@ -75,6 +76,7 @@ fn projected_text_keeps_homogeneous_vertices_crossing_the_camera_plane() {
         font_binding: Some(TextFontBinding::Bitmap {
             font: font("ignored.pvr", 4).into(),
             texture_source,
+            decoded_image: None,
         }),
         x: -2.0,
         y: -3.0,
@@ -121,6 +123,7 @@ fn submitted_text_uses_bound_font_geometry_and_texture_not_active_name() {
         ]),
         system_labels: SystemLabelPool::default(),
         captures: Default::default(),
+        file_images: Default::default(),
     };
     let command = TextRenderCommand {
         order: 0,
@@ -129,6 +132,7 @@ fn submitted_text_uses_bound_font_geometry_and_texture_not_active_name() {
         font_binding: Some(TextFontBinding::Bitmap {
             font: font("ignored-relative-name.pvr", 4).into(),
             texture_source: bound_texture.clone(),
+            decoded_image: None,
         }),
         x: 10.0,
         y: 20.0,
@@ -181,6 +185,7 @@ fn font_v2_utf32_glyphs_reach_the_wgpu_quad_path() {
         textures: HashMap::from([(texture_source.clone(), alpha_texture(8, 8))]),
         system_labels: SystemLabelPool::default(),
         captures: Default::default(),
+        file_images: Default::default(),
     };
     let command = TextRenderCommand {
         order: 0,
@@ -189,6 +194,7 @@ fn font_v2_utf32_glyphs_reach_the_wgpu_quad_path() {
         font_binding: Some(TextFontBinding::Bitmap {
             font: utf32_font.into(),
             texture_source: texture_source.clone(),
+            decoded_image: None,
         }),
         x: 0.0,
         y: 0.0,
@@ -243,6 +249,7 @@ fn system_text_builds_premultiplied_label_and_uses_native_stroke_anchor_geometry
         textures: HashMap::new(),
         system_labels: SystemLabelPool::default(),
         captures: Default::default(),
+        file_images: Default::default(),
     };
     let frame = assets
         .prepare_gpu_frame(&[], std::slice::from_ref(&command), &[], &[])
@@ -473,6 +480,7 @@ fn last_system_font_release_separates_same_hash_deferred_label_lifetimes() {
         textures: HashMap::new(),
         system_labels: SystemLabelPool::default(),
         captures: Default::default(),
+        file_images: Default::default(),
     };
     let frame = assets.prepare_gpu_frame(&[], &commands, &[], &[]).unwrap();
     assert_eq!(frame.draws.len(), 2);

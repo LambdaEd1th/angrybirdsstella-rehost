@@ -71,6 +71,7 @@ fn wide_headless_readback_removes_wgpu_row_padding() {
         textures: HashMap::new(),
         system_labels: SystemLabelPool::default(),
         captures: Default::default(),
+        file_images: Default::default(),
     };
     let frame = PreparedFrame {
         resolution,
@@ -244,6 +245,7 @@ fn mixed_command_classes_keep_native_immediate_submission_order() {
         textures: HashMap::from([(texture_name, alpha_texture(1, 1))]),
         system_labels: SystemLabelPool::default(),
         captures: Default::default(),
+        file_images: Default::default(),
     };
     let rect = |order| RectRenderCommand {
         projection_3d: None,
@@ -305,6 +307,7 @@ fn capture_sprite_copies_the_immediate_framebuffer_for_later_draws() {
         textures: HashMap::new(),
         system_labels: SystemLabelPool::default(),
         captures: Default::default(),
+        file_images: Default::default(),
     };
     let capture_source = "<capture:batch-test>";
     assets.regions.insert(
@@ -385,6 +388,7 @@ fn capture_sprite_copies_the_immediate_framebuffer_for_later_draws() {
                 name: "CAPTURED_FRAME".to_owned(),
                 texture_source: capture_source.to_owned(),
                 temporary: false,
+                decoded_image: None,
             }],
         )
         .unwrap();

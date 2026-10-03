@@ -17,6 +17,7 @@ fn reference_game_preserves_capture_commands_and_cross_frame_painter_order() {
         textures: HashMap::new(),
         system_labels: SystemLabelPool::default(),
         captures: Default::default(),
+        file_images: Default::default(),
     };
     let mut pixels = vec![0; (GAME_WIDTH * GAME_HEIGHT) as usize];
     commands::render_game_with_captures(
@@ -29,6 +30,7 @@ fn reference_game_preserves_capture_commands_and_cross_frame_painter_order() {
             name: "NEW_CAPTURE".to_owned(),
             texture_source: "<capture:NEW_CAPTURE>".to_owned(),
             temporary: false,
+            decoded_image: None,
         }],
         [23, 47, 89],
         &mut pixels,

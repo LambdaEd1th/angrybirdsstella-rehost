@@ -2002,7 +2002,9 @@ fn set_texture_retains_its_resolved_native_image_pointer_across_replacement() {
     let command = &bridge.commands[0];
     assert_eq!(command.bound_region.as_ref().unwrap().sprite.width, 12);
     match command.masked_texture_binding().unwrap() {
-        MaskedTextureBinding::Source(source) => assert!(source.ends_with("first/first.pvr")),
+        MaskedTextureBinding::Source(source) | MaskedTextureBinding::Retained { source, .. } => {
+            assert!(source.ends_with("first/first.pvr"))
+        }
         MaskedTextureBinding::Missing => panic!("setTexture resolved a live image"),
     }
     drop(bridge);

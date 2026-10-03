@@ -73,6 +73,7 @@ impl AssetCatalog {
             textures: HashMap::new(),
             system_labels: SystemLabelPool::default(),
             captures: CapturedTextureCatalog::default(),
+            file_images: Default::default(),
         })
     }
 

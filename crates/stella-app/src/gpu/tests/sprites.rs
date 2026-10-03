@@ -30,6 +30,7 @@ fn near_degenerate_atlas_matrix_is_submitted_without_a_host_epsilon_cull() {
         textures: HashMap::from([(texture_name, alpha_texture(1000, 1000))]),
         system_labels: SystemLabelPool::default(),
         captures: Default::default(),
+        file_images: Default::default(),
     };
     let command = RenderCommand {
         projection_3d: None,
@@ -93,6 +94,7 @@ fn native_explicit_quad_reaches_gpu_in_recovered_triangle_and_uv_order() {
         ]),
         system_labels: SystemLabelPool::default(),
         captures: Default::default(),
+        file_images: Default::default(),
     };
     let positions = [[90.0, 80.0], [10.0, 70.0], [100.0, 20.0], [20.0, 10.0]];
     let uv = [[0.9, 0.8], [0.1, 0.7], [1.0, 0.2], [0.2, 0.1]];
@@ -178,6 +180,7 @@ fn native_atlas_quad_keeps_positions_and_signed_rotated_region_uvs() {
         ]),
         system_labels: SystemLabelPool::default(),
         captures: Default::default(),
+        file_images: Default::default(),
     };
     let positions = [[10.0, 16.0], [10.0, 24.0], [30.0, 16.0], [30.0, 24.0]];
     let command = RenderCommand {
@@ -244,6 +247,7 @@ fn raw_atlas_quad_preserves_custom_model_space_and_native_uvs() {
         textures: HashMap::from([(texture_name.clone(), alpha_texture(20, 40))]),
         system_labels: SystemLabelPool::default(),
         captures: Default::default(),
+        file_images: Default::default(),
     };
     let positions = [[-2.0, -3.0], [2.0, -3.0], [-2.0, 3.0], [2.0, 3.0]];
     let projection = TextProjection3D {
@@ -361,6 +365,7 @@ fn render_state_pivot_is_not_applied_twice_after_native_sprite_anchoring() {
         textures: HashMap::from([(texture_name, alpha_texture(10, 20))]),
         system_labels: SystemLabelPool::default(),
         captures: Default::default(),
+        file_images: Default::default(),
     };
     let command = RenderCommand {
         projection_3d: None,
@@ -424,6 +429,7 @@ fn explicit_sprite_pivot_override_replaces_an_atlas_pivot() {
         textures: HashMap::from([(texture_name, alpha_texture(10, 20))]),
         system_labels: SystemLabelPool::default(),
         captures: Default::default(),
+        file_images: Default::default(),
     };
     let command = RenderCommand {
         projection_3d: None,
@@ -463,6 +469,7 @@ fn retained_animation_region_draws_after_active_resource_catalog_release() {
         textures: HashMap::from([(texture_name.clone(), alpha_texture(16, 16))]),
         system_labels: SystemLabelPool::default(),
         captures: Default::default(),
+        file_images: Default::default(),
     };
     let command = RenderCommand {
         projection_3d: None,
@@ -522,6 +529,7 @@ fn selected_sprite_uses_its_submission_time_mask_texture_pointer() {
         ]),
         system_labels: SystemLabelPool::default(),
         captures: Default::default(),
+        file_images: Default::default(),
     };
     let command = RenderCommand {
         projection_3d: None,
@@ -588,6 +596,7 @@ fn retained_scene_composite_draws_its_frozen_child_after_catalog_release() {
         textures: HashMap::from([(texture_name.clone(), alpha_texture(16, 16))]),
         system_labels: SystemLabelPool::default(),
         captures: Default::default(),
+        file_images: Default::default(),
     };
     let command = RenderCommand {
         projection_3d: None,
@@ -670,6 +679,7 @@ fn rotated_native_pivot_and_non_uniform_scale_reach_gpu_vertices_exactly() {
         textures: HashMap::from([(texture_name, alpha_texture(10, 20))]),
         system_labels: SystemLabelPool::default(),
         captures: Default::default(),
+        file_images: Default::default(),
     };
     let command = RenderCommand {
         projection_3d: None,
@@ -813,6 +823,7 @@ fn assert_downloaded_avatar_generations(indexed_tga: Option<bool>) {
         textures: HashMap::new(),
         system_labels: SystemLabelPool::default(),
         captures: Default::default(),
+        file_images: Default::default(),
     };
     let size = GameResolution {
         width: 40,

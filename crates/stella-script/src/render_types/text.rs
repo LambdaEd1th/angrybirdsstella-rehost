@@ -57,6 +57,7 @@ pub enum TextFontBinding {
         font: Arc<BitmapFont>,
         /// Constructor-resolved atlas source retained with that IFont value.
         texture_source: String,
+        decoded_image: Option<Arc<stella_assets::native_image::DecodedNativeImage>>,
     },
     /// Snapshot of the UIKit-backed IFont implementation selected at native
     /// submission time. Font bytes are shared between deferred commands, but

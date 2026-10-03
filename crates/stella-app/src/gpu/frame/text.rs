@@ -14,7 +14,13 @@ impl AssetCatalog {
             Some(TextFontBinding::Bitmap {
                 font,
                 texture_source,
-            }) => (font.clone(), texture_source.clone()),
+                decoded_image,
+            }) => {
+                if let Some(image) = decoded_image {
+                    self.retain_native_image(texture_source, image)?;
+                }
+                (font.clone(), texture_source.clone())
+            }
             Some(TextFontBinding::System(binding)) => {
                 return self.append_gpu_system_text(command, binding, frame);
             }

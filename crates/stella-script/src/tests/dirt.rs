@@ -272,7 +272,8 @@ fn native_dirt_constructor_retains_both_resolved_image_pointers() {
         &dirt.foreground_texture_binding,
     ] {
         match binding {
-            MaskedTextureBinding::Source(source) => {
+            MaskedTextureBinding::Source(source)
+            | MaskedTextureBinding::Retained { source, .. } => {
                 assert!(source.ends_with("first/first.pvr"));
             }
             MaskedTextureBinding::Missing => panic!("Dirt image resolved during construction"),

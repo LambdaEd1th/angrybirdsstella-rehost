@@ -15,6 +15,7 @@ fn catalog() -> AssetCatalog {
         textures: HashMap::new(),
         system_labels: Default::default(),
         captures: Default::default(),
+        file_images: Default::default(),
     }
 }
 

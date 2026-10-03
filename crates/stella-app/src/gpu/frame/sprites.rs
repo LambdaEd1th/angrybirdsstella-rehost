@@ -12,28 +12,40 @@ impl AssetCatalog {
         transform: SpriteTransform,
         frame: &mut PreparedFrame,
     ) -> Result<()> {
-        let MaskedTextureBinding::Source(background_texture) = &dirt.background_texture_binding
-        else {
+        let Some(background_texture) = dirt.background_texture_binding.source() else {
             return Ok(());
         };
-        let MaskedTextureBinding::Source(foreground_texture) = &dirt.foreground_texture_binding
-        else {
+        let Some(foreground_texture) = dirt.foreground_texture_binding.source() else {
             return Ok(());
         };
         // Dirt already has native mesh UVs and an opaque program: no image
         // dimensions/format are needed here. Resolve an Image overwritten by
         // capture without forcing uploads for unused (empty) mesh layers.
-        let resolve_source = |source: &String| {
-            self.captures.bindings.get(source).map_or_else(
-                || {
-                    if self.textures.contains_key(source) {
-                        source.clone()
-                    } else {
-                        stella_assets::image_source::image_source_path(source).to_owned()
-                    }
-                },
-                |texture| texture.source.clone(),
-            )
+        for (binding, triangles) in [
+            (&dirt.background_texture_binding, &dirt.background_triangles),
+            (&dirt.foreground_texture_binding, &dirt.foreground_triangles),
+        ] {
+            if triangles.iter().any(|triangles| !triangles.is_empty())
+                && let (Some(source), Some(image)) = (binding.source(), binding.image())
+            {
+                self.retain_native_image(source, image)?;
+            }
+        }
+        let resolve_source = |source: &str| {
+            self.captures
+                .bindings
+                .get(source)
+                .or_else(|| self.file_images.bindings.get(source))
+                .map_or_else(
+                    || {
+                        if self.textures.contains_key(source) {
+                            source.to_owned()
+                        } else {
+                            stella_assets::image_source::image_source_path(source).to_owned()
+                        }
+                    },
+                    |texture| texture.source.clone(),
+                )
         };
         let background_texture = resolve_source(background_texture);
         let foreground_texture = resolve_source(foreground_texture);
@@ -148,10 +160,14 @@ impl AssetCatalog {
         ) {
             return Ok(());
         }
+        if let Some((_, _, Some(binding))) = masked_texture
+            && let (Some(source), Some(image)) = (binding.source(), binding.image())
+        {
+            self.retain_native_image(source, image)?;
+        }
         let fill = masked_texture.and_then(|(name, scale, binding)| {
             let texture = match binding {
-                Some(MaskedTextureBinding::Source(source)) => Some(source.clone()),
-                Some(MaskedTextureBinding::Missing) => None,
+                Some(binding) => binding.source().map(str::to_owned),
                 None => self.masked_textures.get(name).cloned(),
             }?;
             Some((texture, scale))

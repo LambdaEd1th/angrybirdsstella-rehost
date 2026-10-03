@@ -76,7 +76,11 @@ fn online_agent(config: &OnlineConfig) -> ureq::Agent {
 }
 
 fn service_error(status: Option<u16>, message: &'static str) -> ServiceError {
-    ServiceError { status, message }
+    ServiceError {
+        status,
+        message,
+        native_code: None,
+    }
 }
 
 fn request(
@@ -191,6 +195,15 @@ pub(super) fn request_set(
     value: &str,
     hash: &str,
 ) -> Result<StoredHash, ServiceError> {
+    // StorageImpl::setKey (100700490) rejects empty inputs before token
+    // acquisition, encoding or HTTP, including the social progress caller.
+    if key.is_empty() || value.is_empty() {
+        return Err(ServiceError {
+            status: None,
+            message: "storage key and value must be nonempty",
+            native_code: Some(1),
+        });
+    }
     let url = format!("{}/state", config.base_url);
     let encoded = codec::encode(value).map_err(|message| service_error(None, message))?;
     let fields = [

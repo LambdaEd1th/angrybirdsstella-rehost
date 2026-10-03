@@ -44,8 +44,8 @@ pub(crate) fn install(
             let texture_binding = resources
                 .lock()
                 .expect("resource runtime lock poisoned")
-                .active_masked_texture_source(&texture, &data_root)
-                .map_or(MaskedTextureBinding::Missing, MaskedTextureBinding::Source);
+                .active_masked_texture_binding(&texture, &data_root)
+                .unwrap_or(MaskedTextureBinding::Missing);
             let mut bridge = texture_bridge.lock().expect("render bridge lock poisoned");
             let object = bridge
                 .game_lua_object_mut(&name)

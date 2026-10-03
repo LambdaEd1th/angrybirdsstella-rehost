@@ -15,11 +15,16 @@ pub(crate) fn install_capture(
             let name = native_required_string(&args, 0, "captureSprite")?;
             let mut bridge = render.lock().expect("render bridge lock poisoned");
             let dimensions = [bridge.screen_width, bridge.screen_height];
-            let (texture_source, temporary) = resources
-                .lock()
-                .expect("resource runtime lock poisoned")
-                .capture_sprite(&name, dimensions, &data_root)?;
-            bridge.push_capture_command(name, texture_source, temporary);
+            let mut resources = resources.lock().expect("resource runtime lock poisoned");
+            let (texture_source, temporary) =
+                resources.capture_sprite(&name, dimensions, &data_root)?;
+            let decoded_image = resources
+                .sprite_sheet_decoded_images
+                .get(&name)
+                .and_then(|images| images.last())
+                .cloned()
+                .flatten();
+            bridge.push_capture_command(name, texture_source, temporary, decoded_image);
             Ok(())
         })?,
     )

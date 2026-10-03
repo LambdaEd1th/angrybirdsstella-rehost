@@ -108,6 +108,11 @@ jobs:
           cargo test --locked -p stella-script --lib
           tests::platform_services::social_game::
 
+      - name: Run native social progress service regressions
+        run: >-
+          cargo test --locked -p stella-script --lib
+          tests::platform_services::social_progress::
+
   platform-check:
     name: Check ${{ matrix.label }}
     needs: quality

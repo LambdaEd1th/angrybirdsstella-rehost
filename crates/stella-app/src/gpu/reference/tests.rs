@@ -54,6 +54,7 @@ fn fixture(vertices: Vec<GpuVertex>, program: NativeProgram) -> (PreparedFrame, 
         )]),
         system_labels: SystemLabelPool::default(),
         captures: Default::default(),
+        file_images: Default::default(),
     };
     (frame, assets)
 }

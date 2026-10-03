@@ -3,7 +3,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::PathBuf,
-    sync::Arc,
+    sync::{Arc, Weak},
     time::Duration,
 };
 
@@ -15,6 +15,7 @@ use crate::{
     TextFontBinding, resolve_data_file,
 };
 
+mod file_images;
 mod sprite_capture;
 mod sprite_catalog;
 mod sprite_lifecycle;
@@ -184,7 +185,8 @@ pub(crate) struct ResourceRuntime {
     pub(crate) sprite_sheet_descriptor_paths: BTreeMap<String, PathBuf>,
     pub(crate) sprite_sheet_values: BTreeMap<String, SpriteSheet>,
     pub(crate) sprite_sheet_decoded_images:
-        BTreeMap<String, Arc<stella_assets::native_image::DecodedNativeImage>>,
+        BTreeMap<String, Vec<Option<Arc<stella_assets::native_image::DecodedNativeImage>>>>,
+    file_image_cache: BTreeMap<String, Weak<stella_assets::native_image::DecodedNativeImage>>,
     /// Extent of the sheet's retained Image (+0x20), independent of sprite
     /// geometry and subsequent framebuffer resizes.
     pub(crate) sprite_sheet_image_dimensions: BTreeMap<String, [u32; 2]>,
@@ -230,6 +232,9 @@ pub(crate) struct ResourceRuntime {
     /// Production text submission is lookup-only and never re-enters the
     /// filesystem to rediscover this constructor-resolved source.
     pub(crate) bitmap_font_texture_sources: BTreeMap<String, String>,
+    pub(crate) bitmap_font_decoded_images:
+        BTreeMap<String, Arc<stella_assets::native_image::DecodedNativeImage>>,
+    next_bitmap_font_image_identity: u64,
     /// Parsed bitmap object committed by `createBitmapFont`. Keeping the
     /// value here freezes the successful constructor input just like the
     /// native shared IFont object instead of reopening its file on queries.
@@ -294,6 +299,7 @@ impl ResourceRuntime {
             sprite_sheet_descriptor_paths: BTreeMap::new(),
             sprite_sheet_values: BTreeMap::new(),
             sprite_sheet_decoded_images: BTreeMap::new(),
+            file_image_cache: BTreeMap::new(),
             sprite_sheet_image_dimensions: BTreeMap::new(),
             next_capture_image_identity: 1,
             sprite_sheet_texture_sources: BTreeMap::new(),
@@ -311,6 +317,8 @@ impl ResourceRuntime {
             bitmap_font_paths: BTreeMap::new(),
             bitmap_font_descriptor_paths: BTreeMap::new(),
             bitmap_font_texture_sources: BTreeMap::new(),
+            bitmap_font_decoded_images: BTreeMap::new(),
+            next_bitmap_font_image_identity: 1,
             bitmap_font_values: BTreeMap::new(),
             system_fonts: BTreeMap::new(),
             system_font_label_pool_epoch: 0,
@@ -372,11 +380,13 @@ impl ResourceRuntime {
                     &font.texture,
                 )
             });
+        let decoded_image = self.bitmap_font_decoded_images.get(&name).cloned();
         Some((
             name,
             TextFontBinding::Bitmap {
                 font,
                 texture_source,
+                decoded_image,
             },
         ))
     }

@@ -478,9 +478,18 @@ impl SocialRuntime {
             .state
             .lock()
             .map_err(|_| runtime_error("social state lock poisoned"))?;
-        if state.local_provider && state.connected {
-            state.document.progress = Some(progress);
-            persist(&state)?;
+        if state.local_provider {
+            if state.connected {
+                state.document.progress = Some(progress);
+                persist(&state)?;
+            }
+            return Ok(());
+        }
+        drop(state);
+        // 1000C0F28 uses SkynestStorage even without a connected social
+        // network; its retained native callbacks never notify Lua.
+        if !self.storage.request_social_set_progress(progress)? {
+            eprintln!("SocialManager: Error setting progress: SkynestStorage not available.");
         }
         Ok(())
     }
