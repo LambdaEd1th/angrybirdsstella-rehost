@@ -122,7 +122,7 @@ impl FriendsClient {
     }
 }
 
-fn provider_name(network: SocialNetwork) -> &'static str {
+pub(in super::super) fn provider_name(network: SocialNetwork) -> &'static str {
     match network {
         SocialNetwork::Facebook => "facebook",
         SocialNetwork::SinaWeibo => "sinaweibo",

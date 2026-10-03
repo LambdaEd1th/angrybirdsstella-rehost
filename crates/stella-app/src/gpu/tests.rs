@@ -13,6 +13,60 @@ mod sharing;
 mod sprites;
 mod text;
 
+/// Raw attachment samples, independent of the production screenshot readback.
+/// Used for both presentation targets and call-prefix screenshot references.
+pub(super) fn read_texture(renderer: &GpuRenderer, texture: &wgpu::Texture) -> RgbaImage {
+    let (width, height) = (texture.width(), texture.height());
+    let pitch = (width * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
+        * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+    let buffer = renderer.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("independent GPU test readback"),
+        size: u64::from(pitch) * u64::from(height),
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut encoder = renderer.device.create_command_encoder(&Default::default());
+    encoder.copy_texture_to_buffer(
+        texture.as_image_copy(),
+        wgpu::TexelCopyBufferInfo {
+            buffer: &buffer,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(pitch),
+                rows_per_image: Some(height),
+            },
+        },
+        texture.size(),
+    );
+    renderer.queue.submit([encoder.finish()]);
+    let (sender, receiver) = mpsc::channel();
+    buffer.map_async(wgpu::MapMode::Read, .., move |result| {
+        sender.send(result).unwrap();
+    });
+    renderer
+        .device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .unwrap();
+    receiver.recv().unwrap().unwrap();
+    let mapped = buffer.get_mapped_range(..).unwrap();
+    let pixels = mapped
+        .chunks_exact(pitch as usize)
+        .flat_map(|row| row[..(width * 4) as usize].iter().copied())
+        .collect();
+    drop(mapped);
+    buffer.unmap();
+    let mut image = RgbaImage::from_raw(width, height, pixels).unwrap();
+    if matches!(
+        texture.format(),
+        wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
+    ) {
+        for pixel in image.pixels_mut() {
+            pixel.0.swap(0, 2);
+        }
+    }
+    image
+}
+
 impl GpuRenderer {
     /// Exercise wgpu's actual loss callback, after completing submitted work.
     pub(crate) fn destroy_device_for_test(&self) {

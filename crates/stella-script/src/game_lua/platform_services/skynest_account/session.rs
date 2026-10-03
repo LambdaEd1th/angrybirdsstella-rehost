@@ -343,7 +343,11 @@ impl IdentitySession {
     }
 
     pub(super) fn request_owner_is_current(&self, owner: RequestOwner) -> bool {
-        self.check_owner(owner.epoch, owner.generation).is_ok()
+        self.check_request_owner(owner).is_ok()
+    }
+
+    pub(super) fn check_request_owner(&self, owner: RequestOwner) -> Result<(), SessionError> {
+        self.check_owner(owner.epoch, owner.generation)
     }
 
     pub(super) fn storage_lifetime_is_current(&self, epoch: u64, generation: u64) -> bool {

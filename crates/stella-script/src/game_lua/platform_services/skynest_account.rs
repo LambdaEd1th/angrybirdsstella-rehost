@@ -27,6 +27,7 @@ pub(super) use session::{RegistryNamespace, StoreError};
 mod signing;
 mod storage_bridge;
 mod timezone;
+mod unregistration;
 use endpoint::IdentityEndpoint;
 use interactive::{InteractiveCompletion, InteractiveState};
 use session::{IdentitySession, ProviderLevel, RequestOwner};
@@ -36,6 +37,7 @@ pub(super) use storage_bridge::{IdentityLifetime, StorageIdentity};
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 enum Completion {
+    UnregisterFinished,
     LoginUnavailable {
         login_job: u64,
     },
@@ -134,6 +136,7 @@ struct NicknameResponse {
 }
 
 enum OnlineCompletion {
+    UnregisterFinished,
     Login {
         login_job: u64,
         result: Result<ProfileResponse, String>,
@@ -889,20 +892,10 @@ pub(super) fn install(
             social_login_runtime.begin_unavailable_social()
         })?,
     )?;
-    let unregister_state = Arc::clone(&state);
+    let unregister_runtime = runtime.clone();
     account.set(
         "native_unRegister",
-        lua.create_function(move |_, _: MultiValue| {
-            let mut state = unregister_state
-                .lock()
-                .map_err(|_| runtime_error("Skynest state lock poisoned"))?;
-            state.logged_in = false;
-            state.keys.clear();
-            state.storage_hashes.clear();
-            state.cloud_settings = None;
-            state.identity_session.logout().map_err(runtime_error)?;
-            state.persist()
-        })?,
+        lua.create_function(move |_, _: MultiValue| unregister_runtime.begin_unregister())?,
     )?;
 
     let nickname_state = Arc::clone(&state);
@@ -1004,6 +997,7 @@ pub(crate) fn dispatch_local_completion(
     };
     if !runtime.session.request_owner_is_current(owner) {
         match completion {
+            Completion::UnregisterFinished => {}
             Completion::ValidateNickname { callback, .. } => lua.remove_registry_value(callback)?,
             Completion::LoginUnavailable { login_job }
             | Completion::LoginSucceeded { login_job } => {
@@ -1014,6 +1008,7 @@ pub(crate) fn dispatch_local_completion(
         return Ok(());
     }
     match completion {
+        Completion::UnregisterFinished => {}
         Completion::LoginUnavailable { login_job } => {
             if runtime.complete_login_job(login_job) {
                 notify_login_unavailable(lua, &runtime.state)?;
@@ -1047,6 +1042,7 @@ pub(crate) fn dispatch_online_completion(
     };
     if !runtime.session.request_owner_is_current(owner) {
         match completion {
+            OnlineCompletion::UnregisterFinished => {}
             OnlineCompletion::ValidateNickname { request_id, .. } => {
                 if let Some(callback) = runtime.callbacks.borrow_mut().remove(&request_id) {
                     lua.remove_registry_value(callback)?;
@@ -1060,6 +1056,7 @@ pub(crate) fn dispatch_online_completion(
         return Ok(());
     }
     match completion {
+        OnlineCompletion::UnregisterFinished => {}
         OnlineCompletion::Login {
             login_job,
             result: Ok(_profile),

@@ -3,6 +3,7 @@ use super::super::social::{LocalSocialFriend, friends_store::protocol};
 use super::*;
 
 mod platform_connection;
+pub(super) use platform_connection::provider_name;
 
 pub(in crate::game_lua::platform_services) fn profile_integer(
     value: &serde_json::Value,

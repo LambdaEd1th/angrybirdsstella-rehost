@@ -176,8 +176,12 @@ the recovered per-request signature from an explicitly supplied replacement key.
 The file is read as exact bytes, including any newline; it is not hex-decoded.
 Without `--identity-url`, the persistent local guest identity remains active.
 Session renewal and one first-401 replay are implemented, with refresh/profile
-persistence isolated by provider and client. Native social/unregistration flows
-and all session-event consumers are not yet complete.
+persistence isolated by provider and client. Native account unregistration is
+asynchronous: a selected external provider requests `external/remove` and then
+`external/disconnect` through `identity/2.0`. This native operation leaves local
+identity/storage intact; the original Lua facade invokes logout separately.
+Other native social flows and remaining session-event consumers are not yet
+complete.
 
 Cloud settings and Skynest key/value requests can likewise target an
 independently operated compatible `storage/1.0` service:

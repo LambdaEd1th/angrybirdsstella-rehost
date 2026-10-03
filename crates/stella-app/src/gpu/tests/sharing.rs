@@ -1,6 +1,7 @@
 //! Native screenshot readback timing, row origin and retained drawable alpha.
 
 use super::*;
+use image::ImageEncoder;
 
 fn catalog() -> AssetCatalog {
     AssetCatalog {
@@ -42,18 +43,33 @@ fn screenshot_shares_capture_each_call_before_later_draws_with_original_alpha() 
         .unwrap();
     let requests = runtime.take_screenshot_share_requests();
     assert_eq!(requests.iter().map(|r| r.order).collect::<Vec<_>>(), [2, 4]);
+    assert!(runtime.take_render_commands().is_empty());
+    assert!(runtime.take_text_commands().is_empty());
+    assert!(runtime.take_capture_commands().is_empty());
+    let rectangles = runtime.take_rect_commands();
     let mut assets = catalog();
-    let frame = assets
-        .prepare_gpu_frame_with_shares_at_resolution(
-            size,
-            &runtime.take_render_commands(),
-            &runtime.take_text_commands(),
-            &runtime.take_rect_commands(),
-            &runtime.take_capture_commands(),
-            &requests,
-        )
-        .unwrap();
     let mut renderer = GpuRenderer::headless(size).unwrap();
+    // Render each native call's draw prefix without the share implementation,
+    // then independently copy the raw attachment. Capture equality is exact,
+    // including alpha; it must not inherit another GPU's UNORM blend rounding.
+    let references: Vec<_> = requests
+        .iter()
+        .map(|request| {
+            let prefix: Vec<_> = rectangles
+                .iter()
+                .filter(|rectangle| rectangle.order < request.order)
+                .cloned()
+                .collect();
+            let frame = assets
+                .prepare_gpu_frame_at_resolution(size, &[], &[], &prefix, &[])
+                .unwrap();
+            renderer.render_offscreen(&assets, &frame, [0; 3]).unwrap();
+            read_texture(&renderer, &renderer.game_texture).into_raw()
+        })
+        .collect();
+    let frame = assets
+        .prepare_gpu_frame_with_shares_at_resolution(size, &[], &[], &rectangles, &[], &requests)
+        .unwrap();
     let final_frame = renderer.render_to_rgba(&assets, &frame, [0; 3]).unwrap();
     assert!(
         final_frame
@@ -75,19 +91,53 @@ fn screenshot_shares_capture_each_call_before_later_draws_with_original_alpha() 
     for (index, share) in shares.iter().enumerate() {
         assert_eq!(share.request, requests[index]);
         assert_eq!(share.resolution, size);
+        assert_eq!(
+            share.rgba, references[index],
+            "share {index} call-prefix RGBA"
+        );
+        assert_ne!(share.rgba, final_frame);
+        let mut png = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut png)
+            .write_image(
+                &share.rgba,
+                size.width,
+                size.height,
+                image::ExtendedColorType::Rgba8,
+            )
+            .unwrap();
+        assert_eq!(
+            image::load_from_memory(&png)
+                .unwrap()
+                .into_rgba8()
+                .into_raw(),
+            references[index],
+            "share {index} PNG must preserve every RGBA sample"
+        );
         for (pixel_index, pixel) in share.rgba.as_chunks::<4>().0.iter().enumerate() {
             // drawRect packs alpha with FCVTZS before native glBlendFunc.
             // PlainAlpha uses SRC_ALPHA for alpha as well as RGB.
-            let expected = if index == 1 && pixel_index < 7 {
-                [32, 0, 127, 168]
-            } else if index == 1 {
-                [0, 0, 127, 191]
+            let (source, destination): ([u8; 4], [u8; 4]) = if index == 1 {
+                let start = pixel_index * 4;
+                let destination: [u8; 4] = references[0][start..start + 4].try_into().unwrap();
+                ([0, 0, 255, 127], destination)
             } else if pixel_index < 7 {
-                [63, 0, 0, 208]
+                ([255, 0, 0, 63], [0, 0, 0, 255])
             } else {
-                [0, 0, 0, 255]
+                ([0, 255, 0, 0], [0, 0, 0, 255])
             };
-            assert_eq!(*pixel, expected, "share {index}, pixel {pixel_index}");
+            for channel in 0..4 {
+                let alpha = u32::from(source[3]);
+                let numerator = u32::from(source[channel]) * alpha
+                    + u32::from(destination[channel]) * (255 - alpha);
+                // Only the analytic blend permits neighboring UNORM integers.
+                // Zero/one factors stay exact; readback and PNG stay byte-exact.
+                assert!(
+                    (numerator / 255..=numerator.div_ceil(255))
+                        .contains(&u32::from(pixel[channel])),
+                    "share {index}, pixel {pixel_index}, channel {channel}: {} versus {numerator}/255",
+                    pixel[channel]
+                );
+            }
         }
     }
     assert!(renderer.take_screenshot_shares().is_empty());
