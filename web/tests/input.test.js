@@ -6,7 +6,7 @@ const inputModule = process.env.STELLA_INPUT_MODULE
   ? pathToFileURL(process.env.STELLA_INPUT_MODULE) : new URL("../input.js", import.meta.url);
 const { installInput } = await import(inputModule);
 
-function host(accountDialog = { open: false }) {
+function host(accountDialog = { open: false }, ratingDialog = null) {
   const document = new EventTarget(), window = new EventTarget(), canvas = new EventTarget();
   const calls = [], failures = [], captures = new Set();
   let nativeTouches = [];
@@ -46,7 +46,7 @@ function host(accountDialog = { open: false }) {
   };
   const game = { module, failed: false, audio: { setActive() {}, sync() {} } };
   const cleanup = installInput(game, {
-    canvas, document, window, accountDialog,
+    canvas, document, window, accountDialog, ratingDialog,
     engineCall: (module, name, ...args) => { calls.push([name, ...args]); assert.equal(module[name](...args), 0); },
     failGame: (_, error) => { failures.push(error); game.failed = true; },
     saveOrReport: () => {},
@@ -71,6 +71,30 @@ test("focus transfers into the native account form without application/audio pau
   target.document.activeElement = email; root.dispatchEvent(new Event("focusin"));
   assert.equal(target.game.lifecycle.active, true);
   assert.deepEqual(target.calls.filter(call => call[0] === "_stella_active"), []);
+});
+
+test("rating owns focus above the account and restores it without native activation changes", () => {
+  const account = new EventTarget(), rating = new EventTarget(), email = {}, button = {};
+  account.hidden = false; account.contains = element => element === email;
+  rating.hidden = false; rating.contains = element => element === button;
+  const target = host(account, rating); target.game.accountVisible = true; target.game.ratingVisible = true;
+  const blur = new Event("blur"); Object.assign(blur, { relatedTarget: button }); target.canvas.dispatchEvent(blur);
+  target.document.activeElement = button; rating.dispatchEvent(new Event("focusin"));
+  const transfer = new Event("focusout"); Object.assign(transfer, { relatedTarget: email }); rating.dispatchEvent(transfer);
+  target.document.activeElement = email; account.dispatchEvent(new Event("focusin"));
+  rating.hidden = true; target.game.ratingVisible = false;
+  assert.equal(target.game.lifecycle.active, true);
+  assert.deepEqual(target.calls.filter(call => call[0] === "_stella_active"), []);
+});
+
+test("rating ownership drops captured game input and suppresses late pointers and keys", () => {
+  const target = host(); target.pointer("pointerdown", 11, 10, 20);
+  const count = target.calls.length;
+  target.game.ratingVisible = true; target.game.resetInput();
+  target.pointer("pointerup", 11, 10, 20); target.pointer("pointerdown", 12, 30, 40);
+  target.pointer("pointermove", 12, 50, 60);
+  const key = new Event("keydown", { cancelable: true }); Object.assign(key, { key: "Escape" }); target.canvas.dispatchEvent(key);
+  assert.equal(target.calls.length, count); assert.equal(target.captures.size, 0);
 });
 
 test("opening account ownership drops captured game pointers and rejects late game input", () => {

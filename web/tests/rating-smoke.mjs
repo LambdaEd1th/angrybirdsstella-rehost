@@ -1,0 +1,10 @@
+import { readFile } from "node:fs/promises";
+import { resolve, join } from "node:path";
+import { pathToFileURL } from "node:url";
+import { runRatingSuite } from "./rating-flow.mjs";
+const artifact = resolve(process.argv[2] ?? "dist/pages"), engine = join(artifact, "engine");
+const { default: createStella } = await import(pathToFileURL(join(engine, "stella_web.js")));
+const data = await readFile(join(engine, "stella_web.data"));
+const module = await createStella({ noInitialRun: true, locateFile: name => join(engine, name), getPreloadedPackage: () => data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength), print: () => {}, printErr: console.error });
+const options = process.argv[3] ? await import(pathToFileURL(resolve(process.argv[3]))) : {};
+console.log(JSON.stringify(runRatingSuite(module, options), null, 2));

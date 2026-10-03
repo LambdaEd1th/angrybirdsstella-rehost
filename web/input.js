@@ -2,18 +2,20 @@ import { GameLifecycle } from "./lifecycle.js";
 import { canvasPoint } from "./display.js";
 import { LocalizedError } from "./i18n.js";
 
-export function installInput(game, { canvas, accountDialog, engineCall, failGame, saveOrReport, document = globalThis.document, window = globalThis.window }) {
+export function installInput(game, { canvas, accountDialog, ratingDialog = null, engineCall, failGame, saveOrReport, document = globalThis.document, window = globalThis.window }) {
   const listeners = [], pointers = new Map();
   let primary = null;
   function listen(target, event, handler, options) { target.addEventListener(event, handler, options); listeners.push(() => target.removeEventListener(event, handler, options)); }
-  function input(operation) { if (game.failed || !game.lifecycle.active || game.accountVisible) return; try { operation(); } catch (error) { failGame(game, error); } }
+  const modalVisible = () => game.accountVisible || game.ratingVisible;
+  function input(operation) { if (game.failed || !game.lifecycle.active || modalVisible()) return; try { operation(); } catch (error) { failGame(game, error); } }
   function resetPointers() {
     const captured = [...pointers.keys()];
     primary = null; pointers.clear();
     for (const id of captured) if (canvas.hasPointerCapture(id)) canvas.releasePointerCapture(id);
   }
   game.resetInput = resetPointers;
-  function ownsFocus(element) { return element === canvas || (!accountDialog.hidden && accountDialog.contains?.(element)); }
+  const dialogs = [accountDialog, ratingDialog].filter(Boolean);
+  function ownsFocus(element) { return element === canvas || dialogs.some(dialog => !dialog.hidden && dialog.contains?.(element)); }
   game.lifecycle = new GameLifecycle({
     focused: ownsFocus(document.activeElement), visible: !document.hidden, modal: false,
     resetInput: resetPointers,
@@ -40,7 +42,7 @@ export function installInput(game, { canvas, accountDialog, engineCall, failGame
     input(() => engineCall(game.module, "_stella_touch", phase, id, ...position));
   }
   listen(canvas, "pointerdown", event => {
-    if (event.button !== 0 || game.failed || game.accountVisible) return;
+    if (event.button !== 0 || game.failed || modalVisible()) return;
     event.preventDefault(); canvas.focus();
     if (!game.lifecycle.active) return;
     canvas.setPointerCapture(event.pointerId);
@@ -51,7 +53,7 @@ export function installInput(game, { canvas, accountDialog, engineCall, failGame
     if (primary === event.pointerId) input(() => engineCall(game.module, "_stella_pointer", ...position, 1));
   });
   listen(canvas, "pointermove", event => {
-    if (game.failed || !game.lifecycle.active || game.accountVisible) return;
+    if (game.failed || !game.lifecycle.active || modalVisible()) return;
     const position = point(event), tracked = pointers.get(event.pointerId);
     if (tracked) {
       tracked.position = position;
@@ -89,9 +91,9 @@ export function installInput(game, { canvas, accountDialog, engineCall, failGame
   });
   listen(canvas, "blur", event => { lifecycle({ focused: !!ownsFocus(event.relatedTarget) }); saveOrReport(game, false); });
   listen(canvas, "focus", () => { lifecycle({ focused: true }); });
-  if (accountDialog.addEventListener) {
-    listen(accountDialog, "focusin", () => lifecycle({ focused: true }));
-    listen(accountDialog, "focusout", event => lifecycle({ focused: !!ownsFocus(event.relatedTarget) }));
+  for (const dialog of dialogs) if (dialog.addEventListener) {
+    listen(dialog, "focusin", () => lifecycle({ focused: true }));
+    listen(dialog, "focusout", event => lifecycle({ focused: !!ownsFocus(event.relatedTarget) }));
   }
   listen(document, "visibilitychange", () => {
     lifecycle({ visible: !document.hidden });

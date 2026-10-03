@@ -32,6 +32,8 @@ mod account;
 #[allow(dead_code, unused_imports)]
 #[path = "../../stella-app/src/account_ui.rs"]
 mod account_ui;
+#[path = "../../stella-app/src/apprater_ui.rs"]
+mod apprater_ui;
 #[allow(dead_code, unused_imports)]
 #[path = "../../stella-app/src/assets/mod.rs"]
 mod assets;
@@ -40,6 +42,7 @@ mod input;
 #[allow(dead_code, unused_imports)]
 #[path = "../../stella-app/src/platform_ui_drawing.rs"]
 mod platform_ui_drawing;
+mod rating;
 use assets::*;
 
 const GAME_WIDTH: u32 = 1024;
@@ -92,6 +95,8 @@ struct BrowserGame {
     active: bool,
     touches: input::BrowserTouches,
     account: account::BrowserAccount,
+    rating: rating::BrowserRating,
+    platform_packet: CString,
 }
 
 thread_local! {
@@ -189,6 +194,8 @@ pub extern "C" fn stella_init(width: u32, height: u32) -> i32 {
                 active: true,
                 touches: input::BrowserTouches::default(),
                 account,
+                rating: rating::BrowserRating::default(),
+                platform_packet: CString::new("[]").unwrap(),
             })
         });
         Ok(())
@@ -229,6 +236,7 @@ pub extern "C" fn stella_frame(delta: f64) -> i32 {
             game.runtime.update(elapsed.as_secs_f64()).browser()?;
         }
         game.synchronize_account()?;
+        game.synchronize_rating()?;
         // GameLua::draw clears its queues. Consume the complete immediate
         // stream first, including scheduler/update captures and the resources
         // they retain before draw can release or recreate those resources.
@@ -253,14 +261,10 @@ pub extern "C" fn stella_frame(delta: f64) -> i32 {
         // cannot enter the game stream or capture textures.
         packet["account"] = json!(game.runtime.account_ui().map(|view| view.id));
         packet["locale"] = json!(game.runtime.current_locale().browser()?);
-        if let Some(prompt) = game.runtime.app_rating_prompt() {
-            game.runtime
-                .answer_app_rating(prompt.id, stella_script::AppRatingChoice::Later)
-                .browser()?;
-        }
-        // Offline host actions are deliberately handled here, so requests do
-        // not accumulate indefinitely when the browser has no native provider.
-        game.runtime.take_platform_action_requests();
+        packet["rating"] = json!(game.runtime.app_rating_prompt().map(|p| p.id));
+        // External actions are drained separately, including calls made from
+        // UI callbacks while the display link is paused. Rating never supplies
+        // an answer until a user invokes one of the retained alert's buttons.
         game.runtime.take_screenshot_share_requests();
         game.runtime.take_analytics_events();
         game.packet = CString::new(serde_json::to_vec(&packet)?)?;
@@ -285,6 +289,19 @@ fn audio_packet(state: &stella_script::AudioOutputState) -> serde_json::Value {
 }
 
 impl BrowserGame {
+    fn synchronize_rating(&mut self) -> Result<()> {
+        if self.rating.sync(&self.runtime, self.resolution) {
+            self.runtime.clear_platform_input_for_modal().browser()?;
+            self.touches.clear();
+            self.account.cancel_pointer();
+        }
+        Ok(())
+    }
+
+    fn game_input_available(&self) -> bool {
+        self.runtime.account_ui().is_none() && self.runtime.app_rating_prompt().is_none()
+    }
+
     fn synchronize_account(&mut self) -> Result<()> {
         if self.account.sync(&self.runtime, self.resolution)? {
             self.touches.clear();
@@ -353,7 +370,7 @@ pub extern "C" fn stella_packet() -> *const std::ffi::c_char {
 #[unsafe(no_mangle)]
 pub extern "C" fn stella_pointer(x: f64, y: f64, down: i32) -> i32 {
     with_game(|game| {
-        if game.runtime.account_ui().is_none() {
+        if game.game_input_available() {
             game.runtime.set_cursor(x, y, down != 0).browser()?;
         }
         Ok(())
@@ -365,7 +382,7 @@ pub extern "C" fn stella_pointer(x: f64, y: f64, down: i32) -> i32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn stella_touch(phase: i32, id: u32, x: f64, y: f64) -> i32 {
     with_game(|game| {
-        if game.runtime.account_ui().is_none() {
+        if game.game_input_available() {
             game.touches.event(&game.runtime, phase, id, x, y)?;
         }
         Ok(())
@@ -383,7 +400,7 @@ pub extern "C" fn stella_touches(
     y2: i32,
 ) -> i32 {
     with_game(|game| {
-        if game.runtime.account_ui().is_some() {
+        if !game.game_input_available() {
             return Ok(());
         }
         let touches = [(u64::from(id1), x1, y1), (u64::from(id2), x2, y2)];
@@ -395,7 +412,7 @@ pub extern "C" fn stella_touches(
 #[unsafe(no_mangle)]
 pub extern "C" fn stella_key(code: i32, down: i32) -> i32 {
     with_game(|game| {
-        if game.runtime.account_ui().is_some() {
+        if !game.game_input_available() {
             return Ok(());
         }
         let name = match code {
@@ -412,7 +429,7 @@ pub extern "C" fn stella_key(code: i32, down: i32) -> i32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn stella_wheel(delta: i32, shift: i32, control: i32) -> i32 {
     with_game(|game| {
-        if game.runtime.account_ui().is_some() {
+        if !game.game_input_available() {
             return Ok(());
         }
         game.runtime
@@ -429,6 +446,8 @@ pub extern "C" fn stella_active(active: i32) -> i32 {
         }
         game.runtime.set_application_active(active != 0).browser()?;
         game.touches.clear();
+        game.rating.cancel_pointer();
+        game.account.cancel_pointer();
         if active != 0 {
             game.runtime.post_application_resumed();
         }
@@ -495,7 +514,9 @@ pub extern "C" fn stella_account_packet() -> *const std::ffi::c_char {
 fn with_account(token: u32, operation: impl FnOnce(&mut BrowserGame) -> Result<()>) -> i32 {
     with_game(|game| {
         game.synchronize_account()?;
-        if game.active && game.account.accepts(token) {
+        game.synchronize_rating()?;
+        if game.active && game.runtime.app_rating_prompt().is_none() && game.account.accepts(token)
+        {
             operation(game)?;
         }
         Ok(())
@@ -589,6 +610,90 @@ pub extern "C" fn stella_account_editor(token: u32, field: i32) -> *const std::f
     let mut pointer = std::ptr::null();
     with_account(token, |game| {
         pointer = game.account.editor(field)?;
+        Ok(())
+    });
+    pointer
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn stella_rating_frame() -> i32 {
+    with_game(|game| {
+        game.synchronize_rating()?;
+        game.rating.frame(&game.runtime)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn stella_rating_packet() -> *const std::ffi::c_char {
+    GAME.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .map_or(std::ptr::null(), |game| game.rating.packet())
+    })
+}
+
+fn with_rating(token: u32, operation: impl FnOnce(&mut BrowserGame) -> Result<()>) -> i32 {
+    with_game(|game| {
+        game.synchronize_rating()?;
+        if game.active && game.rating.accepts(token) {
+            operation(game)?;
+            game.synchronize_rating()?;
+        }
+        Ok(())
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn stella_rating_pointer(token: u32, phase: i32, x: f32, y: f32) -> i32 {
+    with_rating(token, |game| {
+        game.rating.pointer(&game.runtime, phase, x, y)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn stella_rating_choose(token: u32, code: i32) -> i32 {
+    with_rating(token, |game| {
+        if let Some(choice) = rating::choice(code) {
+            game.rating.choose(&game.runtime, choice)?;
+        }
+        Ok(())
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn stella_rating_focus(token: u32, code: i32) -> i32 {
+    with_rating(token, |game| {
+        if let Some(choice) = rating::choice(code) {
+            game.rating.focus(choice);
+        }
+        Ok(())
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn stella_rating_key(token: u32, code: i32, shift: i32) -> i32 {
+    with_rating(token, |game| {
+        game.rating.key(&game.runtime, code, shift != 0)
+    })
+}
+
+/// One-shot egress also works inside a trusted UI callback, so a Rate action
+/// can attempt its native external URL without waiting for another game frame.
+#[unsafe(no_mangle)]
+pub extern "C" fn stella_platform_packet() -> *const std::ffi::c_char {
+    let mut pointer = std::ptr::null();
+    with_game(|game| {
+        use stella_script::{GamerServicesView, PlatformActionRequest};
+        let actions: Vec<_> = game.runtime.take_platform_action_requests().into_iter().map(|action| {
+            match action {
+                PlatformActionRequest::OpenUrl { url } => json!({"kind":"openUrl","url":url}),
+                PlatformActionRequest::OpenAppStoreProduct { product_id, product_type } => json!({"kind":"appStoreProduct","productId":product_id,"productType":product_type}),
+                PlatformActionRequest::PlayVideo { path } => json!({"kind":"video","path":path}),
+                PlatformActionRequest::ShowGamerServices { view, entries } => json!({"kind":"gamerServices","view":match view { GamerServicesView::Achievements=>"achievements", GamerServicesView::Leaderboards=>"leaderboards" },"entries":entries}),
+            }
+        }).collect();
+        game.platform_packet = CString::new(serde_json::to_vec(&actions)?)?;
+        pointer = game.platform_packet.as_ptr();
         Ok(())
     });
     pointer

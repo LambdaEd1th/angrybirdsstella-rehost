@@ -20,6 +20,10 @@ pub(crate) struct AppRatingUi {
 }
 
 impl AppRatingUi {
+    pub(crate) fn button_regions(&self) -> &[(AppRatingChoice, Rect)] {
+        &self.regions
+    }
+
     #[cfg(test)]
     pub(crate) fn button_rect(&self, choice: AppRatingChoice) -> Option<Rect> {
         self.regions
@@ -62,7 +66,7 @@ impl AppRatingUi {
 
     fn hit(&self) -> Option<AppRatingChoice> {
         let [x, y] = self.pointer;
-        self.regions.iter().find_map(|(choice, rect)| {
+        self.button_regions().iter().find_map(|(choice, rect)| {
             (x >= rect.x && y >= rect.y && x < rect.x + rect.width && y < rect.y + rect.height)
                 .then_some(*choice)
         })
@@ -200,4 +204,5 @@ impl AppRatingUi {
 }
 
 #[cfg(test)]
+#[path = "apprater_ui/tests.rs"]
 mod tests;

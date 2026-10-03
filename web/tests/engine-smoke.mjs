@@ -60,6 +60,19 @@ async function boot(save) {
     assert.equal(packet.locale, locale.game, "Language survives live switching and resume");
     assert.ok(packet.operations.some(operation => operation.count > 0), `${locale.game} renders`);
   }
+  // The real resume path may now retain the native rating alert. Supply an
+  // explicit test-user choice so subsequent pointer checks target the game.
+  call("_stella_rating_frame");
+  const rating = JSON.parse(module.UTF8ToString(module._stella_rating_packet()));
+  if (rating) {
+    assert.deepEqual(rating.buttons.map(button => button.choice), [2, 1, 0]);
+    for (let frame = 0; frame < 8; frame++) call("_stella_frame", 1 / 60);
+    call("_stella_rating_frame");
+    assert.equal(JSON.parse(module.UTF8ToString(module._stella_rating_packet())).token, rating.token, "Display frames must not invent a rating answer");
+    call("_stella_rating_choose", rating.token, 2);
+    call("_stella_rating_frame");
+    assert.equal(JSON.parse(module.UTF8ToString(module._stella_rating_packet())), null);
+  }
   assert.equal(module._stella_set_locale(-1), -1);
   assert.equal(module._stella_set_locale(LOCALES.length), -1);
   call("_stella_pointer", 100, 100, 1); call("_stella_frame", 1 / 60);

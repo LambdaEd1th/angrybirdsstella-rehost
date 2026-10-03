@@ -189,6 +189,7 @@ node --test web/tests/*.test.js
 node web/tests/engine-smoke.mjs dist/pages
 node web/tests/frame-smoke.mjs dist/pages
 node web/tests/account-smoke.mjs dist/pages
+node web/tests/rating-smoke.mjs dist/pages
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo fmt --all -- --check
 ```
@@ -210,7 +211,7 @@ UI localizations. Login, registration, birthday selectors, help, required-field
 errors, two-second editing checks, password reset and cancellation are routed
 through the native account API. Requests without a configured compatible
 provider show the native network-error page; no account success is invented.
-Remote service configuration, native sharing and platform store integrations
+Remote service configuration, native sharing and embedded store presentation
 are not exposed by this host. Fonts use the shipped Open Sans faces in the browser instead of the
 host operating system's fonts, with the bundled OFL-licensed
 [Noto Sans CJK collection](fonts/README.md) supplying Chinese, Japanese and Korean
@@ -218,7 +219,7 @@ glyphs missing from Open Sans (including the score panel's player name).
 Proprietary runtime resources retain their existing licensing; this browser host
 does not change it.
 
-Canvas and account-form focus, plus page visibility, share one application
+Canvas, account-form and rating-alert focus, plus page visibility, share one application
 activation boundary. Native account presentation keeps the game/audio lifetime
 active and clears pending game input. Its private premultiplied CPU image is
 shown on a separate Canvas2D surface above the game, excluded from game textures
@@ -240,3 +241,22 @@ activation must be enabled before physical playback resumes.
 account regressions and all eleven original UI languages in isolated MEMFS.
 Real browser focus, keyboard/IME delivery and visual comparison still require
 browser/device verification; diagnostic rasters are not original-device goldens.
+
+Rating alerts retain the original message and Later, Decline and Rate choices
+in all eleven UI languages until the player answers. The private Rust alert
+appears above a retained account form, blocks underlying input and stays outside
+game captures. Keyboard navigation, resize, focus restoration and cached restarts
+retain native ownership; obsolete input cannot answer a later alert. Native
+rating flags are persisted before attempting the original review URL from the
+button callback. External URLs and store-product links are consumed once in
+native call order. Browser/OS launch results are advisory and do not report that
+a review or purchase was completed. Video and gamer-service requests expose their
+complete payload through the `stella-platform-action` event; this host still
+needs providers to present them.
+
+`node web/tests/rating-smoke.mjs <artifact>` runs ten production-WASM rating
+regressions and checks all eleven original UI languages in isolated MEMFS.
+It covers retained prompts, native choice flags and URLs, private captures,
+keyboard/pointer ownership, account layering, resize and cached restart tokens.
+The alert shares the desktop painter; original UIKit geometry/font parity and
+actual platform review handling still require device verification.

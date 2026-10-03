@@ -135,6 +135,10 @@ impl BrowserAccount {
         self.ui.visible() && token == self.token
     }
 
+    pub(super) fn cancel_pointer(&mut self) {
+        self.ui.press(None);
+    }
+
     fn command(&mut self, runtime: &StellaLua, command: Command) -> Result<()> {
         if let Command::OpenUrl(url) = command {
             self.external_url = Some(url);

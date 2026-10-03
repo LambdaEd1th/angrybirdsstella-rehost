@@ -34,7 +34,7 @@ export class BrowserAccountUI {
     root.replaceChildren(this.canvas, this.controls);
     const listen = (type, operation, options) => { root.addEventListener(type, operation, options); this.listeners.push(() => root.removeEventListener(type, operation, options)); };
     listen("pointerdown", event => {
-      if (event.button !== 0 || this.primary !== null || game.failed || !game.lifecycle.active) return;
+      if (event.button !== 0 || this.primary !== null || game.failed || !game.lifecycle.active || game.ratingVisible) return;
       event.preventDefault(); this.primary = event.pointerId; this.pointerToken = this.token; root.setPointerCapture(event.pointerId);
       this.pointer(0, event);
     });
@@ -87,7 +87,7 @@ export class BrowserAccountUI {
   }
 
   run(operation) {
-    if (this.game.failed || !this.game.lifecycle.active || this.token === null) return;
+    if (this.game.failed || !this.game.lifecycle.active || this.game.ratingVisible || this.token === null) return;
     try { operation(); this.refresh(); }
     catch (error) { this.failGame(this.game, error); }
   }
@@ -150,7 +150,7 @@ export class BrowserAccountUI {
       if (input.value !== editor.value) input.value = editor.value;
       if (input.selectionStart !== editor.start || input.selectionEnd !== editor.end || (input.selectionDirection === "backward") !== editor.backward) input.setSelectionRange(editor.start, editor.end, editor.backward ? "backward" : "forward");
     }
-    if (opened || ownedFocus) {
+    if (!this.game.ratingVisible && (opened || ownedFocus)) {
       const focus = this.inputs.get(packet.focus);
       if (focus && this.document.activeElement !== focus) focus.focus({ preventScroll: true });
       else if (!focus && (opened || fieldOf(this.document.activeElement) >= 0 || !this.root.contains(this.document.activeElement))) this.root.focus({ preventScroll: true });
@@ -159,6 +159,10 @@ export class BrowserAccountUI {
   }
 
   clearInputs() { for (const input of this.inputs.values()) input.value = ""; this.inputs.clear(); this.composing.clear(); }
+  cancelPointer() {
+    const captured = this.primary; this.primary = null;
+    if (captured !== null && this.root.hasPointerCapture(captured)) this.root.releasePointerCapture(captured);
+  }
   focus() {
     if (this.root.hidden) this.gameCanvas.focus({ preventScroll: true });
     else (this.inputs.get(this.packet?.focus) || this.root).focus({ preventScroll: true });
