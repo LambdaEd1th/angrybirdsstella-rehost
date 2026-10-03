@@ -216,14 +216,20 @@ impl FriendsStore {
 
 impl SocialRuntime {
     pub(crate) fn synchronize_native_context(&self) -> LuaResult<()> {
-        let retired = self
+        let state = self
             .state
             .lock()
-            .map_err(|_| runtime_error("social state lock poisoned"))?
+            .map_err(|_| runtime_error("social state lock poisoned"))?;
+        let retired = state
             .friends_store
             .as_ref()
             .and_then(|store| store.context.as_ref())
-            .is_some_and(|context| !context.context_is_current());
+            .is_some_and(|context| !context.context_is_current())
+            || state
+                .game_client
+                .as_ref()
+                .is_some_and(|game| !game.context_is_current());
+        drop(state);
         if !retired {
             return Ok(());
         }
@@ -238,6 +244,7 @@ impl SocialRuntime {
         }
         state.provider_generation = state.provider_generation.wrapping_add(1);
         state.friends_store = None;
+        state.retire_game_client();
         state.connected = false;
         state.local_profile = Value::Null;
         state.avatars.clear();
@@ -356,6 +363,18 @@ impl SocialRuntime {
             .map_err(|_| runtime_error("social state lock poisoned"))?;
         if state.local_provider {
             return Ok(());
+        }
+        // 1000C0198 creates GameClient before FriendsStore, once per active
+        // identity context. Loading the native cache is synchronous; requests
+        // and callbacks run through its retained serialized executor.
+        if state.game_client.is_none()
+            && let Some(identity) = self.account.game_identity()?
+        {
+            state.game_client = Some(game_client::GameHandle::new(
+                self,
+                identity,
+                state.provider_generation,
+            )?);
         }
         if state.friends_store.is_some() {
             drop(state);

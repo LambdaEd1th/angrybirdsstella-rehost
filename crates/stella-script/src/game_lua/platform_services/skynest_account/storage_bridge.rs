@@ -59,6 +59,7 @@ impl StorageIdentity {
                 self.lifetime.epoch,
                 self.lifetime.generation,
                 &PreparedRequest {
+                    headers: &[],
                     url,
                     body,
                     timeout,

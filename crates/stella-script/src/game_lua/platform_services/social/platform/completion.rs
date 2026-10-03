@@ -212,6 +212,17 @@ impl SocialRuntime {
                 }
                 let ready = state.readiness == 0;
                 drop(state);
+                if result.is_ok()
+                    && let Some(game) = &self
+                        .state
+                        .lock()
+                        .map_err(|_| runtime_error("social state lock poisoned"))?
+                        .game_client
+                {
+                    // Native C2B950 is emitted for a successful new external
+                    // connection, independently of cached platform readiness.
+                    game.social_connected();
+                }
                 if result.is_ok() && matches!(consumer, ConnectionConsumer::Lua) {
                     self.publish_platform_connection(lua, &client)?;
                 }

@@ -81,6 +81,13 @@ impl IdentityEndpoint {
         let root = self.service_root.strip_suffix("/identity").unwrap();
         format!("{root}/session/1/apps/{component}/sessions")
     }
+
+    pub(super) fn leaderboard_url(&self, operation: &str) -> String {
+        // 100684464 uses the identity context's origin, not its parent client
+        // identifier; 1006A0DB8 selects leaderboard/1.0. Operation is unchanged.
+        let root = self.service_root.strip_suffix("/identity").unwrap();
+        format!("{root}/leaderboard/1.0/{operation}")
+    }
 }
 
 #[cfg(test)]

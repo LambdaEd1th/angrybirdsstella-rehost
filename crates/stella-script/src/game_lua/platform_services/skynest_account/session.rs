@@ -288,6 +288,90 @@ impl Default for IdentitySession {
 }
 
 impl IdentitySession {
+    pub(super) fn current_game_owner(
+        &self,
+        context: RequestOwner,
+    ) -> Option<(RequestOwner, String, String)> {
+        let state = self.state.lock().ok()?;
+        state.check_epoch(context.epoch).ok()?;
+        let profile = state.profile.as_ref()?;
+        let account = profile
+            .raw
+            .get("accountId")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        Some((
+            RequestOwner {
+                epoch: state.epoch,
+                generation: Some(state.identity_generation),
+            },
+            account,
+            profile.public_account_id.clone(),
+        ))
+    }
+
+    pub(super) fn read_game_cache_for_owner(
+        &self,
+        owner: RequestOwner,
+        path: &std::path::Path,
+    ) -> Result<String, String> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| "identity session lock poisoned")?;
+        state
+            .check_owner(owner.epoch, owner.generation)
+            .map_err(|_| "identity request cancelled")?;
+        let profile = state
+            .profile
+            .as_ref()
+            .ok_or("identity profile unavailable")?;
+        let account = profile
+            .raw
+            .get("accountId")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        FriendsFile::for_game_account(path, account)?.read()
+    }
+
+    pub(super) fn store_game_cache_for_owner(
+        &self,
+        owner: RequestOwner,
+        path: &std::path::Path,
+        text: &str,
+    ) -> Result<bool, String> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| "identity session lock poisoned")?;
+        if state.check_owner(owner.epoch, owner.generation).is_err() {
+            return Ok(false);
+        }
+        let profile = state
+            .profile
+            .as_ref()
+            .ok_or("identity profile unavailable")?;
+        let account = profile
+            .raw
+            .get("accountId")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        FriendsFile::for_game_account(path, account)?.write(text)?;
+        Ok(true)
+    }
+
+    pub(super) fn game_local_player(&self, owner: RequestOwner) -> Option<(String, String)> {
+        let state = self.state.lock().ok()?;
+        state.check_owner(owner.epoch, owner.generation).ok()?;
+        state.profile.as_ref().map(|profile| {
+            (
+                profile.public_account_id.clone(),
+                profile.personal.nickname.clone(),
+            )
+        })
+    }
+
     pub(super) fn store_friends_cache_for_owner(
         &self,
         owner: RequestOwner,

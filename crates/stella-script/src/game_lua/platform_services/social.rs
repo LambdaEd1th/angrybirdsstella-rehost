@@ -7,6 +7,7 @@ use std::{collections::VecDeque, fs, io::Read, time::Duration};
 mod avatar;
 mod avatar_cache;
 pub(in crate::game_lua::platform_services) mod friends_store;
+pub(in crate::game_lua::platform_services) mod game_client;
 mod platform;
 
 use avatar::{AvatarStage, LoadResult};
@@ -40,6 +41,7 @@ enum OnlineCompletion {
         task: SocialPlatformTask,
     },
     Platform(Box<platform::PlatformCompletion>),
+    NativeGame(Box<game_client::GameCompletion>),
     NativeFriends {
         network: Option<SocialNetwork>,
         client: super::skynest_account::friends_support::FriendsClient,
@@ -178,6 +180,7 @@ struct SocialState {
     persistence_path: PathBuf,
     document: LocalSocialDocument,
     friends_store: Option<friends_store::FriendsStore>,
+    game_client: Option<game_client::GameHandle>,
     avatars: BTreeMap<String, AvatarStage>,
     avatar_paths: BTreeMap<String, PathBuf>,
     pending_avatars: BTreeMap<String, Vec<String>>,
@@ -191,6 +194,14 @@ impl Drop for SocialState {
         // last runtime owner must retire I/O before those workers finish.
         if let Some(cache) = &self.avatar_cache {
             cache.retire();
+        }
+    }
+}
+
+impl SocialState {
+    fn retire_game_client(&mut self) {
+        if let Some(game) = self.game_client.take() {
+            game.retire();
         }
     }
 }
@@ -251,6 +262,7 @@ impl SocialRuntime {
                 persistence_path,
                 document: LocalSocialDocument::default(),
                 friends_store: None,
+                game_client: None,
                 avatars: BTreeMap::new(),
                 avatar_paths: BTreeMap::new(),
                 pending_avatars: BTreeMap::new(),
@@ -275,12 +287,13 @@ impl SocialRuntime {
             .map_err(|_| runtime_error("social URL lock poisoned"))?
             .take()
             .is_some()
-            || self
-                .state
-                .lock()
-                .map_err(|_| runtime_error("social state lock poisoned"))?
-                .friends_store
-                .is_some();
+            || {
+                let state = self
+                    .state
+                    .lock()
+                    .map_err(|_| runtime_error("social state lock poisoned"))?;
+                state.friends_store.is_some() || state.game_client.is_some()
+            };
         if switching {
             self.retire_platform_jobs()?;
             self.unload_all_avatars()?;
@@ -299,6 +312,7 @@ impl SocialRuntime {
             state.local_player_name = "Stella Player".to_owned();
             state.local_profile = serde_json::Value::Null;
             state.friends_store = None;
+            state.retire_game_client();
             state.document = LocalSocialDocument::default();
             state.avatars.clear();
             state.avatar_paths.clear();
@@ -350,6 +364,7 @@ impl SocialRuntime {
         state.connected = false;
         state.local_profile = serde_json::Value::Null;
         state.friends_store = None;
+        state.retire_game_client();
         state.document.friends.clear();
         state.avatars.clear();
         state.avatar_paths.clear();
@@ -471,6 +486,7 @@ impl SocialRuntime {
     }
 
     fn post_score(&self, level: String, score: f32, request_id: String) -> LuaResult<()> {
+        self.synchronize_native_context()?;
         if let Some(url) = self.compatible_url() {
             let completion_level = level.clone();
             let completion_request_id = request_id.clone();
@@ -501,6 +517,8 @@ impl SocialRuntime {
                 .completions
                 .push_back(Completion::ScorePosted { level, request_id });
             self.application_events.post(ApplicationEvent::SocialLocal);
+        } else if let Some(game) = &state.game_client {
+            game.post(level, score, request_id)?;
         }
         Ok(())
     }
@@ -529,6 +547,7 @@ impl SocialRuntime {
     }
 
     fn fetch_leaderboard(&self, level: String, request_id: String) -> LuaResult<()> {
+        self.synchronize_native_context()?;
         if let Some(url) = self.compatible_url() {
             let completion_level = level.clone();
             let completion_request_id = request_id.clone();
@@ -544,6 +563,18 @@ impl SocialRuntime {
                     }),
                 ),
             });
+        }
+        {
+            let state = self
+                .state
+                .lock()
+                .map_err(|_| runtime_error("social state lock poisoned"))?;
+            if let Some(game) = &state.game_client {
+                if state.connected {
+                    game.fetch(level, request_id)?;
+                }
+                return Ok(());
+            }
         }
         self.queue_if_local(Completion::Leaderboard { level, request_id });
         Ok(())
@@ -1003,6 +1034,7 @@ pub(crate) fn dispatch_online_completion(lua: &Lua, runtime: &SocialRuntime) -> 
             }
         }
         OnlineCompletion::Platform(completion) => runtime.finish_platform(lua, *completion)?,
+        OnlineCompletion::NativeGame(completion) => game_client::finish(lua, runtime, *completion)?,
         OnlineCompletion::NativeFriends {
             client,
             result,

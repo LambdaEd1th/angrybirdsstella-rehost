@@ -26,6 +26,7 @@ impl IdentitySession {
             ProviderLevel::Level2,
             SessionAdoption::Initial,
             &PreparedRequest {
+                headers: &[],
                 url: &config.endpoint.request_url(operation),
                 body: Some(body),
                 timeout: super::super::REQUEST_TIMEOUT,
@@ -128,6 +129,7 @@ impl IdentitySession {
             level,
             SessionAdoption::Initial,
             &PreparedRequest {
+                headers: &[],
                 url: &config.endpoint.request_url(operation),
                 body: Some(("application/x-www-form-urlencoded", body.as_bytes())),
                 timeout: super::super::REQUEST_TIMEOUT,
@@ -171,11 +173,27 @@ impl IdentitySession {
             level,
             SessionAdoption::Initial,
             &PreparedRequest {
+                headers: &[],
                 url: &config.endpoint.request_url(operation),
                 body: None,
                 timeout: super::super::REQUEST_TIMEOUT,
                 still_current: None,
             },
+        )
+    }
+
+    pub(in super::super) fn execute_game(
+        &self,
+        config: &IdentityConfig,
+        owner: &mut RequestOwner,
+        request: &PreparedRequest<'_>,
+    ) -> Result<Response<Body>, SessionError> {
+        self.execute(
+            config,
+            owner,
+            ProviderLevel::Level2,
+            SessionAdoption::Initial,
+            request,
         )
     }
 

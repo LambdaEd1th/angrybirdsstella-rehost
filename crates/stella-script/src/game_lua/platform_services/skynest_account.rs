@@ -16,6 +16,7 @@ use std::{
 pub(super) mod avatar_support;
 mod endpoint;
 pub(in crate::game_lua::platform_services) mod friends_support;
+pub(in crate::game_lua::platform_services) mod game_support;
 mod identifiers;
 mod interactive;
 mod os_version;

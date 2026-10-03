@@ -156,6 +156,7 @@ fn identity_storage_lifetime_replacement_during_401_preserves_new_account_tokens
             epoch,
             generation,
             &PreparedRequest {
+                headers: &[],
                 url: &url,
                 body: None,
                 timeout: Duration::from_secs(5),
@@ -192,6 +193,7 @@ fn identity_storage_lifetime_replacement_during_acquire_cannot_publish_old_token
             epoch,
             generation,
             &PreparedRequest {
+                headers: &[],
                 url: &url,
                 body: None,
                 timeout: Duration::from_secs(5),
@@ -233,6 +235,7 @@ fn identity_storage_lifetime_different_account_after_renewal_cancels_replay() {
         epoch,
         generation,
         &PreparedRequest {
+            headers: &[],
             url: &config.endpoint.request_url("synthetic-storage"),
             body: Some(("application/json", br#"{"oldAccountWrite":true}"#)),
             timeout: Duration::from_secs(5),
@@ -267,6 +270,7 @@ fn identity_storage_lifetime_same_account_renewal_keeps_frozen_request_and_owner
             epoch,
             generation,
             &PreparedRequest {
+                headers: &[],
                 url: &config.endpoint.request_url("synthetic-storage"),
                 body: Some(("application/json", br#"{"retained":[1,2,3]}"#)),
                 timeout: Duration::from_secs(5),
@@ -305,6 +309,7 @@ fn identity_storage_lifetime_service_change_cancels_401_and_renewal_replay() {
                 epoch,
                 generation,
                 &PreparedRequest {
+                    headers: &[],
                     url: &url,
                     body: Some(("application/json", br#"{"oldServiceWrite":true}"#)),
                     timeout: Duration::from_secs(5),

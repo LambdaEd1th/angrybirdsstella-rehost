@@ -127,6 +127,7 @@ fn protected_401_renewal_emits_session_event_without_a_lua_login_callback() {
             epoch,
             generation,
             &PreparedRequest {
+                headers: &[],
                 url: &config.endpoint.request_url("fixture-storage/state"),
                 body: None,
                 timeout: Duration::from_secs(3),

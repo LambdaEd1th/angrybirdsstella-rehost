@@ -234,6 +234,7 @@ impl SdkLogger {
         let body = serde_json::json!({"logs": batch.records}).to_string();
         let current = || self.is_current(batch.generation);
         let request = PreparedRequest {
+            headers: &[],
             url: &batch.binding.url,
             body: Some(("application/json", body.as_bytes())),
             timeout: REQUEST_TIMEOUT,

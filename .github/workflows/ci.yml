@@ -98,6 +98,16 @@ jobs:
           cargo test --locked -p stella-script --lib
           asynchronous_platform_service
 
+      - name: Run native score protocol regressions
+        run: >-
+          cargo test --locked -p stella-script --lib
+          game_lua::platform_services::social::game_client::protocol::tests::
+
+      - name: Run native score and leaderboard service regressions
+        run: >-
+          cargo test --locked -p stella-script --lib
+          tests::platform_services::social_game::
+
   platform-check:
     name: Check ${{ matrix.label }}
     needs: quality

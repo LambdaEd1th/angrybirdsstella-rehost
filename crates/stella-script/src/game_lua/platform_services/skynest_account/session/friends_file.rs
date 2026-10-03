@@ -22,13 +22,24 @@ pub(in super::super) struct FriendsFile {
 
 impl FriendsFile {
     pub(in super::super) fn for_account(registry: &Path, account: &str) -> Result<Self, String> {
+        Self::with_prefix(registry, account, "skynest_friends_store_")
+    }
+
+    pub(in super::super) fn for_game_account(
+        registry: &Path,
+        account: &str,
+    ) -> Result<Self, String> {
+        Self::with_prefix(registry, account, "skynest_game_scores_")
+    }
+
+    fn with_prefix(registry: &Path, account: &str, prefix: &str) -> Result<Self, String> {
         // Host containment rule: native concatenation trusts the service ID.
         if account.contains(['/', '\\', '\0']) {
             return Err("friends cache account contains a path separator or NUL".to_owned());
         }
         let root = registry.parent().ok_or("friends cache root unavailable")?;
         Ok(Self {
-            path: root.join(format!("skynest_friends_store_{account}")),
+            path: root.join(format!("{prefix}{account}")),
         })
     }
 

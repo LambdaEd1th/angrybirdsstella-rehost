@@ -9,6 +9,7 @@ pub(in super::super) struct PreparedRequest<'a> {
     pub(in super::super) url: &'a str,
     /// None selects GET; Some preserves POST's exact content type and bytes.
     pub(in super::super) body: Option<(&'a str, &'a [u8])>,
+    pub(in super::super) headers: &'a [(&'a str, &'a str)],
     pub(in super::super) timeout: Duration,
     pub(in super::super) still_current: Option<&'a dyn Fn() -> bool>,
 }
@@ -32,17 +33,27 @@ impl PreparedRequest<'_> {
         // 10066E978 uses the selected provider's access + segment, never the
         // clientSignature metadata. Only these headers change on first-401 replay.
         match self.body {
-            Some((content_type, body)) => agent
-                .post(self.url)
-                .header("Content-Type", content_type)
-                .header("X-Access-Token", &tokens.access_token)
-                .header("Rovio-Sgs", &tokens.segment)
-                .send(body),
-            None => agent
-                .get(self.url)
-                .header("X-Access-Token", &tokens.access_token)
-                .header("Rovio-Sgs", &tokens.segment)
-                .call(),
+            Some((content_type, body)) => {
+                let mut request = agent
+                    .post(self.url)
+                    .header("Content-Type", content_type)
+                    .header("X-Access-Token", &tokens.access_token)
+                    .header("Rovio-Sgs", &tokens.segment);
+                for (name, value) in self.headers {
+                    request = request.header(*name, *value);
+                }
+                request.send(body)
+            }
+            None => {
+                let mut request = agent
+                    .get(self.url)
+                    .header("X-Access-Token", &tokens.access_token)
+                    .header("Rovio-Sgs", &tokens.segment);
+                for (name, value) in self.headers {
+                    request = request.header(*name, *value);
+                }
+                request.call()
+            }
         }
         .map_err(|_| SessionError::transport())
     }
