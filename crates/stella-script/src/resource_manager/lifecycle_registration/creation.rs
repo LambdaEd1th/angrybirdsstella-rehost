@@ -265,6 +265,7 @@ fn install_system_font(
             resources.bitmap_font_descriptor_paths.remove(&name);
             resources.bitmap_font_texture_sources.remove(&name);
             resources.bitmap_font_decoded_images.remove(&name);
+            resources.bitmap_font_image_owners.remove(&name);
             resources.bitmap_font_values.remove(&name);
             resources.system_fonts.insert(name, font);
             Ok(())
@@ -322,6 +323,7 @@ fn install_stroked_system_font(
             resources.bitmap_font_descriptor_paths.remove(&name);
             resources.bitmap_font_texture_sources.remove(&name);
             resources.bitmap_font_decoded_images.remove(&name);
+            resources.bitmap_font_image_owners.remove(&name);
             resources.bitmap_font_values.remove(&name);
             resources.system_fonts.insert(name, font);
             Ok(())

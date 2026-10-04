@@ -1,5 +1,7 @@
 use super::*;
+use std::collections::HashSet;
 use std::path::Path;
+use std::sync::Weak;
 
 use super::captures::ResolvedTexture;
 use stella_assets::{
@@ -19,6 +21,8 @@ static NEXT_FILE_TEXTURE_GENERATION: std::sync::atomic::AtomicU64 =
 pub(crate) struct FileImageCatalog {
     pub(crate) bindings: HashMap<String, ResolvedTexture>,
     versions: HashMap<String, Vec<String>>,
+    owners: HashMap<String, Weak<stella_script::NativeImageOwner>>,
+    pub(crate) lifetimes: HashMap<String, Weak<()>>,
 }
 
 mod pvr_reader;
@@ -60,8 +64,9 @@ impl TextureAsset {
 
 impl AssetCatalog {
     pub(crate) fn retain_decoded_image(&mut self, region: &SpriteCatalogRegion) -> Result<()> {
+        self.retain_image_owner(&region.texture_source, region.image_owner.as_ref());
         if let Some(image) = &region.decoded_image {
-            self.retain_native_image(&region.texture_source, image)?;
+            self.retain_native_image(&region.texture_source, image, region.image_owner.as_ref())?;
         }
         Ok(())
     }
@@ -70,8 +75,12 @@ impl AssetCatalog {
         &mut self,
         source: &str,
         image: &DecodedNativeImage,
+        owner: Option<&Arc<stella_script::NativeImageOwner>>,
     ) -> Result<()> {
-        if self.file_images.bindings.contains_key(source) {
+        self.retain_image_owner(source, owner);
+        if self.file_images.bindings.contains_key(source)
+            || self.captures.bindings.contains_key(source)
+        {
             return Ok(());
         }
         image.layout.pixels.gl_texture_format(true)?;
@@ -110,6 +119,15 @@ impl AssetCatalog {
                 .push(key.clone());
             key
         };
+        let lease = self
+            .file_images
+            .lifetimes
+            .get(&physical)
+            .and_then(Weak::upgrade)
+            .unwrap_or_else(|| Arc::new(()));
+        self.file_images
+            .lifetimes
+            .insert(physical.clone(), Arc::downgrade(&lease));
         self.file_images.bindings.insert(
             source.to_owned(),
             ResolvedTexture {
@@ -117,9 +135,56 @@ impl AssetCatalog {
                 width: image.width,
                 height: image.height,
                 surface_format: image.layout.pixels.for_gl_upload(true),
+                lease: Some(lease),
             },
         );
         Ok(())
+    }
+
+    pub(crate) fn retain_image_owner(
+        &mut self,
+        source: &str,
+        owner: Option<&Arc<stella_script::NativeImageOwner>>,
+    ) {
+        if let Some(owner) = owner {
+            self.file_images
+                .owners
+                .insert(source.to_owned(), Arc::downgrade(owner));
+        }
+    }
+
+    /// Release logical Images after their last native object/command owner,
+    /// then collect physical pixels when no binding or prepared frame uses
+    /// them. Static diagnostic sources have no native lifetime to observe.
+    pub(crate) fn collect_released_images(&mut self) -> HashSet<String> {
+        let released = self
+            .file_images
+            .owners
+            .iter()
+            .filter(|(_, owner)| owner.strong_count() == 0)
+            .map(|(source, _)| source.clone())
+            .collect::<Vec<_>>();
+        for source in released {
+            self.file_images.owners.remove(&source);
+            self.file_images.bindings.remove(&source);
+            self.captures.bindings.remove(&source);
+        }
+        let released = self
+            .file_images
+            .lifetimes
+            .iter()
+            .filter(|(_, lease)| lease.strong_count() == 0)
+            .map(|(source, _)| source.clone())
+            .collect::<HashSet<_>>();
+        for source in &released {
+            self.file_images.lifetimes.remove(source);
+            self.textures.remove(source);
+        }
+        self.file_images.versions.retain(|_, versions| {
+            versions.retain(|source| self.textures.contains_key(source));
+            !versions.is_empty()
+        });
+        released
     }
 
     pub(crate) fn texture(&mut self, name: &str) -> Result<&TextureAsset> {

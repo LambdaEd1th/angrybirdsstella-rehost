@@ -28,7 +28,7 @@ pub(super) fn install(
             };
             drop(resources);
             let mut bridge = render.lock().expect("render bridge lock poisoned");
-            bridge.extend_render_commands(commands);
+            bridge.extend_render_commands(commands)?;
             background::submit(&arguments, &mut bridge);
             Ok(())
         })?,

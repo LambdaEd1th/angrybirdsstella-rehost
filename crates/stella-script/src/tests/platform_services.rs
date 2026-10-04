@@ -8441,9 +8441,22 @@ fn deferred_host_sprite_catalog_tracks_native_shadow_and_release_lifetimes() {
             command.sprite.as_arc(),
             active_entry.name.as_arc()
         ));
+        let submitted = command.bound_region.as_ref().unwrap();
+        assert_eq!(
+            submitted.native_sheet_id,
+            retained_entry_region.native_sheet_id
+        );
+        assert_eq!(submitted.sprite, retained_entry_region.sprite);
+        assert_eq!(
+            submitted.uv_image_dimensions,
+            retained_entry_region.uv_image_dimensions
+        );
+        assert!(submitted.sheet_image.is_none());
+        assert!(retained_entry_region.sheet_image.is_some());
+        assert!(retained_entry_region.image_owner.is_none());
         assert!(Arc::ptr_eq(
-            command.bound_region.as_ref().unwrap(),
-            retained_entry_region
+            submitted.image_owner.as_ref().unwrap(),
+            first.regions["SHARED"].image_owner.as_ref().unwrap()
         ));
         assert_eq!(cached.sprite.width, 10);
         assert!(cached.texture_source.ends_with("first/first.pvr"));
@@ -8494,7 +8507,7 @@ fn deferred_host_sprite_catalog_tracks_native_shadow_and_release_lifetimes() {
 }
 
 #[test]
-fn composite_loader_freezes_the_first_ordered_sheet_pointer_across_shadow_and_release() {
+fn composite_loader_retains_first_sheet_geometry_but_cannot_draw_after_sheet_release() {
     let unique = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -8529,7 +8542,6 @@ fn composite_loader_freezes_the_first_ordered_sheet_pointer_across_shadow_and_re
                 res.createSpriteSheet("first/FIRST.dat")
                 res.createCompoSpriteSet("composite/COMPOSITE.dat")
                 res.createSpriteSheet("second/SECOND.dat")
-                res.releaseSpriteSheet("first/FIRST.dat", false)
                 drawCompoSprite("FROZEN", 0, 0, 1, 1)
             "#,
         )
@@ -8561,9 +8573,28 @@ fn composite_loader_freezes_the_first_ordered_sheet_pointer_across_shadow_and_re
         command.sprite.as_arc(),
         parts[0].sprite.as_arc()
     ));
-    assert!(Arc::ptr_eq(retained, &parts[0].region));
+    assert_eq!(retained.native_sheet_id, parts[0].region.native_sheet_id);
+    assert_eq!(retained.sprite, parts[0].region.sprite);
+    assert_eq!(
+        retained.uv_image_dimensions,
+        parts[0].region.uv_image_dimensions
+    );
+    assert!(retained.sheet_image.is_none());
+    assert!(parts[0].region.sheet_image.is_some());
+    assert!(parts[0].region.image_owner.is_none());
+    assert!(Arc::ptr_eq(
+        retained.image_owner.as_ref().unwrap(),
+        snapshot.regions[alias].image_owner.as_ref().unwrap()
+    ));
     drop(resources);
     drop(bridge);
+    let error = runtime
+        .execute_source(
+            "res.releaseSpriteSheet('first/FIRST.dat',false); drawCompoSprite('FROZEN',0,0,1,1)",
+        )
+        .unwrap_err();
+    assert!(error.to_string().contains("released SpriteSheet"));
+    assert!(runtime.sprite_catalog_snapshot_since(0).unwrap().composites["FROZEN"].is_empty());
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -8615,7 +8646,6 @@ fn scene_objects_retain_assigned_atlas_composite_and_null_resource_pointers() {
                 native_setSprite("retargeted", "FROZEN")
 
                 res.createSpriteSheet("second/SECOND.dat")
-                res.releaseSpriteSheet("first/FIRST.dat", false)
                 res.createSpriteSheet("late/LATE.dat")
                 drawGameNative()
             "#,
@@ -8646,6 +8676,15 @@ fn scene_objects_retain_assigned_atlas_composite_and_null_resource_pointers() {
     assert!(missing.bound_region.is_none());
     assert!(missing.bound_composite.as_ref().unwrap().is_empty());
     drop(bridge);
+    let error = runtime
+        .execute_source("res.releaseSpriteSheet('first/FIRST.dat',false); drawGameNative()")
+        .unwrap_err();
+    assert!(error.to_string().contains("released SpriteSheet"));
+    assert_eq!(
+        runtime.take_render_commands().len(),
+        4,
+        "previously submitted scene Images survive release"
+    );
     fs::remove_dir_all(root).unwrap();
 }
 

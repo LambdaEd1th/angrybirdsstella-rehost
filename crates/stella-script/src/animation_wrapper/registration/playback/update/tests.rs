@@ -75,7 +75,10 @@ fn assert_close_state_removed(runtime: &AnimationRuntime, tag: &str) {
 
 fn test_region(name: &str) -> SpriteCatalogRegion {
     SpriteCatalogRegion {
+        sheet_image: None,
+        uv_image_dimensions: None,
         decoded_image: None,
+        image_owner: None,
         native_sheet_id: 1,
         texture_source: "timeline-test.pvr".to_owned(),
         sprite: stella_assets::ka3d::SpriteRegion {

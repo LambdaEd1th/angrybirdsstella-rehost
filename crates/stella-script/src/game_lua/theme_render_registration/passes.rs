@@ -25,7 +25,7 @@ pub(super) fn install_background(
                 (index >= 0).then_some(index as usize),
                 &resources,
                 &data_root,
-            );
+            )?;
             Ok(())
         })?,
     )
@@ -47,7 +47,7 @@ pub(super) fn install_foreground(
             let mut bridge = render.lock().expect("render bridge lock poisoned");
             trace_pass(&bridge, "drawForegroundNative", true);
             super::camera::prepare_draw(lua, &mut bridge, true)?;
-            bridge.draw_theme_pass(true, None, &resources, &data_root);
+            bridge.draw_theme_pass(true, None, &resources, &data_root)?;
             Ok(())
         })?,
     )

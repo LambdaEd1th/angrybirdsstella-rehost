@@ -13,7 +13,7 @@ impl RenderBridge {
         selected_layer: Option<usize>,
         resources: &ResourceRuntime,
         data_root: &Path,
-    ) {
+    ) -> LuaResult<()> {
         // The public theme members enter this pass unconditionally. +0xCC
         // guards the host Lua draw callback and drawGameNative, not this pass.
         if !foreground {
@@ -29,7 +29,7 @@ impl RenderBridge {
         };
         let (first_layer, end_layer) = match selected_layer {
             Some(index) if index < layer_count => (index, index + 1),
-            Some(_) => return,
+            Some(_) => return Ok(()),
             None => (0, layer_count),
         };
         for index in first_layer..end_layer {
@@ -67,7 +67,7 @@ impl RenderBridge {
                 layer.cached_draw_world_x = world_x;
                 layer.cached_draw_world_y = world_y;
             }
-            self.draw_theme_particles_for_layer(foreground, definition_index as i32, &transform);
+            self.draw_theme_particles_for_layer(foreground, definition_index as i32, &transform)?;
 
             let bound_region = resources.active_atlas_catalog_region(&sprite, data_root);
             let bound_composite = resources
@@ -125,8 +125,9 @@ impl RenderBridge {
                 world_space: true,
             };
             let layer_commands = positions.into_iter().map(|(x, y)| command(x, y));
-            self.extend_render_commands(layer_commands);
+            self.extend_render_commands(layer_commands)?;
         }
+        Ok(())
     }
 
     /// `sub_100096E9C`, called at `0x10009C17C/0x10009C1A8` before the
@@ -138,20 +139,20 @@ impl RenderBridge {
         foreground: bool,
         layer_index: i32,
         transform: &position::ThemeLayerTransform,
-    ) {
+    ) -> LuaResult<()> {
         let particles = if foreground {
             self.theme_foreground_particles.particles.get(&layer_index)
         } else {
             self.theme_background_particles.particles.get(&layer_index)
         };
         let Some(particles) = particles else {
-            return;
+            return Ok(());
         };
 
         let inherited_state = self.state;
         let world_scale = self.world_scale as f32;
         if world_scale == 0.0 || !world_scale.is_finite() {
-            return;
+            return Ok(());
         }
         let [layer_x, layer_y] = transform.native_world;
         let top_left_x = self.top_left_x as f32;
@@ -189,7 +190,8 @@ impl RenderBridge {
                 }
             })
             .collect::<Vec<_>>();
-        self.extend_render_commands(commands);
+        self.extend_render_commands(commands)?;
+        Ok(())
     }
 }
 

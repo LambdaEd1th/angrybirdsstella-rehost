@@ -3,6 +3,7 @@
 use super::*;
 use bytemuck::{Pod, Zeroable};
 use std::ops::Range;
+use std::sync::Weak;
 use stella_assets::surface_format::SurfaceFormat;
 
 #[allow(unused_imports)]
@@ -11,6 +12,7 @@ mod frame;
 #[path = "../../stella-app/src/gpu/program.rs"]
 mod program;
 use program::{NativeProgram, native_sprite_program};
+mod retirement;
 
 const WHITE_TEXTURE: &str = "<stella-white>";
 
@@ -62,6 +64,7 @@ pub(crate) struct PreparedFrame {
     operations: Vec<PreparedOperation>,
     capture_formats: HashMap<String, SurfaceFormat>,
     required_textures: HashSet<String>,
+    texture_leases: HashMap<String, Arc<()>>,
     transient_textures: HashMap<String, Arc<TextureAsset>>,
     retired_textures: HashSet<String>,
     current_clip: Option<[i32; 4]>,
@@ -90,7 +93,10 @@ impl PreparedFrame {
             uploaded.insert(name.clone());
         }
         let operations = self.operations.iter().map(|operation| match operation {
-            PreparedOperation::Capture(name) => json!({"capture": name}),
+            PreparedOperation::Capture(name) => {
+                uploaded.insert(name.clone());
+                json!({"capture": name})
+            },
             PreparedOperation::ScreenshotShare(request) => json!({"share": {
                 "sequence": request.sequence, "filename": request.filename, "title": request.title
             }}),
@@ -105,11 +111,26 @@ impl PreparedFrame {
                 json!({"first": draw.vertices.start, "count": draw.vertices.end - draw.vertices.start, "base": pair.0, "fill": pair.1, "program": program, "scissor": draw.scissor})
             }
         }).collect::<Vec<_>>();
-        for name in &self.retired_textures {
+        let capture_targets = self
+            .operations
+            .iter()
+            .filter_map(|operation| match operation {
+                PreparedOperation::Capture(name) => Some(name.clone()),
+                PreparedOperation::Draw(_) | PreparedOperation::ScreenshotShare(_) => None,
+            })
+            .collect::<HashSet<_>>();
+        let retired = retirement::retired_texture_names(
+            &self.retired_textures,
+            uploaded,
+            &assets.file_images.lifetimes,
+            &self.required_textures,
+            &capture_targets,
+        );
+        for name in &retired {
             uploaded.remove(name);
         }
         Ok(
-            json!({"vertices": {"pointer": self.vertices.as_ptr() as usize, "length": self.vertices.len() * std::mem::size_of::<GpuVertex>()}, "uniforms": {"pointer": self.uniforms.as_ptr() as usize, "count": self.uniforms.len()}, "textures": textures, "operations": operations, "retired": self.retired_textures}),
+            json!({"vertices": {"pointer": self.vertices.as_ptr() as usize, "length": self.vertices.len() * std::mem::size_of::<GpuVertex>()}, "uniforms": {"pointer": self.uniforms.as_ptr() as usize, "count": self.uniforms.len()}, "textures": textures, "operations": operations, "retired": retired}),
         )
     }
 }

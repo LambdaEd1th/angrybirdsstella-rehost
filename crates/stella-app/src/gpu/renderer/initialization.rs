@@ -223,6 +223,7 @@ impl GpuRenderer {
             textures,
             texture_bind_groups: HashMap::new(),
             retired_textures: HashSet::new(),
+            texture_lifetimes: HashMap::new(),
             blit_pipeline,
             blit_bind_group,
             blit_layout,

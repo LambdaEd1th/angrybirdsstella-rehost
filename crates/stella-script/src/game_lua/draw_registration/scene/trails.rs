@@ -6,7 +6,7 @@ pub(super) fn push_native_trajectory_streams(
     bridge: &mut RenderBridge,
     resources: &ResourceRuntime,
     data_root: &Path,
-) {
+) -> LuaResult<()> {
     let top_left_x = bridge.top_left_x as f32;
     let top_left_y = bridge.top_left_y as f32;
     let world_scale = bridge.world_scale as f32;
@@ -82,5 +82,6 @@ pub(super) fn push_native_trajectory_streams(
             });
         }
     }
-    bridge.extend_render_commands(commands);
+    bridge.extend_render_commands(commands)?;
+    Ok(())
 }

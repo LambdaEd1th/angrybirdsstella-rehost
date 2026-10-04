@@ -55,33 +55,55 @@ impl BrowserTouches {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{path::PathBuf, time::SystemTime};
+    use std::{
+        path::PathBuf,
+        sync::{
+            Mutex, MutexGuard,
+            atomic::{AtomicU64, Ordering},
+        },
+        time::SystemTime,
+    };
 
-    struct Fixture(PathBuf);
+    // These integration tests link the production process-global pinch state.
+    // Keep independent simulated applications from resetting each other's gesture.
+    static RUNTIME_LOCK: Mutex<()> = Mutex::new(());
+    static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
+
+    struct Fixture {
+        root: PathBuf,
+        _runtime_guard: MutexGuard<'static, ()>,
+    }
 
     impl Fixture {
         fn new() -> Self {
+            let runtime_guard = RUNTIME_LOCK
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             let nonce = SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos();
+            let fixture_id = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
             let root = std::env::temp_dir().join(format!(
-                "stella-browser-touch-{}-{nonce}",
+                "stella-browser-touch-{}-{nonce}-{fixture_id}",
                 std::process::id()
             ));
             std::fs::create_dir(&root).unwrap();
             std::fs::create_dir(root.join("data")).unwrap();
-            Self(root)
+            Self {
+                root,
+                _runtime_guard: runtime_guard,
+            }
         }
 
         fn runtime(&self) -> StellaLua {
-            StellaLua::new(self.0.join("data")).unwrap()
+            StellaLua::new(self.root.join("data")).unwrap()
         }
     }
 
     impl Drop for Fixture {
         fn drop(&mut self) {
-            std::fs::remove_dir_all(&self.0).unwrap();
+            std::fs::remove_dir_all(&self.root).unwrap();
         }
     }
 

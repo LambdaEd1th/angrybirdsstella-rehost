@@ -172,7 +172,7 @@ fn particle_spawned_by_lua_update_integrates_in_the_same_native_frame() {
 }
 
 #[test]
-fn particle_creation_retains_the_resolved_atlas_across_shadow_and_release() {
+fn particle_creation_retains_the_resolved_atlas_across_shadow_but_cannot_draw_after_release() {
     let unique = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -213,7 +213,6 @@ fn particle_creation_retains_the_resolved_atlas_across_shadow_and_release() {
                     angle=0, mode=3
                 })
                 res.createSpriteSheet("second/SECOND.dat")
-                res.releaseSpriteSheet("first/FIRST.dat", false)
                 drawMenuParticlesNative()
             "#,
         )
@@ -231,6 +230,12 @@ fn particle_creation_retains_the_resolved_atlas_across_shadow_and_release() {
     assert_eq!(retained.sprite.width, 10);
     assert!(retained.texture_source.ends_with("first/first.pvr"));
     drop(bridge);
+    let error = runtime
+        .execute_source(
+            "res.releaseSpriteSheet('first/FIRST.dat',false); drawMenuParticlesNative()",
+        )
+        .unwrap_err();
+    assert!(error.to_string().contains("released SpriteSheet"));
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -298,7 +303,6 @@ fn lifetime_particle_frame_change_rebinds_once_then_retains_that_atlas() {
         .execute_source(
             r#"
                 res.createSpriteSheet("replacement/REPLACEMENT.dat")
-                res.releaseSpriteSheet("initial/INITIAL.dat", false)
                 drawMenuParticlesNative()
             "#,
         )
@@ -317,6 +321,12 @@ fn lifetime_particle_frame_change_rebinds_once_then_retains_that_atlas() {
     assert_eq!(retained.sprite.width, 30);
     assert!(retained.texture_source.ends_with("initial/initial.pvr"));
     drop(bridge);
+    let error = runtime
+        .execute_source(
+            "res.releaseSpriteSheet('initial/INITIAL.dat',false); drawMenuParticlesNative()",
+        )
+        .unwrap_err();
+    assert!(error.to_string().contains("released SpriteSheet"));
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -821,7 +831,7 @@ fn ordinary_particle_draw_keeps_native_divide_add_multiply_float_boundaries() {
     bridge.top_left_x = f64::from(camera);
     bridge.top_left_y = f64::from(camera);
     bridge.world_scale = f64::from(world_scale);
-    bridge.draw_particles(1);
+    bridge.draw_particles(1).unwrap();
     let command = &bridge.commands[0];
     assert!(!command.world_space);
     let projected = (command.state.translate_x + command.x) * command.state.scale_x;
@@ -845,7 +855,7 @@ fn ordinary_particle_draw_keeps_native_divide_add_multiply_float_boundaries() {
         particle.mode = 3;
     }
     bridge.particle_system.scale = menu_scale;
-    bridge.draw_particles(3);
+    bridge.draw_particles(3).unwrap();
     let command = &bridge.commands[0];
     let projected = (command.state.translate_x + command.x) * command.state.scale_x;
     assert_eq!(projected.to_bits(), 0x4850_1c9a);

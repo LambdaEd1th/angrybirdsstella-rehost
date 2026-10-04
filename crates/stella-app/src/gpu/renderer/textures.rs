@@ -9,6 +9,25 @@ impl GpuRenderer {
         assets: &AssetCatalog,
         frame: &PreparedFrame,
     ) -> Result<()> {
+        self.texture_lifetimes.extend(
+            assets
+                .file_images
+                .lifetimes
+                .iter()
+                .map(|(source, lease)| (source.clone(), lease.clone())),
+        );
+        self.texture_lifetimes.extend(
+            frame
+                .texture_leases
+                .iter()
+                .map(|(source, lease)| (source.clone(), Arc::downgrade(lease))),
+        );
+        self.retired_textures.extend(
+            self.texture_lifetimes
+                .iter()
+                .filter(|(_, lease)| lease.strong_count() == 0)
+                .map(|(source, _)| source.clone()),
+        );
         self.retired_textures
             .extend(frame.retired_textures.iter().cloned());
         self.retire_unused_textures(frame, false);
@@ -46,7 +65,8 @@ impl GpuRenderer {
             .retired_textures
             .iter()
             .filter(|name| {
-                !frame.required_textures.contains(*name)
+                !self.texture_lifetimes.get(*name).is_some_and(|lease| lease.strong_count() != 0)
+                    && !frame.required_textures.contains(*name)
                     && (completed || !frame.operations.iter().any(|operation| {
                         matches!(operation, PreparedOperation::Capture(target) if target == *name)
                     }))
@@ -58,6 +78,7 @@ impl GpuRenderer {
             self.texture_bind_groups
                 .retain(|(base, fill), _| base != &name && fill != &name);
             self.retired_textures.remove(&name);
+            self.texture_lifetimes.remove(&name);
         }
     }
 

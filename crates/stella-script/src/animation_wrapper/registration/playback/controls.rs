@@ -296,6 +296,9 @@ mod tests {
                     (
                         name.to_owned(),
                         SpriteCatalogRegion {
+                            sheet_image: None,
+                            uv_image_dimensions: None,
+                            image_owner: None,
                             decoded_image: None,
                             native_sheet_id: 1,
                             texture_source: "test-animation.pvr".to_owned(),

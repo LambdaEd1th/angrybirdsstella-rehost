@@ -96,6 +96,7 @@ impl AssetCatalog {
         }
         let region = bound_region
             .map(|region| AtlasRegion {
+                uv_image_dimensions: region.uv_image_dimensions,
                 texture: region.texture_source.clone(),
                 sprite: region.sprite.clone(),
             })

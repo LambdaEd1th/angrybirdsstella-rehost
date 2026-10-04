@@ -402,6 +402,8 @@ fn native_friends_store_cached_avatar_uses_real_download_without_social_provider
         .lock()
         .unwrap()
         .active_atlas_catalog_region("AVATAR_cached", runtime.data_root())
+        .unwrap()
+        .snapshot_image()
         .unwrap();
     assert_eq!(
         (

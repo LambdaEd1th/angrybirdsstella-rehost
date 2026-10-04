@@ -134,7 +134,7 @@ fn theme_particles_inherit_then_restore_the_callers_non_transform_state() {
 }
 
 #[test]
-fn theme_particle_creation_retains_its_atlas_after_theme_resources_are_released() {
+fn theme_particle_creation_retains_its_atlas_across_shadow_but_cannot_draw_after_release() {
     let unique = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -190,11 +190,19 @@ fn theme_particle_creation_retains_its_atlas_after_theme_resources_are_released(
         )
         .unwrap();
     runtime.update(0.1).unwrap();
+    let image_owner = {
+        let catalog = runtime.sprite_catalog_snapshot_since(0).unwrap();
+        Arc::downgrade(
+            catalog.regions["THEME_PARTICLE"]
+                .image_owner
+                .as_ref()
+                .unwrap(),
+        )
+    };
     runtime
         .execute_source(
             r#"
                 res.createSpriteSheet("second/SECOND.dat")
-                res.releaseSpriteSheet("first/FIRST.dat", false)
                 drawBackgroundNative(-1)
             "#,
         )
@@ -207,12 +215,26 @@ fn theme_particle_creation_retains_its_atlas_after_theme_resources_are_released(
         30
     );
     let bridge = runtime.render.lock().unwrap();
-    assert_eq!(bridge.commands.len(), 1);
+    assert_eq!(bridge.commands.len(), 2);
     assert_eq!(bridge.commands[0].sprite, "THEME_PARTICLE");
     let retained = bridge.commands[0].bound_region.as_ref().unwrap();
     assert_eq!(retained.sprite.width, 10);
     assert!(retained.texture_source.ends_with("first/first.pvr"));
     drop(bridge);
+    let error = runtime
+        .execute_source("res.releaseSpriteSheet('first/FIRST.dat',false); drawBackgroundNative(-1)")
+        .unwrap_err();
+    assert!(error.to_string().contains("released SpriteSheet"));
+    assert!(
+        image_owner.strong_count() > 0,
+        "submitted draws still own their Image"
+    );
+    drop(runtime.take_render_commands());
+    assert_eq!(
+        image_owner.strong_count(),
+        0,
+        "live theme particles retained the released Image"
+    );
     fs::remove_dir_all(root).unwrap();
 }
 

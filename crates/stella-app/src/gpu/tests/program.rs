@@ -93,6 +93,7 @@ fn ordinary_atlas_submission_preserves_the_surface_format_program_branch() {
         regions: HashMap::from([(
             "OPAQUE_SPRITE".to_owned(),
             AtlasRegion {
+                uv_image_dimensions: None,
                 texture: texture_name.clone(),
                 sprite: SpriteRegion {
                     name: "OPAQUE_SPRITE".to_owned(),

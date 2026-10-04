@@ -103,7 +103,7 @@ pub(super) fn install_draw(
             for command in &mut commands {
                 command.state.clip_rect = clip_rect;
             }
-            bridge.extend_render_commands(commands);
+            bridge.extend_render_commands(commands)?;
             Ok(())
         })?,
     )?;

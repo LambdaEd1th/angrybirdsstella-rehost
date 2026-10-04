@@ -141,14 +141,14 @@ fn render_circle(
         for rotation in 0..4 {
             let angle = ((rotation as f32) * NATIVE_PI) * 0.5_f32;
             set_native_angle(&mut bridge.state, angle);
-            submit_pivot_sprite(resources, data_root, bridge, &sprite, x, y);
+            submit_pivot_sprite(resources, data_root, bridge, &sprite, x, y)?;
         }
         let diagonal = NATIVE_PI * 0.25_f32;
         for rotation in 0..4 {
             let product = (rotation as f32) * NATIVE_PI;
             let angle = f64::from(product).mul_add(0.5_f64, f64::from(diagonal)) as f32;
             set_native_angle(&mut bridge.state, angle);
-            submit_pivot_sprite(resources, data_root, bridge, &sprite, x, y);
+            submit_pivot_sprite(resources, data_root, bridge, &sprite, x, y)?;
         }
         index = index.wrapping_add(1);
     }
@@ -206,7 +206,7 @@ fn render_box(
         // cosine-derived Y coordinate in the ResourceManager call ABI.
         let x = x_span.mul_add(position, -x_base) / local_scale;
         let y = y_delta.mul_add(position, y_base) / local_scale;
-        submit_pivot_sprite(resources, data_root, bridge, &sprite, x, y);
+        submit_pivot_sprite(resources, data_root, bridge, &sprite, x, y)?;
         index = index.wrapping_add(1);
     }
     Ok(())
@@ -219,7 +219,7 @@ fn submit_pivot_sprite(
     sprite: &str,
     x: f32,
     y: f32,
-) {
+) -> LuaResult<()> {
     let draw = ParsedSpriteDraw {
         sprite: sprite.to_owned(),
         x: f64::from(x),
@@ -230,8 +230,9 @@ fn submit_pivot_sprite(
     };
     if let Some(command) = native_resource_sprite_command(resources, data_root, draw, bridge.state)
     {
-        bridge.push_render_command(command);
+        bridge.push_render_command(command)?;
     }
+    Ok(())
 }
 
 fn set_native_angle(state: &mut RenderState, angle: f32) {

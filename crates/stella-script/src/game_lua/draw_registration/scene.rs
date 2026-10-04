@@ -99,7 +99,7 @@ pub(super) fn install(
                         .lock()
                         .expect("resource runtime lock poisoned");
                     let mut bridge = render.lock().expect("render bridge lock poisoned");
-                    push_native_trajectory_streams(&mut bridge, &resources, &data_root);
+                    push_native_trajectory_streams(&mut bridge, &resources, &data_root)?;
                     trajectory_drawn = true;
                 }
                 // RenderObjectData+0x20/+0x158/+0x160 are reached directly
@@ -216,7 +216,7 @@ pub(super) fn install(
                     for command in &mut commands {
                         command.state.clip_rect = clip_rect;
                     }
-                    bridge.extend_render_commands(commands);
+                    bridge.extend_render_commands(commands)?;
                 } else {
                     // sub_10006D5B4 reads `shader` from the retained Lua
                     // object after the pre-draw callback, then builds the
@@ -250,7 +250,7 @@ pub(super) fn install(
                         render
                             .lock()
                             .expect("render bridge lock poisoned")
-                            .push_scene_object(object, decoration_resources, shader);
+                            .push_scene_object(object, decoration_resources, shader)?;
                     } else {
                         // Purple's ordinary sprite branch consumes only the
                         // retained RenderObjectData resource pointer. Keep the
@@ -258,7 +258,7 @@ pub(super) fn install(
                         render
                             .lock()
                             .expect("render bridge lock poisoned")
-                            .push_scene_object(object, None, None);
+                            .push_scene_object(object, None, None)?;
                     }
                 }
                 // RenderObjectData+0x160 is loaded at 0x10004C300, after the

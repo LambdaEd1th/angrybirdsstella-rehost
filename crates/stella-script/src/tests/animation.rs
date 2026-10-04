@@ -149,7 +149,10 @@ fn shipped_leaves_use_inverse_skin_rotation_and_native_layer_order() {
                 (
                     sprite.name.clone(),
                     SpriteCatalogRegion {
+                        sheet_image: None,
+                        uv_image_dimensions: None,
                         decoded_image: None,
+                        image_owner: None,
                         native_sheet_id: 1,
                         texture_source: sheet.texture_for(sprite).unwrap_or_default().to_owned(),
                         sprite: sprite.clone(),
@@ -264,7 +267,10 @@ fn shipped_leaves_follow_native_recursive_world_matrices_during_both_phases() {
                 (
                     sprite.name.clone(),
                     SpriteCatalogRegion {
+                        sheet_image: None,
+                        uv_image_dimensions: None,
                         decoded_image: None,
+                        image_owner: None,
                         native_sheet_id: 1,
                         texture_source: sheet.texture_for(sprite).unwrap_or_default().to_owned(),
                         sprite: sprite.clone(),
@@ -403,7 +409,7 @@ fn shipped_leaves_bind_skin_at_apply_and_retain_pointer_until_the_next_apply() {
         "forced target application resolves the current skin through live resources"
     );
 
-    runtime
+    let error = runtime
         .execute_source(
             r#"
                 res.releaseSpriteSheet(
@@ -412,15 +418,10 @@ fn shipped_leaves_bind_skin_at_apply_and_retain_pointer_until_the_next_apply() {
                 AnimationWrapperNative.draw("leaves")
             "#,
         )
-        .unwrap();
-    assert_eq!(
-        runtime
-            .take_render_commands()
-            .iter()
-            .filter(|command| command.sprite.starts_with("TRANSITION_LEAF_"))
-            .count(),
-        16,
-        "the SpriteComponent retains its concrete pointer until a setter runs"
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("released SpriteSheet"),
+        "the retained SpriteComponent cannot dereference a destroyed sheet"
     );
 
     runtime
@@ -819,7 +820,10 @@ fn animation_sprite_components_append_native_centering_after_atlas_pivot_vertice
         BTreeMap::from([(
             "PANEL".to_owned(),
             SpriteCatalogRegion {
+                sheet_image: None,
+                uv_image_dimensions: None,
                 decoded_image: None,
+                image_owner: None,
                 native_sheet_id: 1,
                 texture_source: "panel.pvr".to_owned(),
                 sprite: stella_assets::ka3d::SpriteRegion {
@@ -1310,10 +1314,11 @@ fn animation_native_lifecycle_preserves_void_abi_cache_and_active_scene() {
                 actions = AnimationWrapperNative.getActions("scene", "ignored")
                 bad_actions_tag = pcall(AnimationWrapperNative.getActions, 123)
                 bad_shader_tag = pcall(AnimationWrapperNative.setShader, 123, nil)
+                AnimationWrapperNative.draw("scene", "ignored")
                 res.releaseSpriteSheet("images/SHEET.dat", false)
                 released_left, released_top, released_right, released_bottom =
                     AnimationWrapperNative.getEntityWorldBounds("scene", "SLOT_TEST")
-                AnimationWrapperNative.draw("scene", "ignored")
+                released_draw_ok = pcall(AnimationWrapperNative.draw, "scene", "ignored")
                 bad_draw_tag = pcall(AnimationWrapperNative.draw, 123)
 
                 AnimationWrapperNative.pause("scene", "ignored")
@@ -1412,10 +1417,11 @@ fn animation_native_lifecycle_preserves_void_abi_cache_and_active_scene() {
         .take_render_commands()
         .into_iter()
         .find(|command| command.sprite == "TEST_SPRITE")
-        .expect("released animation component retained its sprite pointer");
+        .expect("submitted animation command retained its Image before release");
     let retained = retained.bound_region.expect("retained atlas region");
     assert_eq!((retained.sprite.width, retained.sprite.height), (40, 10));
     assert!(retained.texture_source.ends_with("images/sheet.pvr"));
+    assert!(!environment.get::<bool>("released_draw_ok").unwrap());
     let timeline_events = environment.get::<mlua::Table>("timeline_events").unwrap();
     assert_eq!(environment.get::<i64>("timeline_event_count").unwrap(), 3);
     let first = timeline_events.raw_get::<mlua::Table>(1).unwrap();

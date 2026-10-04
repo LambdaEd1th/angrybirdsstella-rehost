@@ -14,22 +14,54 @@ impl RenderBridge {
         order
     }
 
-    pub(crate) fn push_render_command(&mut self, mut command: RenderCommand) {
+    pub(crate) fn push_render_command(&mut self, mut command: RenderCommand) -> LuaResult<()> {
+        // AtlasSprite resolves SpriteSheet+0x20 at this immediate boundary.
+        // Scene/animation/particle owners borrow the sheet; only the submitted
+        // command keeps the Image alive while the GPU host consumes it later.
+        if command.dirt.is_none() {
+            command.bound_region = command
+                .bound_region
+                .as_ref()
+                .map(|region| region.snapshot_image())
+                .transpose()?;
+            if let Some(parts) = &command.bound_composite
+                && parts.iter().any(|part| part.region.sheet_image.is_some())
+            {
+                let frozen = parts
+                    .iter()
+                    .map(|part| {
+                        Ok(BoundCompositePart {
+                            // CompoSprite::draw at 0x1004376D4 reads an Entry's
+                            // AtlasSprite only after its visible byte passes.
+                            region: if part.part.visible {
+                                part.region.snapshot_image()?
+                            } else {
+                                Arc::clone(&part.region)
+                            },
+                            ..part.clone()
+                        })
+                    })
+                    .collect::<LuaResult<Vec<_>>>()?;
+                command.bound_composite = Some(Arc::new(frozen));
+            }
+        }
         command.projection_3d = self.projection_3d().map(Arc::new);
         if command.state.clip_rect.is_none() {
             command.state.clip_rect = self.state.clip_rect;
         }
         command.order = self.allocate_draw_order();
         self.commands.push(command);
+        Ok(())
     }
 
     pub(crate) fn extend_render_commands(
         &mut self,
         commands: impl IntoIterator<Item = RenderCommand>,
-    ) {
+    ) -> LuaResult<()> {
         for command in commands {
-            self.push_render_command(command);
+            self.push_render_command(command)?;
         }
+        Ok(())
     }
 
     pub(crate) fn push_text_command(&mut self, mut command: TextRenderCommand) {
@@ -67,6 +99,7 @@ impl RenderBridge {
         texture_source: String,
         temporary: bool,
         decoded_image: Option<Arc<stella_assets::native_image::DecodedNativeImage>>,
+        image_owner: Option<Arc<crate::NativeImageOwner>>,
     ) {
         let order = self.allocate_draw_order();
         self.capture_commands.push(CaptureRenderCommand {
@@ -75,6 +108,7 @@ impl RenderBridge {
             texture_source,
             temporary,
             decoded_image,
+            image_owner,
         });
     }
 }

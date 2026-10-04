@@ -21,6 +21,7 @@ fn register_capture(assets: &mut AssetCatalog, source: &str, size: GameResolutio
     assets.regions.insert(
         "CAP".to_owned(),
         AtlasRegion {
+            uv_image_dimensions: None,
             texture: source.to_owned(),
             sprite: SpriteRegion {
                 name: "CAP".to_owned(),
@@ -43,6 +44,7 @@ fn capture(order: u64, source: &str) -> CaptureRenderCommand {
         texture_source: source.to_owned(),
         temporary: false,
         decoded_image: None,
+        image_owner: None,
     }
 }
 
@@ -235,15 +237,20 @@ fn lua_capture_keeps_same_file_images_and_reloaded_sheet_owners_independent() {
         1,
         "unmodified owners share immutable PNG bytes"
     );
-    let physical = &assets.file_images.bindings[sources[0]].source;
+    assert!(
+        !assets.file_images.bindings.contains_key(sources[0]),
+        "capture replaces this Image's original file binding"
+    );
+    let physical = &assets.file_images.bindings[sources[1]].source;
     assert!(assets.textures.contains_key(physical));
-    for source in &sources {
+    for source in sources.iter().skip(1) {
         assert_eq!(&assets.file_images.bindings[*source].source, physical);
         assert_ne!(
             *source, physical,
             "shared pixels cannot alias a mutable owner"
         );
     }
+    assert_ne!(&assets.captures.bindings[sources[0]].source, physical);
     let mut renderer = GpuRenderer::headless(size).unwrap();
     let rgba = renderer
         .render_to_rgba(&assets, &frame, [0, 0, 255])
@@ -364,7 +371,10 @@ fn capture_existing_image_preserves_shadowed_geometry_and_retained_aliases() {
         .textures
         .insert("shadow.png".to_owned(), alpha_texture(4, 4));
     let retained = SpriteCatalogRegion {
+        sheet_image: None,
+        uv_image_dimensions: None,
         decoded_image: None,
+        image_owner: None,
         native_sheet_id: 42,
         texture_source: source.to_owned(),
         sprite: SpriteRegion {
@@ -381,6 +391,7 @@ fn capture_existing_image_preserves_shadowed_geometry_and_retained_aliases() {
     assets.regions.insert(
         "CAP".to_owned(),
         AtlasRegion {
+            uv_image_dimensions: None,
             texture: "shadow.png".to_owned(),
             sprite: SpriteRegion {
                 width: 3,

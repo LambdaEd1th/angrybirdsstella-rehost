@@ -131,7 +131,7 @@ pub(super) fn install(
                     y: draw_y,
                     state: draw_state.into(),
                     world_space: true,
-                });
+                })?;
             }
             Ok(())
         })?,

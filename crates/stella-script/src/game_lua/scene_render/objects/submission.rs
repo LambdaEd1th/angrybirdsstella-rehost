@@ -115,8 +115,8 @@ impl RenderBridge {
                 texture: object.texture.clone(),
                 // Purple passes the retained RenderObjectData resource
                 // pointers at +0x90/+0x78 into its immediate draw member.
-                // Keep both immutable owners shared across the deferred wgpu
-                // boundary instead of materializing either resource graph.
+                // Keep their shared geometry; push_render_command resolves
+                // the live Image before crossing the deferred wgpu boundary.
                 bound_region: object.sprite_region.clone(),
                 bound_composite: object.composite_sprite.clone(),
                 geometry: None,
@@ -130,7 +130,7 @@ impl RenderBridge {
     }
 
     #[cfg(test)]
-    pub(crate) fn draw_scene_range(&mut self) {
+    pub(crate) fn draw_scene_range(&mut self) -> LuaResult<()> {
         let objects = self
             .scene_range_names()
             .into_iter()
@@ -145,7 +145,8 @@ impl RenderBridge {
             .iter()
             .filter_map(|object| self.scene_object_command(object))
             .collect::<Vec<_>>();
-        self.extend_render_commands(commands);
+        self.extend_render_commands(commands)?;
+        Ok(())
     }
 
     pub(crate) fn push_scene_object(
@@ -153,7 +154,7 @@ impl RenderBridge {
         object: SceneDrawObject,
         decoration_resources: Option<(&ResourceRuntime, &Path)>,
         shader: Option<SpriteShader>,
-    ) {
+    ) -> LuaResult<()> {
         // sub_10004BFE0 installs the base object context and then calls the
         // ordinary member with the same GL_Context pointer. The member mutates
         // that context in place before returning to the post callback. Keep
@@ -175,7 +176,7 @@ impl RenderBridge {
             {
                 self.push_rect_command(command);
             }
-            return;
+            return Ok(());
         }
         if !object.flash_animation
             && object.ray.is_none()
@@ -192,10 +193,10 @@ impl RenderBridge {
                 projection_3d: None,
                 order: 0,
                 // The compact draw snapshot already retained every native
-                // resource pointer while the scene lock was released for Lua.
-                // Transfer those owners into the deferred wgpu command rather
-                // than retaining and releasing the same pointers a second
-                // time. Purple likewise passes +0x90/+0x78 straight through.
+                // sprite pointer while the scene lock was released for Lua.
+                // Image ownership starts at push_render_command, after the
+                // callbacks have finished. Purple likewise passes the retained
+                // +0x90/+0x78 sprite pointers straight through.
                 sprite: object.sprite.into(),
                 texture: object.texture,
                 bound_region: object.sprite_region,
@@ -208,16 +209,16 @@ impl RenderBridge {
                 state: command_state.expect("drawable scene object must retain its draw state"),
                 world_space: true,
             };
-            self.push_render_command(command);
+            self.push_render_command(command)?;
         }
         if object.flash_animation {
-            return;
+            return Ok(());
         }
         let Some(decoration) = object.decoration.as_deref() else {
-            return;
+            return Ok(());
         };
         if decoration.sprite.is_empty() || decoration.amount <= 0 {
-            return;
+            return Ok(());
         }
         // sub_10004BAB4 reaches GameLua+0xe0 (ResourceManager) only after the
         // RenderObjectData+0x141 decoration byte and its positive count have
@@ -225,7 +226,7 @@ impl RenderBridge {
         // +0x78/+0x90 pointers, so their caller must not acquire the rehost's
         // shared resource-manager lock.
         let Some((resources, data_root)) = decoration_resources else {
-            return;
+            return Ok(());
         };
         let mut decoration_angle = object.angle as f32;
         let radians_per_step = (decoration.angle_increment as f32) * f32::from_bits(0x4049_0FDB);
@@ -279,7 +280,7 @@ impl RenderBridge {
                 },
                 decoration_state,
             ) {
-                self.push_render_command(command);
+                self.push_render_command(command)?;
             }
             // 0x10004C2CC..0x10004C2EC performs one rounded FMUL followed
             // by FMADD and fmodf. `angleIncrement` is authored in degrees;
@@ -293,5 +294,6 @@ impl RenderBridge {
         }
         // The post callback therefore sees the last iteration's state. The
         // loop computes one following angle but never stores it into GL.
+        Ok(())
     }
 }

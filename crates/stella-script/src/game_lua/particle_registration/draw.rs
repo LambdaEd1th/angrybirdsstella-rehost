@@ -20,7 +20,7 @@ pub(super) fn install(
                 let mut bridge = draw_bridge.lock().expect("render bridge lock poisoned");
                 // GameLua+0x199 gates only the two in-game passes.
                 if !requires_in_game_particles || bridge.particles_enabled {
-                    bridge.draw_particles(mode);
+                    bridge.draw_particles(mode)?;
                 }
                 Ok(())
             })?,

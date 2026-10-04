@@ -16,6 +16,9 @@ use stella_assets::ka3d::{CompositePart, SpriteRegion};
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpriteCatalogSnapshot {
     pub revision: u64,
+    /// Currently retained Images, including hidden sheets and empty sheets.
+    /// The host records weak owners rather than retaining this map.
+    pub image_owners: BTreeMap<String, Arc<super::NativeImageOwner>>,
     pub regions: BTreeMap<String, SpriteCatalogRegion>,
     pub composites: BTreeMap<String, Vec<CompositePart>>,
     pub masked_textures: BTreeMap<String, String>,
@@ -23,8 +26,15 @@ pub struct SpriteCatalogSnapshot {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpriteCatalogRegion {
-    /// File and downloaded Images own pixels at native construction time.
-    /// Retain them through deferred draws and aliases, independently of disk.
+    /// Present on retained sprite objects, absent on immutable draw snapshots.
+    pub sheet_image: Option<super::SpriteSheetImageBinding>,
+    /// Extent used by AtlasSprite's constructor to normalize its stored UVs.
+    /// Later SPRT records replace the sheet's Image without changing these.
+    pub uv_image_dimensions: Option<[u32; 2]>,
+    /// Submitted Image ownership, absent on the live sprite's sheet borrow.
+    pub image_owner: Option<Arc<super::NativeImageOwner>>,
+    /// Pixels frozen at the immediate draw or catalog-export boundary.
+    /// Live sprite objects resolve their sheet instead of retaining pixels.
     pub decoded_image: Option<Arc<stella_assets::native_image::DecodedNativeImage>>,
     /// Deterministic host identity for the retained native `SpriteSheet*`.
     /// Purple uses this pointer as the second key of its z-ordered draw map.
@@ -32,12 +42,34 @@ pub struct SpriteCatalogRegion {
     /// retained by existing objects keep the old allocation identity.
     pub native_sheet_id: u64,
     /// Opaque native Image binding and GPU-cache key. Ordinary sheet images
-    /// include the concrete sheet/texture-record identity plus their resolved
+    /// include the concrete current Image identity plus its resolved
     /// file path; `stella_assets::image_source::image_source_path` unwraps it
     /// only for I/O. Captures use an allocation identity with no file source.
-    /// Retained aliases share this value, while a same-file reload does not.
+    /// On a live sprite this is the constructor source; snapshot_image reads
+    /// the current source from its sheet before publishing a deferred command.
     pub texture_source: String,
     pub sprite: SpriteRegion,
+}
+
+impl SpriteCatalogRegion {
+    pub(crate) fn snapshot_image(self: &Arc<Self>) -> crate::LuaResult<Arc<Self>> {
+        let Some(binding) = &self.sheet_image else {
+            return Ok(Arc::clone(self));
+        };
+        let image = binding.snapshot().map_err(|reason| {
+            crate::runtime_error(format!(
+                "Native sprite '{}' uses {reason}",
+                self.sprite.name
+            ))
+        })?;
+        Ok(Arc::new(Self {
+            sheet_image: None,
+            image_owner: Some(image.owner),
+            decoded_image: image.image,
+            texture_source: image.source,
+            ..self.as_ref().clone()
+        }))
+    }
 }
 
 /// One native CompoSprite record paired with the AtlasSprite pointer frozen
@@ -120,7 +152,8 @@ pub enum MaskedTextureBinding {
     Source(String),
     Retained {
         source: String,
-        image: Arc<stella_assets::native_image::DecodedNativeImage>,
+        image: Option<Arc<stella_assets::native_image::DecodedNativeImage>>,
+        image_owner: Option<Arc<super::NativeImageOwner>>,
     },
 }
 
@@ -128,10 +161,16 @@ impl MaskedTextureBinding {
     pub(crate) fn with_image(
         source: String,
         image: Option<Arc<stella_assets::native_image::DecodedNativeImage>>,
+        image_owner: Option<Arc<super::NativeImageOwner>>,
     ) -> Self {
-        match image {
-            Some(image) => Self::Retained { source, image },
-            None => Self::Source(source),
+        if image.is_some() || image_owner.is_some() {
+            Self::Retained {
+                source,
+                image,
+                image_owner,
+            }
+        } else {
+            Self::Source(source)
         }
     }
 
@@ -144,7 +183,14 @@ impl MaskedTextureBinding {
 
     pub fn image(&self) -> Option<&Arc<stella_assets::native_image::DecodedNativeImage>> {
         match self {
-            Self::Retained { image, .. } => Some(image),
+            Self::Retained { image, .. } => image.as_ref(),
+            Self::Missing | Self::Source(_) => None,
+        }
+    }
+
+    pub fn image_owner(&self) -> Option<&Arc<super::NativeImageOwner>> {
+        match self {
+            Self::Retained { image_owner, .. } => image_owner.as_ref(),
             Self::Missing | Self::Source(_) => None,
         }
     }

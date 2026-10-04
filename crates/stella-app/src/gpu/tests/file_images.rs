@@ -1,6 +1,9 @@
 //! Native file Image construction owns pixels before deferred GPU drawing.
 use super::*;
 
+mod lifetime;
+mod live_sheet;
+
 const OLD: [u8; 4] = [203, 31, 7, 255];
 const NEW: [u8; 4] = [29, 17, 83, 255];
 
@@ -58,6 +61,22 @@ impl Files {
             payload.extend_from_slice(&value.to_be_bytes());
         }
         std::fs::write(self.data().join("F.dat"), envelope(b"FONT", payload)).unwrap();
+    }
+
+    fn multi_sheet(&self) {
+        self.sheet("A");
+        self.sheet("B");
+        let mut sheet = std::fs::read(self.data().join("A.dat")).unwrap();
+        let second = std::fs::read(self.data().join("B.dat")).unwrap();
+        sheet.extend_from_slice(&second[8..]);
+        let size = sheet.len() as u32 - 8;
+        sheet[4..8].copy_from_slice(&size.to_be_bytes());
+        let offset = sheet
+            .windows(8)
+            .rposition(|bytes| bytes == b"same.png")
+            .unwrap();
+        sheet[offset..offset + 8].copy_from_slice(b"next.png");
+        std::fs::write(self.data().join("AB.dat"), sheet).unwrap();
     }
 }
 
@@ -192,24 +211,11 @@ fn native_file_bitmap_font_reload_keeps_old_glyphs_and_replaces_warm_atlas_pixel
 }
 
 #[test]
-fn native_file_image_uses_each_sprt_record_after_files_are_deleted() {
+fn native_file_image_uses_sheet_current_image_after_later_sprt_record_replaces_it() {
     let files = Files::new();
-    files.sheet("A");
-    files.sheet("B");
-    let first = std::fs::read(files.data().join("A.dat")).unwrap();
-    let second = std::fs::read(files.data().join("B.dat")).unwrap();
-    let mut sheet = first;
-    sheet.extend_from_slice(&second[8..]);
-    let size = sheet.len() as u32 - 8;
-    sheet[4..8].copy_from_slice(&size.to_be_bytes());
-    // Different paths in the two records make an accidental owner-wide
-    // decoded-image binding visible as literal wrong pixels.
-    let offset = sheet
-        .windows(8)
-        .rposition(|bytes| bytes == b"same.png")
-        .unwrap();
-    sheet[offset..offset + 8].copy_from_slice(b"next.png");
-    std::fs::write(files.data().join("AB.dat"), sheet).unwrap();
+    // sub_10046AC1C replaces SpriteSheet+0x20 on every SPRT record.
+    // Both AtlasSprites read that current Image at draw (sub_100467A00).
+    files.multi_sheet();
     files.image(OLD);
     RgbaImage::from_pixel(2, 2, image::Rgba(NEW))
         .save(files.data().join("next.png"))
@@ -222,7 +228,33 @@ fn native_file_image_uses_each_sprt_record_after_files_are_deleted() {
     std::fs::remove_file(files.data().join("next.png")).unwrap();
     runtime.execute_source("res.drawSprite('A',0,0); res.drawSprite('B',2,0); res.releaseSpriteSheet('AB.dat',false)").unwrap();
     let mut assets = assets(&files);
-    assert_halves(&pixels(&runtime, &mut assets), OLD, NEW);
+    assert_halves(&pixels(&runtime, &mut assets), NEW, NEW);
+}
+
+#[test]
+fn native_atlas_uvs_keep_constructor_extent_when_current_sheet_image_changes() {
+    let files = Files::new();
+    files.multi_sheet();
+    files.image(OLD);
+    RgbaImage::from_fn(4, 2, |x, _| image::Rgba(if x < 2 { OLD } else { NEW }))
+        .save(files.data().join("next.png"))
+        .unwrap();
+    let runtime = StellaLua::new_with_resolution(files.data(), 4, 2).unwrap();
+    runtime
+        .execute_source("res.createSpriteSheet('AB.dat')")
+        .unwrap();
+    std::fs::remove_file(files.data().join("same.png")).unwrap();
+    std::fs::remove_file(files.data().join("next.png")).unwrap();
+    runtime
+        .execute_source("res.drawSprite('A',0,0); res.drawSprite('B',2,0)")
+        .unwrap();
+    let mut assets = assets(&files);
+    // A's 2x2 constructor image gives UV 0..1; B's 4x2 image gives 0..0.5.
+    // Both draw the final 4x2 image. Each literal row must therefore differ.
+    assert_eq!(
+        pixels(&runtime, &mut assets),
+        [OLD, NEW, OLD, OLD].concat().repeat(2)
+    );
 }
 
 #[test]

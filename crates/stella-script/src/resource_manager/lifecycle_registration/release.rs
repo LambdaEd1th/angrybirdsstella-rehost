@@ -54,6 +54,7 @@ pub(super) fn install(
             resources.bitmap_font_descriptor_paths.remove(&key);
             resources.bitmap_font_texture_sources.remove(&key);
             resources.bitmap_font_decoded_images.remove(&key);
+            resources.bitmap_font_image_owners.remove(&key);
             resources.bitmap_font_values.remove(&key);
             resources.remove_system_font(&key);
             if resources.current_font.as_deref() == Some(key.as_str()) {

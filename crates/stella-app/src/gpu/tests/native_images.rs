@@ -22,6 +22,8 @@ fn command(image: stella_assets::native_image::DecodedNativeImage, identity: u64
         sprite: "NATIVE_IMAGE".into(),
         texture: None,
         bound_region: Some(Arc::new(SpriteCatalogRegion {
+            sheet_image: None,
+            uv_image_dimensions: None,
             native_sheet_id: identity,
             texture_source: stella_assets::image_source::sheet_image_source(
                 identity,
@@ -39,6 +41,7 @@ fn command(image: stella_assets::native_image::DecodedNativeImage, identity: u64
                 atlas_rotation: 0,
             },
             decoded_image: Some(Arc::new(image)),
+            image_owner: None,
         })),
         bound_composite: None,
         geometry: None,

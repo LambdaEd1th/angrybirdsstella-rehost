@@ -15,9 +15,11 @@ impl AssetCatalog {
                 font,
                 texture_source,
                 decoded_image,
+                image_owner,
             }) => {
+                self.retain_image_owner(texture_source, image_owner.as_ref());
                 if let Some(image) = decoded_image {
-                    self.retain_native_image(texture_source, image)?;
+                    self.retain_native_image(texture_source, image, image_owner.as_ref())?;
                 }
                 (font.clone(), texture_source.clone())
             }
@@ -51,6 +53,7 @@ impl AssetCatalog {
         let anchor_x = f64::from(anchor_x);
         let anchor_y = f64::from(anchor_y);
         let texture = self.resolve_gpu_texture(&texture_source)?;
+        frame.retain_texture(&texture);
         let (texture_source, texture_width, texture_height, surface_format) = (
             texture.source,
             texture.width,

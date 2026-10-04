@@ -1,6 +1,11 @@
 //! Resources::captureSprite (0x100458F54) and retained Image lifetime.
 
-use std::path::Path;
+use std::{
+    path::Path,
+    sync::atomic::{AtomicU64, Ordering},
+};
+
+static NEXT_CAPTURE_IMAGE_IDENTITY: AtomicU64 = AtomicU64::new(1);
 
 use stella_assets::ka3d::{SpriteRegion, SpriteSheet};
 
@@ -79,8 +84,7 @@ impl ResourceRuntime {
     }
 
     fn allocate_capture_image_source(&mut self) -> String {
-        let identity = self.next_capture_image_identity;
-        self.next_capture_image_identity = identity.wrapping_add(1).max(1);
+        let identity = NEXT_CAPTURE_IMAGE_IDENTITY.fetch_add(1, Ordering::Relaxed);
         format!("<capture:image:{identity}>")
     }
 }

@@ -25,10 +25,13 @@ impl AssetCatalog {
             (&dirt.background_texture_binding, &dirt.background_triangles),
             (&dirt.foreground_texture_binding, &dirt.foreground_triangles),
         ] {
+            if let Some(source) = binding.source() {
+                self.retain_image_owner(source, binding.image_owner());
+            }
             if triangles.iter().any(|triangles| !triangles.is_empty())
                 && let (Some(source), Some(image)) = (binding.source(), binding.image())
             {
-                self.retain_native_image(source, image)?;
+                self.retain_native_image(source, image, binding.image_owner())?;
             }
         }
         let resolve_source = |source: &str| {
@@ -49,6 +52,16 @@ impl AssetCatalog {
         };
         let background_texture = resolve_source(background_texture);
         let foreground_texture = resolve_source(foreground_texture);
+        for source in [&background_texture, &foreground_texture] {
+            if let Some(lease) = self
+                .file_images
+                .lifetimes
+                .get(source)
+                .and_then(Weak::upgrade)
+            {
+                frame.texture_leases.insert(source.clone(), lease);
+            }
+        }
         for triangles in &dirt.background_triangles {
             append_gpu_dirt_triangles(frame, triangles, transform, background_texture.clone());
         }
@@ -136,6 +149,7 @@ impl AssetCatalog {
         }
         let region = bound_region
             .map(|region| AtlasRegion {
+                uv_image_dimensions: region.uv_image_dimensions,
                 texture: region.texture_source.clone(),
                 sprite: region.sprite.clone(),
             })
@@ -152,8 +166,11 @@ impl AssetCatalog {
             return Ok(());
         };
         let base = self.resolve_gpu_texture(&region.texture)?;
-        let (base_texture, base_width, base_height, surface_format) =
-            (base.source, base.width, base.height, base.surface_format);
+        frame.retain_texture(&base);
+        let [base_width, base_height] = region
+            .uv_image_dimensions
+            .unwrap_or([base.width, base.height]);
+        let (base_texture, surface_format) = (base.source, base.surface_format);
         if matches!(
             masked_texture,
             Some((_, _, Some(MaskedTextureBinding::Missing)))
@@ -161,9 +178,12 @@ impl AssetCatalog {
             return Ok(());
         }
         if let Some((_, _, Some(binding))) = masked_texture
-            && let (Some(source), Some(image)) = (binding.source(), binding.image())
+            && let Some(source) = binding.source()
         {
-            self.retain_native_image(source, image)?;
+            self.retain_image_owner(source, binding.image_owner());
+            if let Some(image) = binding.image() {
+                self.retain_native_image(source, image, binding.image_owner())?;
+            }
         }
         let fill = masked_texture.and_then(|(name, scale, binding)| {
             let texture = match binding {
@@ -175,6 +195,7 @@ impl AssetCatalog {
         let (fill_texture, fill_width, fill_height, texture_scale, source_mode, blend) =
             if let Some((fill_texture, texture_scale)) = fill {
                 let fill = self.resolve_gpu_texture(&fill_texture)?;
+                frame.retain_texture(&fill);
                 (
                     fill.source,
                     fill.width,

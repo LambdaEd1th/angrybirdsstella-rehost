@@ -139,7 +139,9 @@ impl ResourceRuntime {
     }
 
     pub(crate) fn replace_sprite_sheet_value(&mut self, owner: &str, mut sheet: SpriteSheet) {
+        self.sprite_sheet_image_cells.remove(owner);
         self.sprite_sheet_decoded_images.remove(owner);
+        self.sprite_sheet_image_owners.remove(owner);
         self.sprite_sheet_image_dimensions.remove(owner);
         let existing = sheet
             .sprites
@@ -205,7 +207,9 @@ impl ResourceRuntime {
     }
 
     pub(crate) fn remove_sprite_sheet_value(&mut self, owner: &str) {
+        self.sprite_sheet_image_cells.remove(owner);
         self.sprite_sheet_decoded_images.remove(owner);
+        self.sprite_sheet_image_owners.remove(owner);
         self.sprite_sheet_image_dimensions.remove(owner);
         self.sprite_sheet_identities.remove(owner);
         self.sprite_sheet_texture_sources.remove(owner);
@@ -226,7 +230,11 @@ impl ResourceRuntime {
     /// `sub_1004578BC` + `sub_10046AF40` path selected by
     /// `releaseSpriteSheet(path, true)`.
     pub(crate) fn deactivate_sprite_sheet_value(&mut self, owner: &str) {
+        if let Some(image) = self.sprite_sheet_image_cells.get(owner) {
+            image.replace(None);
+        }
         self.sprite_sheet_decoded_images.remove(owner);
+        self.sprite_sheet_image_owners.remove(owner);
         self.sprite_sheet_image_dimensions.remove(owner);
         self.sprite_sheet_texture_sources.remove(owner);
         self.sprite_sheet_catalog_regions.remove(owner);

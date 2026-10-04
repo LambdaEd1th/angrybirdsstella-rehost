@@ -82,6 +82,9 @@ jobs:
       - name: Run portable crate tests
         run: cargo test --locked -p stella-assets -p stella-core
 
+      - name: Run browser Rust regressions
+        run: cargo test --locked -p stella-web
+
       - name: Run native body binding regressions
         run: "cargo test --locked -p stella-script --lib tests::body_bindings::"
 

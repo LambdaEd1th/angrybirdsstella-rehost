@@ -49,7 +49,7 @@ pub(super) fn install(
                 (x2, y2),
                 width,
             ) {
-                bridge.push_render_command(command);
+                bridge.push_render_command(command)?;
             }
             Ok(())
         })?,
@@ -84,7 +84,7 @@ pub(super) fn install(
                 (x2, y2),
                 width,
             ) {
-                bridge.push_render_command(command);
+                bridge.push_render_command(command)?;
             }
             Ok(())
         })?,

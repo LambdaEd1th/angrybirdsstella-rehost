@@ -11,6 +11,7 @@ fn near_degenerate_atlas_matrix_is_submitted_without_a_host_epsilon_cull() {
         regions: HashMap::from([(
             "TINY".to_owned(),
             AtlasRegion {
+                uv_image_dimensions: None,
                 texture: texture_name.clone(),
                 sprite: SpriteRegion {
                     name: "TINY".to_owned(),
@@ -72,6 +73,7 @@ fn native_explicit_quad_reaches_gpu_in_recovered_triangle_and_uv_order() {
         regions: HashMap::from([(
             "MASK".to_owned(),
             AtlasRegion {
+                uv_image_dimensions: None,
                 texture: active_texture.clone(),
                 sprite: SpriteRegion {
                     name: "MASK".to_owned(),
@@ -105,7 +107,10 @@ fn native_explicit_quad_reaches_gpu_in_recovered_triangle_and_uv_order() {
         texture: None,
         bound_region: Some(
             SpriteCatalogRegion {
+                sheet_image: None,
+                uv_image_dimensions: None,
                 decoded_image: None,
+                image_owner: None,
                 native_sheet_id: 1,
                 texture_source: texture_name.clone(),
                 sprite: SpriteRegion {
@@ -158,6 +163,7 @@ fn native_atlas_quad_keeps_positions_and_signed_rotated_region_uvs() {
         regions: HashMap::from([(
             "RUBBER".to_owned(),
             AtlasRegion {
+                uv_image_dimensions: None,
                 texture: active_texture.clone(),
                 sprite: SpriteRegion {
                     name: "RUBBER".to_owned(),
@@ -190,7 +196,10 @@ fn native_atlas_quad_keeps_positions_and_signed_rotated_region_uvs() {
         texture: None,
         bound_region: Some(
             SpriteCatalogRegion {
+                sheet_image: None,
+                uv_image_dimensions: None,
                 decoded_image: None,
+                image_owner: None,
                 native_sheet_id: 1,
                 texture_source: texture_name.clone(),
                 sprite: SpriteRegion {
@@ -274,7 +283,10 @@ fn raw_atlas_quad_preserves_custom_model_space_and_native_uvs() {
         sprite: "RAW".into(),
         texture: None,
         bound_region: Some(Arc::new(SpriteCatalogRegion {
+            sheet_image: None,
+            uv_image_dimensions: None,
             decoded_image: None,
+            image_owner: None,
             native_sheet_id: 1,
             texture_source: texture_name,
             sprite,
@@ -346,6 +358,7 @@ fn render_state_pivot_is_not_applied_twice_after_native_sprite_anchoring() {
         regions: HashMap::from([(
             "PIVOT_SPRITE".to_owned(),
             AtlasRegion {
+                uv_image_dimensions: None,
                 texture: texture_name.clone(),
                 sprite: SpriteRegion {
                     name: "PIVOT_SPRITE".to_owned(),
@@ -410,6 +423,7 @@ fn explicit_sprite_pivot_override_replaces_an_atlas_pivot() {
         regions: HashMap::from([(
             "PANEL".to_owned(),
             AtlasRegion {
+                uv_image_dimensions: None,
                 texture: texture_name.clone(),
                 sprite: SpriteRegion {
                     name: "PANEL".to_owned(),
@@ -478,7 +492,10 @@ fn retained_animation_region_draws_after_active_resource_catalog_release() {
         texture: None,
         bound_region: Some(
             SpriteCatalogRegion {
+                sheet_image: None,
+                uv_image_dimensions: None,
                 decoded_image: None,
+                image_owner: None,
                 native_sheet_id: 1,
                 texture_source: texture_name.clone(),
                 sprite: SpriteRegion {
@@ -542,7 +559,10 @@ fn selected_sprite_uses_its_submission_time_mask_texture_pointer() {
         })),
         bound_region: Some(
             SpriteCatalogRegion {
+                sheet_image: None,
+                uv_image_dimensions: None,
                 decoded_image: None,
+                image_owner: None,
                 native_sheet_id: 1,
                 texture_source: base_texture.clone(),
                 sprite: SpriteRegion {
@@ -619,7 +639,10 @@ fn retained_scene_composite_draws_its_frozen_child_after_catalog_release() {
                     visible: true,
                 },
                 region: Arc::new(SpriteCatalogRegion {
+                    sheet_image: None,
+                    uv_image_dimensions: None,
                     decoded_image: None,
+                    image_owner: None,
                     native_sheet_id: 1,
                     texture_source: texture_name.clone(),
                     sprite: SpriteRegion {
@@ -660,6 +683,7 @@ fn rotated_native_pivot_and_non_uniform_scale_reach_gpu_vertices_exactly() {
         regions: HashMap::from([(
             "ROTATED_PIVOT_SPRITE".to_owned(),
             AtlasRegion {
+                uv_image_dimensions: None,
                 texture: texture_name.clone(),
                 sprite: SpriteRegion {
                     name: "ROTATED_PIVOT_SPRITE".to_owned(),
@@ -788,7 +812,10 @@ fn assert_downloaded_avatar_generations(indexed_tga: Option<bool>) {
             sprite: "AVATAR".into(),
             texture: None,
             bound_region: Some(Arc::new(SpriteCatalogRegion {
+                sheet_image: None,
+                uv_image_dimensions: None,
                 decoded_image: Some(Arc::new(decoded)),
+                image_owner: None,
                 native_sheet_id: index as u64 + 1,
                 texture_source: source,
                 sprite: SpriteRegion {

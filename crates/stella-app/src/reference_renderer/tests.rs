@@ -31,6 +31,7 @@ fn reference_game_preserves_capture_commands_and_cross_frame_painter_order() {
             texture_source: "<capture:NEW_CAPTURE>".to_owned(),
             temporary: false,
             decoded_image: None,
+            image_owner: None,
         }],
         [23, 47, 89],
         &mut pixels,
@@ -45,6 +46,7 @@ fn reference_game_preserves_capture_commands_and_cross_frame_painter_order() {
     assets.regions.insert(
         "PATCH".to_owned(),
         AtlasRegion {
+            uv_image_dimensions: None,
             texture: "<capture:NEW_CAPTURE>".to_owned(),
             sprite: SpriteRegion {
                 name: "PATCH".to_owned(),

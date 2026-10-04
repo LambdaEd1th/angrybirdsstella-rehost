@@ -292,7 +292,7 @@ fn ordinary_sheet_reload_does_not_reuse_a_captured_image_from_the_same_file() {
 }
 
 #[test]
-fn duplicate_texture_records_and_other_sheets_have_independent_image_bindings() {
+fn duplicate_texture_records_use_the_current_sheet_image_and_other_sheets_remain_independent() {
     use stella_assets::{
         image_source::image_source_path,
         ka3d::{SpriteRegion, SpriteSheet},
@@ -335,15 +335,22 @@ fn duplicate_texture_records_and_other_sheets_have_independent_image_bindings() 
     resources.cache_sprite_sheet_host_bindings("A", &data_root);
     let first = resources.sprite_sheet_texture_sources["A"].clone();
     let before = resources.sprite_catalog_snapshot(&data_root);
-    assert_eq!(before.regions["FIRST"].texture_source, first[0]);
+    assert_eq!(before.regions["FIRST"].texture_source, first[1]);
     assert_eq!(before.regions["SECOND"].texture_source, first[1]);
+    assert!(!before.image_owners.contains_key(&first[0]));
+    assert!(before.image_owners.contains_key(&first[1]));
+    assert!(resources.sprite_sheet_decoded_images["A"][0].is_none());
+    assert!(Arc::ptr_eq(
+        before.regions["FIRST"].image_owner.as_ref().unwrap(),
+        before.regions["SECOND"].image_owner.as_ref().unwrap(),
+    ));
     let dimensions = resources.sprite_sheet_image_dimensions["A"];
     let (captured, temporary) = resources
         .capture_sprite("A", dimensions, &data_root)
         .unwrap();
     assert_eq!(
         captured, first[1],
-        "capture changes the last constructed Image only"
+        "capture changes the sheet's current Image for both AtlasSprites"
     );
     assert!(!temporary);
     assert_eq!(

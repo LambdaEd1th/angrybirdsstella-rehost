@@ -181,6 +181,8 @@ fn social_avatar_online_coalesces_accounts_decodes_second_call_and_retains_pixel
         .lock()
         .unwrap()
         .active_atlas_catalog_region("AVATAR_own", runtime.data_root())
+        .unwrap()
+        .snapshot_image()
         .unwrap();
     assert_eq!(
         (
@@ -391,6 +393,8 @@ fn social_avatar_downloaded_bmp_and_tga_publish_real_pixels_and_native_layouts()
             .lock()
             .unwrap()
             .active_atlas_catalog_region("AVATAR_own", runtime.data_root())
+            .unwrap()
+            .snapshot_image()
             .unwrap();
         let image = retained.decoded_image.as_ref().unwrap();
         assert_eq!((image.width, image.height), expected_size);

@@ -27,7 +27,7 @@ pub(super) fn install(
                         draw,
                         bridge.state,
                     ) {
-                        bridge.push_render_command(command);
+                        bridge.push_render_command(command)?;
                     }
                 }
                 Ok(())
@@ -47,10 +47,18 @@ pub(crate) fn native_resource_sprite_command(
     draw: ParsedSpriteDraw,
     mut state: RenderState,
 ) -> Option<RenderCommand> {
-    let geometry = resources.active_geometry(&draw.sprite)?;
-    // Purple's immediate call already owns the AtlasSprite's image pointer
-    // here. Keep that exact resolved region on the deferred wgpu command even
-    // if Lua releases or shadows the sheet later in the same frame.
+    // Both concrete Sprite types expose their stored size/pivot. A Compo
+    // Entry's raw AtlasSprite is independent of the active name tree; deriving
+    // bounds through that tree could silently suppress a cleared-sheet draw.
+    let metrics = resources.active_native_sprite_metrics(&draw.sprite)?;
+    let geometry = SpriteGeometry {
+        min_x: -f64::from(metrics.pivot_x),
+        min_y: -f64::from(metrics.pivot_y),
+        max_x: f64::from(metrics.width) - f64::from(metrics.pivot_x),
+        max_y: f64::from(metrics.height) - f64::from(metrics.pivot_y),
+    };
+    // Borrow the concrete sprites here. RenderBridge resolves their current
+    // sheet Image when submitting the immediate draw to the deferred host.
     let bound_region = resources.active_atlas_catalog_region(&draw.sprite, data_root);
     let bound_composite = resources
         .active_bound_composite(&draw.sprite)

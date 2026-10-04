@@ -3,7 +3,7 @@
 use crate::*;
 
 impl RenderBridge {
-    pub(crate) fn draw_particles(&mut self, mode: i32) {
+    pub(crate) fn draw_particles(&mut self, mode: i32) -> LuaResult<()> {
         let world_scale = self.world_scale as f32;
         let menu_particles_scale = self.particle_system.scale;
         let top_left_x = self.top_left_x as f32;
@@ -68,10 +68,11 @@ impl RenderBridge {
                 }
             })
             .collect::<Vec<_>>();
-        self.extend_render_commands(commands);
+        self.extend_render_commands(commands)?;
         // Unlike ThemeParticleSystem, ordinary Particles does not restore a
         // saved state. `sub_100091D90` copies a freshly constructed default
         // 0x9C record both before its loop and again before returning.
         self.state = RenderState::default();
+        Ok(())
     }
 }

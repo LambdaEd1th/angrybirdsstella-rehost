@@ -85,7 +85,7 @@ pub(super) fn install(
                 y: (y * 20.0_f32) / scale_y,
                 state: state.into(),
                 world_space: false,
-            });
+            })?;
             Ok(())
         })?,
     )

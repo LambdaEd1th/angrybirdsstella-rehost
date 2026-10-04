@@ -215,7 +215,10 @@ fn bind_test_animation_sprites(runtime: &mut AnimationRuntime, tag: &str, sprite
                 (
                     (*name).to_owned(),
                     SpriteCatalogRegion {
+                        sheet_image: None,
+                        uv_image_dimensions: None,
                         decoded_image: None,
+                        image_owner: None,
                         native_sheet_id: 1,
                         texture_source: "test-animation.pvr".to_owned(),
                         sprite: stella_assets::ka3d::SpriteRegion {

@@ -45,6 +45,7 @@ pub struct CaptureRenderCommand {
     /// image without replacing its atlas geometry or global name priority.
     pub texture_source: String,
     pub decoded_image: Option<std::sync::Arc<stella_assets::native_image::DecodedNativeImage>>,
+    pub image_owner: Option<std::sync::Arc<super::NativeImageOwner>>,
     /// Existing sheet with a released/null Image: native capture creates and
     /// immediately drops a temporary image, without restoring the sheet.
     pub temporary: bool,

@@ -17,9 +17,11 @@ impl AssetCatalog {
                 font,
                 texture_source,
                 decoded_image,
+                image_owner,
             }) => {
+                self.retain_image_owner(texture_source, image_owner.as_ref());
                 if let Some(image) = decoded_image {
-                    self.retain_native_image(texture_source, image)?;
+                    self.retain_native_image(texture_source, image, image_owner.as_ref())?;
                 }
                 (font.clone(), texture_source.clone())
             }

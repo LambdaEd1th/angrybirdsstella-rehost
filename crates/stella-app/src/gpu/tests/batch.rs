@@ -226,6 +226,7 @@ fn mixed_command_classes_keep_native_immediate_submission_order() {
         regions: HashMap::from([(
             "ORDER_SPRITE".to_owned(),
             AtlasRegion {
+                uv_image_dimensions: None,
                 texture: texture_name.clone(),
                 sprite: SpriteRegion {
                     name: "ORDER_SPRITE".to_owned(),
@@ -313,6 +314,7 @@ fn capture_sprite_copies_the_immediate_framebuffer_for_later_draws() {
     assets.regions.insert(
         "CAPTURED_FRAME".to_owned(),
         AtlasRegion {
+            uv_image_dimensions: None,
             texture: capture_source.to_owned(),
             sprite: SpriteRegion {
                 name: "CAPTURED_FRAME".to_owned(),
@@ -389,6 +391,7 @@ fn capture_sprite_copies_the_immediate_framebuffer_for_later_draws() {
                 texture_source: capture_source.to_owned(),
                 temporary: false,
                 decoded_image: None,
+                image_owner: None,
             }],
         )
         .unwrap();

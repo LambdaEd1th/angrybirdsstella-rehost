@@ -35,7 +35,14 @@ impl AssetCatalog {
                     else {
                         continue;
                     };
-                    regions.insert(sprite.name.clone(), AtlasRegion { texture, sprite });
+                    regions.insert(
+                        sprite.name.clone(),
+                        AtlasRegion {
+                            uv_image_dimensions: None,
+                            texture,
+                            sprite,
+                        },
+                    );
                 }
             } else if Ka3dEnvelope::find(&bytes, b"COMP").is_ok() {
                 let set = CompositeSpriteSet::parse(&bytes)
@@ -81,6 +88,9 @@ impl AssetCatalog {
         &mut self,
         snapshot: SpriteCatalogSnapshot,
     ) -> Result<()> {
+        for (source, owner) in &snapshot.image_owners {
+            self.retain_image_owner(source, Some(owner));
+        }
         for region in snapshot.regions.values() {
             self.retain_decoded_image(region)?;
         }
@@ -91,6 +101,7 @@ impl AssetCatalog {
                 (
                     name,
                     AtlasRegion {
+                        uv_image_dimensions: region.uv_image_dimensions,
                         texture: region.texture_source,
                         sprite: region.sprite,
                     },
@@ -158,10 +169,14 @@ mod tests {
         catalog
             .apply_sprite_catalog_snapshot(SpriteCatalogSnapshot {
                 revision: 1,
+                image_owners: BTreeMap::new(),
                 regions: BTreeMap::from([(
                     name,
                     SpriteCatalogRegion {
+                        sheet_image: None,
+                        uv_image_dimensions: None,
                         decoded_image: None,
+                        image_owner: None,
                         native_sheet_id: 1,
                         texture_source: texture.clone(),
                         sprite: region.sprite,

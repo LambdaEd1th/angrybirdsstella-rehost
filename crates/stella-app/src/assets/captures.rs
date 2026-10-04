@@ -5,18 +5,20 @@
 use super::*;
 use stella_assets::surface_format::SurfaceFormat;
 
+static NEXT_CAPTURE_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedTexture {
     pub(crate) source: String,
     pub(crate) width: u32,
     pub(crate) height: u32,
     pub(crate) surface_format: SurfaceFormat,
+    pub(crate) lease: Option<Arc<()>>,
 }
 
 #[derive(Default)]
 pub(crate) struct CapturedTextureCatalog {
     pub(crate) bindings: HashMap<String, ResolvedTexture>,
-    next_generation: u64,
 }
 
 impl AssetCatalog {
@@ -43,6 +45,7 @@ impl AssetCatalog {
             width: texture.width(),
             height: texture.height(),
             surface_format: texture.upload_surface_format(),
+            lease: None,
         })
     }
 
@@ -61,6 +64,7 @@ impl AssetCatalog {
                 height: resolution.height,
                 // 0x10059A1D8 selects SurfaceFormat 2 for a new image.
                 surface_format: SurfaceFormat::B8G8R8,
+                lease: None,
             },
             None => self.resolve_gpu_texture(logical_source)?,
         };
@@ -74,21 +78,28 @@ impl AssetCatalog {
                 resolution.height
             ));
         }
-        self.captures.next_generation += 1;
+        let generation = NEXT_CAPTURE_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let lease = (!temporary).then(|| Arc::new(()));
         let texture = ResolvedTexture {
-            source: format!(
-                "<capture-generation:{}:{}>",
-                self.captures.next_generation, logical_source
-            ),
+            source: format!("<capture-generation:{}:{}>", generation, logical_source),
+            lease,
             // glCopyTexImage2D(GL_RGB) changes pixels, not Image's stored
             // dimensions or surface-format field. Existing RGBA masks still
             // choose their original shader family, now sampling alpha one.
             ..original
         };
         if !temporary {
+            if let Some(lease) = &texture.lease {
+                self.file_images
+                    .lifetimes
+                    .insert(texture.source.clone(), Arc::downgrade(lease));
+            }
             self.captures
                 .bindings
                 .insert(logical_source.to_owned(), texture.clone());
+            // The Image now owns its captured pixels. Earlier frames retain
+            // the original immutable upload through their physical lease.
+            self.file_images.bindings.remove(logical_source);
         }
         Ok((texture, previous.map(|texture| texture.source)))
     }

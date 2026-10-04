@@ -57,7 +57,7 @@ fn flash_animation_draws_same_named_animation_with_native_scene_transform() {
     {
         let mut bridge = runtime.render.lock().unwrap();
         bridge.commands.clear();
-        bridge.draw_scene_range();
+        bridge.draw_scene_range().unwrap();
         assert_eq!(bridge.commands.len(), 1);
         assert_eq!(bridge.commands[0].sprite, "RED_CROSS");
     }
@@ -1458,7 +1458,10 @@ fn native_scene_composite_callback_uses_integer_bounds_pivot_and_ignores_object_
                     visible: true,
                 },
                 region: Arc::new(SpriteCatalogRegion {
+                    sheet_image: None,
+                    uv_image_dimensions: None,
                     decoded_image: None,
+                    image_owner: None,
                     native_sheet_id: 1,
                     texture_source: "part.pvr".to_owned(),
                     sprite: stella_assets::ka3d::SpriteRegion {

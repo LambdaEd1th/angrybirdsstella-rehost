@@ -1,7 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     ops::Range,
-    sync::{Arc, mpsc},
+    sync::{Arc, Weak, mpsc},
 };
 
 use anyhow::{Result, anyhow};
@@ -84,6 +84,7 @@ pub(crate) struct PreparedFrame {
     required_textures: HashSet<String>,
     transient_textures: HashMap<String, Arc<TextureAsset>>,
     retired_textures: HashSet<String>,
+    texture_leases: HashMap<String, Arc<()>>,
     current_clip: Option<[i32; 4]>,
     current_projection: Option<TextProjection3D>,
     current_raw_vertices: bool,
@@ -137,6 +138,7 @@ pub(crate) struct GpuRenderer {
     textures: HashMap<String, GpuTexture>,
     texture_bind_groups: HashMap<(String, String), wgpu::BindGroup>,
     retired_textures: HashSet<String>,
+    texture_lifetimes: HashMap<String, Weak<()>>,
     blit_pipeline: Option<wgpu::RenderPipeline>,
     blit_bind_group: Option<wgpu::BindGroup>,
     blit_layout: Option<wgpu::BindGroupLayout>,

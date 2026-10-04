@@ -10,7 +10,7 @@ mod text;
 mod texture;
 mod transform;
 
-pub(super) use captures::CapturedTextureCatalog;
+pub(super) use captures::{CapturedTextureCatalog, ResolvedTexture};
 pub(super) use system_font::{
     SystemLabelPool, native_system_label_hash, native_system_label_horizontal_anchor,
     native_system_label_offset, native_system_label_vertical_anchor, rasterize_system_label,
@@ -23,6 +23,7 @@ pub(super) use transform::{
 
 #[derive(Debug, Clone)]
 pub(super) struct AtlasRegion {
+    pub(super) uv_image_dimensions: Option<[u32; 2]>,
     pub(super) texture: String,
     pub(super) sprite: SpriteRegion,
 }

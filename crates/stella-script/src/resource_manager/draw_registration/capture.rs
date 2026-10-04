@@ -24,7 +24,14 @@ pub(crate) fn install_capture(
                 .and_then(|images| images.last())
                 .cloned()
                 .flatten();
-            bridge.push_capture_command(name, texture_source, temporary, decoded_image);
+            let image_owner = resources.sprite_sheet_image_owners.get(&name).cloned();
+            bridge.push_capture_command(
+                name,
+                texture_source,
+                temporary,
+                decoded_image,
+                image_owner,
+            );
             Ok(())
         })?,
     )

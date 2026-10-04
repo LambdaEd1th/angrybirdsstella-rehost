@@ -46,7 +46,7 @@ pub(super) fn install(
                         angle,
                     },
                     state,
-                ));
+                ))?;
                 return Ok(());
             }
             let Some(parts) = parts else {
@@ -75,7 +75,7 @@ pub(super) fn install(
                         angle: angle - f64::from(part.angle),
                     },
                     state,
-                ));
+                ))?;
             }
             Ok(())
         })?,

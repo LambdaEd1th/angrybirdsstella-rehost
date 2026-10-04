@@ -16,6 +16,7 @@ fn capture_assets() -> AssetCatalog {
         assets.regions.insert(
             name.to_owned(),
             AtlasRegion {
+                uv_image_dimensions: None,
                 texture: SHEET.to_owned(),
                 sprite: SpriteRegion {
                     name: name.to_owned(),
@@ -77,6 +78,7 @@ fn capture(order: u64) -> CaptureRenderCommand {
         texture_source: SHEET.to_owned(),
         temporary: false,
         decoded_image: None,
+        image_owner: None,
     }
 }
 
@@ -241,6 +243,7 @@ fn reference_capture_temporary_image_does_not_restore_a_released_sheet() {
                 texture_source: "<capture:released-image>".to_owned(),
                 temporary: true,
                 decoded_image: None,
+                image_owner: None,
             }],
         )
         .unwrap();

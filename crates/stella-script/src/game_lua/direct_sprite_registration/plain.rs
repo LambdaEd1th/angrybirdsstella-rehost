@@ -45,7 +45,7 @@ pub(super) fn install(
                     angle,
                 },
                 state,
-            ));
+            ))?;
             Ok(())
         })?,
     )

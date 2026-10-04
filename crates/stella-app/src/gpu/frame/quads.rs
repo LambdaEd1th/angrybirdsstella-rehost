@@ -20,6 +20,7 @@ impl AssetCatalog {
         }
         let region = bound_region
             .map(|region| AtlasRegion {
+                uv_image_dimensions: region.uv_image_dimensions,
                 texture: region.texture_source.clone(),
                 sprite: region.sprite.clone(),
             })
@@ -36,10 +37,15 @@ impl AssetCatalog {
             return Ok(());
         };
         let texture = self.resolve_gpu_texture(&region.texture)?;
+        frame.retain_texture(&texture);
         let (base_texture, texture_width, texture_height, surface_format) = (
             texture.source,
-            texture.width as f32,
-            texture.height as f32,
+            region
+                .uv_image_dimensions
+                .map_or(texture.width, |size| size[0]) as f32,
+            region
+                .uv_image_dimensions
+                .map_or(texture.height, |size| size[1]) as f32,
             texture.surface_format,
         );
         let uv = region.sprite.native_uvs(texture_width, texture_height);
@@ -82,6 +88,7 @@ impl AssetCatalog {
         }
         let region = bound_region
             .map(|region| AtlasRegion {
+                uv_image_dimensions: region.uv_image_dimensions,
                 texture: region.texture_source.clone(),
                 sprite: region.sprite.clone(),
             })
@@ -98,6 +105,7 @@ impl AssetCatalog {
             return Ok(());
         };
         let texture = self.resolve_gpu_texture(&region.texture)?;
+        frame.retain_texture(&texture);
         let (base_texture, surface_format) = (texture.source, texture.surface_format);
         let positions = quad.positions.map(|[x, y]| [x as f32, y as f32]);
         let uv = quad.uv.map(|[u, v]| [u as f32, v as f32]);

@@ -316,13 +316,18 @@ fn mixed_draw_command_classes_share_one_native_submission_sequence() {
     assert_eq!(rectangles.len(), 2);
     assert_eq!(rectangles[0].order, 0);
     assert_eq!(sprites[0].order, 1);
+    let snapshot = runtime.sprite_catalog_snapshot_since(0).unwrap();
+    let image = &snapshot.regions["ORDER_CAPTURE"];
+    assert!(image.texture_source.starts_with("<capture:image:"));
+    assert!(image.image_owner.is_some());
     assert_eq!(
         captures,
         [CaptureRenderCommand {
             order: 2,
             name: "ORDER_CAPTURE".to_owned(),
-            texture_source: "<capture:image:1>".to_owned(),
+            texture_source: image.texture_source.clone(),
             decoded_image: None,
+            image_owner: image.image_owner.clone(),
             temporary: false,
         }]
     );

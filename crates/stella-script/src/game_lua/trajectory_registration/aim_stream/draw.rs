@@ -73,7 +73,7 @@ pub(in crate::game_lua::trajectory_registration) fn install_draw(
                     })
                     .collect::<Vec<_>>()
             };
-            bridge.extend_render_commands(commands);
+            bridge.extend_render_commands(commands)?;
             // The enabled flag is copied to the AimStream only after this
             // frame's draw; a false-to-true edge repopulates the next frame.
             let enabled = bridge.aiming_aid_enabled;

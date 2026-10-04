@@ -92,18 +92,18 @@ pub(crate) fn ensure_dirt_component(
     // render lock so the deferred host retains the same lifetime boundary.
     let (background_binding, foreground_binding) = {
         let resources = resources.lock().expect("resource runtime lock poisoned");
-        let resolve = |name: &str| {
-            resources
-                .active_atlas_catalog_region(name, data_root)
-                .map(|region| {
-                    MaskedTextureBinding::with_image(
-                        region.texture_source.clone(),
-                        region.decoded_image.clone(),
-                    )
-                })
-                .unwrap_or(MaskedTextureBinding::Missing)
+        let resolve = |name: &str| -> LuaResult<MaskedTextureBinding> {
+            let Some(region) = resources.active_atlas_catalog_region(name, data_root) else {
+                return Ok(MaskedTextureBinding::Missing);
+            };
+            let region = region.snapshot_image()?;
+            Ok(MaskedTextureBinding::with_image(
+                region.texture_source.clone(),
+                region.decoded_image.clone(),
+                region.image_owner.clone(),
+            ))
         };
-        (resolve(&background), resolve(&foreground))
+        (resolve(&background)?, resolve(&foreground)?)
     };
     let mut bridge = render.lock().expect("render bridge lock poisoned");
     let Some(object) = bridge.game_lua_object_mut(object_name) else {

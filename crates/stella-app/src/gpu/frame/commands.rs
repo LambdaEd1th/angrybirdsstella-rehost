@@ -48,6 +48,7 @@ impl AssetCatalog {
         capture_commands: &[CaptureRenderCommand],
         screenshot_shares: &[ScreenshotShareRequest],
     ) -> Result<PreparedFrame> {
+        let retired_textures = self.collect_released_images();
         if resolution.width > u32::from(u16::MAX) || resolution.height > u32::from(u16::MAX) {
             return Err(anyhow!(
                 "{}x{} exceeds Purple's 16-bit sprite geometry",
@@ -66,6 +67,7 @@ impl AssetCatalog {
 
         let mut frame = PreparedFrame {
             resolution,
+            retired_textures,
             ..PreparedFrame::default()
         };
         // RenderBridge allocates one monotonically increasing native draw
@@ -177,14 +179,20 @@ impl AssetCatalog {
                 FrameCommand::Capture => {
                     let command = &capture_commands[capture_index];
                     capture_index += 1;
+                    self.retain_image_owner(&command.texture_source, command.image_owner.as_ref());
                     if let Some(image) = &command.decoded_image {
-                        self.retain_native_image(&command.texture_source, image)?;
+                        self.retain_native_image(
+                            &command.texture_source,
+                            image,
+                            command.image_owner.as_ref(),
+                        )?;
                     }
                     let (texture, retired) = self.prepare_capture_texture(
                         &command.texture_source,
                         resolution,
                         command.temporary,
                     )?;
+                    frame.retain_texture(&texture);
                     if let Some(retired) = retired {
                         frame.retired_textures.insert(retired);
                     }
@@ -204,6 +212,14 @@ impl AssetCatalog {
                 }
             }
         }
+        // Pin only sampled inputs. Outputs produced by this frame can be
+        // reconstructed by its capture operations when the frame is replayed.
+        // Their live Image binding owns the latest pixels between frames.
+        frame.texture_leases.retain(|source, _| {
+            frame.required_textures.contains(source) && !frame.operations.iter().any(|operation| {
+                matches!(operation, PreparedOperation::Capture(target) if target == source)
+            })
+        });
         if std::env::var_os("STELLA_TRACE_GPU_BATCHES").is_some() {
             eprintln!(
                 "prepared gpu frame: {} uniforms, {} vertices, {} draws, {} operations, {} textures",
