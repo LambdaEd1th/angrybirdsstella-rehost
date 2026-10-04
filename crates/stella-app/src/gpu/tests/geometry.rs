@@ -151,8 +151,10 @@ fn dirt_mesh_uses_constructor_time_texture_pointers_after_catalog_shadowing() {
         foreground_texture: "DIRT_FG".to_owned(),
         background_texture_binding: MaskedTextureBinding::Source("first-bg.pvr".to_owned()),
         foreground_texture_binding: MaskedTextureBinding::Source("first-fg.pvr".to_owned()),
-        background_triangles: vec![triangle.clone()],
-        foreground_triangles: vec![triangle],
+        background_texture_borrow: None,
+        foreground_texture_borrow: None,
+        background_triangles: Arc::new(vec![triangle.clone()]),
+        foreground_triangles: Arc::new(vec![triangle]),
     };
     let command = RenderCommand {
         projection_3d: None,

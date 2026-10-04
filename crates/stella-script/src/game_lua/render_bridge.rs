@@ -18,7 +18,16 @@ impl RenderBridge {
         // AtlasSprite resolves SpriteSheet+0x20 at this immediate boundary.
         // Scene/animation/particle owners borrow the sheet; only the submitted
         // command keeps the Image alive while the GPU host consumes it later.
-        if command.dirt.is_none() {
+        if let Some(dirt) = &command.dirt {
+            command.dirt = Some(dirt.snapshot_textures()?);
+        } else {
+            // TexturizedSprite culls geometry before resolving either Image.
+            // A rejected draw must not pin pixels or dereference a dead borrow.
+            if command.texture.is_some()
+                && !command.masked_quad_visible([self.screen_width, self.screen_height])
+            {
+                return Ok(());
+            }
             command.bound_region = command
                 .bound_region
                 .as_ref()
@@ -44,6 +53,11 @@ impl RenderBridge {
                     .collect::<LuaResult<Vec<_>>>()?;
                 command.bound_composite = Some(Arc::new(frozen));
             }
+            command.texture = command
+                .texture
+                .as_ref()
+                .map(|texture| texture.snapshot())
+                .transpose()?;
         }
         command.projection_3d = self.projection_3d().map(Arc::new);
         if command.state.clip_rect.is_none() {

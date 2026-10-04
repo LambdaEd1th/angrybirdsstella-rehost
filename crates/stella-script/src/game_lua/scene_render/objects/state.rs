@@ -110,9 +110,9 @@ impl RenderBridge {
         // screen origin, and (flip * worldScale) followed by FMUL with the
         // object scale for the linear basis. Preserve those float32 stage
         // boundaries instead of collapsing the expression in host f64.
-        let translate_x = ((object.x as f32 * 20.0_f32) - self.top_left_x as f32) * world_scale;
-        let translate_y = ((object.y as f32 * 20.0_f32) - self.top_left_y as f32) * world_scale;
-        let textured = object.texture.is_some();
+        let mut translate_x = ((object.x as f32 * 20.0_f32) - self.top_left_x as f32) * world_scale;
+        let mut translate_y = ((object.y as f32 * 20.0_f32) - self.top_left_y as f32) * world_scale;
+        let textured = object.masked_texture().is_some();
         // The alpha-masked branch at 0x10004C14C does not enter
         // sub_10006D5B4. It uses the raw +0xBC/+0xC0 scales and the caller's
         // already-composed +0xAC/+0xB0 angle instead. Ordinary sprites keep
@@ -144,6 +144,18 @@ impl RenderBridge {
                 object.pivot_offset_y as f32,
             )
         });
+        let matrix = masked_texture_matrix.map(|[tx, ty, m00, m01, m10, m11]| {
+            // sub_10008D428 rotates first and applies each context axis scale
+            // afterward. Its screen origin also adds the live pivot offset;
+            // the fill phase above deliberately omits that screen correction.
+            translate_x = ((tx as f32 + object.scale_x as f32 * object.pivot_offset_x as f32)
+                - self.top_left_x as f32)
+                * world_scale;
+            translate_y = ((ty as f32 + object.scale_y as f32 * object.pivot_offset_y as f32)
+                - self.top_left_y as f32)
+                * world_scale;
+            [m00, m01, m10, m11].map(|v| f64::from(v as f32 * world_scale))
+        });
         RenderState {
             custom_model: self.state.custom_model,
             translate_x: f64::from(translate_x),
@@ -155,7 +167,7 @@ impl RenderBridge {
             // +0xB0 (`setSpriteRotation`) belongs to the surrounding live
             // callback context and is not added to this explicit matrix.
             angle: f64::from(angle),
-            matrix: None,
+            matrix,
             masked_texture_matrix,
             sprite_pivot: None,
             pivot_x: 0.0,
@@ -209,7 +221,7 @@ impl RenderBridge {
 
         // The masked-texture branch at 0x10004C14C bypasses sub_10006D5B4
         // and divides only the camera translation by raw +0xBC/+0xC0.
-        if object.texture.is_some() {
+        if object.masked_texture().is_some() {
             let scale_x = object.scale_x as f32;
             let scale_y = object.scale_y as f32;
             return RenderState {

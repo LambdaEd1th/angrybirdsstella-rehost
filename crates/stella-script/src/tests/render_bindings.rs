@@ -1503,6 +1503,7 @@ fn selected_object_submission_retains_both_native_image_pointers() {
             assert!(source.ends_with("first/first.pvr"))
         }
         MaskedTextureBinding::Missing => panic!("mask image was resolved at submission"),
+        MaskedTextureBinding::Borrowed { .. } => panic!("submitted Image was not frozen"),
     }
     drop(bridge);
     fs::remove_dir_all(root).unwrap();

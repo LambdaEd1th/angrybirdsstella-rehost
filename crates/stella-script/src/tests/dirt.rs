@@ -204,7 +204,7 @@ fn native_block_extension_queues_collision_holes_and_exposes_methods() {
 }
 
 #[test]
-fn native_dirt_constructor_retains_both_resolved_image_pointers() {
+fn native_dirt_constructor_borrows_both_resolved_texture_pointers() {
     let unique = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -216,13 +216,13 @@ fn native_dirt_constructor_retains_both_resolved_image_pointers() {
     }
     let entries = [("DIRT_BACKGROUND", 10, 20), ("DIRT_FOREGROUND", 30, 40)];
     fs::write(
-        data_root.join("first/DIRT.dat"),
+        data_root.join("first/FIRST.dat"),
         test_textured_sprite_sheet_with_names("first.pvr", &entries),
     )
     .unwrap();
     fs::write(data_root.join("first/first.pvr"), []).unwrap();
     fs::write(
-        data_root.join("second/DIRT.dat"),
+        data_root.join("second/SECOND.dat"),
         test_textured_sprite_sheet_with_names("second.pvr", &entries),
     )
     .unwrap();
@@ -232,7 +232,7 @@ fn native_dirt_constructor_retains_both_resolved_image_pointers() {
     runtime
         .execute_source(
             r#"
-                res.createSpriteSheet("first/DIRT.dat")
+                res.createSpriteSheet("first/FIRST.dat")
                 createBox("dirt", "DIRT", 0, 0, 10, 10, 0, 0.2, 0, true, false, 1)
                 blocks = {
                     DIRT_DEF = {
@@ -246,10 +246,10 @@ fn native_dirt_constructor_retains_both_resolved_image_pointers() {
                 }
                 objects.world.dirt.definition = "DIRT_DEF"
                 dirt_extension = createNativeBlockExtension("dirt", "dirt")
-                res.createSpriteSheet("second/DIRT.dat")
-                res.releaseSpriteSheet("second/DIRT.dat", false)
-                res.releaseSpriteSheet("first/DIRT.dat", false)
+                res.createSpriteSheet("second/SECOND.dat")
+                res.releaseSpriteSheet("second/SECOND.dat", false)
                 drawGameNative()
+                res.releaseSpriteSheet("first/FIRST.dat", false)
                 "#,
         )
         .unwrap();
@@ -277,9 +277,11 @@ fn native_dirt_constructor_retains_both_resolved_image_pointers() {
                 assert!(source.ends_with("first/first.pvr"));
             }
             MaskedTextureBinding::Missing => panic!("Dirt image resolved during construction"),
+            MaskedTextureBinding::Borrowed { .. } => panic!("Dirt borrows a Texture separately"),
         }
     }
     drop(bridge);
+    assert!(runtime.execute_source("drawGameNative()").is_err());
     fs::remove_dir_all(root).unwrap();
 }
 

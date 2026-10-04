@@ -1,30 +1,8 @@
 //! Atlas region UV construction, pivot setup and four-vertex transform.
 
 use super::{super::*, shader::shader_uniform};
-use crate::gpu::frame::batch::screen_to_clip;
-
 fn native_masked_quad_visible(positions: &[[f32; 2]; 4], resolution: GameResolution) -> bool {
-    // TexturizedSprite's batch append (`sub_10008D428`) transforms the quad
-    // to clip space first, then rejects it unless max x/y are >= -1 and min
-    // x/y are < 1. Preserve those inclusive/strict edges and float32 FMADDs.
-    let clip = positions.map(|position| screen_to_clip(position, resolution));
-    let min_x = clip
-        .iter()
-        .map(|position| position[0])
-        .fold(f32::INFINITY, f32::min);
-    let min_y = clip
-        .iter()
-        .map(|position| position[1])
-        .fold(f32::INFINITY, f32::min);
-    let max_x = clip
-        .iter()
-        .map(|position| position[0])
-        .fold(f32::NEG_INFINITY, f32::max);
-    let max_y = clip
-        .iter()
-        .map(|position| position[1])
-        .fold(f32::NEG_INFINITY, f32::max);
-    max_x >= -1.0 && max_y >= -1.0 && min_x < 1.0 && min_y < 1.0
+    stella_script::native_masked_quad_visible(positions, [resolution.width, resolution.height])
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -17,6 +17,8 @@ pub(crate) struct DirtTextures {
     pub(crate) foreground: String,
     pub(crate) background_binding: MaskedTextureBinding,
     pub(crate) foreground_binding: MaskedTextureBinding,
+    pub(crate) background_borrow: Option<NativeTextureBorrow>,
+    pub(crate) foreground_borrow: Option<NativeTextureBorrow>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -61,8 +63,10 @@ impl DirtComponent {
                 foreground_texture: textures.foreground.clone(),
                 background_texture_binding: textures.background_binding.clone(),
                 foreground_texture_binding: textures.foreground_binding.clone(),
-                background_triangles: triangulate_dirt_paths(&background_paths),
-                foreground_triangles: triangulate_dirt_paths(&foreground_paths),
+                background_texture_borrow: textures.background_borrow.clone(),
+                foreground_texture_borrow: textures.foreground_borrow.clone(),
+                background_triangles: Arc::new(triangulate_dirt_paths(&background_paths)),
+                foreground_triangles: Arc::new(triangulate_dirt_paths(&foreground_paths)),
             });
             Self {
                 fixture_density,
@@ -79,7 +83,7 @@ impl DirtComponent {
         debug_assert!(!self.background_paths.is_empty());
         self.foreground_paths = native_dirt_difference(&self.foreground_paths, hole);
         Arc::make_mut(&mut self.render_command).foreground_triangles =
-            triangulate_dirt_paths(&self.foreground_paths);
+            Arc::new(triangulate_dirt_paths(&self.foreground_paths));
     }
 
     pub(crate) fn foreground_fixtures(&self) -> Vec<Vec<(f64, f64)>> {

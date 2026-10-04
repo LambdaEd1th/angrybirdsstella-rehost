@@ -44,14 +44,15 @@ pub(crate) fn install(
             let texture_binding = resources
                 .lock()
                 .expect("resource runtime lock poisoned")
-                .active_masked_texture_binding(&texture, &data_root)
+                .borrow_masked_texture_binding(&texture, &data_root)
                 .unwrap_or(MaskedTextureBinding::Missing);
             let mut bridge = texture_bridge.lock().expect("render bridge lock poisoned");
             let object = bridge
                 .game_lua_object_mut(&name)
                 .ok_or_else(|| runtime_error(format!("Missing object: {name}")))?;
             // sub_10004CC74 writes the resource name at +0x70, resolves the
-            // texture pointer into +0x80, and performs no Lua reflection.
+            // raw Image pointer into +0x80 without retaining it, and performs
+            // no Lua reflection. Only a submitted visible draw freezes pixels.
             object.texture = Some(Arc::new(SpriteTextureSubmission {
                 name: texture.into(),
                 scale: object.texture_scale,

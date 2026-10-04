@@ -87,21 +87,17 @@ pub(crate) fn ensure_dirt_component(
         )))
     })()?;
     // sub_10001F98C resolves both AtlasSprite names through
-    // sub_10045BC64/sub_10046B1F0 and snapshots the returned image pointers
-    // before constructing either DrawablePolygon. Do this before taking the
-    // render lock so the deferred host retains the same lifetime boundary.
-    let (background_binding, foreground_binding) = {
+    // sub_10045BC64/sub_10046B1F0, then calls Image virtual slot +128 to get
+    // raw Texture pointers. Neither Dirt, DrawablePolygon nor the shader's
+    // BASEMAP setter retains them. Keep the constructor allocation identity
+    // without extending its Image lifetime through an undrawn component.
+    let ((background_binding, background_borrow), (foreground_binding, foreground_borrow)) = {
         let resources = resources.lock().expect("resource runtime lock poisoned");
-        let resolve = |name: &str| -> LuaResult<MaskedTextureBinding> {
+        let resolve = |name: &str| {
             let Some(region) = resources.active_atlas_catalog_region(name, data_root) else {
-                return Ok(MaskedTextureBinding::Missing);
+                return Ok((MaskedTextureBinding::Missing, None));
             };
-            let region = region.snapshot_image()?;
-            Ok(MaskedTextureBinding::with_image(
-                region.texture_source.clone(),
-                region.decoded_image.clone(),
-                region.image_owner.clone(),
-            ))
+            region.borrow_texture()
         };
         (resolve(&background)?, resolve(&foreground)?)
     };
@@ -117,6 +113,8 @@ pub(crate) fn ensure_dirt_component(
                 foreground: foreground.clone(),
                 background_binding,
                 foreground_binding,
+                background_borrow,
+                foreground_borrow,
             },
             material_properties.map_or(object.density, |properties| properties.0),
             material_properties.map_or(object.friction, |properties| properties.1),

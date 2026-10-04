@@ -38,6 +38,20 @@ pub(crate) struct SceneDrawObject {
     pub(crate) dirt: Option<Arc<DirtComponent>>,
 }
 
+impl SceneDrawObject {
+    pub(crate) fn masked_texture(&self) -> Option<&Arc<SpriteTextureSubmission>> {
+        // 0x10004C14C requires a non-null Image and a non-composite sprite.
+        // Custom Dirt/ray/animation callbacks take precedence over this branch.
+        self.texture.as_ref().filter(|texture| {
+            self.composite_sprite.is_none()
+                && self.dirt.is_none()
+                && self.ray.is_none()
+                && !self.flash_animation
+                && texture.binding.source().is_some()
+        })
+    }
+}
+
 /// Fields consumed before the pre callback is entered. Purple has not yet
 /// installed this object's GL transform at that point; the remaining visual
 /// state already lives in `SceneDrawObject` for the later draw/post phase.

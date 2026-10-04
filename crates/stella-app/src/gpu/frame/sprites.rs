@@ -62,10 +62,10 @@ impl AssetCatalog {
                 frame.texture_leases.insert(source.clone(), lease);
             }
         }
-        for triangles in &dirt.background_triangles {
+        for triangles in dirt.background_triangles.iter() {
             append_gpu_dirt_triangles(frame, triangles, transform, background_texture.clone());
         }
-        for triangles in &dirt.foreground_triangles {
+        for triangles in dirt.foreground_triangles.iter() {
             append_gpu_dirt_triangles(frame, triangles, transform, foreground_texture.clone());
         }
         Ok(())

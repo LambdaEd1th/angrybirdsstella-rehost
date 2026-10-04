@@ -112,7 +112,7 @@ impl RenderBridge {
                 projection_3d: None,
                 order: 0,
                 sprite: object.sprite.clone().into(),
-                texture: object.texture.clone(),
+                texture: object.masked_texture().cloned(),
                 // Purple passes the retained RenderObjectData resource
                 // pointers at +0x90/+0x78 into its immediate draw member.
                 // Keep their shared geometry; push_render_command resolves
@@ -189,6 +189,7 @@ impl RenderBridge {
             // a RenderObjectData member and therefore must be supplied from
             // the dispatcher on every draw.
             let dirt = object.dirt.as_deref().map(DirtComponent::render_command);
+            let texture = object.masked_texture().cloned();
             let command = RenderCommand {
                 projection_3d: None,
                 order: 0,
@@ -198,7 +199,7 @@ impl RenderBridge {
                 // callbacks have finished. Purple likewise passes the retained
                 // +0x90/+0x78 sprite pointers straight through.
                 sprite: object.sprite.into(),
-                texture: object.texture,
+                texture,
                 bound_region: object.sprite_region,
                 bound_composite: object.composite_sprite,
                 geometry: None,

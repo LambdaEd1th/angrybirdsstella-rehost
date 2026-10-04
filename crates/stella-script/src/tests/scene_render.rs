@@ -1,5 +1,51 @@
 use super::*;
 
+struct MaskedSceneFixture {
+    runtime: StellaLua,
+    root: PathBuf,
+}
+
+impl MaskedSceneFixture {
+    fn new(fill: &str) -> Self {
+        let unique = NEXT_TEST_SPRITE_SHEET_ID.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "stella-masked-scene-{}-{unique}",
+            std::process::id()
+        ));
+        let data_root = root.join("data");
+        fs::create_dir_all(&data_root).unwrap();
+        fs::create_dir_all(root.join("appdata")).unwrap();
+        fs::write(
+            data_root.join("BASE.dat"),
+            test_textured_sprite_sheet_with_names(
+                "base.pvr",
+                &[("RED_CROSS", 12, 14), ("BODY", 12, 14)],
+            ),
+        )
+        .unwrap();
+        fs::write(data_root.join("base.pvr"), []).unwrap();
+        fs::write(
+            data_root.join(format!("{fill}.dat")),
+            test_textured_sprite_sheet("FILL_SPRITE", "fill.pvr", 2, 2),
+        )
+        .unwrap();
+        fs::write(data_root.join("fill.pvr"), []).unwrap();
+        let runtime = StellaLua::new(&data_root).unwrap();
+        runtime
+            .execute_source(&format!(
+                "res.createSpriteSheet('BASE.dat'); res.createSpriteSheet('{fill}.dat')"
+            ))
+            .unwrap();
+        Self { runtime, root }
+    }
+}
+
+impl Drop for MaskedSceneFixture {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
 #[test]
 fn flash_animation_draws_same_named_animation_with_native_scene_transform() {
     let runtime = StellaLua::new("/tmp").unwrap();
@@ -1024,8 +1070,9 @@ fn native_scene_index_retains_old_sheet_pointer_until_explicit_sprite_rebind() {
 
 #[test]
 fn native_scene_draw_command_retains_the_same_name_and_atlas_pointers() {
-    let runtime = StellaLua::new(std::env::temp_dir()).unwrap();
-    register_test_sprite_sheet(&runtime, &["BODY"]);
+    let fixture = MaskedSceneFixture::new("FILL");
+    let runtime = &fixture.runtime;
+    register_test_sprite_sheet(runtime, &["BODY"]);
     runtime
         .execute_source(
             r#"
@@ -1683,7 +1730,8 @@ fn native_audio_handles_are_unique_and_accept_volume_and_stop_updates() {
 
 #[test]
 fn native_texture_state_reaches_scene_render_commands() {
-    let runtime = StellaLua::new("/tmp").unwrap();
+    let fixture = MaskedSceneFixture::new("THEME_HOMETREE_BG_TEXTURE_1");
+    let runtime = &fixture.runtime;
     runtime
         .execute_source(
             r#"
@@ -1783,17 +1831,22 @@ fn native_texture_state_reaches_scene_render_commands() {
     runtime
         .execute_source(
             r#"
-                setTopLeft(300, 400)
+                setTopLeft(4, 6)
                 setWorldScale(0.5)
                 drawGameNative()
             "#,
         )
         .unwrap();
     let bridge = runtime.render.lock().unwrap();
-    assert!(Arc::ptr_eq(
+    assert!(!Arc::ptr_eq(
         &retained_texture,
         bridge.commands[0].texture.as_ref().unwrap()
     ));
+    assert_eq!(
+        retained_texture.binding,
+        bridge.commands[0].texture.as_ref().unwrap().binding,
+        "each submission freezes the same still-live Image"
+    );
     assert_ne!(bridge.commands[0].state.translate_x, original_screen_x);
     assert_eq!(
         bridge.commands[0].state.masked_texture_matrix,
@@ -1804,7 +1857,8 @@ fn native_texture_state_reaches_scene_render_commands() {
 
 #[test]
 fn texture_scale_update_preserves_an_already_queued_native_submission() {
-    let runtime = StellaLua::new("/tmp").unwrap();
+    let fixture = MaskedSceneFixture::new("FILL");
+    let runtime = &fixture.runtime;
     runtime
         .execute_source(
             r#"
@@ -1956,7 +2010,7 @@ fn chapter01_finale_gold_transformer_reaches_native_scene_submission() {
 }
 
 #[test]
-fn set_texture_retains_its_resolved_native_image_pointer_across_replacement() {
+fn set_texture_borrows_its_selected_image_independently_of_sprite_name_shadowing() {
     let unique = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -1973,13 +2027,13 @@ fn set_texture_retains_its_resolved_native_image_pointer_across_replacement() {
     .unwrap();
     fs::write(data_root.join("base/base.pvr"), []).unwrap();
     fs::write(
-        data_root.join("first/MASK.dat"),
+        data_root.join("first/FIRST.dat"),
         test_textured_sprite_sheet("MASK_SPRITE", "first.pvr", 10, 20),
     )
     .unwrap();
     fs::write(data_root.join("first/first.pvr"), []).unwrap();
     fs::write(
-        data_root.join("second/MASK.dat"),
+        data_root.join("second/SECOND.dat"),
         test_textured_sprite_sheet("MASK_SPRITE", "second.pvr", 30, 40),
     )
     .unwrap();
@@ -1990,11 +2044,11 @@ fn set_texture_retains_its_resolved_native_image_pointer_across_replacement() {
         .execute_source(
             r#"
                 res.createSpriteSheet("base/BASE.dat")
-                res.createSpriteSheet("first/MASK.dat")
+                res.createSpriteSheet("first/FIRST.dat")
                 createNonPhysicsObject("textured", "BASE_SPRITE", 0, 0, 1)
-                setTexture("textured", "MASK")
-                res.createSpriteSheet("second/MASK.dat", true)
-                res.releaseSpriteSheet("second/MASK.dat", false)
+                setTexture("textured", "FIRST")
+                res.createSpriteSheet("second/SECOND.dat", true)
+                res.releaseSpriteSheet("second/SECOND.dat", false)
                 drawGameNative()
             "#,
         )
@@ -2009,8 +2063,13 @@ fn set_texture_retains_its_resolved_native_image_pointer_across_replacement() {
             assert!(source.ends_with("first/first.pvr"))
         }
         MaskedTextureBinding::Missing => panic!("setTexture resolved a live image"),
+        MaskedTextureBinding::Borrowed { .. } => panic!("submitted Image was not frozen"),
     }
     drop(bridge);
+    runtime
+        .execute_source("res.releaseSpriteSheet('first/FIRST.dat',true)")
+        .unwrap();
+    assert!(runtime.execute_source("drawGameNative()").is_err());
     fs::remove_dir_all(root).unwrap();
 }
 

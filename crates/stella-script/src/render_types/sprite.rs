@@ -52,6 +52,28 @@ pub struct SpriteCatalogRegion {
 }
 
 impl SpriteCatalogRegion {
+    pub(crate) fn borrow_texture(
+        self: &Arc<Self>,
+    ) -> crate::LuaResult<(MaskedTextureBinding, Option<super::NativeTextureBorrow>)> {
+        let image = self.snapshot_image()?;
+        let borrow = self
+            .sheet_image
+            .as_ref()
+            .zip(image.image_owner.as_ref())
+            .map(|(sheet, owner)| super::NativeTextureBorrow::new(sheet.clone(), owner.identity()));
+        let binding = if borrow.is_some() {
+            MaskedTextureBinding::Source(image.texture_source.clone())
+        } else {
+            // Immutable diagnostic regions do not have a native sheet lifetime.
+            MaskedTextureBinding::with_image(
+                image.texture_source.clone(),
+                image.decoded_image.clone(),
+                image.image_owner.clone(),
+            )
+        };
+        Ok((binding, borrow))
+    }
+
     pub(crate) fn snapshot_image(self: &Arc<Self>) -> crate::LuaResult<Arc<Self>> {
         let Some(binding) = &self.sheet_image else {
             return Ok(Arc::clone(self));
@@ -150,6 +172,12 @@ pub enum MaskedTextureBinding {
     /// host keeps the command/order record but must never bind a later image.
     Missing,
     Source(String),
+    /// A scene object's raw Image pointer. Resolve only when that masked
+    /// branch actually submits visible geometry, then publish Retained.
+    Borrowed {
+        source: String,
+        image: super::NativeImageBorrow,
+    },
     Retained {
         source: String,
         image: Option<Arc<stella_assets::native_image::DecodedNativeImage>>,
@@ -158,6 +186,20 @@ pub enum MaskedTextureBinding {
 }
 
 impl MaskedTextureBinding {
+    pub(crate) fn snapshot(&self) -> crate::LuaResult<Self> {
+        let Self::Borrowed { source, image } = self else {
+            return Ok(self.clone());
+        };
+        let image = image.snapshot().map_err(|reason| {
+            crate::runtime_error(format!("Native masked Image '{source}' uses {reason}"))
+        })?;
+        Ok(Self::with_image(
+            image.source,
+            image.image,
+            Some(image.owner),
+        ))
+    }
+
     pub(crate) fn with_image(
         source: String,
         image: Option<Arc<stella_assets::native_image::DecodedNativeImage>>,
@@ -177,21 +219,23 @@ impl MaskedTextureBinding {
     pub fn source(&self) -> Option<&str> {
         match self {
             Self::Missing => None,
-            Self::Source(source) | Self::Retained { source, .. } => Some(source),
+            Self::Source(source)
+            | Self::Borrowed { source, .. }
+            | Self::Retained { source, .. } => Some(source),
         }
     }
 
     pub fn image(&self) -> Option<&Arc<stella_assets::native_image::DecodedNativeImage>> {
         match self {
             Self::Retained { image, .. } => image.as_ref(),
-            Self::Missing | Self::Source(_) => None,
+            Self::Missing | Self::Source(_) | Self::Borrowed { .. } => None,
         }
     }
 
     pub fn image_owner(&self) -> Option<&Arc<super::NativeImageOwner>> {
         match self {
             Self::Retained { image_owner, .. } => image_owner.as_ref(),
-            Self::Missing | Self::Source(_) => None,
+            Self::Missing | Self::Source(_) | Self::Borrowed { .. } => None,
         }
     }
 }
@@ -208,6 +252,18 @@ pub struct SpriteTextureSubmission {
     pub name: Arc<str>,
     pub scale: f64,
     pub binding: MaskedTextureBinding,
+}
+
+impl SpriteTextureSubmission {
+    pub(crate) fn snapshot(self: &Arc<Self>) -> crate::LuaResult<Arc<Self>> {
+        if !matches!(self.binding, MaskedTextureBinding::Borrowed { .. }) {
+            return Ok(Arc::clone(self));
+        }
+        Ok(Arc::new(Self {
+            binding: self.binding.snapshot()?,
+            ..self.as_ref().clone()
+        }))
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -418,6 +474,66 @@ pub struct RenderCommand {
 }
 
 impl RenderCommand {
+    pub(crate) fn masked_quad_visible(&self, dimensions: [u32; 2]) -> bool {
+        let Some(region) = &self.bound_region else {
+            return true;
+        };
+        let state = self.state;
+        let (sine, cosine) = state.angle.sin_cos();
+        let [m00, m01, m10, m11] = state.matrix.unwrap_or_else(|| {
+            if self.world_space {
+                [
+                    cosine * state.scale_x,
+                    -sine * state.scale_y,
+                    sine * state.scale_x,
+                    cosine * state.scale_y,
+                ]
+            } else {
+                [
+                    state.scale_x * cosine,
+                    -state.scale_x * sine,
+                    state.scale_y * sine,
+                    state.scale_y * cosine,
+                ]
+            }
+        });
+        let mut x = state.translate_x + self.x;
+        let mut y = state.translate_y + self.y;
+        if !self.world_space {
+            x *= state.scale_x;
+            y *= state.scale_y;
+            x = state.scale_x.mul_add(
+                (-cosine).mul_add(state.pivot_x, sine.mul_add(state.pivot_y, state.pivot_x)),
+                x,
+            );
+            y = state.scale_y.mul_add(
+                (-sine).mul_add(
+                    state.pivot_x,
+                    (-cosine).mul_add(state.pivot_y, state.pivot_y),
+                ),
+                y,
+            );
+        }
+        let [pivot_x, pivot_y] = state.sprite_pivot.unwrap_or([
+            f32::from(region.sprite.pivot_x),
+            f32::from(region.sprite.pivot_y),
+        ]);
+        let [width, height] = state.draw_size.unwrap_or([
+            f32::from(region.sprite.width),
+            f32::from(region.sprite.height),
+        ]);
+        let positions =
+            [[0.0, 0.0], [width, 0.0], [0.0, height], [width, height]].map(|[px, py]| {
+                let local_x = px - pivot_x;
+                let local_y = py - pivot_y;
+                [
+                    x + m00.mul_add(local_x, m01 * local_y),
+                    y + m10.mul_add(local_x, m11 * local_y),
+                ]
+            });
+        super::native_masked_quad_visible(&positions, dimensions)
+    }
+
     pub fn texture_name(&self) -> Option<&str> {
         self.texture.as_deref().map(|texture| texture.name.as_ref())
     }
@@ -563,15 +679,64 @@ mod deferred_payload_tests {
 pub struct DirtRenderCommand {
     pub background_texture: String,
     pub foreground_texture: String,
-    /// Image pointers resolved once by the native Dirt constructor. They do
-    /// not follow later ResourceManager shadowing or release by name.
+    /// Texture pointers resolved once by the native Dirt constructor. Live
+    /// components borrow them; submitted commands keep immutable pixels.
     pub background_texture_binding: MaskedTextureBinding,
     pub foreground_texture_binding: MaskedTextureBinding,
+    pub background_texture_borrow: Option<super::NativeTextureBorrow>,
+    pub foreground_texture_borrow: Option<super::NativeTextureBorrow>,
     /// Triangle positions are in the scene object's local physics units.
     /// Purple multiplies them by 20 immediately before projection and also
     /// passes the unscaled pair through as repeating texture coordinates.
-    pub background_triangles: Vec<Vec<RenderTriangle>>,
-    pub foreground_triangles: Vec<Vec<RenderTriangle>>,
+    pub background_triangles: Arc<Vec<Vec<RenderTriangle>>>,
+    pub foreground_triangles: Arc<Vec<Vec<RenderTriangle>>>,
+}
+
+impl DirtRenderCommand {
+    pub(crate) fn snapshot_textures(self: &Arc<Self>) -> crate::LuaResult<Arc<Self>> {
+        if self.background_texture_borrow.is_none() && self.foreground_texture_borrow.is_none() {
+            return Ok(Arc::clone(self));
+        }
+        let resolve = |binding: &MaskedTextureBinding,
+                       borrow: &Option<super::NativeTextureBorrow>,
+                       triangles: &[Vec<RenderTriangle>]|
+         -> crate::LuaResult<MaskedTextureBinding> {
+            // DrawablePolygon::render (0x100024A08) skips an empty mesh before
+            // its raw BASEMAP pointer is passed to the shader.
+            if let Some(borrow) = borrow
+                && triangles.iter().any(|triangles| !triangles.is_empty())
+            {
+                let image = borrow.snapshot().map_err(|reason| {
+                    crate::runtime_error(format!(
+                        "Native Dirt texture '{}' uses {reason}",
+                        binding.source().unwrap_or_default()
+                    ))
+                })?;
+                Ok(MaskedTextureBinding::with_image(
+                    image.source,
+                    image.image,
+                    Some(image.owner),
+                ))
+            } else {
+                Ok(binding.clone())
+            }
+        };
+        Ok(Arc::new(Self {
+            background_texture_binding: resolve(
+                &self.background_texture_binding,
+                &self.background_texture_borrow,
+                &self.background_triangles,
+            )?,
+            foreground_texture_binding: resolve(
+                &self.foreground_texture_binding,
+                &self.foreground_texture_borrow,
+                &self.foreground_triangles,
+            )?,
+            background_texture_borrow: None,
+            foreground_texture_borrow: None,
+            ..self.as_ref().clone()
+        }))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

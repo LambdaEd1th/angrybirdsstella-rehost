@@ -435,6 +435,31 @@ impl ResourceRuntime {
         Some(MaskedTextureBinding::with_image(source, image, image_owner))
     }
 
+    pub(crate) fn borrow_masked_texture_binding(
+        &self,
+        name: &str,
+        data_root: &Path,
+    ) -> Option<MaskedTextureBinding> {
+        let binding = self.active_masked_texture_binding(name, data_root)?;
+        let owner = if self.sprite_sheet_values.contains_key(name) {
+            name.to_owned()
+        } else {
+            crate::resource_manager::resource_double_file_stem(name)
+        };
+        let Some((cell, image_owner)) = self
+            .sprite_sheet_image_cells
+            .get(&owner)
+            .zip(binding.image_owner())
+        else {
+            // Immutable diagnostic fixtures have no native resource cell.
+            return Some(binding);
+        };
+        Some(MaskedTextureBinding::Borrowed {
+            source: binding.source()?.to_owned(),
+            image: crate::NativeImageBorrow::new(cell.bind(), image_owner.identity()),
+        })
+    }
+
     fn sprite_sheet_image_source(
         &self,
         owner: &str,
