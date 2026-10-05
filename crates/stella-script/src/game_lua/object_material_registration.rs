@@ -54,10 +54,12 @@ pub(crate) fn install(
             // raw Image pointer into +0x80 without retaining it, and performs
             // no Lua reflection. Only a submitted visible draw freezes pixels.
             object.texture = Some(Arc::new(SpriteTextureSubmission {
-                name: texture.into(),
+                name: texture.as_str().into(),
                 scale: object.texture_scale,
                 binding: texture_binding,
+                native_quad: None,
             }));
+            bridge.ensure_named_masked_batch(texture.into());
             Ok(())
         })?,
     )?;

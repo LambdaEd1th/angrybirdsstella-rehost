@@ -6,7 +6,7 @@ mod trails;
 mod walk;
 
 use trails::push_native_trajectory_streams;
-use walk::NativeSceneWalk;
+use walk::{NativeSceneStep, NativeSceneWalk};
 
 pub(super) fn install(
     lua: &Lua,
@@ -67,14 +67,28 @@ pub(super) fn install(
                 (bridge.native_scene_z_bounds(), bridge.world_scale as f32)
             };
             let mut trajectory_drawn = false;
+            let mut masked_in_vector = false;
             for (z_bucket, entry) in
                 NativeSceneWalk::new(Arc::clone(&render), z_bounds, draw_world_scale)
             {
-                let Some((name, visit)) = entry else {
-                    if let Some(draw) = z_order_draw.as_ref() {
-                        draw.call::<()>(f64::from(z_bucket))?;
+                let (name, visit) = match entry {
+                    NativeSceneStep::ZBucket => {
+                        if let Some(draw) = z_order_draw.as_ref() {
+                            draw.call::<()>(f64::from(z_bucket))?;
+                        }
+                        continue;
                     }
-                    continue;
+                    NativeSceneStep::SheetEnd => {
+                        if masked_in_vector {
+                            render
+                                .lock()
+                                .expect("render bridge lock poisoned")
+                                .flush_named_masked_batches()?;
+                        }
+                        masked_in_vector = false;
+                        continue;
+                    }
+                    NativeSceneStep::Object(name, visit) => (name, visit),
                 };
                 let callback_state_object = visit.callback;
                 let callback_horizontal_flip = callback_state_object.horizontal_flip;
@@ -154,6 +168,13 @@ pub(super) fn install(
                 let Some(object) = object else {
                     continue;
                 };
+                // The native flag records entry into the mask branch,
+                // including viewport-culled submissions. It belongs to
+                // this walk, while the pending named map is shared with
+                // nested drawGameNative and selected-helper calls.
+                masked_in_vector |= object.masked_texture().is_some()
+                    && !object.sprite.is_empty()
+                    && object.sprite_bound;
                 let post_horizontal_flip = object.horizontal_flip;
                 if object.flash_animation {
                     // Preserve Purple's interpolated position and authored

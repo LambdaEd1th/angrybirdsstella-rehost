@@ -32,6 +32,7 @@ mod level_table_clone;
 mod loader_registration;
 mod math_random;
 mod native_lua_objects;
+mod native_masked_batches;
 mod object_api;
 mod object_body_registration;
 mod object_decoration_registration;

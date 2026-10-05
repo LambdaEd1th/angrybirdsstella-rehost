@@ -11,6 +11,7 @@ pub(crate) struct SheetImageSnapshot {
     pub(crate) source: String,
     pub(crate) image: Option<Arc<DecodedNativeImage>>,
     pub(crate) owner: Arc<NativeImageOwner>,
+    pub(crate) dimensions: Option<[u32; 2]>,
 }
 
 /// Only ResourceRuntime owns this cell. Sprites borrow it; a sheet release

@@ -502,6 +502,7 @@ fn captures_resolve_as_fill_and_both_explicit_and_native_quad_sources() {
         name: "CAP".into(),
         scale: 1.0,
         binding: MaskedTextureBinding::Source(source.to_owned()),
+        native_quad: None,
     }));
     let positions = [[0.0, 0.0], [8.0, 0.0], [0.0, 8.0], [8.0, 8.0]];
     let mut native = draw(2, "CAP", 8.0, 8.0);

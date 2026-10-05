@@ -107,11 +107,6 @@ impl ResourceRuntime {
                 .entry(owner.to_owned())
                 .or_default(),
         );
-        image_cell.replace(Some(crate::SheetImageSnapshot {
-            source: texture_sources[current_texture_index].clone(),
-            image: decoded_images.get(current_texture_index).cloned().flatten(),
-            owner: image_owner.clone(),
-        }));
         let regions_by_index = {
             let sheet = &self.sprite_sheet_values[owner];
             let native_sheet_id = self
@@ -174,6 +169,12 @@ impl ResourceRuntime {
             self.sprite_sheet_image_dimensions
                 .insert(owner.to_owned(), dimensions);
         }
+        image_cell.replace(Some(crate::SheetImageSnapshot {
+            source: texture_sources[current_texture_index].clone(),
+            image: decoded_images.get(current_texture_index).cloned().flatten(),
+            owner: image_owner.clone(),
+            dimensions: self.sprite_sheet_image_dimensions.get(owner).copied(),
+        }));
         // Earlier Image allocations have no native owner after replacement.
         // Only their constructor UV extent survives on the AtlasSprite.
         decoded_images[..current_texture_index].fill(None);

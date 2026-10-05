@@ -556,6 +556,7 @@ fn selected_sprite_uses_its_submission_time_mask_texture_pointer() {
             name: Arc::from("MASK"),
             scale: 0.25,
             binding: MaskedTextureBinding::Source(retained_mask.clone()),
+            native_quad: None,
         })),
         bound_region: Some(
             SpriteCatalogRegion {

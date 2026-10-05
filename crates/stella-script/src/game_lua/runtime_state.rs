@@ -81,6 +81,9 @@ pub(crate) struct RenderBridge {
     pub(crate) rect_commands: Vec<RectRenderCommand>,
     pub(crate) capture_commands: Vec<CaptureRenderCommand>,
     pub(crate) next_draw_order: u64,
+    /// GameLua+0x5a8: persistent renderers indexed by native texture name.
+    pub(crate) named_masked_batches:
+        BTreeMap<Arc<str>, super::native_masked_batches::NativeMaskedBatch>,
     /// Monotonic stand-in for the intrusive Box2D world/body/contact/joint
     /// lists. Native creation inserts at each list head, so larger values are
     /// visited first by b2World::Solve and each body's edge traversal.
@@ -395,6 +398,7 @@ impl Default for RenderBridge {
             rect_commands: Vec::new(),
             capture_commands: Vec::new(),
             next_draw_order: 0,
+            named_masked_batches: BTreeMap::new(),
             next_physics_creation_order: 0,
             native_body_world_order: BTreeMap::new(),
             native_body_contact_edges: BTreeMap::new(),

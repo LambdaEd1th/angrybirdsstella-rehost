@@ -3,6 +3,43 @@
 use super::{geometry::shader_uniform, *};
 
 impl AssetCatalog {
+    pub(super) fn append_gpu_masked_quad(
+        &mut self,
+        region: Option<&SpriteCatalogRegion>,
+        fill: &MaskedTextureBinding,
+        quad: &stella_script::NativeMaskedQuad,
+        alpha: f32,
+        frame: &mut PreparedFrame,
+    ) -> Result<()> {
+        let (Some(region), Some(fill_source)) = (region, fill.source()) else {
+            return Ok(());
+        };
+        self.retain_decoded_image(region)?;
+        self.retain_image_owner(fill_source, fill.image_owner());
+        if let Some(image) = fill.image() {
+            self.retain_native_image(fill_source, image, fill.image_owner())?;
+        }
+        let mask = self.resolve_gpu_texture(&region.texture_source)?;
+        frame.retain_texture(&mask);
+        let fill = self.resolve_gpu_texture(fill_source)?;
+        frame.retain_texture(&fill);
+        let mut uniform = shader_uniform(None);
+        uniform.header[0] = alpha;
+        // Both UV arrays were normalized by 08D428 before later callbacks
+        // could replace either Image; the flush only selects sampled textures.
+        uniform.header[2] = 4.0;
+        frame.push_quad(
+            quad.positions,
+            quad.mask_uv,
+            quad.fill_uv,
+            uniform,
+            mask.source,
+            fill.source,
+            NativeProgram::SpriteAlphaMasked,
+        );
+        Ok(())
+    }
+
     pub(super) fn append_gpu_native_sprite_quad(
         &mut self,
         name: &str,

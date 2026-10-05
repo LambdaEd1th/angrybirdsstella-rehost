@@ -56,6 +56,10 @@ fn sprite_fragment(input: VertexOutput) -> @location(0) vec4<f32> {
         color = state.diffuse;
     } else if (source_mode == 3u) {
         color = textureSample(fill_map, fill_sampler, input.uv);
+    } else if (source_mode == 4u) {
+        let mask = textureSample(base_map, base_sampler, input.uv);
+        color = textureSample(fill_map, fill_sampler, input.source);
+        color.a *= mask.a;
     } else if (source_mode == 1u) {
         let mask = textureSample(base_map, base_sampler, input.uv);
         let fill_size = max(state.fill.xy, vec2<f32>(1.0));

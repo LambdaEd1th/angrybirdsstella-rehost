@@ -28,7 +28,7 @@ pub(super) fn install(
                     .lock()
                     .expect("resource runtime lock poisoned");
                 let binding = resources
-                    .active_masked_texture_binding(&texture, &data_root)
+                    .borrow_masked_texture_binding(&texture, &data_root)
                     .unwrap_or(MaskedTextureBinding::Missing);
                 (
                     resources.active_atlas_catalog_region(&sprite, &data_root),
@@ -67,25 +67,34 @@ pub(super) fn install(
                 bridge.state.pivot_y as f32 - atlas_pivot[1],
             ));
             let state = bridge.state;
-            bridge.push_render_command(RenderCommand {
-                projection_3d: None,
-                order: 0,
-                sprite: sprite.into(),
-                texture: Some(Arc::new(SpriteTextureSubmission {
-                    name: texture.into(),
-                    scale: 1.0,
-                    binding: masked_texture_binding,
-                })),
-                bound_region,
-                bound_composite: None,
-                geometry: None,
-                shader: None,
-                dirt: None,
-                x: (x * 20.0_f32) / scale_x,
-                y: (y * 20.0_f32) / scale_y,
-                state: state.into(),
-                world_space: false,
-            })?;
+            let position = [(x * 20.0_f32) / scale_x, (y * 20.0_f32) / scale_y];
+            bridge.push_named_masked_command(
+                RenderCommand {
+                    projection_3d: None,
+                    order: 0,
+                    sprite: sprite.into(),
+                    texture: Some(Arc::new(SpriteTextureSubmission {
+                        name: texture.into(),
+                        scale: 1.0,
+                        binding: masked_texture_binding,
+                        native_quad: None,
+                    })),
+                    bound_region,
+                    bound_composite: None,
+                    geometry: None,
+                    shader: None,
+                    dirt: None,
+                    x: position[0],
+                    y: position[1],
+                    state: state.into(),
+                    world_space: false,
+                },
+                position,
+                [scale_x, scale_y],
+            )?;
+            // sub_100043990 flushes the entire named map, including geometry
+            // appended by an enclosing scene walk, before returning to Lua.
+            bridge.flush_named_masked_batches()?;
             Ok(())
         })?,
     )

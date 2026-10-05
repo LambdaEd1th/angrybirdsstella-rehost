@@ -190,6 +190,20 @@ impl RenderBridge {
             // the dispatcher on every draw.
             let dirt = object.dirt.as_deref().map(DirtComponent::render_command);
             let texture = object.masked_texture().cloned();
+            let masked_arguments = texture.as_ref().map(|texture| {
+                let scale_x = object.scale_x as f32;
+                let scale_y = object.scale_y as f32;
+                (
+                    [
+                        (object.x as f32 * 20.0_f32) / scale_x,
+                        (object.y as f32 * 20.0_f32) / scale_y,
+                    ],
+                    [
+                        scale_x / texture.scale as f32,
+                        scale_y / texture.scale as f32,
+                    ],
+                )
+            });
             let command = RenderCommand {
                 projection_3d: None,
                 order: 0,
@@ -210,7 +224,11 @@ impl RenderBridge {
                 state: command_state.expect("drawable scene object must retain its draw state"),
                 world_space: true,
             };
-            self.push_render_command(command)?;
+            if let Some((position, texture_scales)) = masked_arguments {
+                self.push_named_masked_command(command, position, texture_scales)?;
+            } else {
+                self.push_render_command(command)?;
+            }
         }
         if object.flash_animation {
             return Ok(());

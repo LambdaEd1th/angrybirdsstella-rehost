@@ -7,6 +7,15 @@ pub(super) struct NativeSceneWalk {
     cursor: NativeSceneCursor,
 }
 
+// Keep the same inline visit used by the previous Option payload. Boxing the
+// object variant would add one heap allocation for every native scene leaf.
+#[allow(clippy::large_enum_variant)]
+pub(super) enum NativeSceneStep {
+    ZBucket,
+    Object(Arc<str>, SceneDrawVisit),
+    SheetEnd,
+}
+
 struct NativeSceneCursor {
     minimum_z: i32,
     maximum_z: i32,
@@ -53,10 +62,10 @@ impl NativeSceneCursor {
 }
 
 impl Iterator for NativeSceneWalk {
-    /// `None` names mark every persistent outer z node, including empty ones.
+    /// Z markers include every persistent outer node, including empty ones.
     /// Names are then fetched by live vector index so callback mutations have
     /// the same shift/append behavior as Purple's pointer loop.
-    type Item = (i32, Option<(Arc<str>, SceneDrawVisit)>);
+    type Item = (i32, NativeSceneStep);
 
     fn next(&mut self) -> Option<Self::Item> {
         // One bridge acquisition corresponds to one resumed native tree walk.
@@ -78,7 +87,7 @@ impl Iterator for NativeSceneWalk {
             };
             if cursor.emit_z {
                 cursor.emit_z = false;
-                return Some((current_z, None));
+                return Some((current_z, NativeSceneStep::ZBucket));
             }
             let current_sheet = match cursor.sheet {
                 Some(current_sheet) => current_sheet,
@@ -106,7 +115,7 @@ impl Iterator for NativeSceneWalk {
                 // bridge acquisition is already held, then release it before
                 // yielding to either Lua callback.
                 if let Some(visit) = bridge.scene_draw_visit(name.as_ref()) {
-                    return Some((current_z, Some((name, visit))));
+                    return Some((current_z, NativeSceneStep::Object(name, visit)));
                 }
                 continue;
             }
@@ -123,6 +132,9 @@ impl Iterator for NativeSceneWalk {
             if cursor.sheet.is_none() {
                 cursor.advance_z(&bridge.scene_render_index);
             }
+            // The caller flushes named masks before visiting the next sheet
+            // or invoking the next z callback (0x10004C358..0x10004C3DC).
+            return Some((current_z, NativeSceneStep::SheetEnd));
         }
     }
 }

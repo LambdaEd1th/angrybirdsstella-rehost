@@ -52,6 +52,37 @@ pub struct SpriteCatalogRegion {
 }
 
 impl SpriteCatalogRegion {
+    pub(crate) fn borrow_image(
+        &self,
+    ) -> crate::LuaResult<(MaskedTextureBinding, Option<[u32; 2]>)> {
+        let Some(sheet) = &self.sheet_image else {
+            return Ok((
+                MaskedTextureBinding::with_image(
+                    self.texture_source.clone(),
+                    self.decoded_image.clone(),
+                    self.image_owner.clone(),
+                ),
+                self.decoded_image
+                    .as_ref()
+                    .map(|image| [image.width, image.height])
+                    .or(self.uv_image_dimensions),
+            ));
+        };
+        let image = sheet.snapshot().map_err(|reason| {
+            crate::runtime_error(format!(
+                "Native sprite '{}' uses {reason}",
+                self.sprite.name
+            ))
+        })?;
+        Ok((
+            MaskedTextureBinding::Borrowed {
+                source: image.source,
+                image: super::NativeImageBorrow::new(sheet.clone(), image.owner.identity()),
+            },
+            image.dimensions,
+        ))
+    }
+
     pub(crate) fn borrow_texture(
         self: &Arc<Self>,
     ) -> crate::LuaResult<(MaskedTextureBinding, Option<super::NativeTextureBorrow>)> {
@@ -186,6 +217,21 @@ pub enum MaskedTextureBinding {
 }
 
 impl MaskedTextureBinding {
+    pub(crate) fn native_dimensions(&self) -> crate::LuaResult<Option<[u32; 2]>> {
+        match self {
+            Self::Borrowed { source, image } => image
+                .snapshot()
+                .map(|image| image.dimensions)
+                .map_err(|reason| {
+                    crate::runtime_error(format!("Native masked Image '{source}' uses {reason}"))
+                }),
+            Self::Retained { image, .. } => {
+                Ok(image.as_ref().map(|image| [image.width, image.height]))
+            }
+            Self::Missing | Self::Source(_) => Ok(None),
+        }
+    }
+
     pub(crate) fn snapshot(&self) -> crate::LuaResult<Self> {
         let Self::Borrowed { source, image } = self else {
             return Ok(self.clone());
@@ -252,6 +298,16 @@ pub struct SpriteTextureSubmission {
     pub name: Arc<str>,
     pub scale: f64,
     pub binding: MaskedTextureBinding,
+    /// Geometry appended to a named TexturizedSprite before its later flush.
+    pub native_quad: Option<Arc<NativeMaskedQuad>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct NativeMaskedQuad {
+    /// Raw NDC vertices from sub_10008D428, before the flush-time model/projection.
+    pub positions: [[f32; 2]; 4],
+    pub mask_uv: [[f32; 2]; 4],
+    pub fill_uv: [[f32; 2]; 4],
 }
 
 impl SpriteTextureSubmission {

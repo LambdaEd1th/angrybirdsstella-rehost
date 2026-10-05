@@ -334,6 +334,12 @@ impl Material<'_> {
         let mut color = match source_mode {
             2 => diffuse,
             3 => sample(self.fill, uv, true),
+            4 => {
+                let mask = sample(self.base, uv, false);
+                let mut color = sample(self.fill, source, true);
+                color[3] *= mask[3];
+                color
+            }
             1 => {
                 let mask = sample(self.base, uv, false);
                 let scale = f64::from(uniform.header[1]);

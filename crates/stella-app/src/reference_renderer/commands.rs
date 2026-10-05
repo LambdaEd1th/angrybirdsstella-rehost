@@ -39,9 +39,13 @@ pub(super) fn render_game_with_captures(
     );
     if !capture_commands.is_empty()
         || !assets.captures.bindings.is_empty()
-        || commands
-            .iter()
-            .any(|command| command.projection_3d.is_some())
+        || commands.iter().any(|command| {
+            command.projection_3d.is_some()
+                || command
+                    .texture
+                    .as_deref()
+                    .is_some_and(|texture| texture.native_quad.is_some())
+        })
         || text_commands
             .iter()
             .any(|command| command.projection_3d.is_some())

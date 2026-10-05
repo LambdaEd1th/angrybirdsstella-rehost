@@ -4,6 +4,7 @@ use super::*;
 mod dirt_texture;
 mod lifetime;
 mod live_sheet;
+mod masked_batches;
 mod masked_scene;
 mod masked_uv;
 

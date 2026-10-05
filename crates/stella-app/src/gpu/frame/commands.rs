@@ -243,6 +243,19 @@ impl AssetCatalog {
         let state = command.state;
         frame.current_clip = state.clip_rect;
         frame.current_projection = command.projection_3d.as_deref().copied();
+        if let Some(texture) = command.texture.as_deref()
+            && let Some(quad) = texture.native_quad.as_deref()
+        {
+            frame.current_raw_vertices = true;
+            frame.current_vertex_depth = 0.001;
+            return self.append_gpu_masked_quad(
+                command.bound_region.as_deref(),
+                &texture.binding,
+                quad,
+                state.alpha,
+                frame,
+            );
+        }
         let is_composite = command.bound_composite.is_some()
             || (command.bound_region.is_none()
                 && self.composites.contains_key(command.sprite.as_str()));
