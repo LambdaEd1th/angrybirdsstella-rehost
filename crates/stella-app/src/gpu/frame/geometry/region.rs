@@ -82,7 +82,11 @@ pub(in crate::gpu) fn append_gpu_region(
     } else {
         source_points.map(|(x, y)| [x, y])
     };
-    let uv = region.native_uvs(base_width as f32, base_height as f32);
+    let uv = if program == NativeProgram::SpriteAlphaMasked {
+        region.native_mask_uvs(base_width as f32, base_height as f32)
+    } else {
+        region.native_uvs(base_width as f32, base_height as f32)
+    };
     let mut uniform = shader_uniform(shader);
     uniform.header[0] = transform.alpha;
     uniform.header[1] = texture_scale as f32;

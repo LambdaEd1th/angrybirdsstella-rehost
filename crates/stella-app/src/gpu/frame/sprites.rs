@@ -167,9 +167,7 @@ impl AssetCatalog {
         };
         let base = self.resolve_gpu_texture(&region.texture)?;
         frame.retain_texture(&base);
-        let [base_width, base_height] = region
-            .uv_image_dimensions
-            .unwrap_or([base.width, base.height]);
+        let current_dimensions = [base.width, base.height];
         let (base_texture, surface_format) = (base.source, base.surface_format);
         if matches!(
             masked_texture,
@@ -211,6 +209,13 @@ impl AssetCatalog {
                 );
                 (WHITE_TEXTURE.to_owned(), 1, 1, 1.0, 0.0, program)
             };
+        // TexturizedSprite reads its mask's current Texture extent; ordinary
+        // Sprite::draw keeps the UV extent selected by the Sprite constructor.
+        let [base_width, base_height] = if blend == NativeProgram::SpriteAlphaMasked {
+            current_dimensions
+        } else {
+            region.uv_image_dimensions.unwrap_or(current_dimensions)
+        };
         append_gpu_region(
             frame,
             &region.sprite,

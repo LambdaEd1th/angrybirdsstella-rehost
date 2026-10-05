@@ -5,6 +5,7 @@ mod dirt_texture;
 mod lifetime;
 mod live_sheet;
 mod masked_scene;
+mod masked_uv;
 
 const OLD: [u8; 4] = [203, 31, 7, 255];
 const NEW: [u8; 4] = [29, 17, 83, 255];

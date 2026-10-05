@@ -104,9 +104,20 @@ pub(crate) fn draw_region(
             // complete texture edge rather than at each sprite rectangle.
             let normalized_x = display_x / draw_width;
             let normalized_y = display_y / draw_height;
-            let atlas = region
-                .native_atlas_corners()
-                .map(|point| point.map(f64::from));
+            let atlas = if masked_texture.is_some() {
+                region
+                    .native_mask_uvs(texture.width() as f32, texture.height() as f32)
+                    .map(|[u, v]| {
+                        [
+                            f64::from(u) * f64::from(texture.width()),
+                            f64::from(v) * f64::from(texture.height()),
+                        ]
+                    })
+            } else {
+                region
+                    .native_atlas_corners()
+                    .map(|point| point.map(f64::from))
+            };
             let atlas_x = (atlas[1][0] - atlas[0][0]).mul_add(
                 normalized_x,
                 (atlas[2][0] - atlas[0][0]).mul_add(normalized_y, atlas[0][0]),

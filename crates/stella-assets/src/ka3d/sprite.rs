@@ -53,6 +53,20 @@ impl SpriteRegion {
         self.native_atlas_corners()
             .map(|[x, y]| [x / texture_width, y / texture_height])
     }
+
+    /// TexturizedSprite (`sub_10008D428`) reads the raw atlas shorts and the
+    /// current mask Texture's dimensions instead of Sprite's cached UVs.
+    /// Its reciprocal/multiply order also bypasses constructor permutations.
+    pub fn native_mask_uvs(&self, texture_width: f32, texture_height: f32) -> [[f32; 2]; 4] {
+        let inverse_width = 1.0_f32 / texture_width;
+        let inverse_height = 1.0_f32 / texture_height;
+        let left = i32::from(self.x);
+        let top = i32::from(self.y);
+        let right = left + i32::from(self.width);
+        let bottom = top + i32::from(self.height);
+        [[left, top], [right, top], [left, bottom], [right, bottom]]
+            .map(|[x, y]| [x as f32 * inverse_width, y as f32 * inverse_height])
+    }
 }
 
 impl SpriteSheet {
