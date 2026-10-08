@@ -54,7 +54,6 @@ pub(super) struct StellaApp {
     account_clipboard: Option<arboard::Clipboard>,
     account_started: Instant,
     active: bool,
-    close_request: window::CloseRequest,
     fatal_error: Option<String>,
     window_errors: window::WindowErrors,
 }
@@ -222,7 +221,6 @@ impl StellaApp {
             account_clipboard: None,
             account_started: Instant::now(),
             active: false,
-            close_request: window::CloseRequest::default(),
             fatal_error: None,
             window_errors: window::WindowErrors::default(),
         })

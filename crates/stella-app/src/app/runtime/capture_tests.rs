@@ -77,7 +77,6 @@ fn capture_app() -> StellaApp {
         account_clipboard: None,
         account_started: Instant::now(),
         active: true,
-        close_request: super::super::window::CloseRequest::default(),
         fatal_error: None,
         window_errors: crate::app::window::WindowErrors::default(),
     }

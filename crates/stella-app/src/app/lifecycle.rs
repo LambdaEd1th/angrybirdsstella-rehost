@@ -376,6 +376,107 @@ mod tests {
         assert!(!app.runtime.audio_output_state().started);
     }
 
+    fn window_termination_with_unsafe_lua(inactive: bool, account: bool) {
+        let Some(sandbox) = ShippedDataSandbox::new("window-close-save") else {
+            return;
+        };
+        let mut app = StellaApp::new_with_missing_global_diagnostics(
+            sandbox.data_root.clone(),
+            GameResolution::default(),
+            false,
+            PlatformServiceOptions {
+                local_services: true,
+                ..PlatformServiceOptions::default()
+            },
+        )
+        .unwrap();
+        app.did_become_active();
+        if inactive {
+            app.will_resign_active();
+        }
+        if account {
+            app.runtime
+                .execute_source("_G.SkynestAccount.native_login(true, false, false)")
+                .unwrap();
+            app.synchronize_account_ui().unwrap();
+            assert!(app.account_ui.visible());
+            assert!(
+                !app.account_window_event(&WindowEvent::CloseRequested)
+                    .unwrap()
+            );
+        }
+        execute_diagnostic_source(
+            &app.runtime,
+            r#"
+                g_safeToQuit = false
+                settings.iap = { gained = {}, used = {}, sync = {} }
+                settings.pendingRewards = {}
+                Coins:setPendingReward("StarReward_15", 66, "Level end")
+                Coins:grantPendingRewards()
+                loadTableFromFile("settings.lua", "windowCloseBefore")
+                assert(windowCloseBefore.pendingRewards.coins.StarReward_15.amount == 66)
+            "#,
+        )
+        .unwrap();
+        app.runtime.update(0.0).unwrap();
+        assert!(!app.runtime.safe_to_quit());
+        assert!(!app.runtime.exit_requested());
+
+        // This is the real winit `exiting` callback body, with shipped
+        // gamePaused and isolated persistence rather than a mock save hook.
+        app.terminate_window();
+        app.finish_window_run(Ok(())).unwrap();
+        assert!(!app.active);
+        assert!(!app.runtime.audio_output_state().started);
+        execute_diagnostic_source(
+            &app.runtime,
+            r#"
+                loadTableFromFile("settings.lua", "windowCloseAfter")
+                assert(windowCloseAfter.iap.gained.coins == 66)
+                assert(next(windowCloseAfter.pendingRewards.coins) == nil)
+                settings = windowCloseAfter
+                Coins:grantPendingRewards()
+                assert(Coins:getAmount() == 66)
+            "#,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn window_termination_persists_shipped_rewards_while_lua_is_unsafe() {
+        window_termination_with_unsafe_lua(false, false);
+    }
+
+    #[test]
+    fn inactive_window_termination_still_persists_shipped_rewards() {
+        window_termination_with_unsafe_lua(true, false);
+    }
+
+    #[test]
+    fn account_overlay_does_not_consume_close_or_prevent_final_persistence() {
+        window_termination_with_unsafe_lua(false, true);
+    }
+
+    #[test]
+    fn window_termination_reports_a_shipped_pause_failure() {
+        let Some(sandbox) = ShippedDataSandbox::new("window-close-error") else {
+            return;
+        };
+        let mut app = StellaApp::new_with_missing_global_diagnostics(
+            sandbox.data_root.clone(),
+            GameResolution::default(),
+            false,
+            PlatformServiceOptions::default(),
+        )
+        .unwrap();
+        app.runtime
+            .execute_source("function gamePaused() error('window-close save failure') end")
+            .unwrap();
+        app.terminate_window();
+        let error = app.finish_window_run(Ok(())).unwrap_err();
+        assert!(error.to_string().contains("window-close save failure"));
+    }
+
     #[test]
     fn focus_cycle_discards_a_primary_hold_without_publishing_release() {
         let Some(sandbox) = ShippedDataSandbox::new("lifecycle-input") else {

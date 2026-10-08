@@ -28,27 +28,16 @@ impl StellaApp {
     pub(crate) fn finish_window_run(&mut self, result: Result<()>) -> Result<()> {
         self.window_errors.finish(result)
     }
-}
 
-/// Desktop delivery of GameApp's native `isSafeToQuit` virtual.
-///
-/// Purple retains a Lua-derived byte at `GameLua+0x6AC` and exposes it through
-/// the GameApp vtable. A platform close request made while that byte is false
-/// remains pending until a later frame publishes true. Script-requested exits
-/// are a separate force path and deliberately bypass this gate.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct CloseRequest {
-    pending: bool,
-}
-
-impl CloseRequest {
-    fn request(&mut self, safe_to_quit: bool) -> bool {
-        self.pending = true;
-        safe_to_quit
-    }
-
-    fn should_exit(self, safe_to_quit: bool, forced: bool) -> bool {
-        forced || (self.pending && safe_to_quit)
+    pub(super) fn terminate_window(&mut self) {
+        // Linux clipboard ownership lives with this handle; winit may finish
+        // the event loop without dropping the app value on every platform.
+        self.account_clipboard = None;
+        self.application_will_terminate();
+        if let Some(error) = self.fatal_error.take() {
+            eprintln!("runtime stopped during termination: {error}");
+            self.window_errors.record(error);
+        }
     }
 }
 
@@ -130,9 +119,13 @@ impl ApplicationHandler for StellaApp {
         if !consumed {
             match event {
                 WindowEvent::CloseRequested => {
-                    if self.close_request.request(self.runtime.safe_to_quit()) {
-                        event_loop.exit();
-                    }
+                    // Purple's applicationWillTerminate: (0x1004047A8)
+                    // stops updates and delivers the final pause/save pass
+                    // without consulting GameLua's safe-to-quit byte. The
+                    // shipped iOS scripts can leave that byte false forever.
+                    // Let winit reach `exiting`, which preserves that final
+                    // callback and reports any persistence failure.
+                    event_loop.exit();
                 }
                 WindowEvent::Focused(focused) => {
                     if focused {
@@ -207,14 +200,7 @@ impl ApplicationHandler for StellaApp {
     }
 
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
-        // Linux clipboard ownership lives with this handle; winit may finish
-        // the event loop without dropping the app value on every platform.
-        self.account_clipboard = None;
-        self.application_will_terminate();
-        if let Some(error) = self.fatal_error.take() {
-            eprintln!("runtime stopped during termination: {error}");
-            self.window_errors.record(error);
-        }
+        self.terminate_window();
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
@@ -227,10 +213,7 @@ impl ApplicationHandler for StellaApp {
             event_loop.exit();
             return;
         }
-        if self
-            .close_request
-            .should_exit(self.runtime.safe_to_quit(), self.runtime.exit_requested())
-        {
+        if self.runtime.exit_requested() {
             event_loop.exit();
             return;
         }
@@ -252,7 +235,7 @@ impl ApplicationHandler for StellaApp {
 
 #[cfg(test)]
 mod tests {
-    use super::{CloseRequest, WindowErrors};
+    use super::WindowErrors;
 
     #[test]
     fn window_errors_survive_normal_loop_exit_and_termination_errors() {
@@ -275,29 +258,5 @@ mod tests {
         assert!(format!("{result:#}").contains("event loop failed"));
         assert!(result.to_string().contains("save persistence failed"));
         assert!(WindowErrors::default().finish(Ok(())).is_ok());
-    }
-
-    #[test]
-    fn unsafe_platform_close_waits_until_a_later_safe_frame() {
-        let mut close = CloseRequest::default();
-
-        assert!(!close.request(false));
-        assert!(!close.should_exit(false, false));
-        assert!(close.should_exit(true, false));
-    }
-
-    #[test]
-    fn safe_platform_close_exits_immediately() {
-        let mut close = CloseRequest::default();
-
-        assert!(close.request(true));
-        assert!(close.should_exit(true, false));
-    }
-
-    #[test]
-    fn script_requested_exit_bypasses_an_unsafe_platform_gate() {
-        let close = CloseRequest::default();
-
-        assert!(close.should_exit(false, true));
     }
 }

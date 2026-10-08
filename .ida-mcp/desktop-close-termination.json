@@ -1,0 +1,204 @@
+{
+  "provider": "Official IDA MCP Server",
+  "binary": "angry birds stella v1.1.6/Payload/Purple.app/Purple",
+  "instance_id": "ad5d1f278855",
+  "date": "2026-10-08",
+  "result": {
+    "0x1004047a8": {
+      "pseudocode": [
+        "void __cdecl -[AppController applicationWillTerminate:](AppController *self, SEL a2, id a3)",
+        "{",
+        "  __int64 v4; // x0",
+        "  __int64 v5; // x0",
+        "  __int64 v6; // x0",
+        "  __int64 v7; // x0",
+        "  unsigned int *v8; // x8",
+        "  int v9; // w10",
+        "  unsigned int *v10; // x8",
+        "  int v11; // w10",
+        "  unsigned int *v12; // x8",
+        "  int v13; // w10",
+        "  unsigned int *v14; // x8",
+        "  int v15; // w10",
+        "  __int64 v16; // [xsp+0h] [xbp-B0h] BYREF",
+        "  __int128 v17; // [xsp+8h] [xbp-A8h]",
+        "  __int128 v18; // [xsp+18h] [xbp-98h]",
+        "  __int64 v19; // [xsp+28h] [xbp-88h]",
+        "  void *v20; // [xsp+30h] [xbp-80h] BYREF",
+        "  int v21; // [xsp+48h] [xbp-68h]",
+        "  __int64 v22; // [xsp+50h] [xbp-60h] BYREF",
+        "  __int64 v23; // [xsp+58h] [xbp-58h] BYREF",
+        "  __int64 v24; // [xsp+60h] [xbp-50h] BYREF",
+        "  void *v25; // [xsp+68h] [xbp-48h] BYREF",
+        "  bool v26; // [xsp+80h] [xbp-30h]",
+        "  _BYTE v27[8]; // [xsp+88h] [xbp-28h] BYREF",
+        "",
+        "  self->m_allowUpdate = 0;",
+        "  if ( !self->m_os->var6 )",
+        "    -[AppController stopUpdate](self, \"stopUpdate\", a3);",
+        "  sub_100401398(a1: (__int64)&v16);",
+        "  std::string::assign(this: (std::string *)&self->m_config, a2: (const std::string *)&v16);",
+        "  *(_QWORD *)&self->m_config.debugMemoryAllocs = v19;",
+        "  *(_OWORD *)&self->m_config.bits = v18;",
+        "  *(_OWORD *)&self->m_config.width = v17;",
+        "  std::vector<gr::Context::OrientationType>::operator=(a1: &self->m_config.autoOrientations, a2: &v20);",
+        "  self->m_config.framerate = v21;",
+        "  std::string::assign(this: (std::string *)&self->m_config.publisher, a2: (const std::string *)&v22);",
+        "  std::string::assign(this: (std::string *)&self->m_config.product, a2: (const std::string *)&v23);",
+        "  std::string::assign(this: (std::string *)&self->m_config.dllPath, a2: (const std::string *)&v24);",
+        "  std::vector<gr::Context::PlatformType>::operator=(a1: &self->m_config.renderer, a2: &v25);",
+        "  self->m_config.singleton = v26;",
+        "  if ( v25 )",
+        "    operator delete(a1: v25);",
+        "  v4 = v24 - 24;",
+        "  if ( (_UNKNOWN *)(v24 - 24) != &std::string::_Rep::_S_empty_rep_storage )",
+        "  {",
+        "    v8 = (unsigned int *)(v24 - 8);",
+        "    do",
+        "      v9 = __ldaxr(v8);",
+        "    while ( __stlxr(v9 - 1, v8) );",
+        "    if ( v9 <= 0 )",
+        "      std::string::_Rep::_M_destroy(a1: v4, a2: v27);",
+        "  }",
+        "  v5 = v23 - 24;",
+        "  if ( (_UNKNOWN *)(v23 - 24) != &std::string::_Rep::_S_empty_rep_storage )",
+        "  {",
+        "    v10 = (unsigned int *)(v23 - 8);",
+        "    do",
+        "      v11 = __ldaxr(v10);",
+        "    while ( __stlxr(v11 - 1, v10) );",
+        "    if ( v11 <= 0 )",
+        "      std::string::_Rep::_M_destroy(a1: v5, a2: v27);",
+        "  }",
+        "  v6 = v22 - 24;",
+        "  if ( (_UNKNOWN *)(v22 - 24) != &std::string::_Rep::_S_empty_rep_storage )",
+        "  {",
+        "    v12 = (unsigned int *)(v22 - 8);",
+        "    do",
+        "      v13 = __ldaxr(v12);",
+        "    while ( __stlxr(v13 - 1, v12) );",
+        "    if ( v13 <= 0 )",
+        "      std::string::_Rep::_M_destroy(a1: v6, a2: v27);",
+        "  }",
+        "  if ( v20 )",
+        "    operator delete(a1: v20);",
+        "  v7 = v16 - 24;",
+        "  if ( (_UNKNOWN *)(v16 - 24) != &std::string::_Rep::_S_empty_rep_storage )",
+        "  {",
+        "    v14 = (unsigned int *)(v16 - 8);",
+        "    do",
+        "      v15 = __ldaxr(v14);",
+        "    while ( __stlxr(v15 - 1, v14) );",
+        "    if ( v15 <= 0 )",
+        "      std::string::_Rep::_M_destroy(a1: v7, a2: v27);",
+        "  }",
+        "  -[AppController dealloc](self, \"dealloc\");",
+        "}"
+      ],
+      "xrefs": [
+        {
+          "from": "0x100b3ef48",
+          "type": "OFFSET"
+        }
+      ]
+    },
+    "0x100404e24": {
+      "pseudocode": [
+        "void __cdecl -[AppController stopUpdate](AppController *self, SEL a2)",
+        "{",
+        "  id v3; // x0",
+        "  char v4; // [xsp+Eh] [xbp-12h] BYREF",
+        "  char v5; // [xsp+Fh] [xbp-11h] BYREF",
+        "",
+        "  +[NSObject cancelPreviousPerformRequestsWithTarget:selector:object:](",
+        "    &OBJC_CLASS___NSObject,",
+        "    \"cancelPreviousPerformRequestsWithTarget:selector:object:\",",
+        "    self,",
+        "    \"update\",",
+        "    0);",
+        "  -[MyEAGLViewController resetTouches](self->m_viewController, \"resetTouches\");// stopUpdate first calls resetTouches, not viewDidDisappear. Application focus loss therefore drops the primary owner without creating an LBUTTON release edge.",
+        "  v3 = -[CADisplayLink invalidate](self->m_displayLink, \"invalidate\");",
+        "  self->m_displayLink = 0;",
+        "  if ( (unsigned int)sub_100401664(a1: v3) )",
+        "  {",
+        "    (*((void (__fastcall **)(App *, _QWORD))self->m_app->var0 + 19))(a1: self->m_app, a2: 0);",
+        "    v5 = 0;",
+        "    lang::event::call<lang::event::Event,void ()(bool),bool>(a1: &dword_100C2A458, a2: &v5);",
+        "    (*((void (__fastcall **)(App *, _QWORD))self->m_app->var0 + 22))(a1: self->m_app, a2: 0);",
+        "    v4 = 0;",
+        "    lang::event::call<lang::event::Event,void ()(bool),bool>(a1: &dword_100C2A45C, a2: &v4);",
+        "  }",
+        "}"
+      ],
+      "xrefs": [
+        {
+          "from": "0x1004047f0",
+          "type": "CALL_NEAR"
+        },
+        {
+          "from": "0x100404ba4",
+          "type": "JUMP_NEAR"
+        },
+        {
+          "from": "0x100b3efc0",
+          "type": "OFFSET"
+        }
+      ]
+    },
+    "0x100062518": {
+      "pseudocode": [
+        "// GameLua safe-to-quit getter: returns byte +0x6AC. Desktop pending close requests now wait for this latched value; script requestExit remains a separate forced path.",
+        "__int64 __fastcall sub_100062518(__int64 a1)",
+        "{",
+        "  return *(unsigned __int8 *)(a1 + 1708);",
+        "}"
+      ],
+      "xrefs": [
+        {
+          "from": "0x100028fb4",
+          "type": "JUMP_NEAR"
+        }
+      ]
+    },
+    "0x100028fb0": {
+      "pseudocode": [
+        "__int64 __fastcall sub_100028FB0(__int64 a1)",
+        "{",
+        "  return sub_100062518(a1: *(_QWORD *)(a1 + 1400));",
+        "}"
+      ],
+      "xrefs": [
+        {
+          "from": "0x100a90478",
+          "type": "OFFSET"
+        }
+      ]
+    },
+    "0x1004016e4": {
+      "pseudocode": [
+        "__int64 __fastcall sub_1004016E4(__int64 result, int a2)",
+        "{",
+        "  *(_BYTE *)(result + 1219) = 1;",
+        "  *(_DWORD *)(result + 1220) = a2;",
+        "  return result;",
+        "}"
+      ],
+      "xrefs": [
+        {
+          "from": "0x10002a430",
+          "type": "JUMP_NEAR"
+        },
+        {
+          "from": "0x10002a43c",
+          "type": "JUMP_NEAR"
+        },
+        {
+          "from": "0x1000308fc",
+          "type": "CALL_NEAR"
+        }
+      ]
+    }
+  },
+  "stdout": "",
+  "stderr": ""
+}
