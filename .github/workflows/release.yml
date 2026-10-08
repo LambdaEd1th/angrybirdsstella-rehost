@@ -87,10 +87,10 @@ jobs:
       - name: Run portable tests
         run: cargo test --locked -p stella-assets -p stella-core
 
-      - name: Test standalone resource installation
-        run: cargo test --locked -p stella-app bundled_runtime::tests
+      - name: Test external desktop resource selection
+        run: cargo test --locked -p stella-app desktop_launch::tests
 
-      - name: Test release resource preparation and single-file packaging
+      - name: Test external release resources and packaging
         run: python3 -m unittest discover -s scripts -p 'test_*.py'
 
   build:
@@ -159,26 +159,12 @@ jobs:
           key: cargo-release-${{ runner.os }}-${{ runner.arch }}-${{ matrix.target }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: cargo-release-${{ runner.os }}-${{ runner.arch }}-${{ matrix.target }}-
 
-      - name: Download and stage verified runtime data
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          mkdir -p "$RUNNER_TEMP/runtime-data"
-          gh release download "$RUNTIME_DATA_RELEASE" \
-            --repo "$GITHUB_REPOSITORY" \
-            --pattern "$RUNTIME_DATA_ARCHIVE" \
-            --dir "$RUNNER_TEMP/runtime-data"
-          python .github/scripts/stage-runtime-data.py \
-            "$RUNNER_TEMP/runtime-data/$RUNTIME_DATA_ARCHIVE" \
-            --sha256 "$RUNTIME_DATA_SHA256" --output runtime/data
-
       - name: Check shipping launcher with strict Clippy
         env:
           RUSTFLAGS: ${{ contains(matrix.target, 'windows-msvc') && '-C target-feature=+crt-static' || '' }}
         run: cargo clippy -p stella-app --bin stella-app --release --all-features --locked --target ${{ matrix.target }} -- -D warnings
 
-      - name: Build single playable executable
+      - name: Build shipping game executable
         env:
           RUSTFLAGS: ${{ contains(matrix.target, 'windows-msvc') && '-C target-feature=+crt-static' || '' }}
         run: cargo build -p stella-app --bin stella-app --release --locked --target ${{ matrix.target }}
@@ -222,10 +208,31 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Verify only the five standalone game executables are present
+      - name: Download and verify external runtime data
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/runtime-data"
+          gh release download "$RUNTIME_DATA_RELEASE" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "$RUNTIME_DATA_ARCHIVE" \
+            --dir "$RUNNER_TEMP/runtime-data"
+          python3 .github/scripts/stage-runtime-data.py \
+            "$RUNNER_TEMP/runtime-data/$RUNTIME_DATA_ARCHIVE" \
+            --sha256 "$RUNTIME_DATA_SHA256" --output "$RUNNER_TEMP/runtime-data/data"
+
+      - name: Add external resources to every platform archive
         shell: bash
         run: |
-          python - "$RELEASE_TAG" <<'PYVERIFY'
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends zip unzip
+          bash .github/scripts/add-runtime-data.sh dist "$RUNNER_TEMP/runtime-data/data"
+
+      - name: Verify the five game archives and external resources
+        shell: bash
+        run: |
+          python3 - "$RELEASE_TAG" <<'PYVERIFY'
           import hashlib
           import importlib.util
           import os
@@ -237,19 +244,20 @@ jobs:
           version = sys.argv[1]
           expected = {}
           for target in package.TARGETS:
-              suffix = ".exe" if "windows" in target else ""
+              suffix = ".zip" if "windows" in target else ".tar.gz"
               name = f"angry-birds-stella-rehost-{version}-{target}{suffix}"
               expected[name] = target
           actual = {path.name for path in Path("dist").iterdir()}
           if actual != set(expected):
               raise SystemExit(f"unexpected release files: {actual ^ set(expected)}")
-          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
-              summary.write("| Executable | SHA-256 |\n| --- | --- |\n")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary, open("dist/SHA256SUMS", "w") as checksums:
+              summary.write("| Archive | SHA-256 |\n| --- | --- |\n")
               for name, target in expected.items():
                   path = Path("dist") / name
-                  package.verify_executable(path, target)
+                  package.verify_package(path, target)
                   digest = hashlib.sha256(path.read_bytes()).hexdigest()
                   summary.write(f"| {name} | `{digest}` |\n")
+                  checksums.write(f"{digest}  {name}\n")
           PYVERIFY
 
       - name: Create or update GitHub Release
@@ -260,7 +268,7 @@ jobs:
         run: |
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             # Preserve historical releases: do not silently retain a legacy
-            # multi-file distribution or delete previously published assets.
+            # distribution format or delete previously published assets.
             gh release view "$RELEASE_TAG" --json assets > "$RUNNER_TEMP/release-assets.json"
             python - "$RUNNER_TEMP/release-assets.json" <<'PYASSETS'
             import json
@@ -269,7 +277,7 @@ jobs:
             allowed = {path.name for path in Path("dist").iterdir()}
             existing = {asset["name"] for asset in json.loads(Path(sys.argv[1]).read_text())["assets"]}
             if existing - allowed:
-                raise SystemExit("Existing release contains legacy assets; use a new version tag.")
+                raise SystemExit("Existing release contains other assets; use a new version tag.")
             PYASSETS
             gh release upload "$RELEASE_TAG" dist/* --clobber
           else

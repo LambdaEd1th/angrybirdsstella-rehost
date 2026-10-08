@@ -89,34 +89,30 @@ configuration:
 cargo run --profile diagnostic -p stella-app -- --help
 ```
 
-Build the shipping game as a single executable:
+Build the shipping game executable:
 
 ```sh
 cargo build --release --locked -p stella-app --bin stella-app
 ```
 
 `target/release/stella-app` (`stella-app.exe` on Windows) directly opens the game
-without a CLI. It embeds the complete game resources; no adjacent `runtime`
-directory, extraction tool or working-directory setup is needed. Its first
-launch automatically installs verified resources into the user's application
-data directory. Saves remain in a stable sibling `runtime/appdata` directory
-when resource versions change:
+without a CLI. Resources remain external: put the complete `runtime/data`
+directory beside the executable. Saves, settings and local service state retain
+the existing sibling `runtime/appdata` layout. Startup neither embeds nor
+extracts game resources and does not relocate saves to a user application-data
+directory. A missing or incomplete adjacent runtime reports an error.
 
-- macOS: `~/Library/Application Support/Angry Birds Stella Rehost/runtime/appdata`;
-- Windows: `%LOCALAPPDATA%/Angry Birds Stella Rehost/runtime/appdata`;
-- Linux: `$XDG_DATA_HOME/angry-birds-stella-rehost/runtime/appdata`, or
-  `~/.local/share/angry-birds-stella-rehost/runtime/appdata` when unset.
-
-For isolated QA or an explicitly chosen portable data location, set
-`STELLA_USER_DATA_DIR` to an absolute directory. Release startup never reads or
-migrates the developer's `runtime/appdata`. Native desktop builds still require
-the operating system's graphics drivers and standard desktop/audio libraries.
+For `cargo run --release -p stella-app` from the repository root, the launcher
+uses the working directory's `runtime/data` when no `runtime` exists beside the
+executable. For isolated QA, place the executable and resources in a separate
+directory; debug and `diagnostic` builds also support `--data`. Native desktop
+builds require the operating system's graphics drivers and standard
+desktop/audio libraries.
 
 The desktop host enables a persistent local replacement for the retired
 identity, cloud-save, Game Center and social providers by default. It keeps the
 original asynchronous Lua callback boundary and stores only rehost-owned state
-under the selected `runtime/appdata` (the workspace directory for debug and
-`diagnostic`, the user directory for shipping builds):
+under the selected external resource tree's sibling `runtime/appdata`:
 
 - `stella-device-id`: stable installation UUID published as Purple's global
   `uniqueDeviceId` string and used by the shipped per-device save keys;
@@ -335,15 +331,19 @@ git push origin v0.1.0
 ```
 
 The Release workflow can also be started manually with the same tag in the
-GitHub Actions interface. For each of the five desktop targets it verifies and
-stages the pinned runtime archive **before** compiling the shipping launcher,
-checks release Clippy, and publishes only one resource-embedded game executable.
-Windows uses the GUI subsystem and a static CRT. The packaging check rejects
-unbundled developer builds, incorrect architectures and Windows console builds.
-There are no separately shipped resources, debug tools or package directories;
-SHA-256 values are recorded in the workflow summary. Historical multi-file
-releases require a new version tag rather than silently retaining or deleting
-legacy assets.
+GitHub Actions interface. Each of the five desktop targets builds one game
+executable with release Clippy checks. The publish job verifies the pinned
+runtime archive and packages resources as external `runtime/data`, with an
+empty sibling `runtime/appdata`. Unix releases use `.tar.gz`; Windows releases
+use `.zip`. Extract the archive and open `stella-app` (`stella-app.exe` on
+Windows). There is no resource extraction on game startup.
+
+Windows uses the GUI subsystem and a static CRT. Packaging checks architecture,
+Windows subsystem, external resource layout and original native font hashes;
+developer tools and previously embedded executables are excluded. Archives
+include README, license and build information, with SHA-256 values in
+`SHA256SUMS`. Historical releases containing other assets require a new version
+tag rather than silently retaining or deleting them.
 
 These commands and workflows describe publication capability; the current goal
 permits local Git commits and does not authorize pushing tags or publishing.

@@ -10,13 +10,9 @@ anyhow.workspace = true
 arboard.workspace = true
 bytemuck.workspace = true
 clap.workspace = true
-flate2.workspace = true
 image = { workspace = true, features = ["webp"] }
 pollster.workspace = true
 rodio = { workspace = true, features = ["playback"] }
-serde.workspace = true
-serde_json.workspace = true
-sha2.workspace = true
 stella-assets = { path = "../stella-assets" }
 stella-script = { path = "../stella-script" }
 skrifa.workspace = true
@@ -24,10 +20,3 @@ tiny-skia.workspace = true
 unicode-segmentation.workspace = true
 wgpu.workspace = true
 winit.workspace = true
-
-[build-dependencies]
-anyhow.workspace = true
-flate2.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-sha2.workspace = true

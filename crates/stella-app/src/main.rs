@@ -41,12 +41,10 @@ mod app;
 mod apprater_ui;
 mod assets;
 mod audio;
-#[cfg(any(not(debug_assertions), test))]
-mod bundle_format;
-#[cfg(any(not(debug_assertions), test))]
-mod bundled_runtime;
 #[cfg(any(debug_assertions, test))]
 mod cli;
+#[cfg(any(not(debug_assertions), test))]
+mod desktop_launch;
 mod gpu;
 mod platform_ui_drawing;
 
@@ -103,10 +101,10 @@ fn main() -> Result<()> {
     }
     #[cfg(all(not(debug_assertions), not(test)))]
     {
-        let result = bundled_runtime::run();
+        let result = desktop_launch::run();
         #[cfg(target_os = "windows")]
         if let Err(error) = &result {
-            bundled_runtime::show_error(error);
+            desktop_launch::show_error(error);
         }
         result
     }

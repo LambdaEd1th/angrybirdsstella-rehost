@@ -1,3 +1,7 @@
+> 历史记录：以下资源内置、首次启动自动解包和单文件交付方案已按用户要求撤销。
+> 当前实现保留调试 CLI / 发布无 CLI，资源恢复外置 `runtime/data`；
+> 现行说明和本次验证见 [desktop-external-resources.md](desktop-external-resources.md)。
+
 # 桌面调试 CLI 与单文件发布
 
 2026-10-08，完成用户明确授权的桌面构建/打包调整。长期完整复刻 goal

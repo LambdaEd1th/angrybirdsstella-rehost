@@ -69,11 +69,11 @@ jobs:
       - name: Test browser saves and localization
         run: node --test web/tests/*.test.js
 
-      - name: Test standalone desktop resource preparation and packaging
+      - name: Test external desktop resources and packaging
         run: |
           python3 -m unittest discover -s scripts -p 'test_*release*.py'
           python3 -m unittest discover -s scripts -p 'test_runtime_native_assets.py'
-          cargo test --locked -p stella-app bundled_runtime::tests
+          cargo test --locked -p stella-app desktop_launch::tests
 
       - name: Run strict Clippy
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify the pinned runtime archive and prepare inputs before a release build."""
+"""Verify the pinned runtime archive and prepare external resources for release packaging."""
 
 import argparse
 import hashlib

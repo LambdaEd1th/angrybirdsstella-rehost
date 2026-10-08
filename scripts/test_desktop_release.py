@@ -1,9 +1,11 @@
-"""Standalone desktop packaging regressions; no proprietary assets required."""
+"""External-resource desktop packaging regressions; no proprietary assets required."""
 
 import importlib.util
 from pathlib import Path
 import struct
 import tempfile
+import tarfile
+import zipfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -12,7 +14,7 @@ package = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(package)
 
 
-def executable(target, embedded=True, subsystem=2):
+def executable(target, embedded=False, subsystem=2):
     kind, architecture = package.TARGETS[target]
     contents = bytearray(256)
     if kind == "macho":
@@ -48,28 +50,45 @@ class DesktopReleaseTests(unittest.TestCase):
         for tool in ("stella-tool", "stella-headless", "stella-mp3-audit"):
             (binary_root / f"{tool}{suffix}").write_bytes(b"developer tool")
         (binary_root / "runtime/data").mkdir(parents=True)
-        (binary_root / "runtime/data/game.lua").write_bytes(b"must not ship separately")
+        (binary_root / "runtime/data/game.lua").write_bytes(b"unverified build directory resource")
         return path
 
-    def test_each_target_outputs_only_one_exact_game_executable(self):
+    def test_each_archive_contains_one_game_executable_without_developer_tools(self):
         for target in package.TARGETS:
             with self.subTest(target=target):
                 source = self.source(target)
                 dist = self.root / f"dist-{target}"
                 output = package.package(target, "v1.2.3-beta4", self.target_root, dist)
                 self.assertEqual(list(dist.iterdir()), [output])
-                self.assertEqual(output.read_bytes(), source.read_bytes())
-                self.assertEqual(output.suffix == ".exe", "windows" in target)
-                if "windows" not in target:
-                    self.assertEqual(output.stat().st_mode & 0o777, 0o755)
+                suffix = ".exe" if "windows" in target else ""
+                expected = {f"stella-app{suffix}", "README.md", "LICENSE", "BUILD-INFO.txt"}
+                if suffix:
+                    self.assertEqual(output.suffix, ".zip")
+                    with zipfile.ZipFile(output) as archive:
+                        self.assertEqual(set(archive.namelist()), expected)
+                        self.assertEqual(archive.read("stella-app.exe"), source.read_bytes())
+                else:
+                    prefix = output.name.removesuffix(".tar.gz") + "/"
+                    with tarfile.open(output) as archive:
+                        self.assertEqual(set(archive.getnames()), {prefix + name for name in expected})
+                        self.assertEqual(archive.extractfile(prefix + "stella-app").read(), source.read_bytes())
+                        self.assertEqual(archive.getmember(prefix + "stella-app").mode, 0o755)
 
-    def test_unbundled_debug_executable_is_rejected_before_output(self):
+    def test_previous_embedded_executable_is_rejected_before_output(self):
         target = "aarch64-apple-darwin"
-        self.source(target, embedded=False)
+        self.source(target, embedded=True)
         dist = self.root / "dist"
-        with self.assertRaisesRegex(ValueError, "debug builds cannot be shipped"):
+        with self.assertRaisesRegex(ValueError, "embedded resources"):
             package.package(target, "v1.2.3", self.target_root, dist)
         self.assertFalse(dist.exists())
+
+    def test_final_archive_requires_external_resources(self):
+        for target in package.TARGETS:
+            with self.subTest(target=target):
+                self.source(target)
+                output = package.package(target, "v1.2.3", self.target_root, self.root / "dist")
+                with self.assertRaisesRegex(ValueError, "runtime/data/scripts/game.lua"):
+                    package.verify_package(output, target)
 
     def test_windows_console_executable_is_rejected(self):
         target = "x86_64-pc-windows-msvc"

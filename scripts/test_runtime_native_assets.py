@@ -1,13 +1,15 @@
-"""Portable staging and release-input preparation with synthetic font bytes."""
+"""Portable staging and external release-resource packaging with synthetic font bytes."""
 
 import hashlib
 import json
 from pathlib import Path
 import subprocess
+import shutil
 import sys
 import tarfile
 import tempfile
 import unittest
+import zipfile
 from unittest.mock import patch
 
 import runtime_native_assets as assets
@@ -137,6 +139,48 @@ class NativeRuntimeAssetsTests(unittest.TestCase):
         self.assertIn("unsafe runtime archive entry", result.stderr)
         self.assertFalse(output.exists())
         self.assertFalse((self.root / "escaped").exists())
+
+    @unittest.skipUnless(all(shutil.which(tool) for tool in ("bash", "tar", "zip", "unzip")),
+                         "external archive packaging requires shell tar/zip tools")
+    def test_real_tar_zip_packages_include_external_fonts_and_reject_stale_data_first(self):
+        fixture = self.root / "checkout"
+        add_resources = fixture / ".github/scripts/add-runtime-data.sh"
+        write(add_resources, (REPOSITORY / ".github/scripts/add-runtime-data.sh").read_bytes())
+        write(fixture / ".github/scripts/runtime_native_assets.py", Path(assets.__file__).read_bytes())
+        write(fixture / ".github/scripts/runtime-native-assets.json",
+              json.dumps({"files": self.entries}).encode())
+        self.stage()
+        write(self.data / "scripts/game.lua", b"fixture game")
+        dist = self.root / "dist"
+        dist.mkdir()
+        unix_root = self.root / "unix-package"
+        write(unix_root / "stella-app", b"fixture executable")
+        unix = dist / "unix.tar.gz"
+        with tarfile.open(unix, "w:gz") as archive:
+            archive.add(unix_root, arcname="stella-test")
+        windows = dist / "windows.zip"
+        with zipfile.ZipFile(windows, "w") as archive:
+            archive.writestr("stella-app.exe", b"fixture executable")
+        result = subprocess.run(["bash", str(add_resources), str(dist), str(self.data)],
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        with tarfile.open(unix) as unix_package, zipfile.ZipFile(windows) as windows_package:
+            for entry in self.entries:
+                relative = "runtime/data/" + entry["destination"]
+                expected = (self.bundle / entry["source"]).read_bytes()
+                self.assertEqual(unix_package.extractfile("stella-test/" + relative).read(), expected)
+                self.assertEqual(windows_package.read(relative), expected)
+            self.assertEqual(unix_package.extractfile("stella-test/stella-app").read(), b"fixture executable")
+            self.assertEqual(windows_package.read("stella-app.exe"), b"fixture executable")
+            self.assertTrue(unix_package.getmember("stella-test/runtime/appdata").isdir())
+            self.assertIn("runtime/appdata/", windows_package.namelist())
+        before = {path: path.read_bytes() for path in (unix, windows)}
+        (self.data / self.entries[-1]["destination"]).unlink()
+        rejected = subprocess.run(["bash", str(add_resources), str(dist), str(self.data)],
+                                  capture_output=True, text=True)
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertIn("required native runtime asset is missing", rejected.stderr)
+        self.assertEqual(before, {path: path.read_bytes() for path in (unix, windows)})
 
 
 if __name__ == "__main__":
