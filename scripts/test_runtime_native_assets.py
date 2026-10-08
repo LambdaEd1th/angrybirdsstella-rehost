@@ -1,15 +1,14 @@
-"""Portable staging and real tar/zip embedding tests using synthetic font bytes."""
+"""Portable staging and release-input preparation with synthetic font bytes."""
 
 import hashlib
 import json
 from pathlib import Path
-import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
 from unittest.mock import patch
-import zipfile
 
 import runtime_native_assets as assets
 
@@ -75,14 +74,10 @@ class NativeRuntimeAssetsTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "missing"):
                 assets.verify(self.data)
 
-    @unittest.skipUnless(all(shutil.which(tool) for tool in ("bash", "tar", "zip", "unzip")),
-                         "release embedding requires shell tar/zip tools")
-    def test_real_tar_zip_embedding_includes_fonts_and_rejects_stale_archive_first(self):
-        # Run the production script in a fixture checkout with synthetic font
-        # hashes. CI needs neither proprietary fonts nor a running application.
+    def test_verified_archive_staging_includes_fonts_and_rejects_stale_inputs_first(self):
         fixture = self.root / "checkout"
-        embed = fixture / ".github/scripts/embed-runtime-data.sh"
-        write(embed, (REPOSITORY / ".github/scripts/embed-runtime-data.sh").read_bytes())
+        staging = fixture / ".github/scripts/stage-runtime-data.py"
+        write(staging, (REPOSITORY / ".github/scripts/stage-runtime-data.py").read_bytes())
         write(fixture / ".github/scripts/runtime_native_assets.py", Path(assets.__file__).read_bytes())
         write(fixture / ".github/scripts/runtime-native-assets.json",
               json.dumps({"files": self.entries}).encode())
@@ -91,38 +86,57 @@ class NativeRuntimeAssetsTests(unittest.TestCase):
         archive = self.root / "runtime.tar.gz"
 
         def archive_runtime():
-            with tarfile.open(archive, "w:gz") as package:
-                package.add(self.data, arcname="data")
+            with tarfile.open(archive, "w:gz") as bundle:
+                bundle.add(self.data, arcname="data")
+            return hashlib.sha256(archive.read_bytes()).hexdigest()
 
-        archive_runtime()
-        dist = self.root / "dist"
-        dist.mkdir()
-        unix_root = self.root / "unix-package"
-        write(unix_root / "stella-app", b"fixture executable")
-        unix = dist / "unix.tar.gz"
-        with tarfile.open(unix, "w:gz") as package:
-            package.add(unix_root, arcname="stella-test")
-        windows = dist / "windows.zip"
-        with zipfile.ZipFile(windows, "w") as package:
-            package.writestr("stella-app.exe", b"fixture executable")
-        result = subprocess.run(["bash", str(embed), str(dist), str(archive)],
-                                capture_output=True, text=True)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        with tarfile.open(unix) as unix_package, zipfile.ZipFile(windows) as windows_package:
-            for entry in self.entries:
-                relative = "runtime/data/" + entry["destination"]
-                expected = (self.bundle / entry["source"]).read_bytes()
-                self.assertEqual(unix_package.extractfile("stella-test/" + relative).read(), expected)
-                self.assertEqual(windows_package.read(relative), expected)
-
-        before = {path: path.read_bytes() for path in (unix, windows)}
-        (self.data / self.entries[-1]["destination"]).unlink()
-        archive_runtime()
-        rejected = subprocess.run(["bash", str(embed), str(dist), str(archive)],
+        def prepare(output, digest):
+            return subprocess.run([sys.executable, str(staging), str(archive),
+                                   "--sha256", digest, "--output", str(output)],
                                   capture_output=True, text=True)
+
+        digest = archive_runtime()
+        output = self.root / "release-data"
+        result = prepare(output, digest)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for entry in self.entries:
+            self.assertEqual((output / entry["destination"]).read_bytes(),
+                             (self.bundle / entry["source"]).read_bytes())
+        self.assertEqual((output / "scripts/game.lua").read_bytes(), b"fixture game")
+        before = {path.relative_to(output): path.read_bytes() for path in output.rglob("*") if path.is_file()}
+        rejected = prepare(output, digest)
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertIn("refusing to overwrite", rejected.stderr)
+        self.assertEqual(before, {path.relative_to(output): path.read_bytes() for path in output.rglob("*") if path.is_file()})
+        bad_output = self.root / "bad-output"
+        rejected = prepare(bad_output, "0" * 64)
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertIn("SHA-256 mismatch", rejected.stderr)
+        self.assertFalse(bad_output.exists())
+        (self.data / self.entries[-1]["destination"]).unlink()
+        digest = archive_runtime()
+        rejected = prepare(bad_output, digest)
         self.assertNotEqual(rejected.returncode, 0)
         self.assertIn("required native runtime asset is missing", rejected.stderr)
-        self.assertEqual(before, {path: path.read_bytes() for path in (unix, windows)})
+        self.assertFalse(bad_output.exists())
+
+    def test_release_archive_rejects_path_traversal_before_installing(self):
+        fixture = self.root / "checkout/.github/scripts"
+        staging = fixture / "stage-runtime-data.py"
+        write(staging, (REPOSITORY / ".github/scripts/stage-runtime-data.py").read_bytes())
+        write(fixture / "runtime_native_assets.py", Path(assets.__file__).read_bytes())
+        write(fixture / "runtime-native-assets.json", json.dumps({"files": self.entries}).encode())
+        archive = self.root / "unsafe.tar.gz"
+        with tarfile.open(archive, "w:gz") as bundle:
+            bundle.addfile(tarfile.TarInfo("data/../../escaped"))
+        output = self.root / "release-data"
+        result = subprocess.run([sys.executable, str(staging), str(archive),
+                                 "--sha256", hashlib.sha256(archive.read_bytes()).hexdigest(),
+                                 "--output", str(output)], capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unsafe runtime archive entry", result.stderr)
+        self.assertFalse(output.exists())
+        self.assertFalse((self.root / "escaped").exists())
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@ use super::*;
 impl StellaApp {
     /// The screenshot CLI never enters winit, so its normal and error returns
     /// need the same final script persistence boundary as `exiting`.
+    #[cfg(any(debug_assertions, test))]
     pub(crate) fn finish_screenshot_run(&mut self, result: Result<()>) -> Result<()> {
         self.application_will_terminate();
         match (result, self.fatal_error.take()) {

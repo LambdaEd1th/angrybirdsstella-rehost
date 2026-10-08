@@ -6,6 +6,7 @@ mod input;
 mod lifecycle;
 mod platform_actions;
 mod runtime;
+#[cfg(any(debug_assertions, test))]
 mod screenshot;
 mod sharing;
 mod window;
@@ -55,6 +56,7 @@ pub(super) struct StellaApp {
     active: bool,
     close_request: window::CloseRequest,
     fatal_error: Option<String>,
+    window_errors: window::WindowErrors,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -222,6 +224,7 @@ impl StellaApp {
             active: false,
             close_request: window::CloseRequest::default(),
             fatal_error: None,
+            window_errors: window::WindowErrors::default(),
         })
     }
 

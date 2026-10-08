@@ -336,8 +336,8 @@ pub(super) fn run() -> Result<()> {
             .map_err(|error| anyhow!(error.to_string()))?;
     }
     let event_loop = EventLoop::new()?;
-    event_loop.run_app(&mut app)?;
-    Ok(())
+    let result = event_loop.run_app(&mut app).map_err(anyhow::Error::from);
+    app.finish_window_run(result)
 }
 
 #[cfg(test)]

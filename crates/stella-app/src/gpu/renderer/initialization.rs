@@ -104,6 +104,7 @@ impl GpuRenderer {
         pollster::block_on(Self::new(Some(window), resolution))
     }
 
+    #[cfg(any(debug_assertions, test))]
     pub(crate) fn headless(resolution: GameResolution) -> Result<Self> {
         pollster::block_on(Self::new(None, resolution))
     }

@@ -176,6 +176,7 @@ impl GpuRenderer {
         Ok(())
     }
 
+    #[cfg(any(debug_assertions, test))]
     pub(crate) fn render_to_rgba(
         &mut self,
         assets: &AssetCatalog,
@@ -188,6 +189,7 @@ impl GpuRenderer {
 
     /// Read the already-rendered target for an opaque display screenshot.
     /// Native sharing uses ordered copies with the original RGBA alpha.
+    #[cfg(any(debug_assertions, test))]
     pub(crate) fn read_game_rgba(&self) -> Result<Vec<u8>> {
         self.check_device()?;
         let mut encoder = self

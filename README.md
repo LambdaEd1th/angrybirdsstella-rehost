@@ -74,17 +74,49 @@ Its launcher restores one of three localStorage save slots before starting the
 original game and supports importing desktop saves and exporting JSON backups.
 See [the browser build and deployment guide](web/README.md).
 
-With the data already extracted under `runtime/data` (the desktop app uses this
-location by default):
+For development, with the complete data extracted and staged under
+`runtime/data`, launch the debug build:
 
 ```sh
-cargo run --release -p stella-app
+cargo run -p stella-app
 ```
+
+The desktop CLI is compiled only with debug assertions. Use the optimized
+`diagnostic` profile for screenshots, script diagnostics and compatible-service
+configuration:
+
+```sh
+cargo run --profile diagnostic -p stella-app -- --help
+```
+
+Build the shipping game as a single executable:
+
+```sh
+cargo build --release --locked -p stella-app --bin stella-app
+```
+
+`target/release/stella-app` (`stella-app.exe` on Windows) directly opens the game
+without a CLI. It embeds the complete game resources; no adjacent `runtime`
+directory, extraction tool or working-directory setup is needed. Its first
+launch automatically installs verified resources into the user's application
+data directory. Saves remain in a stable sibling `runtime/appdata` directory
+when resource versions change:
+
+- macOS: `~/Library/Application Support/Angry Birds Stella Rehost/runtime/appdata`;
+- Windows: `%LOCALAPPDATA%/Angry Birds Stella Rehost/runtime/appdata`;
+- Linux: `$XDG_DATA_HOME/angry-birds-stella-rehost/runtime/appdata`, or
+  `~/.local/share/angry-birds-stella-rehost/runtime/appdata` when unset.
+
+For isolated QA or an explicitly chosen portable data location, set
+`STELLA_USER_DATA_DIR` to an absolute directory. Release startup never reads or
+migrates the developer's `runtime/appdata`. Native desktop builds still require
+the operating system's graphics drivers and standard desktop/audio libraries.
 
 The desktop host enables a persistent local replacement for the retired
 identity, cloud-save, Game Center and social providers by default. It keeps the
 original asynchronous Lua callback boundary and stores only rehost-owned state
-under `runtime/appdata`:
+under the selected `runtime/appdata` (the workspace directory for debug and
+`diagnostic`, the user directory for shipping builds):
 
 - `stella-device-id`: stable installation UUID published as Purple's global
   `uniqueDeviceId` string and used by the shipped per-device save keys;
@@ -105,14 +137,14 @@ therefore exercises the original `iap.lua` listeners without a platform store
 or real-money charge. An unknown product retains the original immediate
 `PURCHASE_FAILED` result.
 
-Use `--offline-services` to exercise the original unavailable-provider branch
+In a debug or `diagnostic` build, use `--offline-services` to exercise the original unavailable-provider branch
 without creating or loading that local state.
 
 The shipped GameServer facade and all of its original `/api/v1` routes can be
 connected to a compatible replacement endpoint explicitly:
 
 ```sh
-cargo run --release -p stella-app -- \
+cargo run --profile diagnostic -p stella-app -- \
   --game-server-url http://127.0.0.1:8080/api/v1
 ```
 
@@ -127,7 +159,7 @@ JSON Unix timestamp or an object containing `time`, `serverTime`, `timestamp`
 or `epoch`:
 
 ```sh
-cargo run --release -p stella-app -- \
+cargo run --profile diagnostic -p stella-app -- \
   --server-time-url http://127.0.0.1:8080/identity/2.0/time
 ```
 
@@ -139,7 +171,7 @@ manifest endpoint corresponding to the original
 `apdrive/1/apps/<app-id>/assets` route:
 
 ```sh
-cargo run --release -p stella-app -- \
+cargo run --profile diagnostic -p stella-app -- \
   --assets-url http://127.0.0.1:8080/apdrive/1/apps/purple/assets
 ```
 
@@ -154,7 +186,7 @@ Rovio Account/Identity Level 2 also has an explicit compatible-provider
 boundary. Pass a replacement `identity/2.0` or `identity/3.0` service root:
 
 ```sh
-cargo run --release -p stella-app -- \
+cargo run --profile diagnostic -p stella-app -- \
   --identity-url http://127.0.0.1:8080/identity/2.0
 ```
 
@@ -187,7 +219,7 @@ Cloud settings and Skynest key/value requests can likewise target an
 independently operated compatible `storage/1.0` service:
 
 ```sh
-cargo run --release -p stella-app -- \
+cargo run --profile diagnostic -p stella-app -- \
   --storage-url http://127.0.0.1:8080/storage/1.0
 ```
 
@@ -216,7 +248,7 @@ operation endpoint while preserving the recovered native method and callback
 ABI:
 
 ```sh
-cargo run --release -p stella-app -- \
+cargo run --profile diagnostic -p stella-app -- \
   --social-url http://127.0.0.1:8080/stella/social
 ```
 
@@ -237,7 +269,7 @@ the reverse-matched Telepods flow can be exercised with any product identifier
 from `runtime/data/config/telepod_configuration.json`:
 
 ```sh
-cargo run --release -p stella-app -- \
+cargo run --profile diagnostic -p stella-app -- \
   --telepod-code hasbro.telepod.020
 ```
 
@@ -256,7 +288,7 @@ order and `AppStoreLauncher` opens the configured launch URL instead of its
 StoreKit fallback:
 
 ```sh
-cargo run --release -p stella-app -- \
+cargo run --profile diagnostic -p stella-app -- \
   --installed-url-scheme angrybirds \
   --installed-url-scheme badpiggies
 ```
@@ -303,13 +335,18 @@ git push origin v0.1.0
 ```
 
 The Release workflow can also be started manually with the same tag in the
-GitHub Actions interface. It builds the four workspace executables for all five
-targets, publishes `.tar.gz` archives for macOS/Linux and `.zip` archives for
-Windows, injects the verified `runtime/data` payload into every archive,
-and attaches a shared `SHA256SUMS` file. Each package therefore runs without a
-separate extraction step and contains its runtime instructions in
-`README.md`. `BUILD-INFO.txt` records the release version, target, source commit
-and compiler version.
+GitHub Actions interface. For each of the five desktop targets it verifies and
+stages the pinned runtime archive **before** compiling the shipping launcher,
+checks release Clippy, and publishes only one resource-embedded game executable.
+Windows uses the GUI subsystem and a static CRT. The packaging check rejects
+unbundled developer builds, incorrect architectures and Windows console builds.
+There are no separately shipped resources, debug tools or package directories;
+SHA-256 values are recorded in the workflow summary. Historical multi-file
+releases require a new version tag rather than silently retaining or deleting
+legacy assets.
+
+These commands and workflows describe publication capability; the current goal
+permits local Git commits and does not authorize pushing tags or publishing.
 
 Publishing a release also builds and deploys its tagged browser edition to
 GitHub Pages. Both the Release workflow and releases published through GitHub's
@@ -320,8 +357,8 @@ guide](web/README.md) for the repository's Pages setting and manual deployment.
 
 - `runtime/data`: canonical, locally extracted game resources; intentionally
   ignored by Git and never uploaded by CI.
-- `runtime/appdata`: writable saves, stable installation identity, settings and
-  downloaded-asset state;
+- `runtime/appdata`: debug/developer writable saves, stable installation identity,
+  settings and downloaded-asset state;
   intentionally ignored by Git.
 
 - `stella-app`: resizable desktop host and `wgpu` atlas/composite renderer,

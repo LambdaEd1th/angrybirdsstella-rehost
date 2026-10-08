@@ -6,6 +6,7 @@
 /archive/
 *.log
 .DS_Store
+__pycache__/
 
 # Canonical local runtime layout. The directory documentation is tracked, but
 # legally supplied game resources and mutable saves must stay local.

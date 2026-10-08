@@ -1,3 +1,8 @@
+#![cfg_attr(
+    all(target_os = "windows", not(debug_assertions)),
+    windows_subsystem = "windows"
+)]
+
 use std::{
     collections::HashMap,
     fs,
@@ -7,6 +12,7 @@ use std::{
 };
 
 use anyhow::{Context as _, Result, anyhow};
+#[cfg(any(debug_assertions, test))]
 use clap::Parser;
 use image::RgbaImage;
 use stella_assets::ka3d::{
@@ -35,6 +41,11 @@ mod app;
 mod apprater_ui;
 mod assets;
 mod audio;
+#[cfg(any(not(debug_assertions), test))]
+mod bundle_format;
+#[cfg(any(not(debug_assertions), test))]
+mod bundled_runtime;
+#[cfg(any(debug_assertions, test))]
 mod cli;
 mod gpu;
 mod platform_ui_drawing;
@@ -86,5 +97,17 @@ impl Default for GameResolution {
 mod reference_renderer;
 
 fn main() -> Result<()> {
-    cli::run()
+    #[cfg(any(debug_assertions, test))]
+    {
+        cli::run()
+    }
+    #[cfg(all(not(debug_assertions), not(test)))]
+    {
+        let result = bundled_runtime::run();
+        #[cfg(target_os = "windows")]
+        if let Err(error) = &result {
+            bundled_runtime::show_error(error);
+        }
+        result
+    }
 }

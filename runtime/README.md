@@ -36,11 +36,18 @@ Before creating a runtime-data archive, run:
 python3 .github/scripts/runtime_native_assets.py verify --data runtime/data
 ```
 
-Release embedding repeats this validation before altering platform packages.
-It copies the entire verified data tree, including both fonts, into tar and
-zip packages. Updating a local tree does not update the separately published
-runtime-data release asset or its pinned workflow checksum; both must be
-updated explicitly as part of a future authorized release-data publication.
+Shipping builds embed the complete verified data tree, including both fonts,
+into `stella-app`. The release workflow stages the pinned archive before every
+platform build; `build.rs` independently checks the required native fonts and
+resource directories. Updating a local tree does not update the separately
+published runtime-data asset or its pinned workflow checksum; both must be
+updated explicitly as part of an authorized release-data publication.
 
-The desktop application uses `runtime/data` by default. An explicit path can
-still be selected with `stella-app --data /path/to/data`.
+Debug and `diagnostic` builds use `runtime/data` by default and accept
+`--data /path/to/data`. Shipping `release` builds have no CLI: they automatically
+prepare the embedded resources in the user's application data directory and
+keep saves in its stable `runtime/appdata` sibling. Only the game executable
+is distributed for each desktop platform. `STELLA_RUNTIME_DATA` selects the
+resource input directory at build time; `STELLA_USER_DATA_DIR` selects an
+absolute isolated or portable user-data directory at runtime. Neither requires
+shipping a second file or changes the developer's normal saves.

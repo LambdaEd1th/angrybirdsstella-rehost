@@ -2,6 +2,34 @@
 
 use super::*;
 
+/// Keep fatal errors through `exiting` so a GUI launcher can report them after
+/// winit has completed the native termination/persistence callback boundary.
+#[derive(Default)]
+pub(super) struct WindowErrors(Vec<String>);
+
+impl WindowErrors {
+    fn record(&mut self, error: String) {
+        self.0.push(error);
+    }
+
+    pub(super) fn finish(&mut self, result: Result<()>) -> Result<()> {
+        if self.0.is_empty() {
+            return result;
+        }
+        let errors = std::mem::take(&mut self.0).join("\n");
+        match result {
+            Ok(()) => Err(anyhow!(errors)),
+            Err(error) => Err(error.context(errors)),
+        }
+    }
+}
+
+impl StellaApp {
+    pub(crate) fn finish_window_run(&mut self, result: Result<()>) -> Result<()> {
+        self.window_errors.finish(result)
+    }
+}
+
 /// Desktop delivery of GameApp's native `isSafeToQuit` virtual.
 ///
 /// Purple retains a Lua-derived byte at `GameLua+0x6AC` and exposes it through
@@ -169,6 +197,7 @@ impl ApplicationHandler for StellaApp {
         }
         if let Some(error) = self.fatal_error.take() {
             eprintln!("runtime stopped: {error}");
+            self.window_errors.record(error);
             event_loop.exit();
         }
     }
@@ -184,6 +213,7 @@ impl ApplicationHandler for StellaApp {
         self.application_will_terminate();
         if let Some(error) = self.fatal_error.take() {
             eprintln!("runtime stopped during termination: {error}");
+            self.window_errors.record(error);
         }
     }
 
@@ -193,6 +223,7 @@ impl ApplicationHandler for StellaApp {
         }
         if let Some(error) = self.fatal_error.take() {
             eprintln!("runtime stopped: {error}");
+            self.window_errors.record(error);
             event_loop.exit();
             return;
         }
@@ -221,7 +252,30 @@ impl ApplicationHandler for StellaApp {
 
 #[cfg(test)]
 mod tests {
-    use super::CloseRequest;
+    use super::{CloseRequest, WindowErrors};
+
+    #[test]
+    fn window_errors_survive_normal_loop_exit_and_termination_errors() {
+        let mut errors = WindowErrors::default();
+        errors.record("GPU device lost".into());
+        errors.record("save persistence failed".into());
+        assert_eq!(
+            errors.finish(Ok(())).unwrap_err().to_string(),
+            "GPU device lost\nsave persistence failed"
+        );
+    }
+
+    #[test]
+    fn window_errors_preserve_an_event_loop_error_too() {
+        let mut errors = WindowErrors::default();
+        errors.record("save persistence failed".into());
+        let result = errors
+            .finish(Err(anyhow::anyhow!("event loop failed")))
+            .unwrap_err();
+        assert!(format!("{result:#}").contains("event loop failed"));
+        assert!(result.to_string().contains("save persistence failed"));
+        assert!(WindowErrors::default().finish(Ok(())).is_ok());
+    }
 
     #[test]
     fn unsafe_platform_close_waits_until_a_later_safe_frame() {

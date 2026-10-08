@@ -87,6 +87,12 @@ jobs:
       - name: Run portable tests
         run: cargo test --locked -p stella-assets -p stella-core
 
+      - name: Test standalone resource installation
+        run: cargo test --locked -p stella-app bundled_runtime::tests
+
+      - name: Test release resource preparation and single-file packaging
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
+
   build:
     name: Build ${{ matrix.label }}
     needs: validate
@@ -140,7 +146,7 @@ jobs:
 
       - name: Install Rust target
         run: |
-          rustup toolchain install ${{ env.RUST_TOOLCHAIN }} --profile minimal
+          rustup toolchain install ${{ env.RUST_TOOLCHAIN }} --profile minimal --component clippy
           rustup target add ${{ matrix.target }} --toolchain ${{ env.RUST_TOOLCHAIN }}
           rustup default ${{ env.RUST_TOOLCHAIN }}
 
@@ -153,10 +159,29 @@ jobs:
           key: cargo-release-${{ runner.os }}-${{ runner.arch }}-${{ matrix.target }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: cargo-release-${{ runner.os }}-${{ runner.arch }}-${{ matrix.target }}-
 
-      - name: Build release binaries
+      - name: Download and stage verified runtime data
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/runtime-data"
+          gh release download "$RUNTIME_DATA_RELEASE" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "$RUNTIME_DATA_ARCHIVE" \
+            --dir "$RUNNER_TEMP/runtime-data"
+          python .github/scripts/stage-runtime-data.py \
+            "$RUNNER_TEMP/runtime-data/$RUNTIME_DATA_ARCHIVE" \
+            --sha256 "$RUNTIME_DATA_SHA256" --output runtime/data
+
+      - name: Check shipping launcher with strict Clippy
         env:
           RUSTFLAGS: ${{ contains(matrix.target, 'windows-msvc') && '-C target-feature=+crt-static' || '' }}
-        run: cargo build --workspace --release --locked --target ${{ matrix.target }}
+        run: cargo clippy -p stella-app --bin stella-app --release --all-features --locked --target ${{ matrix.target }} -- -D warnings
+
+      - name: Build single playable executable
+        env:
+          RUSTFLAGS: ${{ contains(matrix.target, 'windows-msvc') && '-C target-feature=+crt-static' || '' }}
+        run: cargo build -p stella-app --bin stella-app --release --locked --target ${{ matrix.target }}
 
       - name: Package Unix release
         if: matrix.package == 'unix'
@@ -197,73 +222,35 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Download and verify runtime data
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          mkdir -p "$RUNNER_TEMP/runtime-data"
-          gh release download "$RUNTIME_DATA_RELEASE" \
-            --repo "$GITHUB_REPOSITORY" \
-            --pattern "$RUNTIME_DATA_ARCHIVE" \
-            --dir "$RUNNER_TEMP/runtime-data"
-          echo "$RUNTIME_DATA_SHA256  $RUNNER_TEMP/runtime-data/$RUNTIME_DATA_ARCHIVE" \
-            | sha256sum --check -
-          if tar -tzf "$RUNNER_TEMP/runtime-data/$RUNTIME_DATA_ARCHIVE" \
-            | grep -Eq '(^|/)(\.DS_Store|\._[^/]+|__MACOSX)(/|$)'; then
-            echo "macOS cache files found in runtime data" >&2
-            exit 1
-          fi
-          gzip -dc "$RUNNER_TEMP/runtime-data/$RUNTIME_DATA_ARCHIVE" \
-            > "$RUNNER_TEMP/runtime-data/runtime-data.tar"
-          if LC_ALL=C grep -aEq \
-            '(SCHILY\.xattr|LIBARCHIVE\.xattr)\.com\.apple\.' \
-            "$RUNNER_TEMP/runtime-data/runtime-data.tar"; then
-            echo "macOS extended attributes found in runtime data" >&2
-            exit 1
-          fi
-          rm "$RUNNER_TEMP/runtime-data/runtime-data.tar"
-
-      - name: Add game data to every platform package
+      - name: Verify only the five standalone game executables are present
         shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends zip unzip
-          bash .github/scripts/embed-runtime-data.sh \
-            dist "$RUNNER_TEMP/runtime-data/$RUNTIME_DATA_ARCHIVE"
-
-      - name: Verify release archives contain no macOS metadata
-        shell: bash
-        run: |
-          set -euo pipefail
-          for archive in dist/*.tar.gz; do
-            if tar -tzf "$archive" | grep -E '(^|/)(\.DS_Store|\._[^/]+|__MACOSX)(/|$)' >/dev/null; then
-              echo "macOS metadata found in $(basename "$archive")" >&2
-              exit 1
-            fi
-            metadata_tar="$RUNNER_TEMP/$(basename "$archive" .gz)"
-            gzip -dc "$archive" > "$metadata_tar"
-            if LC_ALL=C grep -aEq \
-              '(SCHILY\.xattr|LIBARCHIVE\.xattr)\.com\.apple\.' \
-              "$metadata_tar"; then
-              echo "macOS extended attributes found in $(basename "$archive")" >&2
-              exit 1
-            fi
-            rm "$metadata_tar"
-          done
-          for archive in dist/*.zip; do
-            if unzip -Z1 "$archive" | grep -E '(^|/)(\.DS_Store|\._[^/]+|__MACOSX)(/|$)' >/dev/null; then
-              echo "macOS metadata found in $(basename "$archive")" >&2
-              exit 1
-            fi
-          done
-
-      - name: Generate SHA-256 checksums
-        shell: bash
-        run: |
-          cd dist
-          sha256sum -- *.tar.gz *.zip > SHA256SUMS
-          cat SHA256SUMS
+          python - "$RELEASE_TAG" <<'PYVERIFY'
+          import hashlib
+          import importlib.util
+          import os
+          from pathlib import Path
+          import sys
+          spec = importlib.util.spec_from_file_location("desktop_package", ".github/scripts/package-desktop.py")
+          package = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(package)
+          version = sys.argv[1]
+          expected = {}
+          for target in package.TARGETS:
+              suffix = ".exe" if "windows" in target else ""
+              name = f"angry-birds-stella-rehost-{version}-{target}{suffix}"
+              expected[name] = target
+          actual = {path.name for path in Path("dist").iterdir()}
+          if actual != set(expected):
+              raise SystemExit(f"unexpected release files: {actual ^ set(expected)}")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+              summary.write("| Executable | SHA-256 |\n| --- | --- |\n")
+              for name, target in expected.items():
+                  path = Path("dist") / name
+                  package.verify_executable(path, target)
+                  digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                  summary.write(f"| {name} | `{digest}` |\n")
+          PYVERIFY
 
       - name: Create or update GitHub Release
         id: release
@@ -272,6 +259,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            # Preserve historical releases: do not silently retain a legacy
+            # multi-file distribution or delete previously published assets.
+            gh release view "$RELEASE_TAG" --json assets > "$RUNNER_TEMP/release-assets.json"
+            python - "$RUNNER_TEMP/release-assets.json" <<'PYASSETS'
+            import json
+            from pathlib import Path
+            import sys
+            allowed = {path.name for path in Path("dist").iterdir()}
+            existing = {asset["name"] for asset in json.loads(Path(sys.argv[1]).read_text())["assets"]}
+            if existing - allowed:
+                raise SystemExit("Existing release contains legacy assets; use a new version tag.")
+            PYASSETS
             gh release upload "$RELEASE_TAG" dist/* --clobber
           else
             release_options=()
