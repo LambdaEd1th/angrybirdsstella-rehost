@@ -1,28 +1,44 @@
 # Recreation goal checkpoint
 
-Latest continuation (2026-10-08): get_goal confirms ACTIVE and the same full
-811-character objective. Native Clip/Timeline identity and per-target event
-states now have five failing-before/passing-after installed regressions. Current
-source 725e25b3 passes 1,968 workspace tests, six-target strict Clippy, 23 Linux
-CPU checks, five new WebAssembly Timeline checks and 22 actual browser pixel
-checks. Both original long audits were explicitly passed again. No performance
-improvement or full visual/platform/service completion is claimed. Previously
-verified work is committed locally as 9b3a8d6; this Timeline stage is a separate
-local commit. No push, GitHub upload or publication. Details and remaining work
-are in docs/native-animation-timeline-identity.md and
-target/audits/native-animation-timeline-identity-20261008/verification.json.
-Earlier PAUSED and no-commit paragraphs retain their historical meaning.
+Current application state (2026-10-08): get_goal confirms PAUSED and the same
+811-character objective, including local Git commits after implementation and
+necessary validation, with no push, GitHub upload or publication. The initial
+continuation reported ACTIVE; on the later PAUSED read, new goal work stopped.
+Already-started validation and local result preservation are closed out below.
+The complete goal is not complete; prior status statements are historical.
 
-Current status after the requested Git policy edit: get_goal confirms the full
-811-character objective and PAUSED status. Relevant changes may be committed to
-local Git after implementation and necessary validation; pushing, uploading to
-GitHub, and publishing remain excluded. All other requirements are preserved.
-This edit does not resume implementation or analysis and makes no Git commit.
-Before/after goal records are in target/audits/goal-local-git-20261008. Completed
-changes and checks below are retained; the full goal is incomplete. Earlier
-ACTIVE and no-commit statements record the policy and state when their work ran.
-The last implementation checkpoint and identities remain in
-target/audits/native-animation-attachment-transform-20261008/verification.json.
+The event sampling optimization retains the host's existing key selection and
+owned deferred queues, and clones only events that will be emitted. Sixteen
+fresh Official IDA instruction ranges and six data ranges match Purple bytes.
+Eighty alternating synthetic CPU timing samples show 64 held targets falling
+from 9.596 to 3.780 microseconds per update, with median paired process CPU
+about 60.69% lower; dense event updates improve about 8.25%. Allocation traffic
+falls, but peak RSS has no consistent reduction. This is not a normal-level
+frame/FPS/GPU improvement claim. The mlua allocation scope annotation was
+corrected transparently; original raw outputs are retained.
+
+Final code input a5b6ce3a passes 1,968 workspace cases, zero fail, two original
+default ignores and all six configured strict Clippy scopes. Twelve saved test
+programs list 1,970 cases. WebAssembly/22 browser pixel checks, 40 conditional
+Linux CPU cases, 82 actual Metal/one CPU reference cases, both explicit long
+audits and the private 1,000-frame desktop smoke have terminal success. Shipped
+code and tests are identical across the benchmark annotation correction, so
+integration evidence remains applicable; full tests/strict checks were rerun.
+The desktop image verifies only self-regression, not native character artwork.
+
+Required native follow-up: the new string Timeline capture selects its last
+key at/before the first float key, unlike the current host at exact equality.
+Verify caller/clamp/force/loop behavior and other Timeline variants using only
+Official IDA MCP, then implement endpoint regressions. This optimization has
+not closed that discrepancy, the original Poppy issue, full visuals/platforms/
+services or the remaining performance and structural requirements. Autoplay
+remains archived and excluded. Resume only when requested by the user.
+
+Details: docs/native-animation-event-sampling.md and
+ target/audits/native-animation-event-sampling-20261008/verification.json.
+Owned leases/containers/browsers are closed. No normal saves or real purchases.
+Previous local commits are 9b3a8d6 and f966285; this verified sampling change
+is preserved as another local commit, with no push or publication.
 
 ## Retained animation matrices and EntityTarget states — 2026-10-08
 

@@ -20,4 +20,4 @@
 
 按用户最新要求，已通过官方 App Server 的 `thread/goal/set` 将 Git 策略改为：相关实现与必要验证完成后提交到本地 Git，不推送、不上传 GitHub、不发布。应用内 `get_goal` 已确认与上述正文完全一致，共 811 字符，状态仍为 PAUSED；完整目标尚未完成，其余验收标准保留。本次仅调整 goal 和文档，未执行 Git 提交、推送或发布。原目标和修改前后状态保存在 target/audits/goal-local-git-20261008；既有用量记录保留。本文件标题及应用状态说明不属于目标正文。此前准备和执行阶段的记录属于历史状态，保持原样。
 
-最新继续执行状态：2026-10-08 continuation 的 `get_goal` 返回相同 811 字符正文及 ACTIVE。上段 PAUSED 是修改 Git 策略当时的状态；完整目标仍未完成。相关已验证改动现整理为本地 Git 提交，保持不推送、不上传 GitHub、不发布。
+当前应用状态：最新 `get_goal` 确认相同 811 字符正文及 PAUSED。此前 continuation 曾返回 ACTIVE；最新读取后停止新增目标工作，收尾已经启动的验证并保存本地结果。完整目标仍未完成。相关已验证改动按既定策略提交到本地 Git，不推送、不上传 GitHub、不发布。阶段状态见 target/audits/native-animation-event-sampling-20261008/goal-at-wrapup.json。

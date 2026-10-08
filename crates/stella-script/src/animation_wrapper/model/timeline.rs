@@ -80,16 +80,16 @@ pub(crate) fn parse_animation_timeline_event(raw: &str) -> Option<AnimationTimel
     })
 }
 
-fn animation_event_state(
+fn animation_event_state_index(
     track: &[(f64, Option<AnimationTimelineEvent>)],
     time: f64,
-) -> Option<(usize, Option<AnimationTimelineEvent>)> {
+) -> Option<usize> {
     if track.is_empty() {
         return None;
     }
     let upper = track.partition_point(|(key_time, _)| *key_time <= time);
     let index = upper.saturating_sub(1).min(track.len() - 1);
-    Some((index, track[index].1.clone()))
+    Some(index)
 }
 
 /// Mode 2/4 application (`seek`/`start`) always invokes the registered apply
@@ -99,7 +99,8 @@ pub(crate) fn animation_event_at(
     target: &AnimationTarget,
     time: f64,
 ) -> Option<AnimationTimelineEvent> {
-    animation_event_state(&target.event_track, time)?.1
+    let index = animation_event_state_index(&target.event_track, time)?;
+    target.event_track[index].1.clone()
 }
 
 /// Ordinary mode 3 application invokes a discrete callback only when the
@@ -109,9 +110,15 @@ pub(crate) fn animation_event_after_state_change(
     start: f64,
     end: f64,
 ) -> Option<AnimationTimelineEvent> {
-    let (start_index, _) = animation_event_state(&target.event_track, start)?;
-    let (end_index, event) = animation_event_state(&target.event_track, end)?;
-    (start_index != end_index).then_some(event).flatten()
+    let start_index = animation_event_state_index(&target.event_track, start)?;
+    let end_index = animation_event_state_index(&target.event_track, end)?;
+    // 100421F1C compares State's key index; 10041E41C gates mode 3's
+    // callback on that result. Retain owned payloads only for queued events.
+    if start_index == end_index {
+        None
+    } else {
+        target.event_track[end_index].1.clone()
+    }
 }
 
 pub(crate) fn queue_animation_event(
