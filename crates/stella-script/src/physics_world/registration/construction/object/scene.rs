@@ -117,6 +117,7 @@ pub(super) fn insert(
         // into the material-list filter through the native setter.
         block_collision_enabled: true,
         controllable: request.controllable,
+        continuous_bounce_cover: false,
         ignores_score: false,
         keep_orientation: false,
         record_velocity: false,

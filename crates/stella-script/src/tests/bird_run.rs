@@ -2,6 +2,8 @@
 
 use super::*;
 
+mod drums;
+
 fn load_seeded_bird_run(label: &str) -> (ShippedDataSandbox, StellaLua) {
     let sandbox = ShippedDataSandbox::new(label);
     let runtime = StellaLua::new(&sandbox.data_root).unwrap();

@@ -1,5 +1,6 @@
 //! `b2World::SolveTOI` candidate selection and contact-edge expansion.
 
+use super::bounce_cover::{is_bounce_cover_pair, is_front_bounce_contact};
 use crate::*;
 
 // Purple loads this exact float32 constant from 0x100A0CAEC and completes the
@@ -19,6 +20,9 @@ impl RenderBridge {
     /// one endpoint is dynamic and either endpoint is a bullet or non-dynamic;
     /// this covers ordinary dynamic/static and dynamic/kinematic contacts as
     /// well as bullet dynamic/dynamic contacts.
+    /// The separately documented front-drum compatibility exception also
+    /// admits a controllable circle against an ignored drum cover. It does
+    /// not change either body's native bullet flag or ordinary pair policy.
     pub(crate) fn advance_continuous_tunneling(
         &mut self,
         sweep_starts: &BTreeMap<String, NativeSweepStart>,
@@ -61,11 +65,11 @@ impl RenderBridge {
             if !first_end.dynamic_body && !second_end.dynamic_body {
                 continue;
             }
-            if first_end.dynamic_body
+            let ordinary_dynamic_pair = first_end.dynamic_body
                 && second_end.dynamic_body
                 && !first_end.bullet
-                && !second_end.bullet
-            {
+                && !second_end.bullet;
+            if ordinary_dynamic_pair && !is_bounce_cover_pair(first_end, second_end) {
                 continue;
             }
             let first_start = sweep_starts
@@ -154,6 +158,17 @@ impl RenderBridge {
             ) else {
                 continue;
             };
+            if ordinary_dynamic_pair
+                && !is_front_bounce_contact(
+                    first_end,
+                    second_end,
+                    first_start,
+                    second_start,
+                    manifold,
+                )
+            {
+                continue;
+            }
             let began = !self.active_contacts.contains_key(&key);
             let event =
                 Self::native_contact_event(&key, first_end, second_end, manifold, false, began);

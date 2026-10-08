@@ -215,3 +215,59 @@ fn pink_shades_poppy_costume_inherits_faces_and_preserves_drum_ability_input() {
         &["PINK_SHADES_POPPY_LEFT", "PINK_SHADES_POPPY_RIGHT"],
     );
 }
+
+#[test]
+fn next_poppy_updates_faces_after_a_missed_first_shot() {
+    let sandbox = ShippedDataSandbox::new("next-poppy-faces");
+    let runtime = StellaLua::new(&sandbox.data_root).unwrap();
+    runtime.enable_local_services().unwrap();
+    runtime.boot("scripts/game.lua").unwrap();
+    advance(&runtime, 600);
+    runtime
+        .execute_source("LevelLoad.transitionToLevel('Chapter01',19)")
+        .unwrap();
+    advance(&runtime, 360);
+    let environment = game_environment(runtime.lua()).unwrap();
+    let first: String = environment.get("currentBirdName").unwrap();
+    let (x, y): (f64, f64) = runtime
+        .lua()
+        .load("return physicsToScreenTransform(levelStartPosition.x,levelStartPosition.y)")
+        .set_environment(environment.clone())
+        .eval()
+        .unwrap();
+    runtime.set_cursor(x, y, true).unwrap();
+    advance(&runtime, 1);
+    runtime.set_cursor(x, y - 240.0, true).unwrap();
+    advance(&runtime, 40);
+    runtime.set_cursor(x, y - 240.0, false).unwrap();
+    // Miss the structure, then let the original queue load the next bird.
+    // No aim search or level completion is part of this regression.
+    advance(&runtime, 600);
+    let next: String = environment.get("currentBirdName").unwrap();
+    assert_ne!(first, next);
+    let bird: Table = object_world(runtime.lua())
+        .unwrap()
+        .get(next.as_str())
+        .unwrap();
+    assert_eq!(bird.get::<String>("definition").unwrap(), "Poppy");
+    assert!(!bird.get::<Option<bool>>("shot").unwrap().unwrap_or(false));
+    assert_face(&runtime, &next, "POPPY_BEAK_NORMAL");
+    let (x, y): (f64, f64) = runtime
+        .lua()
+        .load("return physicsToScreenTransform(levelStartPosition.x,levelStartPosition.y)")
+        .set_environment(environment.clone())
+        .eval()
+        .unwrap();
+    runtime.set_cursor(x, y, true).unwrap();
+    advance(&runtime, 1);
+    runtime.set_cursor(x - 240.0, y + 115.0, true).unwrap();
+    advance(&runtime, 40);
+    assert_face(&runtime, &next, "POPPY_BEAK_ANGRY");
+    runtime.set_cursor(x - 240.0, y + 115.0, false).unwrap();
+    advance(&runtime, 40);
+    assert!(bird.get::<bool>("shot").unwrap());
+    assert_face(&runtime, &next, "POPPY_BODY_HAPPY_2");
+    assert!(!environment.get::<bool>("g_levelCompleted").unwrap());
+    assert!(runtime.fallback_calls().is_empty());
+    assert!(runtime.compatibility_bindings().is_empty());
+}

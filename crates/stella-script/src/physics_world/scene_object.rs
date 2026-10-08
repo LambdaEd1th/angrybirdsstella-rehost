@@ -137,6 +137,10 @@ pub(crate) struct SceneObject {
     pub(crate) collision_enabled: bool,
     pub(crate) block_collision_enabled: bool,
     pub(crate) controllable: bool,
+    /// Shipped Lua's isDrum && ignoreCollision. This resolves front bounces
+    /// before penetration reaches the backing base; it is a rehost
+    /// compatibility flag, not a native b2Body bullet flag.
+    pub(crate) continuous_bounce_cover: bool,
     pub(crate) ignores_score: bool,
     pub(crate) keep_orientation: bool,
     pub(crate) record_velocity: bool,

@@ -38,15 +38,23 @@ impl StellaLua {
                 }
                 _ => Vec::new(),
             };
-            updates.push((name, material, collision_materials));
+            let continuous_bounce_cover = !matches!(
+                entry.get::<Value>("isDrum")?,
+                Value::Nil | Value::Boolean(false)
+            ) && !matches!(
+                entry.get::<Value>("ignoreCollision")?,
+                Value::Nil | Value::Boolean(false)
+            );
+            updates.push((name, material, collision_materials, continuous_bounce_cover));
         }
         let mut bridge = self.render.lock().expect("render bridge lock poisoned");
-        for (name, material, collision_materials) in updates {
+        for (name, material, collision_materials, continuous_bounce_cover) in updates {
             if let Some(object) = bridge.scene.get_mut(&name) {
                 if let Some(material) = material {
                     object.material = material;
                 }
                 object.collision_materials = collision_materials;
+                object.continuous_bounce_cover = continuous_bounce_cover;
             }
         }
         Ok(())

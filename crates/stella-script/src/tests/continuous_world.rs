@@ -1,5 +1,7 @@
 use super::*;
 
+mod bounce_cover;
+
 fn assert_same_manifold(actual: ContactManifold, expected: ContactManifold) {
     assert_eq!(
         std::mem::discriminant(&actual.manifold_type()),
