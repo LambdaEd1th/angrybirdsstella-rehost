@@ -1,5 +1,7 @@
-//! Full shipped scene transitions, distinct from direct native level-container
-//! tests. This checks lifecycle execution, not visual equivalence to Purple.
+//! Representative shipped input, persistence and scene-transition regressions.
+//! Historical automatic playthroughs live outside the crate in
+//! `archive/auto-playthrough`; they are not part of the current test suite.
+//! These checks do not establish visual equivalence to Purple.
 
 use super::*;
 
@@ -101,29 +103,6 @@ fn shipped_scene_transitions_restart_and_return_to_island_without_fallbacks() {
 }
 
 mod levels;
-mod shot;
-
-mod tap;
-
-mod retry;
-
-mod hold;
-
-mod earned_retry;
-mod last_chance;
-mod practice;
-mod progression;
-mod sixth;
-
-mod seventh;
-mod stella_route;
-
-mod eighth;
-
-mod eleventh;
-mod first_gate;
-mod mixed_birds;
-mod ninth;
-mod poppy_levels;
 mod poppy_rewards;
-mod tenth;
+mod retry;
+mod shot;

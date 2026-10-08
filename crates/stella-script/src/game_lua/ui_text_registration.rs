@@ -1,4 +1,4 @@
-//! Strict `drawUITextNative` entry and its recovered control-flow branches.
+//! Tagged `drawUITextNative` arguments and raw Lua 5.1 table properties.
 
 mod clipped;
 mod ordinary;
@@ -73,21 +73,20 @@ pub(crate) fn install(
                     None
                 };
 
-            if !matches!(text.get::<Value>("visible")?, Value::Boolean(true)) {
+            if !raw_truthy(&text, "visible")? {
                 return Ok(());
             }
             // sub_100031594..0x10003181C evaluates the two trig functions and
             // every table scalar in float32 S registers. The native fetches X
-            // and Y twice because each rotated component is assembled after a
-            // separate Lua-table lookup; preserve that observable order too.
+            // and Y twice using rawget before the float32 arithmetic.
             let cosine = parent_angle.cos();
-            let local_x_for_x = table_required_number(&text, "x", "drawUITextNative")? as f32;
+            let local_x_for_x = raw_number(&text, "x")?;
             let sine = parent_angle.sin();
-            let local_y_for_x = table_required_number(&text, "y", "drawUITextNative")? as f32;
-            let local_x_for_y = table_required_number(&text, "x", "drawUITextNative")? as f32;
-            let local_y_for_y = table_required_number(&text, "y", "drawUITextNative")? as f32;
-            let local_scale_x = table_required_number(&text, "scaleX", "drawUITextNative")? as f32;
-            let local_scale_y = table_required_number(&text, "scaleY", "drawUITextNative")? as f32;
+            let local_y_for_x = raw_number(&text, "y")?;
+            let local_x_for_y = raw_number(&text, "x")?;
+            let local_y_for_y = raw_number(&text, "y")?;
+            let local_scale_x = raw_number(&text, "scaleX")?;
+            let local_scale_y = raw_number(&text, "scaleY")?;
             select_font(&text, &text_render_resources)?;
 
             // 0x1000317F0..0x10003181C: three FMULs followed by FNMSUB for X,
@@ -109,7 +108,8 @@ pub(crate) fn install(
                 sine,
             };
 
-            if matches!(text.get::<Value>("clipped")?, Value::Boolean(true)) {
+            // Unlike visible/floorCoordinates, clipped first requires BOOLEAN.
+            if matches!(text.raw_get::<Value>("clipped")?, Value::Boolean(true)) {
                 return clipped::draw(&text, &text_render_bridge, transform, supplied_alpha);
             }
             ordinary::draw(
@@ -128,19 +128,37 @@ pub(crate) fn install(
 }
 
 fn select_font(text: &mlua::Table, resources: &Arc<Mutex<ResourceRuntime>>) -> LuaResult<()> {
-    let font_request = match text.get::<Value>("font")? {
-        Value::String(font) => font.to_str()?.to_owned(),
-        _ => "FONT_BASIC_SPACE".to_owned(),
-    };
+    let value = text.raw_get::<Value>("font")?;
+    let font_request = native_lua51_string(&value)
+        .map(|font| font.split('\0').next().unwrap_or_default().to_owned())
+        .unwrap_or_else(|| "FONT_BASIC_SPACE".to_owned());
     // ResourceManager::useFont keeps the prior font when the requested object
     // is absent. Selection happens before either draw branch in the native.
     let mut resources = resources.lock().expect("resource runtime lock poisoned");
-    if resources.bitmap_fonts.contains(&font_request)
-        || resources.system_fonts.contains_key(&font_request)
-    {
-        resources.current_font = Some(font_request);
-    }
+    resources.select_native_font(&font_request);
     Ok(())
+}
+
+fn raw_number(text: &mlua::Table, key: &str) -> LuaResult<f32> {
+    Ok(native_lua51_number(&text.raw_get::<Value>(key)?).unwrap_or(0.0) as f32)
+}
+
+fn raw_string(text: &mlua::Table, key: &str) -> LuaResult<String> {
+    // 529FB4 constructs std::string from lua_tolstring's C pointer, or the
+    // empty representation for a non-string/non-number value.
+    Ok(native_lua51_string(&text.raw_get::<Value>(key)?)
+        .unwrap_or_default()
+        .split('\0')
+        .next()
+        .unwrap_or_default()
+        .to_owned())
+}
+
+fn raw_truthy(text: &mlua::Table, key: &str) -> LuaResult<bool> {
+    Ok(!matches!(
+        text.raw_get::<Value>(key)?,
+        Value::Nil | Value::Boolean(false)
+    ))
 }
 
 fn trace_call(args: &MultiValue) {
@@ -157,7 +175,7 @@ fn trace_call(args: &MultiValue) {
             ]
             .into_iter()
             .filter_map(|key| {
-                text.get::<Value>(key)
+                text.raw_get::<Value>(key)
                     .ok()
                     .filter(|value| !matches!(value, Value::Nil))
                     .map(|value| format!("{key}={}", describe_value(&value)))

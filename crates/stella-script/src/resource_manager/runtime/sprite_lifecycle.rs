@@ -4,7 +4,7 @@ use std::{path::Path, sync::Arc};
 
 use stella_assets::ka3d::{CompositeSpriteSet, SpriteRegion, SpriteSheet};
 
-use super::{ResourceRuntime, SpriteResourceEntry, SpriteResourceKind};
+use super::{PreparedSheetImages, ResourceRuntime, SpriteResourceEntry, SpriteResourceKind};
 use crate::{
     BoundCompositePart, CompositeSpriteOwner, SpriteCatalogRegion,
     resource_manager::{NativeSpriteMetrics, native_composite_metrics_from_parts},
@@ -17,8 +17,20 @@ impl ResourceRuntime {
         sprite: SpriteRegion,
         texture_source: String,
         image: Arc<stella_assets::native_image::DecodedNativeImage>,
-        data_root: &Path,
     ) {
+        let image_owner = crate::NativeImageOwner::new();
+        let source = stella_assets::image_source::sheet_image_source(
+            image_owner.identity(),
+            0,
+            &texture_source,
+        );
+        let mut images = PreparedSheetImages::default();
+        images.push(crate::SheetImageSnapshot {
+            source,
+            dimensions: Some([image.width, image.height]),
+            image: Some(image),
+            owner: image_owner,
+        });
         self.replace_sprite_sheet_value(
             owner,
             SpriteSheet {
@@ -27,11 +39,7 @@ impl ResourceRuntime {
                 sprite_texture_indices: vec![0],
             },
         );
-        self.sprite_sheet_image_dimensions
-            .insert(owner.to_owned(), [image.width, image.height]);
-        self.sprite_sheet_decoded_images
-            .insert(owner.to_owned(), vec![Some(image)]);
-        self.cache_sprite_sheet_host_bindings(owner, data_root);
+        self.publish_sprite_sheet_host_bindings(owner, images);
     }
     /// Publish a single image-backed sprite directly into the active resource
     /// stack. Purple's SocialManager owns downloaded avatar images outside the
@@ -43,7 +51,15 @@ impl ResourceRuntime {
         sprite: SpriteRegion,
         texture_source: String,
         data_root: &Path,
-    ) {
+    ) -> crate::LuaResult<()> {
+        let image = self.load_sheet_file_image(
+            data_root,
+            None,
+            stella_assets::image_source::image_source_path(&texture_source),
+            0,
+        )?;
+        let mut images = PreparedSheetImages::default();
+        images.push(image);
         self.replace_sprite_sheet_value(
             owner,
             SpriteSheet {
@@ -52,7 +68,8 @@ impl ResourceRuntime {
                 sprite_texture_indices: vec![0],
             },
         );
-        self.cache_sprite_sheet_host_bindings(owner, data_root);
+        self.publish_sprite_sheet_host_bindings(owner, images);
+        Ok(())
     }
 
     /// Remove a dynamically owned sprite while leaving its provider-side

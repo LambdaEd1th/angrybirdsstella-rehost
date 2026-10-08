@@ -2,6 +2,7 @@
 
 mod asset;
 mod shader;
+mod target_groups;
 mod timeline;
 mod tracks;
 
@@ -12,6 +13,7 @@ use crate::SpriteShader;
 
 pub(crate) use asset::*;
 pub(crate) use shader::*;
+pub(crate) use target_groups::*;
 pub(crate) use timeline::*;
 pub(crate) use tracks::*;
 
@@ -19,8 +21,8 @@ pub(crate) use tracks::*;
 pub(crate) struct AnimationControl {
     pub(crate) action: String,
     pub(crate) elapsed: f64,
-    /// Time captured after the last native target-application pass. Target
-    /// state change detection compares this value with `elapsed`.
+    /// Control +48 time copied after Animation::apply. EntityTarget sampling
+    /// retains a separate time in each AnimationTargetState (StateBase +8).
     pub(crate) previous_elapsed: f64,
     pub(crate) duration: f64,
     pub(crate) speed: f64,
@@ -38,8 +40,13 @@ pub(crate) struct AnimationControl {
 pub(crate) struct AnimationPlayback {
     /// Native `Animation` active-control vector. Starting a new action appends
     /// a control; restarting an already-active action resets it in place and
-    /// does not change precedence.
+    /// does not change update/callback order. EntityTarget state precedence
+    /// is maintained separately and changes when a control is reattached.
     pub(crate) controls: Vec<AnimationControl>,
+    /// Per-entity ApplyCallback groups and their independently ordered State
+    /// vectors (10041D9D8/10041E0C0). Production scenes always own this map;
+    /// None is reserved for manually constructed, unapplied test fixtures.
+    pub(crate) target_groups: Option<BTreeMap<String, Vec<AnimationUsageGroup>>>,
     /// Values last written through EntityTarget's property setters. Removing
     /// the final state for a usage does not call that setter again, so the
     /// component keeps this value until another active control replaces it.
@@ -61,6 +68,7 @@ impl AnimationPlayback {
     pub(crate) fn loaded(slots: &[String]) -> Self {
         let mut playback = Self {
             controls: Vec::new(),
+            target_groups: Some(BTreeMap::new()),
             latched_targets: BTreeMap::new(),
             current_action: String::new(),
             mode: String::new(),
@@ -100,6 +108,7 @@ impl AnimationPlayback {
             }],
             latched_targets: BTreeMap::new(),
             current_action: action,
+            target_groups: None,
             mode,
             detached_current: None,
             wrapper_control_present: true,
@@ -109,6 +118,7 @@ impl AnimationPlayback {
     pub(crate) fn detached(action: String, duration: f64) -> Self {
         Self {
             controls: Vec::new(),
+            target_groups: Some(BTreeMap::new()),
             latched_targets: BTreeMap::new(),
             current_action: action.clone(),
             mode: "once".to_owned(),
@@ -155,6 +165,9 @@ impl AnimationPlayback {
 
 #[derive(Debug, Clone)]
 pub(crate) struct AnimationLatchedTarget {
+    /// Entity::localMatrix, mutated by all property callbacks in group order.
+    /// A null Sprite pointer does not erase this matrix (100011BC4).
+    pub(crate) local_matrix: Option<AnimationAffine>,
     pub(crate) translation: [f64; 2],
     pub(crate) scale: [f64; 2],
     pub(crate) rotation: f64,
@@ -171,6 +184,7 @@ pub(crate) struct AnimationLatchedTarget {
 impl Default for AnimationLatchedTarget {
     fn default() -> Self {
         Self {
+            local_matrix: None,
             translation: [0.0, 0.0],
             scale: [1.0, 1.0],
             rotation: 0.0,
@@ -262,6 +276,9 @@ pub(crate) struct AnimationSkinTransform {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct AnimationAction {
     pub(crate) targets: BTreeMap<String, AnimationTarget>,
+    /// The native JSON/clip insertion order of usage groups for each target.
+    /// It is distinct from both ApplyHandler registration and control order.
+    pub(crate) native_usages: BTreeMap<String, Vec<AnimationUsage>>,
     /// The single shipped `spineEvent` discrete track, including empty reset
     /// keys. Native change detection compares keyframe indices, not only the
     /// parsed non-empty event values.

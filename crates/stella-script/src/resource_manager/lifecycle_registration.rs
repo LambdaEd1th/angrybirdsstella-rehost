@@ -39,5 +39,5 @@ pub(crate) fn install_release(
 }
 
 pub(crate) use creation::create_sprite_sheet;
-pub(crate) use loading::load_sprite_sheet_path;
+pub(crate) use loading::load_sprite_sheet_stream;
 pub(crate) use release::release_sprite_sheet;

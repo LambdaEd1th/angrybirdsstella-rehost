@@ -12,10 +12,12 @@ use stella_assets::ka3d::{BitmapFont, CompositeSpriteSet, LocalizationTable, Spr
 use super::{NativeSpriteMetrics, SystemFontState};
 use crate::{
     AudioAssetSource, CompositeSpriteOwner, SharedSpriteName, SpriteCatalogRegion, SpriteShader,
-    TextFontBinding, resolve_data_file,
+    TextFontBinding,
 };
 
 mod file_images;
+pub(crate) use file_images::PreparedSheetImages;
+mod font;
 mod sprite_capture;
 mod sprite_catalog;
 mod sprite_lifecycle;
@@ -244,7 +246,10 @@ pub(crate) struct ResourceRuntime {
     /// Generation of SystemFont's process-global LabelPool. Purple advances
     /// this lifetime boundary whenever its last SystemFont::Impl is destroyed.
     pub(crate) system_font_label_pool_epoch: u64,
+    /// The IFont map owns allocations; the current pointer at +0x48 does not.
+    pub(crate) native_font_values: BTreeMap<String, Arc<font::NativeFontValue>>,
     pub(crate) current_font: Option<String>,
+    pub(crate) current_font_value: Option<Weak<font::NativeFontValue>>,
     pub(crate) text_group_sets: BTreeSet<String>,
     /// Native TextGroupSet map value identity represented by its resolved file.
     pub(crate) text_group_set_paths: BTreeMap<String, String>,
@@ -256,10 +261,6 @@ pub(crate) struct ResourceRuntime {
     /// Per-sheet upload deltas accumulated by ResourceManager at native
     /// offset `+0x30` and published as `g_usedTextureMemory`.
     pub(crate) legacy_texture_usage: BTreeMap<String, u32>,
-    /// Texture paths retained by each native sheet, used to reproduce the
-    /// graphics cache's no-second-upload behavior for shared PVRs.
-    pub(crate) legacy_sheet_textures: BTreeMap<String, Vec<String>>,
-    pub(crate) legacy_texture_ref_counts: BTreeMap<String, u32>,
     /// Per-clip decoded byte counts at ResourceManager offset `+0x60`.
     pub(crate) legacy_audio_usage: BTreeMap<String, u32>,
     /// ResourceManager's name-to-play-count tree at native offset `+0x90`.
@@ -324,14 +325,14 @@ impl ResourceRuntime {
             bitmap_font_values: BTreeMap::new(),
             system_fonts: BTreeMap::new(),
             system_font_label_pool_epoch: 0,
+            native_font_values: BTreeMap::new(),
             current_font: None,
+            current_font_value: None,
             text_group_sets: BTreeSet::new(),
             text_group_set_paths: BTreeMap::new(),
             text_group_set_tables: BTreeMap::new(),
             audio_clips: BTreeSet::new(),
             legacy_texture_usage: BTreeMap::new(),
-            legacy_sheet_textures: BTreeMap::new(),
-            legacy_texture_ref_counts: BTreeMap::new(),
             legacy_audio_usage: BTreeMap::new(),
             legacy_audio_play_counts: BTreeMap::new(),
             shader_cache: BTreeMap::new(),
@@ -352,47 +353,17 @@ impl ResourceRuntime {
 
     pub(crate) fn current_text_font_binding(
         &self,
-        data_root: &std::path::Path,
-    ) -> Option<(String, TextFontBinding)> {
-        let name = self.current_font.clone()?;
-        if let Some(font) = self.system_fonts.get(&name) {
-            return Some((name, TextFontBinding::System(font.render_binding())));
-        }
-        let font = Arc::clone(self.bitmap_font_values.get(&name)?);
-        let texture_source = self
-            .bitmap_font_texture_sources
-            .get(&name)
-            .cloned()
-            .unwrap_or_else(|| {
-                // Direct ResourceRuntime fixtures can install a parsed font
-                // without invoking createBitmapFont. Keep that diagnostic
-                // path functional; production constructors always cache.
-                let descriptor = self
-                    .bitmap_font_descriptor_paths
-                    .get(&name)
-                    .cloned()
-                    .or_else(|| {
-                        self.bitmap_font_paths
-                            .get(&name)
-                            .and_then(|source| resolve_data_file(data_root, source).ok())
-                    });
-                sprite_catalog::resolve_texture_source(
-                    data_root,
-                    descriptor.as_ref(),
-                    &font.texture,
-                )
-            });
-        let decoded_image = self.bitmap_font_decoded_images.get(&name).cloned();
-        let image_owner = self.bitmap_font_image_owners.get(&name).cloned();
-        Some((
-            name,
-            TextFontBinding::Bitmap {
-                font,
-                texture_source,
-                decoded_image,
-                image_owner,
-            },
-        ))
+        _data_root: &std::path::Path,
+    ) -> crate::LuaResult<Option<(String, TextFontBinding)>> {
+        let Some(value) = self.current_native_font()? else {
+            return Ok(None);
+        };
+        Ok(Some((
+            self.current_font
+                .clone()
+                .expect("selected IFont has a name"),
+            value.render_binding(),
+        )))
     }
 
     pub(crate) fn remove_system_font(&mut self, name: &str) -> Option<SystemFontState> {

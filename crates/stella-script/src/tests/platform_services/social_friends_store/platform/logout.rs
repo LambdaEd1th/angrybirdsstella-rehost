@@ -25,6 +25,7 @@ fn native_platform_logout_selects_first_external_provider_even_before_friends_in
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
         let origin = format!("http://{}", listener.local_addr().unwrap());
+        let (initial_friends_served, initial_friends_phase) = mpsc::channel();
         let server = thread::spawn(move || {
             let (mut stream, _) = identity_routes::accept_request_including_friends(&listener);
             let mut session: serde_json::Value = serde_json::from_str(&linked_session()).unwrap();
@@ -33,9 +34,13 @@ fn native_platform_logout_selects_first_external_provider_even_before_friends_in
             drop(stream);
             let (mut stream, request) =
                 identity_routes::accept_request_including_friends(&listener);
-            assert!(request.starts_with("GET /identity/2.0/friends "));
+            assert!(
+                request.starts_with("GET /identity/2.0/friends "),
+                "{request}"
+            );
             raw_reply(&mut stream, 503, "");
             drop(stream);
+            initial_friends_served.send(()).unwrap();
             let (mut stream, request) =
                 identity_routes::accept_request_including_friends(&listener);
             assert!(request.starts_with("GET /v2.0/me?"), "{request}");
@@ -45,6 +50,9 @@ fn native_platform_logout_selects_first_external_provider_even_before_friends_in
         let first = StellaLua::new(&sandbox.data_root).unwrap();
         configure(&first, &format!("{origin}/identity/3.0"));
         login(&first, 1);
+        // The login callback does not join the asynchronous friends fetch.
+        // Keep its runtime alive until this fixture's initial request is served.
+        wait_signal(&first, &initial_friends_phase);
         drop(first);
         // Real saved identity is selected lazily during native_logout. No
         // FriendsStore or login callback has been constructed in this runtime.

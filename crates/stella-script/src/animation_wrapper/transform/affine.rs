@@ -7,10 +7,9 @@ use super::{
 
 impl AnimationAffine {
     pub(crate) fn from_transform(transform: AnimationTransform) -> Self {
-        // Purple stores entity matrices as six float32 values. The ordinary
-        // rotation target at sub_10041F4B0 calls __sincosf_stret and performs
-        // the following scale products in float32 before the matrix is ever
-        // composed with its parent.
+        // Scalar compatibility conversion for manually assembled fixtures
+        // and wrapper metadata. Installed EntityTargets retain their matrix:
+        // rotation and scale are separate, ordered native setter calls.
         let angle = transform.angle as f32;
         let (sine, cosine) = angle.sin_cos();
         let scale_x = transform.scale_x as f32;
@@ -72,7 +71,7 @@ impl AnimationAffine {
     /// the skin callback (`sub_100011BC4`) builds `R(-attachment.rotation)`.
     /// The latter also stores and normalizes both float32 basis vectors before
     /// applying the attachment's non-uniform scale.
-    pub(crate) fn then_skin_attachment(self, attachment: &AnimationSkinTransform) -> Self {
+    pub(crate) fn from_skin_attachment(attachment: &AnimationSkinTransform) -> Self {
         let angle = attachment.angle as f32;
         let sine = (-angle).sin();
         let cosine = angle.cos();
@@ -84,14 +83,21 @@ impl AnimationAffine {
         let (column_y_x, column_y_y) = normalize(-sine, cosine);
         let scale_x = attachment.scale_x as f32;
         let scale_y = attachment.scale_y as f32;
-        self.compose(Self {
+        Self {
             m00: f64::from(scale_x * column_x_x),
             m01: f64::from(scale_y * column_y_x),
             m10: f64::from(scale_x * column_x_y),
             m11: f64::from(scale_y * column_y_y),
             x: f64::from(attachment.x as f32),
             y: f64::from(attachment.y as f32),
-        })
+        }
+    }
+
+    /// Compatibility path for a fixture that has never run EntityTarget.
+    /// Installed scenes write this matrix to the slot during the skin
+    /// ApplyHandler and never append it again during draw or query.
+    pub(crate) fn then_skin_attachment(self, attachment: &AnimationSkinTransform) -> Self {
+        self.compose(Self::from_skin_attachment(attachment))
     }
 
     pub(crate) fn compose(self, local: Self) -> Self {
@@ -241,8 +247,15 @@ pub(crate) fn animation_node_world_affine(
     path.reverse();
     let mut world = scene;
     for name in path {
-        let mut local =
-            AnimationAffine::from_transform(animation_local_transform(definition, playback, name)?);
+        let matrix = playback
+            .latched_targets
+            .get(name)
+            .and_then(|target| target.local_matrix);
+        let mut local = if let Some(matrix) = matrix {
+            matrix
+        } else {
+            AnimationAffine::from_transform(animation_local_transform(definition, playback, name)?)
+        };
         // Animation scene construction marks names beginning with `SLOT_`
         // through sub_10043CAF0. Those nodes skip the correction entirely.
         // Every other descendant compares its retained byte against the sign

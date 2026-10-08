@@ -49,6 +49,7 @@ pub(crate) fn prepare_native_contact_callbacks(
             contact_callbacks.push(NativeContactCallback::Bird {
                 first: event.first.clone(),
                 second: event.second.clone(),
+                arm_collision_timer: false,
                 force,
                 damage: 0.0,
                 point_x: event.point_x,
@@ -123,14 +124,10 @@ pub(crate) fn prepare_native_contact_callbacks(
                     bridge.break_joints_attached_to(target, force),
                 );
             }
-            if let Some(object) = bridge.scene.get_mut(attacker)
-                && object.time_since_collision < 0.0
-            {
-                object.time_since_collision = 0.0;
-            }
             contact_callbacks.push(NativeContactCallback::Bird {
                 first: attacker.clone(),
                 second: target.clone(),
+                arm_collision_timer: true,
                 force,
                 damage: damage.applied_damage.floor(),
                 point_x: event.point_x,

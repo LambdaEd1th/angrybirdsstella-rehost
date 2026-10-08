@@ -57,9 +57,8 @@ pub(super) fn install(
             resources.bitmap_font_image_owners.remove(&key);
             resources.bitmap_font_values.remove(&key);
             resources.remove_system_font(&key);
-            if resources.current_font.as_deref() == Some(key.as_str()) {
-                resources.current_font = None;
-            }
+            // 45B214 erases the owning map node without writing +0x48/+0x50.
+            resources.native_font_values.remove(&key);
             Ok(())
         })?,
     )?;

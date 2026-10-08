@@ -52,6 +52,7 @@ pub(crate) enum NativeContactCallback {
     Bird {
         first: String,
         second: String,
+        arm_collision_timer: bool,
         force: f64,
         damage: f64,
         point_x: f64,

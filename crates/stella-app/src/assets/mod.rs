@@ -4,9 +4,7 @@ use super::*;
 
 mod captures;
 mod catalog;
-mod sprite;
 mod system_font;
-mod text;
 mod texture;
 mod transform;
 

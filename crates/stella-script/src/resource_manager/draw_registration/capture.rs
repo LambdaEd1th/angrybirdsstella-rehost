@@ -7,7 +7,6 @@ pub(crate) fn install_capture(
     resource_api: &mlua::Table,
     render: Arc<Mutex<RenderBridge>>,
     resources: Arc<Mutex<ResourceRuntime>>,
-    data_root: Arc<PathBuf>,
 ) -> LuaResult<()> {
     resource_api.set(
         "captureSprite",
@@ -16,8 +15,7 @@ pub(crate) fn install_capture(
             let mut bridge = render.lock().expect("render bridge lock poisoned");
             let dimensions = [bridge.screen_width, bridge.screen_height];
             let mut resources = resources.lock().expect("resource runtime lock poisoned");
-            let (texture_source, temporary) =
-                resources.capture_sprite(&name, dimensions, &data_root)?;
+            let (texture_source, temporary) = resources.capture_sprite(&name, dimensions)?;
             let decoded_image = resources
                 .sprite_sheet_decoded_images
                 .get(&name)

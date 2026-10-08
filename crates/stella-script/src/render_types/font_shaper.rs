@@ -5,10 +5,31 @@
 //! data, so this facade preserves the narrow call surface used by the native
 //! SystemFont emulation while avoiding the unmaintained RustyBuzz crate.
 
-pub(super) use harfrust::{Direction, GlyphBuffer, Script, UnicodeBuffer};
+use std::sync::Arc;
+
+use skrifa::raw::TableProvider;
+
+pub(super) use harfrust::{Buffer as UnicodeBuffer, Direction, Script};
+
+enum FontData<'a> {
+    Borrowed(&'a [u8]),
+    Shared(&'a Arc<[u8]>),
+}
+
+impl FontData<'_> {
+    fn blob(&self) -> harfrust::font::Blob {
+        match self {
+            Self::Borrowed(data) => data.to_vec().into(),
+            // Wrap the existing allocation because Blob's trait object needs
+            // a sized owner. No font bytes are copied on the rendering path.
+            Self::Shared(data) => harfrust::font::Blob::Shared(Arc::new(Arc::clone(data))),
+        }
+    }
+}
 
 pub(super) struct Face<'a> {
-    font: harfrust::FontRef<'a>,
+    data: FontData<'a>,
+    face_index: u32,
     metadata: skrifa::FontRef<'a>,
     points_per_em: Option<f32>,
 }
@@ -16,17 +37,23 @@ pub(super) struct Face<'a> {
 impl<'a> Face<'a> {
     pub(super) fn from_slice(data: &'a [u8], face_index: u32) -> Option<Self> {
         Some(Self {
-            font: harfrust::FontRef::from_index(data, face_index).ok()?,
+            data: FontData::Borrowed(data),
+            face_index,
             metadata: skrifa::FontRef::from_index(data, face_index).ok()?,
             points_per_em: None,
         })
     }
 
+    pub(super) fn from_shared(data: &'a Arc<[u8]>, face_index: u32) -> Option<Self> {
+        let mut face = Self::from_slice(data, face_index)?;
+        face.data = FontData::Shared(data);
+        Some(face)
+    }
+
     pub(super) fn units_per_em(&self) -> i32 {
-        harfrust::ShaperData::new(&self.font)
-            .shaper(&self.font)
-            .build()
-            .units_per_em()
+        self.metadata
+            .head()
+            .map_or(1000, |head| i32::from(head.units_per_em()))
     }
 
     pub(super) fn glyph_index(&self, character: char) -> Option<harfrust::GlyphId> {
@@ -49,18 +76,19 @@ impl<'a> Face<'a> {
 pub(super) fn shape(
     face: &Face<'_>,
     features: &[harfrust::Feature],
-    buffer: UnicodeBuffer,
-) -> GlyphBuffer {
-    // Build the cache and shaper together so their lifetimes remain valid for
-    // the returned glyph buffer.  HarfRust's output is detached from them.
-    let data = harfrust::ShaperData::new(&face.font);
-    let shaper = data.shaper(&face.font).build();
-    shaper.shape(
-        buffer,
+    mut buffer: UnicodeBuffer,
+) -> Option<harfrust::Buffer> {
+    let font = harfrust::Font::new(face.data.blob(), face.face_index)?;
+    let shaper = harfrust::ShaperFont::new(&font);
+    harfrust::shape(
+        &shaper,
+        &mut buffer,
         harfrust::ShapeOptions::default()
             .features(features)
             .point_size(face.points_per_em),
     )
+    .ok()?;
+    buffer.allocation_successful().then_some(buffer)
 }
 
 #[cfg(test)]
@@ -69,20 +97,24 @@ mod tests {
 
     #[test]
     fn point_size_reaches_aat_tracking_without_a_system_font() {
-        let font_data = aat_tracking_test_font();
-        let mut face = Face::from_slice(&font_data, 0).unwrap();
+        let font_data: Arc<[u8]> = aat_tracking_test_font().into();
 
         let advance_at = |face: &Face<'_>| {
             let mut buffer = UnicodeBuffer::new();
             buffer.push_str("A");
             buffer.guess_segment_properties();
-            shape(face, &[], buffer).glyph_positions()[0].x_advance
+            shape(face, &[], buffer).unwrap().glyph_positions()[0].x_advance
         };
 
-        face.set_points_per_em(Some(12.0));
-        assert_eq!(advance_at(&face), 120);
-        face.set_points_per_em(Some(24.0));
-        assert_eq!(advance_at(&face), 240);
+        for mut face in [
+            Face::from_slice(&font_data, 0).unwrap(),
+            Face::from_shared(&font_data, 0).unwrap(),
+        ] {
+            face.set_points_per_em(Some(12.0));
+            assert_eq!(advance_at(&face), 120);
+            face.set_points_per_em(Some(24.0));
+            assert_eq!(advance_at(&face), 240);
+        }
     }
 
     fn aat_tracking_test_font() -> Vec<u8> {

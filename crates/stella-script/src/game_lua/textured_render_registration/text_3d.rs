@@ -49,7 +49,7 @@ pub(super) fn install(
             let (font, font_binding) = resources
                 .lock()
                 .expect("resource runtime lock poisoned")
-                .current_text_font_binding(&data_root)
+                .current_text_font_binding(&data_root)?
                 .ok_or_else(|| runtime_error("No font is set while trying to draw string"))?;
             let text = resolve_localized_string(&resources, &locales, &group, &key)?;
             let mut bridge = render.lock().expect("render bridge lock poisoned");
@@ -85,7 +85,7 @@ pub(super) fn install(
                 vertical_anchor: "TOP".to_owned(),
                 projection_3d: None,
                 clip_rect: state.clip_rect,
-            });
+            })?;
             // On the successful path `0x1000346B4..0x100034714` flushes the
             // glyphs, disables the custom model matrix, installs identity and
             // restores the ordinary projection. The separate 2D transform,

@@ -4,11 +4,15 @@ use std::path::Path;
 
 use crate::AssetError;
 
+mod pvrtc;
+
 const PVR_V2_HEADER_SIZE: usize = 52;
 const PVR_TAG: u32 = u32::from_le_bytes(*b"PVR!");
 
 pub const OGL_RGBA_4444: u8 = 0x10;
 pub const OGL_RGBA_8888: u8 = 0x12;
+pub const OGL_PVRTC_2BPP: u8 = 0x18;
+pub const OGL_PVRTC_4BPP: u8 = 0x19;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PvrV2Header {
@@ -56,7 +60,7 @@ pub fn parse_header(bytes: &[u8]) -> Result<PvrV2Header, AssetError> {
     if words[1] == 0 || words[2] == 0 {
         return Err(AssetError::InvalidPvr("zero texture dimension"));
     }
-    if bytes.len() < PVR_V2_HEADER_SIZE + words[5] as usize {
+    if bytes.len() - PVR_V2_HEADER_SIZE < words[5] as usize {
         return Err(AssetError::InvalidPvr("texture data is truncated"));
     }
     Ok(PvrV2Header {
@@ -76,6 +80,24 @@ pub fn parse_header(bytes: &[u8]) -> Result<PvrV2Header, AssetError> {
 
 pub fn decode_rgba8(bytes: &[u8]) -> Result<DecodedPvr, AssetError> {
     let header = parse_header(bytes)?;
+    let rate = match header.pixel_format() {
+        OGL_PVRTC_2BPP => Some(pvrtc::Rate::Two),
+        OGL_PVRTC_4BPP => Some(pvrtc::Rate::Four),
+        _ => None,
+    };
+    if let Some(rate) = rate {
+        return Ok(DecodedPvr {
+            width: header.width,
+            height: header.height,
+            rgba8: pvrtc::decode(
+                &bytes[PVR_V2_HEADER_SIZE..],
+                header.width,
+                header.height,
+                rate,
+                header.flags & (1 << 15) != 0,
+            )?,
+        });
+    }
     let pixel_count = (header.width as usize)
         .checked_mul(header.height as usize)
         .ok_or(AssetError::InvalidPvr("texture dimensions overflow"))?;
@@ -83,10 +105,16 @@ pub fn decode_rgba8(bytes: &[u8]) -> Result<DecodedPvr, AssetError> {
     let base_size = pixel_count
         .checked_mul(bytes_per_pixel)
         .ok_or(AssetError::InvalidPvr("base mip size overflow"))?;
-    let data = bytes
-        .get(PVR_V2_HEADER_SIZE..PVR_V2_HEADER_SIZE + base_size)
+    let data = bytes[PVR_V2_HEADER_SIZE..]
+        .get(..base_size)
         .ok_or(AssetError::InvalidPvr("base mip is truncated"))?;
-    let mut rgba8 = Vec::with_capacity(pixel_count * 4);
+    let rgba_size = pixel_count
+        .checked_mul(4)
+        .ok_or(AssetError::InvalidPvr("decoded texture size overflow"))?;
+    let mut rgba8 = Vec::new();
+    rgba8
+        .try_reserve_exact(rgba_size)
+        .map_err(|_| AssetError::InvalidPvr("decoded texture allocation failed"))?;
 
     match header.pixel_format() {
         OGL_RGBA_4444 if header.bits_per_pixel == 16 => {
@@ -147,6 +175,8 @@ fn channel(value: u32, mask: u32) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    mod pvrtc;
 
     #[test]
     fn decodes_rgba4444() {

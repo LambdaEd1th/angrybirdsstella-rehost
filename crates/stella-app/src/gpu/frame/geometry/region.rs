@@ -54,7 +54,7 @@ pub(in crate::gpu) fn append_gpu_region(
     {
         return;
     }
-    if std::env::var_os("STELLA_TRACE_GPU_REGIONS").is_some() {
+    if frame.trace_gpu_regions() {
         let min_x = positions
             .iter()
             .map(|position| position[0])

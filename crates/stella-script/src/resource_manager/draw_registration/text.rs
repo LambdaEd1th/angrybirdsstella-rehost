@@ -33,7 +33,7 @@ pub(super) fn install(
             let (font, font_binding) = resource_runtime
                 .lock()
                 .expect("resource runtime lock poisoned")
-                .current_text_font_binding(&data_root)
+                .current_text_font_binding(&data_root)?
                 .ok_or_else(|| runtime_error("No font is set while trying to draw string"))?;
             let content =
                 resolve_localized_string(&resource_runtime, &locale_runtime, &group, &key)?;
@@ -61,7 +61,7 @@ pub(super) fn install(
                 vertical_anchor,
                 projection_3d: None,
                 clip_rect: state.clip_rect,
-            });
+            })?;
             Ok(())
         })?,
     )

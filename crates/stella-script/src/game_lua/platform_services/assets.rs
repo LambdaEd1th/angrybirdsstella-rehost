@@ -417,18 +417,43 @@ pub(super) fn install(
             // sub_1000AC660 constructs the sheet from the descriptor and
             // texture paths completely before sub_100457724 transactionally
             // replaces the shared Resources map entry under `name`.
-            let descriptor_path = app_data_path(&downloadable_sheet_root, &descriptor)
-                .ok()
-                .filter(|path| path.is_file())
-                .or_else(|| resolve_data_file(&downloadable_sheet_root, &descriptor).ok())
-                .ok_or_else(|| runtime_error(format!("asset was not found: {descriptor}")))?;
-            let mut sheet = load_sprite_sheet_path(&descriptor_path, &descriptor)?;
-            sheet.textures.clear();
-            sheet.textures.push(texture);
-            sheet.sprite_texture_indices.fill(0);
+            // sub_1000AC660 opens two independent AppDataInputStreams, in
+            // descriptor/image order. The explicit image is not a sibling of
+            // the descriptor, and neither stream falls back to bundle files.
+            let descriptor_path = app_data_path(
+                &downloadable_sheet_root,
+                &crate::resource_manager::resource_normalized_path(&descriptor),
+            )
+            .map_err(runtime_error)?;
+            let descriptor_stream = fs::File::open(&descriptor_path).map_err(|error| {
+                runtime_error(format!(
+                    "Failed to open asset descriptor '{}': {error}",
+                    descriptor_path.display()
+                ))
+            })?;
+            let texture_path = app_data_path(
+                &downloadable_sheet_root,
+                &crate::resource_manager::resource_normalized_path(&texture),
+            )
+            .map_err(runtime_error)?;
             let mut resources = downloadable_sheet_resources
                 .lock()
                 .expect("resource runtime lock poisoned");
+            let image = resources.load_sheet_file_image(
+                &downloadable_sheet_root,
+                None,
+                &texture_path.to_string_lossy(),
+                0,
+            )?;
+            // The native two-stream loader constructs the supplied Image
+            // before parsing any descriptor records. Embedded texture names
+            // are not file loads on this path (1004617AC).
+            let mut sheet = load_sprite_sheet_stream(descriptor_stream)?;
+            sheet.textures.clear();
+            sheet.textures.push(texture);
+            sheet.sprite_texture_indices.fill(0);
+            let mut images = crate::resource_manager::PreparedSheetImages::default();
+            images.push(image);
             resources.replace_sprite_sheet_value(&name, sheet);
             resources.sprite_sheets.insert(name.clone());
             resources
@@ -437,7 +462,7 @@ pub(super) fn install(
             resources
                 .sprite_sheet_descriptor_paths
                 .insert(name.clone(), descriptor_path);
-            resources.cache_sprite_sheet_host_bindings(&name, &downloadable_sheet_root);
+            resources.publish_sprite_sheet_host_bindings(&name, images);
             Ok(())
         })?,
     )?;

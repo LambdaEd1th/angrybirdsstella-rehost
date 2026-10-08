@@ -56,19 +56,15 @@ pub(crate) fn animation_skin_alias_attachment(
     let default_skin = skins.get("default");
     let skin_transform = selected_skin
         .and_then(|skin| animation_skin_slot(skin, slot))
-        .and_then(|variants| {
-            variants
-                .get(sprite)
-                .or_else(|| variants.get(sprite_basename))
-        })
+        .and_then(|variants| variants.get(sprite))
         .or_else(|| {
+            // AnimationSkins::getSprite (sub_10000C2F0) repeats the exact
+            // slot/alias lookup in the default skin after a selected miss.
+            // A basename decoy must never override that exact fallback or
+            // prevent the callback from applying a null SpriteComponent.
             default_skin
                 .and_then(|skin| animation_skin_slot(skin, slot))
-                .and_then(|variants| {
-                    variants
-                        .get(sprite)
-                        .or_else(|| variants.get(sprite_basename))
-                })
+                .and_then(|variants| variants.get(sprite))
         });
     if let Some(skin_transform) = skin_transform {
         // SpriteComponentCustom forwards the attachment string unchanged to

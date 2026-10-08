@@ -1,15 +1,12 @@
 //! Resources::captureSprite (0x100458F54) and retained Image lifetime.
 
-use std::{
-    path::Path,
-    sync::atomic::{AtomicU64, Ordering},
-};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_CAPTURE_IMAGE_IDENTITY: AtomicU64 = AtomicU64::new(1);
 
 use stella_assets::ka3d::{SpriteRegion, SpriteSheet};
 
-use super::ResourceRuntime;
+use super::{PreparedSheetImages, ResourceRuntime};
 use crate::{LuaResult, runtime_error};
 
 impl ResourceRuntime {
@@ -17,7 +14,6 @@ impl ResourceRuntime {
         &mut self,
         name: &str,
         dimensions: [u32; 2],
-        data_root: &Path,
     ) -> LuaResult<(String, bool)> {
         // Unlike create/releaseSpriteSheet, this entry uses the exact string
         // as the sheet-map key. Existing values retain their geometry and
@@ -79,7 +75,14 @@ impl ResourceRuntime {
         self.sprite_sheets.insert(name.to_owned());
         self.sprite_sheet_image_dimensions
             .insert(name.to_owned(), dimensions);
-        self.cache_sprite_sheet_host_bindings(name, data_root);
+        let mut images = PreparedSheetImages::default();
+        images.push(crate::SheetImageSnapshot {
+            source: texture_source.clone(),
+            image: None,
+            owner: crate::NativeImageOwner::new(),
+            dimensions: Some(dimensions),
+        });
+        self.publish_sprite_sheet_host_bindings(name, images);
         Ok((texture_source, false))
     }
 

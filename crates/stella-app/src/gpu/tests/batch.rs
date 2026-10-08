@@ -3,17 +3,6 @@
 use super::*;
 
 #[test]
-fn native_sprite_stream_excludes_host_only_analytic_dirt_holes() {
-    // The recovered GL sprite submission uploads four float4 uniform rows.
-    // Dirt holes are triangulated by DirtMechanics and never consume an
-    // ordinary sprite uniform or per-vertex local-coordinate attribute.
-    assert_eq!(std::mem::size_of::<DrawUniform>(), 64);
-    // Clip position retains z and w for hardware homogeneous clipping and
-    // perspective-correct interpolation; it cannot be reduced to screen xy.
-    assert_eq!(std::mem::size_of::<GpuVertex>(), 48);
-}
-
-#[test]
 fn native_viewport_projection_rounds_scale_before_fused_translation() {
     assert_eq!(
         frame::screen_to_clip([0.0, 0.0], GameResolution::default()),

@@ -319,13 +319,23 @@ fn wait_signal(runtime: &StellaLua, signal: &std::sync::mpsc::Receiver<()>) {
 }
 
 fn platform_runtime(sandbox: &ShippedDataSandbox, origin: &str) -> StellaLua {
+    platform_runtime_with_provider(
+        sandbox,
+        origin,
+        Arc::new(
+            FacebookGraphSession::new(&format!("{origin}/v2.0"), "synthetic-platform").unwrap(),
+        ),
+    )
+}
+
+fn platform_runtime_with_provider(
+    sandbox: &ShippedDataSandbox,
+    origin: &str,
+    provider: Arc<dyn SocialPlatformProvider>,
+) -> StellaLua {
     let runtime = StellaLua::new(&sandbox.data_root).unwrap();
     configure(&runtime, &format!("{origin}/identity/3.0"));
-    runtime
-        .set_facebook_session(Some(std::sync::Arc::new(
-            FacebookGraphSession::new(&format!("{origin}/v2.0"), "synthetic-platform").unwrap(),
-        )))
-        .unwrap();
+    runtime.set_facebook_session(Some(provider)).unwrap();
     runtime.skynest_account.seed_friends_cache_for_test(
         "own",
         r#"{"friends":[{"accountId":"cached","nickName":"Cached"}]}"#,

@@ -1,5 +1,7 @@
 use super::*;
 
+mod empty;
+
 fn test_string(value: &str) -> Vec<u8> {
     let mut bytes = (value.len() as u16).to_be_bytes().to_vec();
     bytes.extend_from_slice(value.as_bytes());
@@ -289,11 +291,14 @@ fn parses_bitmap_font_v2_utf32_codepoints_and_signed_pivots() {
     assert_eq!(font.glyphs[0].codepoint, 0x1f600);
     assert_eq!((font.glyphs[0].x, font.glyphs[0].y), (-2, -4));
     assert_eq!(font.glyphs[0].pivot_y, -3);
-    assert_eq!(font.native_string_width("😀😀"), 18);
-    assert_eq!(font.native_string_height("x😀"), 12);
-    assert_eq!(font.native_draw_anchor("😀", "RIGHT", "TOP"), [-10, 0]);
+    assert_eq!(font.native_string_width("😀😀").unwrap(), 18);
+    assert_eq!(font.native_string_height("x😀").unwrap(), 12);
     assert_eq!(
-        font.native_string_bounds("😀", "RIGHT", "TOP"),
+        font.native_draw_anchor("😀", "RIGHT", "TOP").unwrap(),
+        [-10, 0]
+    );
+    assert_eq!(
+        font.native_string_bounds("😀", "RIGHT", "TOP").unwrap(),
         [-10, 0, 0, 12]
     );
 }
@@ -322,11 +327,54 @@ fn font_loader_overwrites_header_and_lookup_but_retains_cached_metric_history() 
 }
 
 #[test]
+fn repeated_font_records_retire_pointer_metrics_but_keep_cached_metrics_and_utf32_lookup() {
+    let record = |version: u16, character: u32, pivot: i16| {
+        let mut payload = version.to_be_bytes().to_vec();
+        payload.extend(test_string("same.pvr"));
+        payload.extend_from_slice(&0_i16.to_be_bytes());
+        payload.extend_from_slice(&0_i16.to_be_bytes());
+        payload.extend_from_slice(&1_u16.to_be_bytes());
+        if version == 1 {
+            payload.extend_from_slice(&(character as u16).to_be_bytes());
+        } else {
+            payload.extend_from_slice(&character.to_be_bytes());
+        }
+        for value in [0_i16, 0, 2, 4, pivot] {
+            payload.extend_from_slice(&value.to_be_bytes());
+        }
+        test_chunk(b"FONT", &payload)
+    };
+    let mut body = record(1, u32::from(b'A'), 6);
+    body.extend(record(2, '😀' as u32, 1));
+    let parsed = BitmapFont::parse(&test_container_with_len(b"KA3D", 0, &body)).unwrap();
+    for error in [
+        parsed.native_string_width("😀A").unwrap_err(),
+        parsed.native_string_height("A").unwrap_err(),
+        parsed.native_string_bounds("A", "LEFT", "TOP").unwrap_err(),
+        parsed.native_draw_anchor("A", "RIGHT", "TOP").unwrap_err(),
+    ] {
+        assert!(
+            matches!(error, crate::AssetError::ReleasedFontGlyph { codepoint } if codepoint == u32::from(b'A'))
+        );
+    }
+    assert_eq!(
+        parsed.native_draw_anchor("A", "LEFT", "TOP").unwrap(),
+        [0, 6]
+    );
+    assert_eq!(parsed.native_string_width("😀😀").unwrap(), 4);
+    assert_eq!(parsed.native_string_height("😀").unwrap(), 4);
+    assert_eq!(parsed.native_max_ascending(), 6);
+    assert_eq!(parsed.native_max_descending(), 3);
+}
+
+#[test]
 fn bitmap_font_native_metrics_keep_missing_glyph_spacing_and_w_register_wrap() {
     let font = BitmapFont {
         texture: "font.pvr".to_owned(),
         leading: -4,
         tracking: 3,
+        spacing_initialized: true,
+        current_atlas_glyph_start: 0,
         glyphs: vec![FontGlyph {
             codepoint: u32::from(b'A'),
             x: 0,
@@ -336,13 +384,16 @@ fn bitmap_font_native_metrics_keep_missing_glyph_spacing_and_w_register_wrap() {
             pivot_y: -3,
         }],
     };
-    assert_eq!(font.native_string_width("AxA"), 26);
-    assert_eq!(font.native_string_height("xAx"), 12);
+    assert_eq!(font.native_string_width("AxA").unwrap(), 26);
+    assert_eq!(font.native_string_height("xAx").unwrap(), 12);
     assert_eq!(font.native_max_ascending(), 0);
     assert_eq!(font.native_max_descending(), 15);
-    assert_eq!(font.native_draw_anchor("A", "LEFT", "VCENTER"), [0, -7]);
     assert_eq!(
-        font.native_string_bounds("A", "LEFT", "TOP"),
+        font.native_draw_anchor("A", "LEFT", "VCENTER").unwrap(),
+        [0, -7]
+    );
+    assert_eq!(
+        font.native_string_bounds("A", "LEFT", "TOP").unwrap(),
         [0, 0, 10, 12]
     );
 
@@ -355,7 +406,7 @@ fn bitmap_font_native_metrics_keep_missing_glyph_spacing_and_w_register_wrap() {
         ..font
     };
     assert_eq!(
-        wrapping.native_string_width(&"A".repeat(65_539)),
+        wrapping.native_string_width(&"A".repeat(65_539)).unwrap(),
         -2_147_450_883
     );
 }

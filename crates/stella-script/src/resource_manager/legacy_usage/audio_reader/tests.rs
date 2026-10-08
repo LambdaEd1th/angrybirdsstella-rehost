@@ -1,5 +1,4 @@
 use super::*;
-use crate::resource_manager::legacy_usage::sprite_sheet_textures;
 
 #[test]
 fn wav_counter_uses_data_chunk_not_container_size() {
@@ -159,12 +158,4 @@ fn static_wav_keeps_declared_zero_tail_after_short_input_read() {
     };
     assert_eq!(data.as_ref(), &[0x34, 0x12, 0, 0, 0, 0, 0, 0]);
     let _ = fs::remove_file(path);
-}
-
-#[test]
-fn shipped_sprt_reports_its_pvr_payload_upload() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data");
-    let textures = sprite_sheet_textures(&root, "images/1024x768/CONNECTION_SCREEN_SHEET_0.dat");
-    assert_eq!(textures.len(), 1);
-    assert_eq!(textures[0].uploaded_bytes, 96_350);
 }

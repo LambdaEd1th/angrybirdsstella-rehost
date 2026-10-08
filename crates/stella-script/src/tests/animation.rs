@@ -461,7 +461,11 @@ fn missing_skin_clears_selection_but_rebinds_default_only_on_next_apply() {
         ),
     )
     .unwrap();
-    fs::write(root.join("images/skin-lifecycle.pvr"), []).unwrap();
+    fs::write(
+        root.join("images/skin-lifecycle.pvr"),
+        test_rgba_pvr(64, 64, [255; 4]),
+    )
+    .unwrap();
 
     let targets = serde_json::json!({
         "SLOT_TEST": {
@@ -1079,7 +1083,11 @@ fn animation_native_lifecycle_preserves_void_abi_cache_and_active_scene() {
         test_textured_sprite_sheet("TEST_SPRITE", "sheet.pvr", 40, 10),
     )
     .unwrap();
-    fs::write(root.join("images/sheet.pvr"), []).unwrap();
+    fs::write(
+        root.join("images/sheet.pvr"),
+        test_rgba_pvr(64, 64, [255; 4]),
+    )
+    .unwrap();
     let targets = serde_json::json!({
         "root": {
             "translation": {"keyframes": [[0, [10, 20]]]},
@@ -1423,19 +1431,27 @@ fn animation_native_lifecycle_preserves_void_abi_cache_and_active_scene() {
     assert!(retained.texture_source.ends_with("images/sheet.pvr"));
     assert!(!environment.get::<bool>("released_draw_ok").unwrap());
     let timeline_events = environment.get::<mlua::Table>("timeline_events").unwrap();
-    assert_eq!(environment.get::<i64>("timeline_event_count").unwrap(), 3);
+    // 100410A18 applies every newly attached EntityTarget in mode 0 before
+    // 100012F18's hidden tick and mode-4 application. Both startup callbacks
+    // enqueue the time-zero spineEvent; neither callback is deduplicated.
+    assert_eq!(environment.get::<i64>("timeline_event_count").unwrap(), 4);
     let first = timeline_events.raw_get::<mlua::Table>(1).unwrap();
     assert_eq!(first.get::<String>("event").unwrap(), "instantIn");
     assert_eq!(first.get::<i32>("integer").unwrap(), 0);
     assert_eq!(first.get::<f64>("number").unwrap(), 0.0);
     assert_eq!(first.get::<String>("text").unwrap(), "");
     let second = timeline_events.raw_get::<mlua::Table>(2).unwrap();
-    assert_eq!(second.get::<String>("event").unwrap(), "cameraShake");
-    assert_eq!(second.get::<i32>("integer").unwrap(), 2);
+    assert_eq!(second.get::<String>("event").unwrap(), "instantIn");
+    assert_eq!(second.get::<i32>("integer").unwrap(), 0);
+    assert_eq!(second.get::<f64>("number").unwrap(), 0.0);
+    assert_eq!(second.get::<String>("text").unwrap(), "");
     let third = timeline_events.raw_get::<mlua::Table>(3).unwrap();
-    assert_eq!(third.get::<String>("event").unwrap(), "PLAYBACK_END");
-    assert_eq!(third.get::<f64>("number").unwrap(), 0.0);
-    assert_eq!(third.get::<String>("text").unwrap(), "");
+    assert_eq!(third.get::<String>("event").unwrap(), "cameraShake");
+    assert_eq!(third.get::<i32>("integer").unwrap(), 2);
+    let fourth = timeline_events.raw_get::<mlua::Table>(4).unwrap();
+    assert_eq!(fourth.get::<String>("event").unwrap(), "PLAYBACK_END");
+    assert_eq!(fourth.get::<f64>("number").unwrap(), 0.0);
+    assert_eq!(fourth.get::<String>("text").unwrap(), "");
     assert!(!environment.get::<bool>("paused_is_playing").unwrap());
     assert!(environment.get::<bool>("resumed_is_playing").unwrap());
     assert!(environment.get::<bool>("survives_clear_cache").unwrap());

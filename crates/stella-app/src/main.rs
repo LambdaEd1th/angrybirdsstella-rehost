@@ -85,9 +85,6 @@ impl Default for GameResolution {
 #[cfg(test)]
 mod reference_renderer;
 
-#[cfg(test)]
-use reference_renderer::{draw_explicit_quad, draw_region};
-
 fn main() -> Result<()> {
     cli::run()
 }

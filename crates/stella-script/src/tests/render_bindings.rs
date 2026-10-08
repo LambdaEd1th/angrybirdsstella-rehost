@@ -1,5 +1,7 @@
 use super::*;
 
+mod selected_font;
+
 #[test]
 fn rendering_disabled_skips_the_top_level_draw_and_resumes_from_update() {
     let runtime = unlocked_test_runtime();
@@ -372,6 +374,11 @@ fn string_3d_uses_text_group_key_and_current_font_like_resource_draw_string() {
     )
     .unwrap();
     fs::write(
+        data_root.join("font-atlas.pvr"),
+        test_rgba_pvr(16, 8, [255; 4]),
+    )
+    .unwrap();
+    fs::write(
         data_root.join("TEXTS.dat"),
         test_localization_table("en_EN", "TITLE", "Localized title"),
     )
@@ -428,13 +435,21 @@ fn submitted_text_keeps_constructed_font_and_texture_after_replace_and_release()
         test_bitmap_font_with_glyph("first.pvr", 3),
     )
     .unwrap();
-    fs::write(data_root.join("first/first.pvr"), b"first texture").unwrap();
+    fs::write(
+        data_root.join("first/first.pvr"),
+        test_rgba_pvr(64, 64, [255; 4]),
+    )
+    .unwrap();
     fs::write(
         data_root.join("second/FONT.dat"),
         test_bitmap_font_with_glyph("second.pvr", 11),
     )
     .unwrap();
-    fs::write(data_root.join("second/second.pvr"), b"second texture").unwrap();
+    fs::write(
+        data_root.join("second/second.pvr"),
+        test_rgba_pvr(64, 64, [255; 4]),
+    )
+    .unwrap();
 
     let runtime = StellaLua::new(&data_root).unwrap();
     runtime
@@ -458,7 +473,11 @@ fn submitted_text_keeps_constructed_font_and_texture_after_replace_and_release()
     // path resolution would now bind appdata/first.pvr, while Purple's
     // retained BitmapFont texture owner must keep first/first.pvr.
     fs::remove_file(data_root.join("first/first.pvr")).unwrap();
-    fs::write(root.join("appdata/first.pvr"), b"late texture").unwrap();
+    fs::write(
+        root.join("appdata/first.pvr"),
+        test_rgba_pvr(64, 64, [255; 4]),
+    )
+    .unwrap();
     runtime
         .execute_source(
             r#"
@@ -1380,13 +1399,21 @@ fn immediate_sprite_submission_retains_each_resolved_atlas_across_shadow_and_rel
         test_textured_sprite_sheet("SHARED", "first.pvr", 10, 20),
     )
     .unwrap();
-    fs::write(data_root.join("first/first.pvr"), []).unwrap();
+    fs::write(
+        data_root.join("first/first.pvr"),
+        test_rgba_pvr(64, 64, [255; 4]),
+    )
+    .unwrap();
     fs::write(
         data_root.join("second/SECOND.dat"),
         test_textured_sprite_sheet("SHARED", "second.pvr", 30, 40),
     )
     .unwrap();
-    fs::write(data_root.join("second/second.pvr"), []).unwrap();
+    fs::write(
+        data_root.join("second/second.pvr"),
+        test_rgba_pvr(64, 64, [255; 4]),
+    )
+    .unwrap();
 
     let runtime = StellaLua::new(&data_root).unwrap();
     runtime
@@ -1459,13 +1486,21 @@ fn selected_object_submission_retains_both_native_image_pointers() {
         test_textured_sprite_sheet("SELECTED", "first.pvr", 10, 20),
     )
     .unwrap();
-    fs::write(data_root.join("first/first.pvr"), []).unwrap();
+    fs::write(
+        data_root.join("first/first.pvr"),
+        test_rgba_pvr(64, 64, [255; 4]),
+    )
+    .unwrap();
     fs::write(
         data_root.join("second/MASK.dat"),
         test_textured_sprite_sheet("SELECTED", "second.pvr", 30, 40),
     )
     .unwrap();
-    fs::write(data_root.join("second/second.pvr"), []).unwrap();
+    fs::write(
+        data_root.join("second/second.pvr"),
+        test_rgba_pvr(64, 64, [255; 4]),
+    )
+    .unwrap();
 
     let runtime = StellaLua::new(&data_root).unwrap();
     runtime
@@ -1510,7 +1545,7 @@ fn selected_object_submission_retains_both_native_image_pointers() {
 }
 
 #[test]
-fn ui_text_native_matches_strict_abi_localization_floor_pivot_and_live_state() {
+fn ui_text_native_matches_raw_lua51_localization_floor_pivot_and_live_state() {
     let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/data");
     let runtime = StellaLua::new(&data_root).unwrap();
     runtime
@@ -1537,11 +1572,6 @@ fn ui_text_native_matches_strict_abi_localization_floor_pivot_and_live_state() {
                     drawUITextNative, { visible = false }, 1, 2, "ignored"
                 )
                 too_few_arguments_fail = not pcall(drawUITextNative, ui_text, 1)
-                missing_width_fails = not pcall(drawUITextNative, {
-                    visible = true, x = 0, y = 0, scaleX = 1, scaleY = 1,
-                    font = "FONT_CRIMSON_BASIC", hanchor = "LEFT", vanchor = "TOP",
-                    group = "TEXTS_BASIC", text = "TEXT_LEVEL_COMPLETE"
-                }, 0, 0)
                 "#,
         )
         .unwrap();
@@ -1553,7 +1583,6 @@ fn ui_text_native_matches_strict_abi_localization_floor_pivot_and_live_state() {
             .unwrap()
     );
     assert!(environment.get::<bool>("too_few_arguments_fail").unwrap());
-    assert!(environment.get::<bool>("missing_width_fails").unwrap());
 
     let bridge = runtime.render.lock().unwrap();
     assert_eq!(bridge.text_commands.len(), 1);
@@ -1609,10 +1638,38 @@ fn ui_text_native_matches_strict_abi_localization_floor_pivot_and_live_state() {
     // The explicit sub-one alpha is temporary and Purple restores 1.0,
     // not the previously installed 0.6 value.
     assert_eq!(bridge.state.alpha, 1.0);
+    drop(bridge);
+
+    // Missing width converts to zero and still submits a second draw. Check
+    // its installed context separately so the first draw's state is covered.
+    runtime
+        .execute_source(
+            r#"
+                missing_width_uses_zero = pcall(drawUITextNative, {
+                    visible = true, x = 0, y = 0, scaleX = 1, scaleY = 1,
+                    font = "FONT_CRIMSON_BASIC", hanchor = "LEFT", vanchor = "TOP",
+                    group = "TEXTS_BASIC", text = "TEXT_LEVEL_COMPLETE"
+                }, 0, 0)
+            "#,
+        )
+        .unwrap();
+    assert!(environment.get::<bool>("missing_width_uses_zero").unwrap());
+    let bridge = runtime.render.lock().unwrap();
+    assert_eq!(bridge.text_commands.len(), 2);
+    assert_eq!(
+        (
+            bridge.state.scale_x,
+            bridge.state.scale_y,
+            bridge.state.angle
+        ),
+        (1.0, 1.0, 0.0)
+    );
+    assert_eq!((bridge.state.pivot_x, bridge.state.pivot_y), (0.0, 0.0));
+    assert_eq!(bridge.state.alpha, 1.0);
 }
 
 #[test]
-fn ui_text_native_clipped_lines_inherit_alpha_and_restore_it_on_error() {
+fn ui_text_native_clipped_lines_inherit_alpha_and_preserve_it_on_error() {
     let runtime = StellaLua::new("/tmp").unwrap();
     register_test_sprite_sheet(&runtime, &["LINE_1", "LINE_2", "AFTER_ERROR"]);
     runtime
@@ -1676,8 +1733,8 @@ fn ui_text_native_clipped_lines_inherit_alpha_and_restore_it_on_error() {
     assert_eq!(bridge.commands[2].sprite, "AFTER_ERROR");
     assert_eq!(bridge.commands[0].state.alpha, 0.25);
     assert_eq!(bridge.commands[1].state.alpha, 0.25);
-    assert_eq!(bridge.commands[2].state.alpha, 1.0);
-    assert_eq!(bridge.state.alpha, 1.0);
+    assert_eq!(bridge.commands[2].state.alpha, 0.35_f32);
+    assert_eq!(bridge.state.alpha, f64::from(0.35_f32));
     // Clipped mode does not install the composed text scale/rotation.
     assert_eq!((bridge.state.scale_x, bridge.state.scale_y), (2.0, 3.0));
     assert_eq!(bridge.state.angle, f64::from(0.9_f32));

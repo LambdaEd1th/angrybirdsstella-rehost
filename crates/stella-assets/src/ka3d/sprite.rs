@@ -2,7 +2,7 @@ use crate::AssetError;
 
 use super::reader::NativeContainerReader;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SpriteSheet {
     pub textures: Vec<String>,
     pub sprites: Vec<SpriteRegion>,
@@ -85,11 +85,19 @@ impl SpriteSheet {
 
     /// Parse the big-endian `SPRT` payload used by Stella's atlas metadata.
     pub fn parse(bytes: &[u8]) -> Result<Self, AssetError> {
-        let mut container = NativeContainerReader::parse(bytes)?;
-        if container.container_type() != b"KA3D" {
-            return Err(AssetError::InvalidKa3d("SPRT root is not KA3D"));
-        }
-        let mut found = false;
+        Self::parse_with_image_loader(bytes, |_| Ok(()))
+    }
+
+    /// Invoke the constructor's image loader immediately after each SPRT
+    /// texture name, before consuming sprite geometry (native 1004610F0).
+    /// Metadata-only callers retain the ordinary `parse` entry point.
+    pub fn parse_with_image_loader<E: From<AssetError>>(
+        bytes: &[u8],
+        mut load_image: impl FnMut(&str) -> Result<(), E>,
+    ) -> Result<Self, E> {
+        let Some(mut container) = NativeContainerReader::parse_ka3d(bytes)? else {
+            return Ok(Self::default());
+        };
         let mut textures = Vec::new();
         let mut sprites: Vec<SpriteRegion> = Vec::new();
         let mut sprite_texture_indices = Vec::new();
@@ -98,13 +106,14 @@ impl SpriteSheet {
                 container.skip(chunk.declared_len)?;
                 continue;
             }
-            found = true;
             let reader = container.body();
             if reader.u16()? != 1 {
                 continue;
             }
             let texture_index = textures.len();
-            textures.push(reader.string()?);
+            let texture = reader.string()?;
+            load_image(&texture)?;
+            textures.push(texture);
             let sprite_count = reader.u16()? as usize;
             for _ in 0..sprite_count {
                 let sprite = SpriteRegion {
@@ -128,9 +137,6 @@ impl SpriteSheet {
                     sprite_texture_indices.push(texture_index);
                 }
             }
-        }
-        if !found {
-            return Err(AssetError::InvalidKa3d("resource is not an SPRT sheet"));
         }
         Ok(Self {
             textures,

@@ -537,16 +537,28 @@ fn native_platform_login_error_and_retired_host_completion_never_start_graph_or_
             arrived.send(()).unwrap();
             listener
         });
-        let runtime = platform_runtime(&sandbox, &origin);
         let (provider, complete) = host_provider(&origin, false);
-        runtime
-            .set_facebook_session(Some(provider.clone()))
-            .unwrap();
+        let runtime = platform_runtime_with_provider(&sandbox, &origin, provider.clone());
+        let friends_completed = runtime.social.native_friends_completions_for_test();
         login(&runtime, 1);
         wait_signal(&runtime, &phase);
         assert_eq!(provider.attempts.load(Ordering::Acquire), 1);
         let listener = server.join().unwrap();
         let queue = runtime.social.online_completion_count_probe();
+        // The server's reply signal precedes the client's queued completion.
+        // Wait for that actual completion before isolating the blocked login;
+        // a single event dispatch cannot establish an empty asynchronous queue.
+        for _ in 0..1500 {
+            dispatch_registered_application_events(runtime.lua()).unwrap();
+            if runtime.social.native_friends_completions_for_test() > friends_completed {
+                break;
+            }
+            thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(
+            runtime.social.native_friends_completions_for_test(),
+            friends_completed + 1
+        );
         dispatch_registered_application_events(runtime.lua()).unwrap();
         assert_eq!(queue(), 0);
         if retired {

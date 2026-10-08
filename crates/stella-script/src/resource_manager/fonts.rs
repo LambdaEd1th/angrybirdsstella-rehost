@@ -4,7 +4,7 @@ mod bitmap;
 mod clipping;
 mod system;
 
-pub(crate) use bitmap::{bitmap_font_metric, bitmap_font_string_width, load_bitmap_fonts};
+pub(crate) use bitmap::{bitmap_font_metric, bitmap_font_string_width};
 pub(crate) use clipping::{native_clip_text_lines, native_utf8_skipping_invalid};
 pub(crate) use system::{
     SystemFontState, create_platform_ui_font, create_platform_ui_regular_font,

@@ -1,6 +1,7 @@
 use super::*;
 
 mod score;
+mod timing;
 
 #[test]
 fn block_score_retains_fractional_damage_and_native_fixture_order_flags() {

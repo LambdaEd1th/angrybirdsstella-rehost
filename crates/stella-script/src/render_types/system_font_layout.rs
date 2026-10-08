@@ -672,7 +672,7 @@ fn native_system_font_concrete_script(script: UnicodeScriptCode) -> Option<Unico
 
 pub(super) fn native_system_font_script(script: UnicodeScriptCode) -> font_shaper::Script {
     let tag = skrifa::Tag::new(&script.as_iso15924_tag().to_be_bytes());
-    font_shaper::Script::from_iso15924_tag(tag).unwrap_or(harfrust::script::UNKNOWN)
+    font_shaper::Script::from_iso15924_tag(tag).unwrap_or(font_shaper::Script::UNKNOWN)
 }
 
 #[cfg(test)]

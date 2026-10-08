@@ -22,6 +22,24 @@ impl<'a> NativeContainerReader<'a> {
         if &container_type != b"KA3D" && &container_type != b"RVIO" {
             return Err(AssetError::InvalidKa3d("root tag is not KA3D/RVIO"));
         }
+        Self::finish_header(container_type, reader)
+    }
+
+    /// FONT and SPRT return an empty allocation on a foreign four-byte root,
+    /// without reading its length or remaining bytes (42A780 / 4610F0).
+    pub(super) fn parse_ka3d(bytes: &'a [u8]) -> Result<Option<Self>, AssetError> {
+        let mut reader = BeReader::new(bytes);
+        let container_type = reader.tag()?;
+        if &container_type != b"KA3D" {
+            return Ok(None);
+        }
+        Self::finish_header(container_type, reader).map(Some)
+    }
+
+    fn finish_header(
+        container_type: [u8; 4],
+        mut reader: BeReader<'a>,
+    ) -> Result<Self, AssetError> {
         let declared_len = reader.u32()? as usize;
         if declared_len > reader.remaining_len() {
             return Err(AssetError::InvalidKa3d(

@@ -220,13 +220,21 @@ fn native_dirt_constructor_borrows_both_resolved_texture_pointers() {
         test_textured_sprite_sheet_with_names("first.pvr", &entries),
     )
     .unwrap();
-    fs::write(data_root.join("first/first.pvr"), []).unwrap();
+    fs::write(
+        data_root.join("first/first.pvr"),
+        test_rgba_pvr(64, 64, [255; 4]),
+    )
+    .unwrap();
     fs::write(
         data_root.join("second/SECOND.dat"),
         test_textured_sprite_sheet_with_names("second.pvr", &entries),
     )
     .unwrap();
-    fs::write(data_root.join("second/second.pvr"), []).unwrap();
+    fs::write(
+        data_root.join("second/second.pvr"),
+        test_rgba_pvr(64, 64, [255; 4]),
+    )
+    .unwrap();
 
     let runtime = StellaLua::new(&data_root).unwrap();
     runtime

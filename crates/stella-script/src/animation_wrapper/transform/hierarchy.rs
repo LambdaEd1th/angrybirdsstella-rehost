@@ -56,6 +56,19 @@ pub(crate) fn animation_local_transform(
     if !animation_definition_contains_entity(definition, entity) {
         return None;
     }
+    if let Some(matrix) = playback
+        .latched_targets
+        .get(entity)
+        .and_then(|target| target.local_matrix)
+    {
+        return Some(AnimationTransform {
+            x: matrix.x,
+            y: matrix.y,
+            scale_x: matrix.scale_x(),
+            scale_y: matrix.scale_y(),
+            angle: matrix.angle(),
+        });
+    }
     let translation = animation_target_sample(definition, playback, entity, |target| {
         !target.translation.is_empty()
     })
@@ -98,9 +111,9 @@ pub(crate) fn animation_local_transform(
     })
 }
 
-/// EntityTarget keeps one ordered State vector for each timeline usage and
-/// applies only its last state (`sub_10041E41C`). Controls are appended on
-/// first start, reused in place on later starts, and swap-removed on stop.
+/// Scalar compatibility sampling for a fixture that has never applied native
+/// targets. Installed scenes read retained component/matrix values; their
+/// State vectors have precedence independent of the active Control vector.
 pub(crate) fn animation_target_sample<'a>(
     definition: &'a AnimationDefinition,
     playback: &AnimationPlayback,

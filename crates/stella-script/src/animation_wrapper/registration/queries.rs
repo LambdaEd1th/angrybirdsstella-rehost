@@ -63,7 +63,12 @@ pub(super) fn install_entities(
                         // sub_100015000 queries the two float matrix-column
                         // magnitudes; it does not expose the authored scalar
                         // fields directly.
-                        let affine = AnimationAffine::from_transform(transform);
+                        let affine = runtime
+                            .playback
+                            .get(&tag)
+                            .and_then(|playback| playback.latched_targets.get(&entity))
+                            .and_then(|target| target.local_matrix)
+                            .unwrap_or_else(|| AnimationAffine::from_transform(transform));
                         (affine.scale_x(), affine.scale_y())
                     },
                 ),

@@ -6,6 +6,14 @@
 
 use super::*;
 
+// The CPU draw extensions depend on this desktop oracle. They must not be
+// pulled into the browser's shared asset catalog merely because cfg(test)
+// is enabled by a complete workspace test build.
+#[path = "assets/sprite.rs"]
+mod asset_sprite;
+#[path = "assets/text.rs"]
+mod asset_text;
+
 mod color_mesh;
 mod commands;
 mod presentation;

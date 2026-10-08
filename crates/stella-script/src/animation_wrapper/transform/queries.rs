@@ -148,7 +148,12 @@ pub(crate) fn animation_entity_world_bounds(
     // draw(). ComicCutscene depends on this when it builds the four-border
     // clip rectangle: omitting the attachment collapses all border slots onto
     // their parent nodes and clips the entire comic page away.
-    if let Some(skin_transform) = skin_transform {
+    if let Some(skin_transform) = skin_transform
+        && !playback
+            .latched_targets
+            .get(entity)
+            .is_some_and(|target| target.sprite_applied)
+    {
         transform = transform.then_skin_attachment(&skin_transform);
     }
     // The native public query returns the sprite bounds in the wrapper

@@ -177,18 +177,6 @@ pub(super) fn install(
                     && object.sprite_bound;
                 let post_horizontal_flip = object.horizontal_flip;
                 if object.flash_animation {
-                    // Preserve Purple's interpolated position and authored
-                    // ability rotations. The recovered BirdAnimation flying
-                    // state is the one late writer that derives angle from a
-                    // 30 Hz velocity sample, so the renderer also supplies
-                    // the matching two-slot visual velocity sample for it.
-                    let current_action = animation_runtime
-                        .lock()
-                        .expect("animation runtime lock poisoned")
-                        .playback
-                        .get(name.as_ref())
-                        .map(|playback| playback.current_action.clone())
-                        .unwrap_or_default();
                     let transform = {
                         let mut bridge = render.lock().expect("render bridge lock poisoned");
                         // 0x10004BFE0 installs the callback context and the
@@ -197,17 +185,30 @@ pub(super) fn install(
                         // acquisition instead of introducing a host-only
                         // synchronization boundary between them.
                         bridge.install_scene_post_draw_state(&object);
-                        bridge.flash_animation_transform(&object, &current_action)
+                        bridge.flash_animation_transform(&object)
                     };
-                    let mut commands = {
+                    let (mut commands, current_action) = {
                         let mut runtime = animation_runtime
                             .lock()
                             .expect("animation runtime lock poisoned");
                         runtime.transforms.insert(name.to_string(), transform);
-                        runtime
-                            .matrices
-                            .insert(name.to_string(), AnimationAffine::from_transform(transform));
-                        animation_render_commands(&runtime, name.as_ref())
+                        // sub_10006794C calls translation, rotation and scale
+                        // setters separately. The last setter normalizes the
+                        // two sincosf columns before applying scale; ordinary
+                        // animation rotation tracks do not take this path.
+                        let mut matrix = AnimationAffine::default();
+                        matrix.set_translation(transform.x, transform.y);
+                        matrix.set_rotation(transform.angle);
+                        matrix.set_scale(transform.scale_x, transform.scale_y);
+                        runtime.matrices.insert(name.to_string(), matrix);
+                        let current_action = if trace_animation {
+                            runtime.playback.get(name.as_ref())
+                                .map(|playback| playback.current_action.clone())
+                                .unwrap_or_default()
+                        } else {
+                            String::new()
+                        };
+                        (animation_render_commands(&runtime, name.as_ref()), current_action)
                     };
                     if trace_animation {
                         let (physics_slot, physics_alpha) = {
@@ -217,19 +218,14 @@ pub(super) fn install(
                                 bridge.physics_accumulator * f32::from_bits(0x41EF_FFFF),
                             )
                         };
-                        let velocities = object.display_interpolation_velocities;
                         eprintln!(
-                            "animation-native scene-draw tag={name} action={current_action:?} sprites={} transform=({:.3},{:.3}; {:.3},{:.3}; angle={:.6}) physics=(slot={physics_slot},alpha={physics_alpha:.6},v0={:.6},{:.6},v1={:.6},{:.6})",
+                            "animation-native scene-draw tag={name} action={current_action:?} sprites={} transform=({:.3},{:.3}; {:.3},{:.3}; angle={:.6}) physics=(slot={physics_slot},alpha={physics_alpha:.6})",
                             commands.len(),
                             transform.x,
                             transform.y,
                             transform.scale_x,
                             transform.scale_y,
                             transform.angle,
-                            velocities[0].x,
-                            velocities[0].y,
-                            velocities[1].x,
-                            velocities[1].y,
                         );
                     }
                     let mut bridge = render.lock().expect("render bridge lock poisoned");

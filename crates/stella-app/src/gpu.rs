@@ -1,11 +1,9 @@
 use std::{
     collections::{HashMap, HashSet},
-    ops::Range,
     sync::{Arc, Weak, mpsc},
 };
 
 use anyhow::{Result, anyhow};
-use bytemuck::{Pod, Zeroable};
 use image::RgbaImage;
 use stella_assets::surface_format::SurfaceFormat;
 use winit::window::Window;
@@ -20,50 +18,11 @@ mod resources;
 #[cfg(test)]
 mod reference;
 
+use frame::{DrawUniform, GpuVertex, PreparedDraw, PreparedOperation};
 use program::{NativeProgram, native_sprite_program};
 
 const GAME_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const WHITE_TEXTURE: &str = "<stella-white>";
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-struct GpuVertex {
-    position: [f32; 2],
-    uv: [f32; 2],
-    source: [f32; 2],
-    clip_position: [f32; 4],
-    draw_index: u32,
-    padding: u32,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-struct DrawUniform {
-    header: [f32; 4],
-    diffuse: [f32; 4],
-    params: [f32; 4],
-    fill: [f32; 4],
-}
-
-impl Default for DrawUniform {
-    fn default() -> Self {
-        Self::zeroed()
-    }
-}
-
-struct PreparedDraw {
-    vertices: Range<u32>,
-    texture_pair: usize,
-    program: NativeProgram,
-    scissor: Option<[u32; 4]>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum PreparedOperation {
-    Draw(usize),
-    Capture(String),
-    ScreenshotShare(ScreenshotShareRequest),
-}
-
 /// Pixels owned by one native share call, independent of subsequent draws,
 /// presentation overlays and drawable resizes. Rows are top-down RGBA8.
 pub(crate) struct ScreenshotShareCapture {
@@ -89,6 +48,7 @@ pub(crate) struct PreparedFrame {
     current_projection: Option<TextProjection3D>,
     current_raw_vertices: bool,
     current_vertex_depth: f32,
+    gpu_region_trace: Option<bool>,
 }
 
 #[cfg(test)]

@@ -27,8 +27,6 @@ pub(crate) fn install(
                 if object.dynamic_body || object.kinematic_body {
                     object.velocity_x = velocity_x;
                     object.velocity_y = velocity_y;
-                    object
-                        .reset_display_interpolation_velocity(native_velocity_x, native_velocity_y);
                     // sub_100040FA4 squares both lanes, reduces with FADDP and
                     // wakes only when the float32 sum is strictly positive.
                     if native_velocity_x * native_velocity_x + native_velocity_y * native_velocity_y
@@ -110,10 +108,6 @@ pub(crate) fn install(
                         );
                         object.velocity_y = f64::from(
                             inverse_mass.mul_add(force_y, object.velocity_y as f32),
-                        );
-                        object.reset_display_interpolation_velocity(
-                            object.velocity_x as f32,
-                            object.velocity_y as f32,
                         );
                         object.angular_velocity = f64::from(
                             (object.inverse_inertia() as f32)

@@ -152,13 +152,21 @@ fn theme_particle_creation_retains_its_atlas_across_shadow_but_cannot_draw_after
         ),
     )
     .unwrap();
-    fs::write(data_root.join("first/first.pvr"), []).unwrap();
+    fs::write(
+        data_root.join("first/first.pvr"),
+        test_rgba_pvr(64, 64, [255; 4]),
+    )
+    .unwrap();
     fs::write(
         data_root.join("second/SECOND.dat"),
         test_textured_sprite_sheet("THEME_PARTICLE", "second.pvr", 30, 40),
     )
     .unwrap();
-    fs::write(data_root.join("second/second.pvr"), []).unwrap();
+    fs::write(
+        data_root.join("second/second.pvr"),
+        test_rgba_pvr(64, 64, [255; 4]),
+    )
+    .unwrap();
 
     let runtime = StellaLua::new(&data_root).unwrap();
     configure_theme_camera_fixture(&runtime);

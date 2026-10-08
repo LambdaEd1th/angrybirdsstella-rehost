@@ -77,7 +77,9 @@ pub(crate) fn animation_render_commands(
                 root_affine,
                 descendant_reflection,
             )?;
-            if let Some(skin_transform) = skin_transform {
+            if let Some(skin_transform) = skin_transform
+                && applied_binding.is_none()
+            {
                 transform = transform.then_skin_attachment(&skin_transform);
                 compatibility.scale_x *= skin_transform.scale_x;
                 compatibility.scale_y *= skin_transform.scale_y;
@@ -90,28 +92,36 @@ pub(crate) fn animation_render_commands(
             ) {
                 transform = transform.compose(center);
             }
-            let alpha = animation_target_sample(definition, playback, slot, |target| {
-                !target.alpha.is_empty()
-            })
-            .map(|(target, time)| sample_float(&target.alpha, time, 1.0))
-            .or_else(|| {
-                playback
-                    .latched_targets
-                    .get(slot)
-                    .map(|target| target.alpha)
-            })
-            .unwrap_or(1.0);
-            let z_order = animation_target_sample(definition, playback, slot, |target| {
-                !target.z_order.is_empty()
-            })
-            .and_then(|(target, time)| sample_discrete(&target.z_order, time))
-            .or_else(|| {
-                playback
-                    .latched_targets
-                    .get(slot)
-                    .map(|target| target.z_order)
-            })
-            .unwrap_or(0);
+            let alpha = if let Some(target) = applied_binding {
+                target.alpha
+            } else {
+                animation_target_sample(definition, playback, slot, |target| {
+                    !target.alpha.is_empty()
+                })
+                .map(|(target, time)| sample_float(&target.alpha, time, 1.0))
+                .or_else(|| {
+                    playback
+                        .latched_targets
+                        .get(slot)
+                        .map(|target| target.alpha)
+                })
+                .unwrap_or(1.0)
+            };
+            let z_order = if let Some(target) = applied_binding {
+                target.z_order
+            } else {
+                animation_target_sample(definition, playback, slot, |target| {
+                    !target.z_order.is_empty()
+                })
+                .and_then(|(target, time)| sample_discrete(&target.z_order, time))
+                .or_else(|| {
+                    playback
+                        .latched_targets
+                        .get(slot)
+                        .map(|target| target.z_order)
+                })
+                .unwrap_or(0)
+            };
             Some((
                 z_order,
                 sprite,

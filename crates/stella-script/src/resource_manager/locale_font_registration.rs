@@ -1,7 +1,6 @@
 //! Locale selection and native bitmap/system-font metric bindings.
 
 use crate::*;
-use stella_assets::ka3d::BitmapFont;
 
 pub(crate) fn install_selection(
     lua: &Lua,
@@ -189,10 +188,8 @@ pub(crate) fn install_metrics(
     lua: &Lua,
     resource_api: &mlua::Table,
     resource_runtime: Arc<Mutex<ResourceRuntime>>,
-    bitmap_font_assets: Arc<BTreeMap<String, BitmapFont>>,
 ) -> LuaResult<()> {
     let width_font_resources = Arc::clone(&resource_runtime);
-    let width_font_assets = Arc::clone(&bitmap_font_assets);
     resource_api.set(
         "getStringWidth",
         lua.create_function(move |_, args: MultiValue| {
@@ -202,20 +199,10 @@ pub(crate) fn install_metrics(
             let resources = width_font_resources
                 .lock()
                 .expect("resource runtime lock poisoned");
-            let current = resources
-                .current_font
-                .as_deref()
+            let font = resources
+                .current_native_font()?
                 .ok_or_else(|| runtime_error("No font is set while trying to get string width"))?;
-            if let Some(font) = resources.system_fonts.get(current) {
-                return Ok(f64::from(system_font_string_width(font, &text)));
-            }
-            if let Some(font) = resources.bitmap_font_values.get(current) {
-                return Ok(f64::from(bitmap_font_string_width(font, &text)));
-            }
-            if let Some(font) = width_font_assets.get(current) {
-                return Ok(f64::from(bitmap_font_string_width(font, &text)));
-            }
-            Ok(0.0)
+            Ok(f64::from(font.string_width(&text)?))
         })?,
     )?;
     for (method, metric, missing_message) in [
@@ -246,27 +233,16 @@ pub(crate) fn install_metrics(
         ),
     ] {
         let metric_font_resources = Arc::clone(&resource_runtime);
-        let metric_font_assets = Arc::clone(&bitmap_font_assets);
         resource_api.set(
             method,
             lua.create_function(move |_, ()| {
                 let resources = metric_font_resources
                     .lock()
                     .expect("resource runtime lock poisoned");
-                let current = resources
-                    .current_font
-                    .as_deref()
+                let font = resources
+                    .current_native_font()?
                     .ok_or_else(|| runtime_error(missing_message))?;
-                if let Some(font) = resources.system_fonts.get(current) {
-                    return Ok(system_font_metric(font, metric));
-                }
-                if let Some(font) = resources.bitmap_font_values.get(current) {
-                    return Ok(f64::from(bitmap_font_metric(font, metric)));
-                }
-                if let Some(font) = metric_font_assets.get(current) {
-                    return Ok(f64::from(bitmap_font_metric(font, metric)));
-                }
-                Ok(0.0)
+                font.metric(metric)
             })?,
         )?;
     }

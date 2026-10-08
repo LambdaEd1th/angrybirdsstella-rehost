@@ -19,50 +19,32 @@ pub(crate) fn install(
         "native_createSpriteSheet",
         lua.create_function(move |lua, args: MultiValue| {
             let path = native_required_string(&args, 0, "native_createSpriteSheet")?;
-            let textures = legacy_usage::sprite_sheet_textures(&create_sheet_root, &path);
             // ResourceManager::native_createSpriteSheet at sub_10009470C
             // forwards to LuaResources::createSpriteSheet with replace=false
             // and the otherwise-unused texture flag true.
-            let newly_loaded = lifecycle_registration::create_sprite_sheet(
+            let allocation_delta = lifecycle_registration::create_sprite_sheet(
                 &create_sheet_resources,
                 &create_sheet_root,
                 &path,
                 false,
-            )?;
-            let published = {
+            )?
+            .unwrap_or(0);
+            // The wrapper resets GL counters around construction and stores
+            // +0x34 only when its signed 32-bit value is positive. Each native
+            // Image allocates a Texture even when host pixels are shared.
+            if (allocation_delta as i32) < 1 {
+                return Ok(());
+            }
+            let bytes = {
                 let mut resources = create_sheet_resources
                     .lock()
                     .expect("resource runtime lock poisoned");
-                if !newly_loaded {
-                    None
-                } else {
-                    let mut upload_delta = 0u32;
-                    let mut retained = Vec::with_capacity(textures.len());
-                    for texture in textures {
-                        let count = resources
-                            .legacy_texture_ref_counts
-                            .entry(texture.cache_key.clone())
-                            .or_default();
-                        if *count == 0 {
-                            upload_delta = upload_delta.wrapping_add(texture.uploaded_bytes);
-                        }
-                        *count = count.wrapping_add(1);
-                        retained.push(texture.cache_key);
-                    }
-                    resources
-                        .legacy_sheet_textures
-                        .insert(path.clone(), retained);
-                    if upload_delta == 0 {
-                        None
-                    } else {
-                        resources.legacy_texture_usage.insert(path, upload_delta);
-                        Some(native_sum(resources.legacy_texture_usage.values()))
-                    }
-                }
+                resources
+                    .legacy_texture_usage
+                    .insert(path, allocation_delta);
+                native_sum(resources.legacy_texture_usage.values())
             };
-            if let Some(bytes) = published {
-                publish_memory_global(lua, "g_usedTextureMemory", bytes)?;
-            }
+            publish_memory_global(lua, "g_usedTextureMemory", bytes)?;
             Ok(())
         })?,
     )?;
@@ -78,21 +60,6 @@ pub(crate) fn install(
                 let mut resources = release_sheet_resources
                     .lock()
                     .expect("resource runtime lock poisoned");
-                if let Some(textures) = resources.legacy_sheet_textures.remove(&path) {
-                    for texture in textures {
-                        let remove = resources
-                            .legacy_texture_ref_counts
-                            .get_mut(&texture)
-                            .map(|count| {
-                                *count = count.saturating_sub(1);
-                                *count == 0
-                            })
-                            .unwrap_or(false);
-                        if remove {
-                            resources.legacy_texture_ref_counts.remove(&texture);
-                        }
-                    }
-                }
                 // sub_100094800 uses map operator[], retaining a zero-valued
                 // node even if the path was never loaded.
                 resources.legacy_texture_usage.insert(path, 0);
@@ -147,10 +114,12 @@ pub(crate) fn install(
                     let mut resources = resources.lock().expect("resource runtime lock poisoned");
                     resources.audio_clips.insert(name.clone());
                     resources.legacy_audio_play_counts.insert(name.clone(), 0);
-                    decoded_bytes.map(|bytes| {
-                        resources.legacy_audio_usage.insert(name.clone(), bytes);
-                        native_sum(resources.legacy_audio_usage.values())
-                    })
+                    decoded_bytes
+                        .filter(|bytes| (*bytes as i32) >= 1)
+                        .map(|bytes| {
+                            resources.legacy_audio_usage.insert(name.clone(), bytes);
+                            native_sum(resources.legacy_audio_usage.values())
+                        })
                 };
                 if let Some(bytes) = published {
                     publish_memory_global(lua, "g_usedAudioMemory", bytes)?;
@@ -255,5 +224,5 @@ fn native_sum<'a>(values: impl Iterator<Item = &'a u32>) -> u32 {
 }
 
 fn publish_memory_global(lua: &Lua, name: &str, bytes: u32) -> LuaResult<()> {
-    lua.globals().set(name, f64::from(bytes as f32))
+    lua.globals().set(name, f64::from((bytes as i32) as f32))
 }

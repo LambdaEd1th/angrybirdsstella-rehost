@@ -63,6 +63,27 @@ impl TextureAsset {
 }
 
 impl AssetCatalog {
+    /// Atlas Image access belongs to a glyph draw, after anchor validation.
+    /// This shared desktop/Web module also serves the reference renderer.
+    pub(crate) fn retain_bitmap_font_image(
+        &mut self,
+        command: &stella_script::TextRenderCommand,
+    ) -> Result<()> {
+        if let Some(stella_script::TextFontBinding::Bitmap {
+            texture_source,
+            decoded_image,
+            image_owner,
+            ..
+        }) = command.font_binding.as_ref()
+        {
+            self.retain_image_owner(texture_source, image_owner.as_ref());
+            if let Some(image) = decoded_image {
+                self.retain_native_image(texture_source, image, image_owner.as_ref())?;
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn retain_decoded_image(&mut self, region: &SpriteCatalogRegion) -> Result<()> {
         self.retain_image_owner(&region.texture_source, region.image_owner.as_ref());
         if let Some(image) = &region.decoded_image {

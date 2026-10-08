@@ -2,7 +2,6 @@
 
 use crate::*;
 use std::ffi::{CStr, c_char};
-use stella_assets::ka3d::BitmapFont;
 
 fn native_required_c_string_bytes(
     values: &MultiValue,
@@ -32,7 +31,6 @@ pub(super) fn install(
     lua: &Lua,
     globals: &mlua::Table,
     resources: Arc<Mutex<ResourceRuntime>>,
-    fonts: Arc<BTreeMap<String, BitmapFont>>,
     locales: Arc<Mutex<LocaleRuntime>>,
 ) -> LuaResult<()> {
     globals.set(
@@ -53,33 +51,16 @@ pub(super) fn install(
             let text = localized.unwrap_or_else(|| native_utf8_skipping_invalid(&key));
             // The `0x10004F6B0` empty-input branch publishes an empty result
             // without ever entering the IFont width trampoline.
-            let (bitmap_font, system_font) = if text.is_empty() {
-                (None, None)
+            let font = if text.is_empty() {
+                None
             } else {
                 let resources = resources.lock().expect("resource runtime lock poisoned");
-                let current = resources.current_font.as_deref().ok_or_else(|| {
+                Some(resources.current_native_font()?.ok_or_else(|| {
                     runtime_error("No font is set while trying to get string width")
-                })?;
-                (
-                    resources
-                        .bitmap_font_values
-                        .get(current)
-                        .cloned()
-                        .or_else(|| fonts.get(current).cloned().map(Arc::new)),
-                    resources.system_fonts.get(current).cloned(),
-                )
+                })?)
             };
-            let width = |line: &str| {
-                system_font.as_ref().map_or_else(
-                    || {
-                        bitmap_font
-                            .as_ref()
-                            .map_or(0, |font| bitmap_font_string_width(font, line))
-                    },
-                    |font| system_font_string_width(font, line),
-                )
-            };
-            let (clipped_lines, widest_line) = native_clip_text_lines(&text, maximum_width, width);
+            let width = |line: &str| font.as_ref().map_or(Ok(0), |font| font.string_width(line));
+            let (clipped_lines, widest_line) = native_clip_text_lines(&text, maximum_width, width)?;
             // sub_10004F630 writes GameLua+0x430 directly. Replacing the
             // script-visible `clippedText` field does not retarget this
             // constructor-owned result object.

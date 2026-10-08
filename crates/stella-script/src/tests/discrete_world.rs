@@ -252,9 +252,7 @@ fn explicit_pose_setters_reset_render_pose_and_both_native_slots() {
     for pose in body.interpolation_poses {
         assert_eq!((pose.x, pose.y, pose.angle), (x, y, angle));
     }
-    for velocity in body.display_interpolation_velocities {
-        assert_eq!((velocity.x, velocity.y), (2.5, -3.5));
-    }
+    assert_eq!((body.velocity_x, body.velocity_y), (2.5, -3.5));
 }
 
 #[test]

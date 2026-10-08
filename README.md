@@ -11,7 +11,7 @@ The working implementation currently includes:
 - the original `gamelogic.lua` → `game.lua` startup and fixed 60 Hz update loop;
 - original level loading, definition-pack merging and native scene mirrors;
 - KA3D/RVIO sprite sheets and both observed COMP v1/v2 layouts;
-- PNG, WebP and PVR v2 RGBA4444/RGBA8888 textures;
+- PNG, WebP and PVR v2 RGBA4444/RGBA8888 and PVRTC1 2/4bpp RGB/RGBA textures;
 - a native `wgpu` atlas/composite renderer in a resizable `winit` window;
 - reverse-aligned premultiplied/straight-alpha pipelines, shaders, masks and
   bitmap text on Metal, Vulkan and Direct3D 12 backends;
@@ -288,6 +288,12 @@ passed. It accepts the same `--game-server-url`, `--server-time-url`,
 compilation for macOS ARM64, Windows x86_64/ARM64 and Linux x86_64/ARM64. The
 complete local test suite additionally requires the locally extracted original
 game data, which is intentionally absent from GitHub Actions.
+
+Automatic playthrough implementation is outside the current recreation scope.
+The previous consecutive-level routes and adaptive aiming scripts are preserved
+in [archive/auto-playthrough](archive/auto-playthrough/README.md), outside Cargo
+test discovery. Active regressions retain representative fixed-input gameplay,
+scene restart/return, failure and UI retry, rewards and save restoration.
 
 Create a release by pushing a semantic version tag:
 

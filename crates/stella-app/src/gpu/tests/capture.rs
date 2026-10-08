@@ -209,7 +209,7 @@ fn lua_capture_keeps_same_file_images_and_reloaded_sheet_owners_independent() {
     assert_ne!(sources[0], sources[1]);
     assert_ne!(sources[0], sources[2]);
     assert_ne!(sources[1], sources[2]);
-    let image_path = std::fs::canonicalize(root.join("same.png")).unwrap();
+    let image_path = root.join("same.png");
     for source in &sources {
         assert_eq!(
             std::path::Path::new(stella_assets::image_source::image_source_path(source)),

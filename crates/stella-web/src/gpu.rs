@@ -1,8 +1,6 @@
 //! Shared native frame preparation with a browser-visible binary packet.
 
 use super::*;
-use bytemuck::{Pod, Zeroable};
-use std::ops::Range;
 use std::sync::Weak;
 use stella_assets::surface_format::SurfaceFormat;
 
@@ -11,6 +9,7 @@ use stella_assets::surface_format::SurfaceFormat;
 mod frame;
 #[path = "../../stella-app/src/gpu/program.rs"]
 mod program;
+use frame::{DrawUniform, GpuVertex, PreparedDraw, PreparedOperation};
 use program::{NativeProgram, native_sprite_program};
 mod retirement;
 
@@ -18,40 +17,6 @@ const WHITE_TEXTURE: &str = "<stella-white>";
 
 pub(super) fn clear_scissor(edges: Option<[i32; 4]>, resolution: GameResolution) -> [u32; 4] {
     frame::native_scissor(edges, resolution)
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-struct GpuVertex {
-    position: [f32; 2],
-    uv: [f32; 2],
-    source: [f32; 2],
-    clip_position: [f32; 4],
-    draw_index: u32,
-    padding: u32,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-struct DrawUniform {
-    header: [f32; 4],
-    diffuse: [f32; 4],
-    params: [f32; 4],
-    fill: [f32; 4],
-}
-
-struct PreparedDraw {
-    vertices: Range<u32>,
-    texture_pair: usize,
-    program: NativeProgram,
-    scissor: Option<[u32; 4]>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum PreparedOperation {
-    Draw(usize),
-    Capture(String),
-    ScreenshotShare(ScreenshotShareRequest),
 }
 
 #[derive(Default)]
@@ -71,6 +36,7 @@ pub(crate) struct PreparedFrame {
     current_projection: Option<TextProjection3D>,
     current_raw_vertices: bool,
     current_vertex_depth: f32,
+    gpu_region_trace: Option<bool>,
 }
 
 impl PreparedFrame {

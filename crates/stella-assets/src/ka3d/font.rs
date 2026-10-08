@@ -2,7 +2,7 @@ use crate::AssetError;
 
 use super::reader::NativeContainerReader;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct BitmapFont {
     pub texture: String,
     /// Extra vertical spacing stored in the FONT header. Purple exposes this
@@ -10,7 +10,14 @@ pub struct BitmapFont {
     pub leading: i16,
     /// Horizontal spacing added after each rendered glyph.
     pub tracking: i16,
+    /// Native +0x58/+0x64 are assigned only by a supported FONT record.
+    /// Zero host storage in an empty allocation is not a valid native metric.
+    pub spacing_initialized: bool,
     pub glyphs: Vec<FontGlyph>,
+    /// The last valid FONT record owns a fresh private SpriteSheet. Earlier
+    /// records remain in the native glyph tree as raw, released Sprite pointers.
+    /// Keep their geometry for cached metrics, but reject pointer dereferences.
+    pub current_atlas_glyph_start: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,29 +39,40 @@ impl BitmapFont {
     /// a 16-bit codepoint; version 2 glyphs use a 32-bit codepoint. The five
     /// remaining record fields are signed 16-bit AtlasSprite geometry.
     pub fn parse(bytes: &[u8]) -> Result<Self, AssetError> {
-        let mut container = NativeContainerReader::parse(bytes)?;
-        if container.container_type() != b"KA3D" {
-            return Err(AssetError::InvalidKa3d("FONT root is not KA3D"));
-        }
-        let mut found = false;
+        Self::parse_with_image_loader(bytes, |_| Ok(()))
+    }
+
+    /// FONT's native constructor loads each atlas before the leading,
+    /// tracking and glyph records, including when those later fields fail.
+    pub fn parse_with_image_loader<E: From<AssetError>>(
+        bytes: &[u8],
+        mut load_image: impl FnMut(&str) -> Result<(), E>,
+    ) -> Result<Self, E> {
+        let Some(mut container) = NativeContainerReader::parse_ka3d(bytes)? else {
+            return Ok(Self::default());
+        };
         let mut texture = String::new();
         let mut leading = 0;
         let mut tracking = 0;
+        let mut spacing_initialized = false;
         let mut glyphs = Vec::new();
+        let mut current_atlas_glyph_start = 0;
         while let Some(chunk) = container.next_chunk()? {
             if &chunk.tag != b"FONT" {
                 container.skip(chunk.declared_len)?;
                 continue;
             }
-            found = true;
             let reader = container.body();
             let version = reader.u16()?;
             if !matches!(version, 1 | 2) {
                 continue;
             }
             texture = reader.string()?;
+            load_image(&texture)?;
+            current_atlas_glyph_start = glyphs.len();
             leading = reader.i16()?;
             tracking = reader.i16()?;
+            spacing_initialized = true;
             let glyph_count = reader.u16()? as usize;
             glyphs.reserve(glyph_count);
             for _ in 0..glyph_count {
@@ -72,19 +90,32 @@ impl BitmapFont {
                 });
             }
         }
-        if !found {
-            return Err(AssetError::InvalidKa3d("resource is not a FONT atlas"));
-        }
         Ok(Self {
             texture,
             leading,
             tracking,
+            spacing_initialized,
             glyphs,
+            current_atlas_glyph_start,
         })
     }
 
-    /// Native `std::map<int, Sprite *>` lookup used by every BitmapFont
-    /// virtual. Missing codepoints deliberately have no replacement glyph.
+    pub fn native_leading(&self) -> Result<i16, AssetError> {
+        if !self.spacing_initialized {
+            return Err(AssetError::UninitializedFontMetric { metric: "leading" });
+        }
+        Ok(self.leading)
+    }
+
+    pub fn native_tracking(&self) -> Result<i16, AssetError> {
+        if !self.spacing_initialized {
+            return Err(AssetError::UninitializedFontMetric { metric: "tracking" });
+        }
+        Ok(self.tracking)
+    }
+
+    /// Metadata lookup, including geometry whose native Sprite has been freed.
+    /// Drawing and virtual metrics must use `live_glyph` instead.
     pub fn glyph(&self, codepoint: u32) -> Option<&FontGlyph> {
         self.glyphs
             .iter()
@@ -92,19 +123,59 @@ impl BitmapFont {
             .find(|glyph| glyph.codepoint == codepoint)
     }
 
+    /// Native map lookup followed by a Sprite pointer dereference. Translate
+    /// its undefined freed-pointer access to an explicit host error.
+    pub fn live_glyph(&self, codepoint: u32) -> Result<Option<&FontGlyph>, AssetError> {
+        let Some((index, glyph)) = self
+            .glyphs
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, glyph)| glyph.codepoint == codepoint)
+        else {
+            return Ok(None);
+        };
+        if index < self.current_atlas_glyph_start {
+            return Err(AssetError::ReleasedFontGlyph { codepoint });
+        }
+        Ok(Some(glyph))
+    }
+
+    /// Locate the first invalid dereference without rejecting a live prefix.
+    /// A normal single-record font needs no additional string scan.
+    pub fn first_released_glyph(&self, text: &str) -> Option<(usize, AssetError)> {
+        if self.current_atlas_glyph_start == 0 {
+            return None;
+        }
+        text.char_indices().find_map(|(offset, character)| {
+            self.live_glyph(character as u32)
+                .err()
+                .map(|error| (offset, error))
+        })
+    }
+
     /// Whole-string form of BitmapFont's width virtual. Arithmetic is kept in
     /// 32-bit wrapping lanes, matching the AArch64 `ADD`/`MADD W...` sequence.
-    pub fn native_string_width(&self, text: &str) -> i32 {
-        let character_count = text.chars().count() as i32;
-        if character_count == 0 {
-            return 0;
+    pub fn native_string_width(&self, text: &str) -> Result<i32, AssetError> {
+        let mut character_count = 0_i32;
+        let mut glyph_width = 0_i32;
+        for character in text.chars() {
+            character_count = character_count.wrapping_add(1);
+            if let Some(glyph) = self.live_glyph(character as u32)? {
+                glyph_width = glyph_width.wrapping_add(i32::from(glyph.width));
+            }
         }
-        let glyph_width = text.chars().fold(0_i32, |width, character| {
-            self.glyph(character as u32)
-                .map_or(width, |glyph| width.wrapping_add(i32::from(glyph.width)))
-        });
-        glyph_width
-            .wrapping_add(i32::from(self.tracking).wrapping_mul(character_count.wrapping_sub(1)))
+        if character_count == 0 {
+            return Ok(0);
+        }
+        // 42BBB0's MADD has a zero spacing multiplier for one character.
+        // Its result is known even when the allocated tracking bytes are not.
+        if character_count == 1 {
+            return Ok(glyph_width);
+        }
+        Ok(glyph_width.wrapping_add(
+            i32::from(self.native_tracking()?).wrapping_mul(character_count.wrapping_sub(1)),
+        ))
     }
 
     /// Constructor-cached ascender at object offset `+0x5c`.
@@ -129,12 +200,16 @@ impl BitmapFont {
 
     /// Substring-height virtual for the whole string. Unlike the public font
     /// height metric, this is the tallest glyph in the requested string.
-    pub fn native_string_height(&self, text: &str) -> i32 {
-        text.chars()
-            .filter_map(|character| self.glyph(character as u32))
-            .map(|glyph| i32::from(glyph.height))
-            .max()
-            .unwrap_or(0)
+    pub fn native_string_height(&self, text: &str) -> Result<i32, AssetError> {
+        let mut maximum = None;
+        for character in text.chars() {
+            if let Some(glyph) = self.live_glyph(character as u32)? {
+                maximum = Some(maximum.map_or(i32::from(glyph.height), |height: i32| {
+                    height.max(i32::from(glyph.height))
+                }));
+            }
+        }
+        Ok(maximum.unwrap_or(0))
     }
 
     /// Integer anchor applied by `BitmapFont::draw` before the individual
@@ -145,11 +220,10 @@ impl BitmapFont {
         text: &str,
         horizontal_anchor: &str,
         vertical_anchor: &str,
-    ) -> [i32; 2] {
-        let width = self.native_string_width(text);
+    ) -> Result<[i32; 2], AssetError> {
         let horizontal = match horizontal_anchor {
-            "HCENTER" => (width >> 1).wrapping_neg(),
-            "RIGHT" => width.wrapping_neg(),
+            "HCENTER" => (self.native_string_width(text)? >> 1).wrapping_neg(),
+            "RIGHT" => self.native_string_width(text)?.wrapping_neg(),
             _ => 0,
         };
         let ascending = self.native_max_ascending();
@@ -160,7 +234,7 @@ impl BitmapFont {
             "BOTTOM" => descending.wrapping_neg(),
             _ => 0,
         };
-        [horizontal, vertical]
+        Ok([horizontal, vertical])
     }
 
     /// Wide-string BitmapFont `getBounds` virtual after substring selection.
@@ -171,10 +245,10 @@ impl BitmapFont {
         text: &str,
         horizontal_anchor: &str,
         vertical_anchor: &str,
-    ) -> [i32; 4] {
-        let width = self.native_string_width(text);
-        let height = self.native_string_height(text);
-        let [left, vertical] = self.native_draw_anchor(text, horizontal_anchor, vertical_anchor);
+    ) -> Result<[i32; 4], AssetError> {
+        let width = self.native_string_width(text)?;
+        let height = self.native_string_height(text)?;
+        let [left, vertical] = self.native_draw_anchor(text, horizontal_anchor, vertical_anchor)?;
         let maximum_pivot = text
             .chars()
             .filter_map(|character| self.glyph(character as u32))
@@ -183,11 +257,11 @@ impl BitmapFont {
             .unwrap_or(0)
             .max(0);
         let top = vertical.wrapping_sub(maximum_pivot);
-        [
+        Ok([
             left,
             top,
             left.wrapping_add(width),
             top.wrapping_add(height),
-        ]
+        ])
     }
 }

@@ -1,13 +1,12 @@
 //! Lua method tables registered by Purple game::LuaResources constructor.
 
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeSet,
     path::PathBuf,
     sync::{Arc, Mutex},
 };
 
 use mlua::{Lua, Result as LuaResult, Table, Value};
-use stella_assets::ka3d::BitmapFont;
 
 use super::{
     audio_playback_registration, audio_setup_registration, draw_registration,
@@ -23,7 +22,6 @@ pub(crate) struct RegistrationContext {
     pub(crate) locale_runtime: Arc<Mutex<LocaleRuntime>>,
     pub(crate) audio_runtime: Arc<Mutex<AudioRuntime>>,
     pub(crate) data_root: Arc<PathBuf>,
-    pub(crate) bitmap_font_assets: Arc<BTreeMap<String, BitmapFont>>,
 }
 
 /// Complete method-name inventory published by `game::LuaResources` at
@@ -104,7 +102,6 @@ pub(crate) fn install(lua: &Lua, globals: &Table, context: RegistrationContext) 
         locale_runtime,
         audio_runtime,
         data_root,
-        bitmap_font_assets,
     } = context;
     let resource_api = lua.create_table()?;
     let resource_metatable = lua.create_table()?;
@@ -142,7 +139,6 @@ pub(crate) fn install(lua: &Lua, globals: &Table, context: RegistrationContext) 
         &resource_api,
         Arc::clone(&render),
         Arc::clone(&resource_runtime),
-        Arc::clone(&data_root),
     )?;
     lifecycle_registration::install_release(
         lua,
@@ -191,12 +187,7 @@ pub(crate) fn install(lua: &Lua, globals: &Table, context: RegistrationContext) 
         Arc::clone(&render),
         Arc::clone(&resource_runtime),
     )?;
-    locale_font_registration::install_metrics(
-        lua,
-        &resource_api,
-        Arc::clone(&resource_runtime),
-        Arc::clone(&bitmap_font_assets),
-    )?;
+    locale_font_registration::install_metrics(lua, &resource_api, Arc::clone(&resource_runtime))?;
     locale_font_registration::install_get_locale(lua, &resource_api, Arc::clone(&locale_runtime))?;
     audio_setup_registration::install_controls(lua, &resource_api, Arc::clone(&resource_runtime))?;
     audio_playback_registration::install_volume(

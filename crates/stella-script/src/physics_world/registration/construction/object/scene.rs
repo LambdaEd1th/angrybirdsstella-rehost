@@ -2,7 +2,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use crate::{DisplayInterpolationVelocity, NativeInterpolationPose, RenderBridge, SceneObject};
+use crate::{NativeInterpolationPose, RenderBridge, SceneObject};
 
 use super::super::{ConstructorKind, PreparedConstruction};
 
@@ -57,7 +57,6 @@ pub(super) fn insert(
         render_y: request.y,
         render_angle: 0.0,
         interpolation_poses: [initial_pose; 2],
-        display_interpolation_velocities: [DisplayInterpolationVelocity::ZERO; 2],
         sweep_center_x: request.x as f32,
         sweep_center_y: request.y as f32,
         native_local_center_x: 0.0,

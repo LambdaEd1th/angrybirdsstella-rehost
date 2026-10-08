@@ -7,6 +7,7 @@ mod identity_persistence;
 mod identity_routes;
 mod locale;
 mod qr_scanner;
+mod resource_memory;
 mod storage_session;
 
 use std::{
@@ -6383,17 +6384,16 @@ fn downloadable_assets_match_native_load_callbacks_and_sheet_abi() {
     fs::create_dir_all(app_root.join("assets_service")).unwrap();
     fs::write(
         app_root.join("cached.json"),
-        r#"{
-            "meta":{"app":"Adobe Animate"},
-            "frames":[{
-                "filename":"DYNAMIC_SPRITE",
-                "frame":{"x":0,"y":0,"w":4,"h":6},
-                "pivot":{"x":1,"y":2}
-            }]
-        }"#,
+        // The two-stream Assets DataSheet loader parses KA3D irrespective of
+        // extension, and uses only the explicitly supplied texture stream.
+        test_textured_sprite_sheet("DYNAMIC_SPRITE", "ignored.pvr", 4, 6),
     )
     .unwrap();
-    fs::write(app_root.join("invalid.json"), b"not-json").unwrap();
+    fs::write(app_root.join("cached.pvr"), test_rgba_pvr(8, 8, [255; 4])).unwrap();
+    fs::write(app_root.join("invalid.pvr"), test_rgba_pvr(8, 8, [255; 4])).unwrap();
+    // Assets uses the binary loader even for .json. A foreign root succeeds
+    // as an empty sheet; use a physically truncated KA3D header for failure.
+    fs::write(app_root.join("invalid.json"), b"KA3D").unwrap();
 
     let runtime = StellaLua::new(&data_root).unwrap();
     runtime
@@ -7494,6 +7494,13 @@ fn recovered_resource_lifecycle_bindings_return_no_lua_values() {
     fs::create_dir_all(data_root.join("fonts")).unwrap();
     fs::create_dir_all(data_root.join("images")).unwrap();
     fs::create_dir_all(data_root.join("localization")).unwrap();
+    for directory in [
+        &data_root,
+        &data_root.join("fonts"),
+        &data_root.join("images"),
+    ] {
+        write_test_atlas(directory);
+    }
     fs::write(data_root.join("fonts/FONT.dat"), test_bitmap_font()).unwrap();
     fs::write(data_root.join("fonts/OPTIONAL.dat"), test_bitmap_font()).unwrap();
     fs::write(data_root.join("images/SHEET.dat"), test_sprite_sheet()).unwrap();
@@ -7750,6 +7757,9 @@ fn recovered_resource_lifecycle_uses_native_filepath_keys_for_create_and_release
         fs::create_dir_all(directory).unwrap();
     }
     fs::create_dir_all(root.join("appdata")).unwrap();
+    for directory in ["images", "fonts", "replacement", "reactivated"] {
+        write_test_atlas(base.join(directory));
+    }
     fs::write(base.join("images/MENU.PROFILE.dat"), test_sprite_sheet()).unwrap();
     fs::write(
         base.join("images/MENU.PROFILE.json"),
@@ -7945,7 +7955,7 @@ fn recovered_resource_lifecycle_uses_native_filepath_keys_for_create_and_release
     assert!(!resources.composite_set_paths.contains_key("MENU"));
     assert!(!resources.bitmap_font_paths.contains_key("FONT.PROFILE"));
     assert!(!resources.text_group_set_paths.contains_key("TEXTS.PROFILE"));
-    assert_eq!(resources.current_font, None);
+    assert_eq!(resources.current_font.as_deref(), Some("FONT.PROFILE"));
     drop(resources);
     let _ = fs::remove_dir_all(root);
 }
@@ -7971,6 +7981,9 @@ fn recovered_resource_loader_dispatch_and_failure_commit_order_match_native() {
     }
     fs::create_dir_all(root.join("appdata")).unwrap();
 
+    for directory in ["initial", "bad_family", "texture_packer_object"] {
+        write_test_atlas(assets.join(directory));
+    }
     fs::write(assets.join("initial/SHEET.dat"), test_sprite_sheet()).unwrap();
     fs::write(
         assets.join("initial/COMPO.dat"),
@@ -7984,7 +7997,7 @@ fn recovered_resource_loader_dispatch_and_failure_commit_order_match_native() {
     )
     .unwrap();
     for name in ["SHEET.dat", "COMPO.dat", "FONT.dat", "TEXT.dat"] {
-        fs::write(assets.join("invalid").join(name), b"not a KA3D resource").unwrap();
+        fs::write(assets.join("invalid").join(name), b"KA3D").unwrap();
     }
     fs::write(assets.join("empty/COMPO.dat"), test_composite_set(None)).unwrap();
     fs::write(assets.join("case/SHEET.DAT"), test_sprite_sheet()).unwrap();
@@ -7995,7 +8008,10 @@ fn recovered_resource_loader_dispatch_and_failure_commit_order_match_native() {
     .unwrap();
     fs::write(
         assets.join("bad_family/SHEET.json"),
-        r#"{"meta":{"app":"Unknown Exporter"},"frames":[]}"#,
+        format!(
+            r#"{{"meta":{{"app":"Unknown Exporter","image":{}}},"frames":[]}}"#,
+            serde_json::to_string(TEST_ATLAS_FILE).unwrap()
+        ),
     )
     .unwrap();
     fs::write(
@@ -8005,7 +8021,10 @@ fn recovered_resource_loader_dispatch_and_failure_commit_order_match_native() {
     .unwrap();
     fs::write(
         assets.join("texture_packer_object/SHEET.json"),
-        r#"{"meta":{"app":"http://www.texturepacker.com"},"frames":{}}"#,
+        format!(
+            r#"{{"meta":{{"app":"http://www.texturepacker.com","image":{}}},"frames":{{}}}}"#,
+            serde_json::to_string(TEST_ATLAS_FILE).unwrap()
+        ),
     )
     .unwrap();
 
@@ -8190,12 +8209,13 @@ fn legacy_sprite_manager_forwards_to_filepath_keyed_lua_resources_member() {
     let data_root = root.join("data");
     fs::create_dir_all(data_root.join("images")).unwrap();
     fs::create_dir_all(root.join("appdata")).unwrap();
+    write_test_atlas(data_root.join("images"));
     fs::write(
         data_root.join("images/MENU.PROFILE.dat"),
         test_sprite_sheet(),
     )
     .unwrap();
-    fs::write(data_root.join("images/BROKEN.dat"), b"not KA3D").unwrap();
+    fs::write(data_root.join("images/BROKEN.dat"), b"KA3D").unwrap();
 
     let runtime = StellaLua::new(&data_root).unwrap();
     runtime
@@ -8281,6 +8301,7 @@ fn sprite_resource_name_vectors_use_last_entry_and_release_fallback() {
     let data_root = root.join("data");
     for directory in ["initial", "replacement", "shadow"] {
         fs::create_dir_all(data_root.join(directory)).unwrap();
+        write_test_atlas(data_root.join(directory));
     }
     fs::create_dir_all(root.join("appdata")).unwrap();
     fs::write(
@@ -8391,13 +8412,21 @@ fn deferred_host_sprite_catalog_tracks_native_shadow_and_release_lifetimes() {
         test_textured_sprite_sheet("SHARED", "first.pvr", 10, 20),
     )
     .unwrap();
-    fs::write(data_root.join("first/first.pvr"), []).unwrap();
+    fs::write(
+        data_root.join("first/first.pvr"),
+        test_rgba_pvr(64, 64, [255; 4]),
+    )
+    .unwrap();
     fs::write(
         data_root.join("second/SECOND.dat"),
         test_textured_sprite_sheet("SHARED", "second.pvr", 30, 40),
     )
     .unwrap();
-    fs::write(data_root.join("second/second.pvr"), []).unwrap();
+    fs::write(
+        data_root.join("second/second.pvr"),
+        test_rgba_pvr(64, 64, [255; 4]),
+    )
+    .unwrap();
 
     let runtime = StellaLua::new(&data_root).unwrap();
     runtime
@@ -8522,13 +8551,21 @@ fn composite_loader_retains_first_sheet_geometry_but_cannot_draw_after_sheet_rel
         test_textured_sprite_sheet("SHARED", "first.pvr", 10, 20),
     )
     .unwrap();
-    fs::write(data_root.join("first/first.pvr"), []).unwrap();
+    fs::write(
+        data_root.join("first/first.pvr"),
+        test_rgba_pvr(64, 64, [255; 4]),
+    )
+    .unwrap();
     fs::write(
         data_root.join("second/SECOND.dat"),
         test_textured_sprite_sheet("SHARED", "second.pvr", 30, 40),
     )
     .unwrap();
-    fs::write(data_root.join("second/second.pvr"), []).unwrap();
+    fs::write(
+        data_root.join("second/second.pvr"),
+        test_rgba_pvr(64, 64, [255; 4]),
+    )
+    .unwrap();
     fs::write(
         data_root.join("composite/COMPOSITE.dat"),
         test_composite_set_with_part("FROZEN", "SHARED"),
@@ -8614,19 +8651,31 @@ fn scene_objects_retain_assigned_atlas_composite_and_null_resource_pointers() {
         test_textured_sprite_sheet("SHARED", "first.pvr", 10, 20),
     )
     .unwrap();
-    fs::write(data_root.join("first/first.pvr"), []).unwrap();
+    fs::write(
+        data_root.join("first/first.pvr"),
+        test_rgba_pvr(64, 64, [255; 4]),
+    )
+    .unwrap();
     fs::write(
         data_root.join("second/SECOND.dat"),
         test_textured_sprite_sheet("SHARED", "second.pvr", 30, 40),
     )
     .unwrap();
-    fs::write(data_root.join("second/second.pvr"), []).unwrap();
+    fs::write(
+        data_root.join("second/second.pvr"),
+        test_rgba_pvr(64, 64, [255; 4]),
+    )
+    .unwrap();
     fs::write(
         data_root.join("late/LATE.dat"),
         test_textured_sprite_sheet("LATE", "late.pvr", 50, 60),
     )
     .unwrap();
-    fs::write(data_root.join("late/late.pvr"), []).unwrap();
+    fs::write(
+        data_root.join("late/late.pvr"),
+        test_rgba_pvr(64, 64, [255; 4]),
+    )
+    .unwrap();
     fs::write(
         data_root.join("composite/COMPOSITE.dat"),
         test_composite_set_with_part("FROZEN", "SHARED"),

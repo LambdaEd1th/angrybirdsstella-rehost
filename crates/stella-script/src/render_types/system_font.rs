@@ -199,7 +199,7 @@ impl SystemFontRenderBinding {
     /// character/advance loop would disagree for ligatures, combining marks,
     /// contextual scripts and fonts whose kerning lives only in GPOS.
     pub fn native_system_font_layout(&self, text: &str) -> Option<SystemFontLayout> {
-        let base_face = font_shaper::Face::from_slice(&self.font_data, self.face_index)?;
+        let base_face = font_shaper::Face::from_shared(&self.font_data, self.face_index)?;
         let base_layout_face = SystemFontLayoutFace {
             family: self.family.clone(),
             font_data: self.font_data.clone(),
@@ -241,7 +241,7 @@ impl SystemFontRenderBinding {
                             faces.push(face_run.face.clone());
                             slot
                         };
-                        let mut face = font_shaper::Face::from_slice(
+                        let mut face = font_shaper::Face::from_shared(
                             &face_run.face.font_data,
                             face_run.face.face_index,
                         )?;
@@ -259,8 +259,8 @@ impl SystemFontRenderBinding {
                         } else {
                             font_shaper::Direction::LeftToRight
                         });
-                        buffer.set_script(native_system_font_script(script_run.script));
-                        let shaped = font_shaper::shape(&face, &[], buffer);
+                        buffer.set_script(Some(native_system_font_script(script_run.script)));
+                        let shaped = font_shaper::shape(&face, &[], buffer)?;
                         glyphs.reserve(shaped.len());
                         let mut previous_cluster = None;
                         for (info, position) in

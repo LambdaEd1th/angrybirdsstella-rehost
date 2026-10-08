@@ -2,14 +2,15 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    path::{Path, PathBuf},
+    path::Path,
     sync::Arc,
 };
 
-use stella_assets::image_source::{font_image_source, image_source_path, sheet_image_source};
+use stella_assets::image_source::sheet_image_source;
 use stella_assets::ka3d::CompositePart;
 
-use super::{ResourceRuntime, SpriteResourceEntry, SpriteResourceKind};
+use super::file_images::resolve_file_image_path;
+use super::{PreparedSheetImages, ResourceRuntime, SpriteResourceEntry, SpriteResourceKind};
 use crate::{
     BoundCompositePart, CompositeSpriteOwner, MaskedTextureBinding, SharedSpriteName,
     SpriteCatalogRegion, SpriteCatalogSnapshot,
@@ -17,91 +18,72 @@ use crate::{
 };
 
 impl ResourceRuntime {
-    /// Resolve the BitmapFont atlas exactly once after its constructor has
-    /// parsed the FONT descriptor. Purple creates and retains the texture and
+    /// Publish the BitmapFont atlas after successful construction. Purple
+    /// creates and retains the texture and
     /// AtlasSprite owner in `sub_10042A780`; draw never reopens this path.
-    pub(crate) fn cache_bitmap_font_host_binding(&mut self, owner: &str, data_root: &Path) {
-        let Some(font) = self.bitmap_font_values.get(owner) else {
-            return;
-        };
-        let descriptor = self.bitmap_font_descriptor_paths.get(owner);
-        let path = resolve_texture_source(data_root, descriptor, &font.texture);
-        let image_owner = crate::NativeImageOwner::new();
-        let texture_source = font_image_source(image_owner.identity(), &path);
-        self.bitmap_font_image_owners
-            .insert(owner.to_owned(), image_owner);
-        if let Some(image) = self.snapshot_file_image(&texture_source) {
-            self.bitmap_font_decoded_images
-                .insert(owner.to_owned(), image);
+    pub(crate) fn publish_bitmap_font_host_binding(
+        &mut self,
+        owner: &str,
+        image: Option<crate::SheetImageSnapshot>,
+    ) {
+        self.bitmap_font_image_owners.remove(owner);
+        self.bitmap_font_decoded_images.remove(owner);
+        let texture_source = if let Some(image) = image {
+            self.bitmap_font_image_owners
+                .insert(owner.to_owned(), image.owner);
+            self.bitmap_font_decoded_images.insert(
+                owner.to_owned(),
+                image.image.expect("constructed file Image"),
+            );
+            image.source
         } else {
-            self.bitmap_font_decoded_images.remove(owner);
-        }
+            String::new()
+        };
         self.bitmap_font_texture_sources
             .insert(owner.to_owned(), texture_source);
+        self.register_bitmap_font_value(owner);
     }
 
     /// Resolve the host path and atlas-region bindings once, at the same
     /// lifetime boundary where Purple constructs its SpriteSheet resources.
     /// Native draw calls retain pointers to those resources; they do not
     /// canonicalize the texture filename again for every submitted sprite.
-    pub(crate) fn cache_sprite_sheet_host_bindings(&mut self, owner: &str, data_root: &Path) {
+    /// Returns the native Texture allocation delta before earlier SPRT Images
+    /// are released. Immutable host pixel sharing does not change this counter.
+    #[cfg(test)]
+    pub(crate) fn cache_sprite_sheet_host_bindings(
+        &mut self,
+        owner: &str,
+        data_root: &Path,
+    ) -> crate::LuaResult<u32> {
         let Some(sheet) = self.sprite_sheet_values.get(owner) else {
-            return;
+            return Ok(0);
         };
-        let Some(current_texture_index) = sheet.textures.len().checked_sub(1) else {
-            return;
+        let textures = sheet.textures.clone();
+        let descriptor = self.sprite_sheet_descriptor_paths.get(owner).cloned();
+        let mut prepared = PreparedSheetImages::default();
+        for (index, texture) in textures.iter().enumerate() {
+            let image =
+                self.load_sheet_file_image(data_root, descriptor.as_ref(), texture, index)?;
+            prepared.push(image);
+        }
+        Ok(self.publish_sprite_sheet_host_bindings(owner, prepared))
+    }
+
+    /// Publish a complete candidate without file I/O or a fallible decoder.
+    pub(crate) fn publish_sprite_sheet_host_bindings(
+        &mut self,
+        owner: &str,
+        prepared: PreparedSheetImages,
+    ) -> u32 {
+        let Some(current_texture_index) = prepared.texture_sources.len().checked_sub(1) else {
+            return 0;
         };
-        let image_owner = self
-            .sprite_sheet_image_owners
-            .get(owner)
-            .cloned()
-            .unwrap_or_else(crate::NativeImageOwner::new);
-        let texture_sources = {
-            let Some(sheet) = self.sprite_sheet_values.get(owner) else {
-                return;
-            };
-            let descriptor = self.sprite_sheet_descriptor_paths.get(owner);
-            // sub_10046AC1C replaces SpriteSheet+0x20 for every SPRT record,
-            // releasing the old Image. Every AtlasSprite draws the final
-            // Image; its UVs still use the extent present at construction.
-            sheet
-                .textures
-                .iter()
-                .enumerate()
-                .map(|(texture_index, texture)| {
-                    let path = resolve_texture_source(data_root, descriptor, texture);
-                    if path.starts_with("<capture:") {
-                        path
-                    } else {
-                        sheet_image_source(
-                            if texture_index == current_texture_index {
-                                image_owner.identity()
-                            } else {
-                                crate::NativeImageOwner::new().identity()
-                            },
-                            texture_index,
-                            &path,
-                        )
-                    }
-                })
-                .collect::<Vec<_>>()
-        };
-        let mut decoded_images = self
-            .sprite_sheet_decoded_images
-            .get(owner)
-            .cloned()
-            .unwrap_or_else(|| {
-                texture_sources
-                    .iter()
-                    .map(|source| {
-                        if source.starts_with("<capture:") {
-                            None
-                        } else {
-                            self.snapshot_file_image(source)
-                        }
-                    })
-                    .collect()
-            });
+        let texture_sources = prepared.texture_sources;
+        let current_image = prepared.current_image.expect("prepared sheet Image");
+        let image_owner = current_image.owner.clone();
+        let mut decoded_images = vec![None; texture_sources.len()];
+        decoded_images[current_texture_index] = current_image.image.clone();
         let image_cell = Arc::clone(
             self.sprite_sheet_image_cells
                 .entry(owner.to_owned())
@@ -120,21 +102,16 @@ impl ResourceRuntime {
                 .enumerate()
                 .map(|(index, sprite)| {
                     let texture_index = *sheet.sprite_texture_indices.get(index)?;
-                    let uv_image_dimensions = decoded_images
+                    let uv_image_dimensions = prepared
+                        .constructor_dimensions
                         .get(texture_index)
-                        .and_then(Option::as_ref)
-                        .map(|image| [image.width, image.height])
+                        .copied()
+                        .flatten()
                         .or_else(|| {
                             self.sprite_sheet_catalog_regions
                                 .get(owner)
                                 .and_then(|regions| regions.get(&sprite.name))
                                 .and_then(|region| region.uv_image_dimensions)
-                        })
-                        .or_else(|| {
-                            texture_sources[texture_index]
-                                .starts_with("<capture:")
-                                .then(|| self.sprite_sheet_image_dimensions.get(owner).copied())
-                                .flatten()
                         });
                     Some(Arc::new(SpriteCatalogRegion {
                         sheet_image: Some(image_cell.bind()),
@@ -151,30 +128,11 @@ impl ResourceRuntime {
 
         // Image dimensions belong to the successful sheet construction, not
         // to the active global sprite (which another sheet can shadow).
-        if let Some(image) = decoded_images.last().and_then(Option::as_ref) {
-            self.sprite_sheet_image_dimensions
-                .insert(owner.to_owned(), [image.width, image.height]);
-        } else if let Some(source) = texture_sources
-            .last()
-            .filter(|source| !source.starts_with("<capture:"))
-            && let path = image_source_path(source)
-            && let Ok(bytes) = std::fs::read(path)
-            && let Ok(dimensions) = stella_assets::native_image::image_dimensions_with_extension(
-                &bytes,
-                std::path::Path::new(path)
-                    .extension()
-                    .and_then(|value| value.to_str()),
-            )
-        {
+        if let Some(dimensions) = current_image.dimensions {
             self.sprite_sheet_image_dimensions
                 .insert(owner.to_owned(), dimensions);
         }
-        image_cell.replace(Some(crate::SheetImageSnapshot {
-            source: texture_sources[current_texture_index].clone(),
-            image: decoded_images.get(current_texture_index).cloned().flatten(),
-            owner: image_owner.clone(),
-            dimensions: self.sprite_sheet_image_dimensions.get(owner).copied(),
-        }));
+        image_cell.replace(Some(current_image));
         // Earlier Image allocations have no native owner after replacement.
         // Only their constructor UV extent survives on the AtlasSprite.
         decoded_images[..current_texture_index].fill(None);
@@ -210,6 +168,7 @@ impl ResourceRuntime {
             .insert(owner.to_owned(), texture_sources);
         self.sprite_sheet_catalog_regions
             .insert(owner.to_owned(), regions);
+        prepared.allocation_bytes
     }
 
     pub(super) fn sprite_sheet_catalog_region(
@@ -478,17 +437,13 @@ impl ResourceRuntime {
                     .textures
                     .get(texture_index)?;
                 let descriptor = self.sprite_sheet_descriptor_paths.get(owner);
-                let path = resolve_texture_source(data_root, descriptor, texture);
-                Some(if path.starts_with("<capture:") {
-                    path
-                } else {
-                    let identity = self
-                        .sprite_sheet_identities
-                        .get(owner)
-                        .copied()
-                        .unwrap_or(0);
-                    sheet_image_source(identity, texture_index, &path)
-                })
+                let path = resolve_file_image_path(data_root, descriptor, texture);
+                let identity = self
+                    .sprite_sheet_identities
+                    .get(owner)
+                    .copied()
+                    .unwrap_or(0);
+                Some(sheet_image_source(identity, texture_index, &path))
             })
     }
 
@@ -708,38 +663,4 @@ impl ResourceRuntime {
             }
         }
     }
-}
-
-pub(super) fn resolve_texture_source(
-    data_root: &Path,
-    descriptor: Option<&PathBuf>,
-    texture: &str,
-) -> String {
-    if texture.starts_with("<capture:") {
-        return texture.to_owned();
-    }
-    let requested = Path::new(texture);
-    let mut candidates = Vec::new();
-    if requested.is_absolute() {
-        candidates.push(requested.to_path_buf());
-    } else {
-        if let Some(parent) = descriptor.and_then(|path| path.parent()) {
-            candidates.push(parent.join(requested));
-        }
-        candidates.push(crate::app_data_root(data_root).join(requested));
-        candidates.push(data_root.join(requested));
-        candidates.push(data_root.join("images/1024x768").join(requested));
-        candidates.push(data_root.join("fonts/1024x768").join(requested));
-    }
-    let selected = candidates
-        .iter()
-        .find(|path| path.is_file())
-        .cloned()
-        .or_else(|| candidates.into_iter().next())
-        .unwrap_or_else(|| requested.to_path_buf());
-    selected
-        .canonicalize()
-        .unwrap_or(selected)
-        .to_string_lossy()
-        .into_owned()
 }

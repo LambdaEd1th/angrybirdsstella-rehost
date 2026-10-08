@@ -187,13 +187,21 @@ fn particle_creation_retains_the_resolved_atlas_across_shadow_but_cannot_draw_af
         test_textured_sprite_sheet("PARTICLE", "first.pvr", 10, 20),
     )
     .unwrap();
-    fs::write(data_root.join("first/first.pvr"), []).unwrap();
+    fs::write(
+        data_root.join("first/first.pvr"),
+        test_rgba_pvr(64, 64, [255; 4]),
+    )
+    .unwrap();
     fs::write(
         data_root.join("second/SECOND.dat"),
         test_textured_sprite_sheet("PARTICLE", "second.pvr", 30, 40),
     )
     .unwrap();
-    fs::write(data_root.join("second/second.pvr"), []).unwrap();
+    fs::write(
+        data_root.join("second/second.pvr"),
+        test_rgba_pvr(64, 64, [255; 4]),
+    )
+    .unwrap();
 
     let runtime = StellaLua::new(&data_root).unwrap();
     runtime
@@ -258,13 +266,21 @@ fn lifetime_particle_frame_change_rebinds_once_then_retains_that_atlas() {
         ),
     )
     .unwrap();
-    fs::write(data_root.join("initial/initial.pvr"), []).unwrap();
+    fs::write(
+        data_root.join("initial/initial.pvr"),
+        test_rgba_pvr(64, 64, [255; 4]),
+    )
+    .unwrap();
     fs::write(
         data_root.join("replacement/REPLACEMENT.dat"),
         test_textured_sprite_sheet("FRAME_B", "replacement.pvr", 50, 60),
     )
     .unwrap();
-    fs::write(data_root.join("replacement/replacement.pvr"), []).unwrap();
+    fs::write(
+        data_root.join("replacement/replacement.pvr"),
+        test_rgba_pvr(64, 64, [255; 4]),
+    )
+    .unwrap();
 
     let runtime = StellaLua::new(&data_root).unwrap();
     runtime
@@ -344,7 +360,7 @@ fn lifetime_particle_atlas_frame_draws_before_retained_composite_slot() {
         test_textured_sprite_sheet("PART", "part.pvr", 12, 14),
     )
     .unwrap();
-    fs::write(data_root.join("part.pvr"), []).unwrap();
+    fs::write(data_root.join("part.pvr"), test_rgba_pvr(64, 64, [255; 4])).unwrap();
     fs::write(
         data_root.join("COMPOSITE.dat"),
         test_composite_set_with_part("FRAME_A", "PART"),
@@ -355,7 +371,7 @@ fn lifetime_particle_atlas_frame_draws_before_retained_composite_slot() {
         test_textured_sprite_sheet("FRAME_B", "atlas.pvr", 30, 40),
     )
     .unwrap();
-    fs::write(data_root.join("atlas.pvr"), []).unwrap();
+    fs::write(data_root.join("atlas.pvr"), test_rgba_pvr(64, 64, [255; 4])).unwrap();
 
     let runtime = StellaLua::new(&data_root).unwrap();
     runtime

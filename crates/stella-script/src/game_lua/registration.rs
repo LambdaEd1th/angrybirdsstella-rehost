@@ -42,7 +42,6 @@ pub(crate) fn install_base_globals(
     track_missing_globals: bool,
 ) -> LuaResult<InstalledRuntimes> {
     let globals = lua.globals();
-    let bitmap_font_assets = Arc::new(load_bitmap_fonts(&data_root));
     let localized_strings = load_localized_strings(&data_root, "en_EN");
     let locale_runtime = Arc::new(Mutex::new(LocaleRuntime {
         current: "en_EN".to_owned(),
@@ -93,7 +92,6 @@ pub(crate) fn install_base_globals(
             locale_runtime: Arc::clone(&locale_runtime),
             audio_runtime: Arc::clone(&audio_runtime),
             data_root: Arc::clone(&data_root),
-            bitmap_font_assets: Arc::clone(&bitmap_font_assets),
         },
     )?;
     let platform_services = install_platform_service_tables(
@@ -111,7 +109,6 @@ pub(crate) fn install_base_globals(
         lua,
         &globals,
         Arc::clone(&resource_runtime),
-        Arc::clone(&bitmap_font_assets),
         Arc::clone(&locale_runtime),
     )?;
     install_particle_bindings(

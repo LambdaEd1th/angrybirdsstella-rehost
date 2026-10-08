@@ -43,6 +43,7 @@ fn retire_finished_control(
     tag: &str,
     index: usize,
 ) {
+    let definition = runtime.definitions.get(tag);
     let Some(playback) = runtime.playback.get_mut(tag) else {
         return;
     };
@@ -50,6 +51,12 @@ fn retire_finished_control(
         return;
     }
     let mut control = playback.controls.swap_remove(index);
+    if let Some(groups) = playback.target_groups.as_mut()
+        && let Some(action) =
+            definition.and_then(|definition| definition.actions.get(&control.action))
+    {
+        detach_animation_target_states(groups, &control.action, action);
+    }
     control.elapsed = 0.0;
     control.previous_elapsed = 0.0;
     control.playing = false;

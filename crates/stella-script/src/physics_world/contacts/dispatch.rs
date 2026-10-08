@@ -259,6 +259,7 @@ pub(crate) fn dispatch_native_contact_callbacks(
             NativeContactCallback::Bird {
                 first,
                 second,
+                arm_collision_timer,
                 force,
                 damage,
                 point_x,
@@ -279,6 +280,21 @@ pub(crate) fn dispatch_native_contact_callbacks(
                         normal_x,
                         normal_y,
                     ))?;
+                }
+                // 0x100063910 calls birdCollision before rereading +0x128.
+                // A callback may bounce the bird or write this timer itself.
+                // FCMP/B.GE preserves non-negative writes, clears negative or
+                // unordered writes, and is absent from the two-bird branch.
+                if arm_collision_timer {
+                    let mut bridge = render.lock().expect("render bridge lock poisoned");
+                    if let Some(object) = bridge.scene.get_mut(&first)
+                        && object
+                            .time_since_collision
+                            .partial_cmp(&0.0)
+                            .is_none_or(|order| order.is_lt())
+                    {
+                        object.time_since_collision = 0.0;
+                    }
                 }
             }
             NativeContactCallback::Block {

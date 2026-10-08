@@ -426,6 +426,15 @@ impl StellaLua {
     /// changing a running game also reloads its original localized resources
     /// and relays out the current UI's cached localized text.
     pub fn set_preferred_language(&self, language: &str) -> Result<(), ScriptError> {
+        // The host owns this live reload operation. Keep its active IFont
+        // valid while the shipped locale callback replaces map allocations
+        // and synchronously measures existing text. Reselect the new face
+        // below before this temporary owner is released.
+        let _selected_font_lease = self
+            .resource_runtime
+            .lock()
+            .expect("resource runtime lock poisoned")
+            .current_native_font()?;
         let environment = game_environment(&self.lua)?;
         // fonts.lua::setLocale reloads these three localized bitmap faces.
         // Text's default/fixed fonts retain the already-resolved name, whereas
@@ -452,6 +461,20 @@ impl StellaLua {
             if let Value::Function(resolve) = localized_font {
                 for (source, previous) in previous_fonts {
                     fonts.insert(previous, resolve.call::<String>(source)?);
+                }
+            }
+            // This host-owned live language switch reloads localized faces.
+            // Select the replacement before layout can measure text: the
+            // native resource map replacement does not retarget its raw IFont,
+            // and the shipped setFont helper may cache the same font name.
+            {
+                let mut resources = self
+                    .resource_runtime
+                    .lock()
+                    .expect("resource runtime lock poisoned");
+                if let Some(previous) = resources.current_font.clone() {
+                    let selected = fonts.get(&previous).unwrap_or(&previous);
+                    resources.select_native_font(selected);
                 }
             }
             // Restore formatter inputs after layout refreshes the localized

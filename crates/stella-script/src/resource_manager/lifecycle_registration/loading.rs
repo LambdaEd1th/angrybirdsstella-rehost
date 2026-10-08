@@ -1,7 +1,7 @@
 //! File-loader dispatch owned by Purple's SpriteSheet, CompoSpriteSet,
 //! BitmapFont and TextGroupSet constructors.
 
-use std::{fs, path::Path};
+use std::{fs, io::Read, path::Path};
 
 use mlua::Result as LuaResult;
 use serde_json::{Map, Value};
@@ -12,11 +12,34 @@ use stella_assets::ka3d::{
 
 use crate::{native_fcvtzs_f32, resolve_data_file, resource_file_extension, runtime_error};
 
-pub(crate) fn load_sprite_sheet_path(path: &Path, source: &str) -> LuaResult<SpriteSheet> {
+pub(crate) fn load_sprite_sheet_stream(mut stream: impl Read) -> LuaResult<SpriteSheet> {
+    // Assets' two-stream DataSheet loader ignores the descriptor extension
+    // and its embedded image names (1004617AC).
+    let mut bytes = Vec::new();
+    stream.read_to_end(&mut bytes).map_err(runtime_error)?;
+    SpriteSheet::parse(&bytes).map_err(runtime_error)
+}
+
+struct MetadataError(mlua::Error);
+
+impl From<stella_assets::AssetError> for MetadataError {
+    fn from(error: stella_assets::AssetError) -> Self {
+        Self(runtime_error(error))
+    }
+}
+
+pub(super) fn load_sprite_sheet_with_images(
+    path: &Path,
+    source: &str,
+    mut load_image: impl FnMut(&str) -> LuaResult<()>,
+) -> LuaResult<SpriteSheet> {
     let bytes = fs::read(path).map_err(runtime_error)?;
     match resource_file_extension(source).as_str() {
-        ".dat" => SpriteSheet::parse(&bytes).map_err(runtime_error),
-        ".json" => parse_json_sprite_sheet(&parse_json(&bytes)?),
+        ".dat" => SpriteSheet::parse_with_image_loader(&bytes, |texture| {
+            load_image(texture).map_err(MetadataError)
+        })
+        .map_err(|error| error.0),
+        ".json" => parse_json_sprite_sheet(&parse_json(&bytes)?, load_image),
         extension => Err(unsupported_extension("SpriteSheet", extension)),
     }
 }
@@ -35,8 +58,14 @@ pub(super) fn load_composite_set_source(
     }
 }
 
-pub(super) fn load_bitmap_font_source(data_root: &Path, source: &str) -> LuaResult<BitmapFont> {
-    BitmapFont::parse(&read_resource(data_root, source)?).map_err(runtime_error)
+pub(super) fn load_bitmap_font_with_images(
+    path: &Path,
+    mut load_image: impl FnMut(&str) -> LuaResult<()>,
+) -> LuaResult<BitmapFont> {
+    BitmapFont::parse_with_image_loader(&fs::read(path).map_err(runtime_error)?, |texture| {
+        load_image(texture).map_err(MetadataError)
+    })
+    .map_err(|error| error.0)
 }
 
 pub(super) fn load_text_group_set_source(
@@ -137,8 +166,10 @@ fn metadata_application(root: &Value) -> LuaResult<&str> {
     required_string(required_object(metadata, "meta")?, "app")
 }
 
-fn parse_json_sprite_sheet(root: &Value) -> LuaResult<SpriteSheet> {
-    let app = metadata_application(root)?;
+fn parse_json_sprite_sheet(
+    root: &Value,
+    mut load_image: impl FnMut(&str) -> LuaResult<()>,
+) -> LuaResult<SpriteSheet> {
     let root_object = required_object(root, "root")?;
     let metadata = required_object(
         root_object
@@ -146,15 +177,11 @@ fn parse_json_sprite_sheet(root: &Value) -> LuaResult<SpriteSheet> {
             .ok_or_else(|| invalid_json_field("meta", "object"))?,
         "meta",
     )?;
-    let image = metadata
-        .get("image")
-        .map(|value| {
-            value
-                .as_str()
-                .ok_or_else(|| invalid_json_field("image", "string"))
-        })
-        .transpose()?
-        .unwrap_or("");
+    // 1004637FC requires meta.image and constructs its Image before reading
+    // meta.app or checking the frames representation.
+    let image = required_string(metadata, "image")?;
+    load_image(image)?;
+    let app = required_string(metadata, "app")?;
     let frames = root_object
         .get("frames")
         .ok_or_else(|| invalid_json_field("frames", "array"))?;
@@ -179,10 +206,7 @@ fn parse_json_sprite_sheet(root: &Value) -> LuaResult<SpriteSheet> {
     }
     let sprite_texture_indices = vec![0; sprites.len()];
     Ok(SpriteSheet {
-        textures: (!image.is_empty())
-            .then(|| image.to_owned())
-            .into_iter()
-            .collect(),
+        textures: vec![image.to_owned()],
         sprites,
         sprite_texture_indices,
     })
@@ -361,7 +385,7 @@ mod tests {
                 "rotated": false
             }]
         });
-        let sheet = parse_json_sprite_sheet(&source).unwrap();
+        let sheet = parse_json_sprite_sheet(&source, |_| Ok(())).unwrap();
         let sprite = &sheet.sprites[0];
         assert_eq!(
             (sprite.x, sprite.y, sprite.width, sprite.height),
@@ -418,7 +442,7 @@ mod tests {
                 "rotated": true
             }]
         });
-        let texture_packer = parse_json_sprite_sheet(&texture_packer).unwrap();
+        let texture_packer = parse_json_sprite_sheet(&texture_packer, |_| Ok(())).unwrap();
         let sprite = &texture_packer.sprites[0];
         assert_eq!((sprite.x, sprite.y), (-3, -5));
         assert_eq!((sprite.width, sprite.height), (-7, -9));
@@ -426,39 +450,39 @@ mod tests {
         assert_eq!(sprite.atlas_rotation, 1);
 
         let missing_rotation = serde_json::json!({
-            "meta": {"app": "http://www.texturepacker.com"},
+            "meta": {"app": "http://www.texturepacker.com", "image": "atlas.png"},
             "frames": [{
                 "filename": "BIRD",
                 "frame": {"x": 1, "y": 2, "w": 3, "h": 4}
             }]
         });
         assert!(
-            parse_json_sprite_sheet(&missing_rotation)
+            parse_json_sprite_sheet(&missing_rotation, |_| Ok(()))
                 .unwrap_err()
                 .to_string()
                 .contains("rotated")
         );
 
         let object_frames = serde_json::json!({
-            "meta": {"app": "http://www.texturepacker.com"},
+            "meta": {"app": "http://www.texturepacker.com", "image": "atlas.png"},
             "frames": {"BIRD": {}}
         });
         assert!(
-            parse_json_sprite_sheet(&object_frames)
+            parse_json_sprite_sheet(&object_frames, |_| Ok(()))
                 .unwrap_err()
                 .to_string()
                 .contains("use JSON Array format instead")
         );
 
         let adobe = serde_json::json!({
-            "meta": {"app": "Adobe Animate"},
+            "meta": {"app": "Adobe Animate", "image": "atlas.png"},
             "frames": [{
                 "filename": "BIRD",
                 "frame": {"x": -1, "y": -2, "w": 3, "h": 4},
                 "pivot": {"x": -0.75, "y": 0.75}
             }]
         });
-        let adobe = parse_json_sprite_sheet(&adobe).unwrap();
+        let adobe = parse_json_sprite_sheet(&adobe, |_| Ok(())).unwrap();
         assert_eq!((adobe.sprites[0].x, adobe.sprites[0].y), (-1, -2));
         assert_eq!(
             (adobe.sprites[0].pivot_x, adobe.sprites[0].pivot_y),
@@ -467,13 +491,14 @@ mod tests {
         assert_eq!(adobe.sprites[0].atlas_rotation, 0);
 
         let wide_double_integer_view = serde_json::json!({
-            "meta": {"app": "Adobe Animate"},
+            "meta": {"app": "Adobe Animate", "image": "atlas.png"},
             "frames": [{
                 "filename": "WIDE",
                 "frame": {"x": 4294967295.0, "y": 4294967296.0, "w": 3, "h": 4}
             }]
         });
-        let wide_double_integer_view = parse_json_sprite_sheet(&wide_double_integer_view).unwrap();
+        let wide_double_integer_view =
+            parse_json_sprite_sheet(&wide_double_integer_view, |_| Ok(())).unwrap();
         assert_eq!(
             (
                 wide_double_integer_view.sprites[0].x,

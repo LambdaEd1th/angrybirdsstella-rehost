@@ -55,6 +55,10 @@ pub enum AssetError {
     UnsupportedTextureFormat(surface_format::SurfaceFormat),
     #[error("invalid KA3D resource: {0}")]
     InvalidKa3d(&'static str),
+    #[error("bitmap font glyph U+{codepoint:04X} uses a released private SpriteSheet")]
+    ReleasedFontGlyph { codepoint: u32 },
+    #[error("bitmap font uses uninitialized native {metric}")]
+    UninitializedFontMetric { metric: &'static str },
     #[error("invalid Lua chunk: {0}")]
     InvalidLua(&'static str),
     #[error("unsafe archive entry path: {0}")]

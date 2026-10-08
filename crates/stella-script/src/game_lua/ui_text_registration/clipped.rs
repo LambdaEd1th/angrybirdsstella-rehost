@@ -2,6 +2,7 @@
 
 use super::UiTextTransform;
 use crate::*;
+use mlua::ObjectLike;
 
 pub(super) fn draw(
     text: &mlua::Table,
@@ -9,7 +10,7 @@ pub(super) fn draw(
     transform: UiTextTransform,
     supplied_alpha: Option<f32>,
 ) -> LuaResult<()> {
-    let lines = match text.get::<Value>("lines")? {
+    let lines = match text.raw_get::<Value>("lines")? {
         Value::Table(lines) => lines,
         _ => {
             return Err(runtime_error(
@@ -24,34 +25,38 @@ pub(super) fn draw(
             .state
             .alpha = f64::from(alpha);
     }
-    let callback_result = (|| -> LuaResult<()> {
-        for index in 1.. {
-            let line = match lines.get::<Value>(index)? {
-                Value::Nil => break,
-                Value::Table(line) => line,
-                _ => {
-                    return Err(runtime_error("drawUITextNative clipped line must be table"));
-                }
-            };
-            let draw = match line.get::<Value>("draw")? {
-                Value::Function(draw) => draw,
-                _ => {
-                    return Err(runtime_error(
-                        "drawUITextNative clipped line draw must be function",
-                    ));
-                }
-            };
-            draw.call::<()>((
-                line,
-                transform.x,
-                transform.y,
-                transform.scale_x,
-                transform.scale_y,
-                transform.angle,
-            ))?;
+    for index in 1.. {
+        let line = match lines.raw_get::<Value>(index)? {
+            Value::Nil => break,
+            Value::Table(line) => line,
+            _ => return Err(runtime_error("drawUITextNative clipped line must be table")),
+        };
+        // Only the draw-method lookup uses gettable. It may invoke __index;
+        // 0319xx then reloads the receiver from the raw numeric array slot.
+        let draw = line.get::<Value>("draw")?;
+        let receiver = match lines.raw_get::<Value>(index)? {
+            Value::Table(line) => line,
+            _ => return Err(runtime_error("drawUITextNative clipped line must be table")),
+        };
+        let args = (
+            receiver,
+            transform.x,
+            transform.y,
+            transform.scale_x,
+            transform.scale_y,
+            transform.angle,
+        );
+        match draw {
+            Value::Function(draw) => draw.call::<()>(args)?,
+            Value::Table(draw) => draw.call::<()>(args)?,
+            Value::UserData(draw) => draw.call::<()>(args)?,
+            _ => {
+                return Err(runtime_error(
+                    "drawUITextNative clipped line draw must be callable",
+                ));
+            }
         }
-        Ok(())
-    })();
+    }
     if supplied_alpha.is_some() {
         render
             .lock()
@@ -59,5 +64,5 @@ pub(super) fn draw(
             .state
             .alpha = 1.0;
     }
-    callback_result
+    Ok(())
 }

@@ -51,9 +51,9 @@ pub struct TextRenderCommand {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TextFontBinding {
     Bitmap {
-        /// Shared constructed IFont value. Purple's ResourceManager and every
-        /// submitted glyph retain the same BitmapFont/AtlasSprite ownership;
-        /// deferred wgpu commands must not deep-copy the glyph tree.
+        /// Immutable data from the constructed IFont. Deferred glyph draws
+        /// share this tree without owning the native IFont allocation, whose
+        /// non-owning selection can retire independently of queued frames.
         font: Arc<BitmapFont>,
         /// Constructor-resolved atlas source retained with that IFont value.
         texture_source: String,

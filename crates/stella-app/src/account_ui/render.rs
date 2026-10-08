@@ -691,4 +691,4 @@ impl AccountPainter {
 
 #[cfg(test)]
 #[path = "render/tests.rs"]
-mod tests;
+pub(super) mod tests;

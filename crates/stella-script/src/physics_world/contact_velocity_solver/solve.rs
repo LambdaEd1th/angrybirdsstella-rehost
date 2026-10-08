@@ -114,7 +114,14 @@ impl RenderBridge {
             );
         }
 
-        self.solver_contact_impulses.insert(pair.clone(), cached);
+        // Every prepared constraint normally has a seeded impulse entry.
+        // Reuse its key allocation across velocity iterations; the fallback
+        // preserves insertion when a diagnostic caller omitted that seed.
+        if let Some(impulse) = self.solver_contact_impulses.get_mut(pair) {
+            *impulse = cached;
+        } else {
+            self.solver_contact_impulses.insert(pair.clone(), cached);
+        }
         f64::from((cached.normal as f32).max(cached.secondary_normal as f32))
     }
 }

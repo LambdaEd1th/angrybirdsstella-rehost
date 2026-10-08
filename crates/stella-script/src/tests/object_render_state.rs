@@ -721,32 +721,14 @@ fn sprite_and_physics_scale_preserve_native_lookup_and_reflection_order() {
 #[test]
 fn poppy_drill_sprite_changes_are_discrete_native_resource_rebindings() {
     let runtime = StellaLua::new("/tmp").unwrap();
-    let unique = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let file_name = format!("stella-poppy-tween-{unique}.dat");
-    let path = runtime.data_root().join(&file_name);
-    fs::write(
-        &path,
-        test_textured_sprite_sheet_with_names(
-            "poppy-tween.pvr",
-            &[
-                ("REGULAR", 8, 12),
-                ("POPPY_POWER_1", 10, 20),
-                ("POPPY_POWER_2", 30, 40),
-            ],
-        ),
-    )
-    .unwrap();
-    let environment = game_environment(runtime.lua()).unwrap();
-    let resources = environment.get::<mlua::Table>("res").unwrap();
-    resources
-        .get::<Function>("createSpriteSheet")
-        .unwrap()
-        .call::<()>((file_name.as_str(), true))
-        .unwrap();
-    fs::remove_file(path).unwrap();
+    register_test_sprite_sheet_with_sizes(
+        &runtime,
+        &[
+            ("REGULAR", 8, 12),
+            ("POPPY_POWER_1", 10, 20),
+            ("POPPY_POWER_2", 30, 40),
+        ],
+    );
 
     runtime
         .execute_source(

@@ -51,8 +51,10 @@ pub(super) fn install_stop(
                     );
                 }
             } else {
+                let state = &mut *runtime;
+                let definition = state.definitions.get(&tag);
                 let (found, removed_current) =
-                    runtime
+                    state
                         .playback
                         .get_mut(&tag)
                         .map_or((false, None), |playback| {
@@ -60,6 +62,12 @@ pub(super) fn install_stop(
                                 return (false, None);
                             };
                             let mut control = playback.controls.swap_remove(index);
+                            if let Some(groups) = playback.target_groups.as_mut()
+                                && let Some(action) = definition
+                                    .and_then(|definition| definition.actions.get(&control.action))
+                            {
+                                detach_animation_target_states(groups, &control.action, action);
+                            }
                             control.elapsed = 0.0;
                             control.previous_elapsed = 0.0;
                             control.playing = false;

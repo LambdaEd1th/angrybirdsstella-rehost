@@ -25,29 +25,6 @@ pub(crate) struct NativeInterpolationPose {
     pub(crate) angle: f32,
 }
 
-/// Rehost-side companion to Purple's two native pose slots. The shipped
-/// BirdAnimation update derives a flying bird's root rotation from the
-/// fixed-step b2Body velocity after the native pose interpolation has already
-/// run. Retaining the matching velocity samples lets the 60 Hz renderer
-/// submit that derived angle without changing the authoritative 30 Hz body or
-/// the Lua-visible velocity.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct DisplayInterpolationVelocity {
-    pub(crate) x: f32,
-    pub(crate) y: f32,
-}
-
-impl DisplayInterpolationVelocity {
-    pub(crate) const ZERO: Self = Self { x: 0.0, y: 0.0 };
-
-    pub(crate) fn new(x: f64, y: f64) -> Self {
-        Self {
-            x: x as f32,
-            y: y as f32,
-        }
-    }
-}
-
 impl NativeInterpolationPose {
     pub(crate) fn new(x: f64, y: f64, angle: f64) -> Self {
         Self {
@@ -94,7 +71,6 @@ pub(crate) struct SceneObject {
     pub(crate) render_y: f64,
     pub(crate) render_angle: f64,
     pub(crate) interpolation_poses: [NativeInterpolationPose; 2],
-    pub(crate) display_interpolation_velocities: [DisplayInterpolationVelocity; 2],
     // Purple keeps the b2Sweep centre separately from b2Transform::p.
     pub(crate) sweep_center_x: f32,
     pub(crate) sweep_center_y: f32,

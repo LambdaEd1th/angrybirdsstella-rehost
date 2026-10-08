@@ -297,7 +297,6 @@ impl SocialRuntime {
                     sprite,
                     path.to_string_lossy().into_owned(),
                     image,
-                    &self.data_root,
                 );
             return Ok(());
         }
@@ -335,7 +334,7 @@ impl SocialRuntime {
             sprite,
             texture_source,
             &self.data_root,
-        );
+        )?;
         Ok(())
     }
 

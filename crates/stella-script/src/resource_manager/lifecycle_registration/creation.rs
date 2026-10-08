@@ -4,8 +4,10 @@ use crate::resource_manager::system_font_color_from_lua;
 use crate::*;
 
 use super::loading::{
-    load_bitmap_font_source, load_composite_set_source, load_text_group_set_source,
+    load_bitmap_font_with_images, load_composite_set_source, load_sprite_sheet_with_images,
+    load_text_group_set_source,
 };
+use crate::resource_manager::runtime::PreparedSheetImages;
 
 fn optional_boolean(args: &MultiValue, index: usize, default: bool) -> bool {
     match args.iter().nth(index) {
@@ -108,10 +110,18 @@ pub(super) fn install(
                 resolve_data_file(&bitmap_data_root, &resolved).map_err(runtime_error)?;
             // sub_10042A5B0 finishes the binary FONT constructor before the
             // shared IFont map node is overwritten.
-            let font = load_bitmap_font_source(&bitmap_data_root, &resolved)?;
             let mut resources = bitmap_resources
                 .lock()
                 .expect("resource runtime lock poisoned");
+            let mut image = None;
+            let font = load_bitmap_font_with_images(&descriptor_path, |texture| {
+                image = Some(resources.load_font_file_image(
+                    &bitmap_data_root,
+                    &descriptor_path,
+                    texture,
+                )?);
+                Ok(())
+            })?;
             // Bitmap and system fonts occupy the same native IFont map.
             resources.remove_system_font(&key);
             resources.bitmap_fonts.insert(key.clone());
@@ -122,7 +132,7 @@ pub(super) fn install(
             resources
                 .bitmap_font_values
                 .insert(key.clone(), Arc::new(font));
-            resources.cache_bitmap_font_host_binding(&key, &bitmap_data_root);
+            resources.publish_bitmap_font_host_binding(&key, image);
             Ok(())
         })?,
     )?;
@@ -174,40 +184,50 @@ pub(super) fn install(
 }
 
 /// Invoke the `sub_100457E38` member shared by LuaResources and the older
-/// global ResourceManager facade. The return value distinguishes a real load
-/// from the replace=false existing-object fast path.
+/// global ResourceManager facade. A successful new load returns its native
+/// Texture allocation delta; the replace=false existing-object path returns None.
 pub(crate) fn create_sprite_sheet(
     resource_runtime: &Arc<Mutex<ResourceRuntime>>,
     data_root: &Path,
     path: &str,
     replace: bool,
-) -> LuaResult<bool> {
+) -> LuaResult<Option<u32>> {
     let key = resource_double_file_stem(path);
     let resolved = {
         let resources = resource_runtime
             .lock()
             .expect("resource runtime lock poisoned");
         if !replace && resources.sprite_sheets.contains(&key) {
-            return Ok(false);
+            return Ok(None);
         }
         resource_join_path(&resources.path, path)
     };
     // sub_100457E38 completely loads the candidate before removing the old
     // sheet's global sprite registrations or map pointer.
     let descriptor_path = resolve_data_file(data_root, &resolved).map_err(runtime_error)?;
-    let sheet = load_sprite_sheet_path(&descriptor_path, &resolved)?;
     let mut resources = resource_runtime
         .lock()
         .expect("resource runtime lock poisoned");
+    let mut images = PreparedSheetImages::default();
+    let sheet = load_sprite_sheet_with_images(&descriptor_path, &resolved, |texture| {
+        let image = resources.load_sheet_file_image(
+            data_root,
+            Some(&descriptor_path),
+            texture,
+            images.texture_sources.len(),
+        )?;
+        images.push(image);
+        Ok(())
+    })?;
     resources.replace_sprite_sheet_value(&key, sheet);
     resources.sprite_sheets.insert(key.clone());
     resources.sprite_sheet_paths.insert(key.clone(), resolved);
     resources
         .sprite_sheet_descriptor_paths
         .insert(key.clone(), descriptor_path);
-    resources.cache_sprite_sheet_host_bindings(&key, data_root);
+    let allocation_bytes = resources.publish_sprite_sheet_host_bindings(&key, images);
     resources.released_sprite_sheet_resources.remove(&key);
-    Ok(true)
+    Ok(Some(allocation_bytes))
 }
 
 fn install_system_font(
@@ -267,7 +287,8 @@ fn install_system_font(
             resources.bitmap_font_decoded_images.remove(&name);
             resources.bitmap_font_image_owners.remove(&name);
             resources.bitmap_font_values.remove(&name);
-            resources.system_fonts.insert(name, font);
+            resources.system_fonts.insert(name.clone(), font);
+            resources.register_system_font_value(&name);
             Ok(())
         })?,
     )
@@ -325,7 +346,8 @@ fn install_stroked_system_font(
             resources.bitmap_font_decoded_images.remove(&name);
             resources.bitmap_font_image_owners.remove(&name);
             resources.bitmap_font_values.remove(&name);
-            resources.system_fonts.insert(name, font);
+            resources.system_fonts.insert(name.clone(), font);
+            resources.register_system_font_value(&name);
             Ok(())
         })?,
     )

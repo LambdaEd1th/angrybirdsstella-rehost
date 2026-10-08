@@ -31,14 +31,5 @@ impl SceneObject {
             y: self.y as f32,
             angle: sine.atan2(cosine),
         };
-        self.display_interpolation_velocities[slot] =
-            DisplayInterpolationVelocity::new(self.velocity_x, self.velocity_y);
-    }
-
-    /// Keep the visual velocity pair coherent when a Lua/native member changes
-    /// b2Body velocity outside World::Step. The physics value itself remains
-    /// authoritative and is still exported only at the recovered frame tail.
-    pub(crate) fn reset_display_interpolation_velocity(&mut self, x: f32, y: f32) {
-        self.display_interpolation_velocities = [DisplayInterpolationVelocity { x, y }; 2];
     }
 }

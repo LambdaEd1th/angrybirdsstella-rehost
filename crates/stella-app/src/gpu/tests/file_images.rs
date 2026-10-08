@@ -2,11 +2,21 @@
 use super::*;
 
 mod dirt_texture;
+mod empty;
+mod entity_matrices;
+mod failed_construction;
+mod font_atlas_lifetime;
 mod lifetime;
 mod live_sheet;
+mod lookup;
 mod masked_batches;
 mod masked_scene;
 mod masked_uv;
+#[cfg(unix)]
+mod paths;
+mod pvrtc;
+mod selected_font;
+mod skin_aliases;
 
 const OLD: [u8; 4] = [203, 31, 7, 255];
 const NEW: [u8; 4] = [29, 17, 83, 255];

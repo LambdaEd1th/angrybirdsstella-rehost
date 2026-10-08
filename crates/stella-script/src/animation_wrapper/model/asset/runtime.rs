@@ -34,6 +34,16 @@ pub(crate) fn install_animation_asset(
     runtime.pending_event_tags.retain(|pending| pending != &tag);
     runtime.actions.insert(tag.clone(), asset.actions);
     let mut loaded_playback = AnimationPlayback::loaded(&asset.definition.slots);
+    // Entity construction starts each local matrix at identity. Draw/query
+    // paths must read this retained storage, including an unapplied bone or
+    // a Sprite slot whose pointer was subsequently cleared.
+    for entity in &asset.definition.entities {
+        loaded_playback
+            .latched_targets
+            .entry(entity.clone())
+            .or_default()
+            .local_matrix = Some(AnimationAffine::default());
+    }
     // load's builder never erases the wrapper's +0x30 Control map. The old
     // scene no longer owns an active vector after removal, but the wrapper
     // retains its current Control until a later start/close replaces it.

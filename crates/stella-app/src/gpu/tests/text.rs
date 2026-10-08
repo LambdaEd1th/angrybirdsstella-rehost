@@ -36,6 +36,8 @@ fn font(texture: &str, width: i16) -> BitmapFont {
         texture: texture.to_owned(),
         leading: 0,
         tracking: 0,
+        spacing_initialized: true,
+        current_atlas_glyph_start: 0,
         glyphs: vec![FontGlyph {
             codepoint: u32::from(b'A'),
             x: 0,

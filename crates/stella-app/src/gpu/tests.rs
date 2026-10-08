@@ -3,10 +3,12 @@
 use super::*;
 use stella_assets::surface_format::SurfaceFormat;
 
+mod account_ui;
 mod batch;
 mod capture;
 mod device_loss;
 mod file_images;
+mod frame_helpers;
 mod geometry;
 mod native_images;
 mod program;

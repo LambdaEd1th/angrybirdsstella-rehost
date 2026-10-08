@@ -1,38 +1,8 @@
-//! Entity-target selection and property application (sub_10041E41C).
+//! Ordered EntityTarget state sampling and component/matrix writes (10041E41C).
 
 use std::path::Path;
 
 use crate::*;
-
-fn native_apply_event(
-    runtime: &AnimationRuntime,
-    tag: &str,
-    mode: u8,
-) -> Option<AnimationTimelineEvent> {
-    let playback = runtime.playback.get(tag)?;
-    let definition = runtime.definitions.get(tag)?;
-    let (control, action) = playback.controls.iter().rev().find_map(|control| {
-        let action = definition.actions.get(&control.action)?;
-        (!action.event_track.is_empty()).then_some((control, action))
-    })?;
-    if mode == 3 {
-        animation_event_after_state_change(action, control.previous_elapsed, control.elapsed)
-    } else {
-        animation_event_at(action, control.elapsed)
-    }
-}
-
-#[derive(Default)]
-struct AnimationLatchedUpdate {
-    translation: Option<[f64; 2]>,
-    scale: Option<[f64; 2]>,
-    rotation: Option<f64>,
-    alpha: Option<f64>,
-    sprite_claimed: bool,
-    sprite: Option<(String, AnimationSpriteTrackKind)>,
-    z_order_claimed: bool,
-    z_order: Option<i64>,
-}
 
 fn discrete_state_index<T>(track: &[(f64, T)], time: f64) -> Option<usize> {
     if track.is_empty() {
@@ -43,74 +13,80 @@ fn discrete_state_index<T>(track: &[(f64, T)], time: f64) -> Option<usize> {
     Some(upper.saturating_sub(1).min(track.len() - 1))
 }
 
+struct SpriteBindingContext<'a> {
+    definition: &'a AnimationDefinition,
+    skins: Option<&'a BTreeMap<String, AnimationSkin>>,
+    selected_skin: Option<&'a str>,
+    regions: Option<&'a BTreeMap<String, SpriteCatalogRegion>>,
+    root_present: bool,
+    resources: Option<&'a ResourceRuntime>,
+    data_root: Option<&'a Path>,
+}
+
 fn resolve_native_sprite_binding(
-    runtime: &AnimationRuntime,
-    resources: Option<&ResourceRuntime>,
-    data_root: Option<&Path>,
-    tag: &str,
+    context: &SpriteBindingContext<'_>,
     slot: &str,
     alias: &str,
     kind: AnimationSpriteTrackKind,
-) -> Option<AnimationBoundSprite> {
-    let definition = runtime.definitions.get(tag)?;
-    let (sprite, skin_transform) = match kind {
+) -> (Option<AnimationBoundSprite>, Option<AnimationAffine>) {
+    let attachment = match kind {
         AnimationSpriteTrackKind::DirectSprite => {
-            (alias.rsplit('/').next().unwrap_or(alias).to_owned(), None)
+            Some((alias.rsplit('/').next().unwrap_or(alias).to_owned(), None))
         }
         AnimationSpriteTrackKind::SkinAlias => {
-            let skins = match runtime.skin_sets.get(tag) {
+            let skins = match context.skins {
                 Some(skins) => skins,
-                // Manually assembled transform fixtures have no native root
-                // or wrapper map. An attached scene with no wrapper owner
-                // must not resurrect its discarded skins after closeAll.
-                None if !runtime.root_present => &definition.skins,
-                None => return None,
+                // Only manually assembled fixtures without a native wrapper
+                // owner retain the definition's concrete-region setup path.
+                None if !context.root_present => &context.definition.skins,
+                None => return (None, None),
             };
-            animation_skin_alias_attachment(
-                skins,
-                runtime.skins.get(tag).map(String::as_str),
-                slot,
-                alias,
-            )?
+            animation_skin_alias_attachment(skins, context.selected_skin, slot, alias)
         }
     };
+    let Some((sprite, skin_transform)) = attachment else {
+        return (None, None);
+    };
+    // 100011BC4 writes the attachment matrix whenever the exact skin record
+    // exists, including when its live provider returns a null Sprite*.
+    let local_matrix = skin_transform
+        .as_ref()
+        .map(AnimationAffine::from_skin_attachment);
     let region = match kind {
-        AnimationSpriteTrackKind::DirectSprite => runtime
-            .sprite_regions
-            .get(tag)
+        AnimationSpriteTrackKind::DirectSprite => context
+            .regions
             .and_then(|regions| regions.get(&sprite))
             .cloned(),
         AnimationSpriteTrackKind::SkinAlias => {
-            if let Some((resources, data_root)) = resources.zip(data_root) {
+            if let Some((resources, data_root)) = context.resources.zip(context.data_root) {
                 resources
                     .active_atlas_catalog_region(&sprite, data_root)
                     .map(|region| (*region).clone())
-            } else if resources.is_none() {
-                // Unit fixtures without a ResourceRuntime retain the previous
-                // concrete-region setup path. Installed Lua methods always
-                // pass the live manager and cannot use a stale region.
-                runtime
-                    .sprite_regions
-                    .get(tag)
+            } else if context.resources.is_none() {
+                context
+                    .regions
                     .and_then(|regions| regions.get(&sprite))
                     .cloned()
             } else {
                 None
             }
         }
-    }?;
-    let atlas = &region.sprite;
-    Some(AnimationBoundSprite {
-        sprite,
-        skin_transform,
-        metrics: NativeSpriteMetrics {
-            width: i32::from(atlas.width),
-            height: i32::from(atlas.height),
-            pivot_x: i32::from(atlas.pivot_x),
-            pivot_y: i32::from(atlas.pivot_y),
-        },
-        region,
-    })
+    };
+    let binding = region.map(|region| {
+        let atlas = &region.sprite;
+        AnimationBoundSprite {
+            sprite,
+            skin_transform,
+            metrics: NativeSpriteMetrics {
+                width: i32::from(atlas.width),
+                height: i32::from(atlas.height),
+                pivot_x: i32::from(atlas.pivot_x),
+                pivot_y: i32::from(atlas.pivot_y),
+            },
+            region,
+        }
+    });
+    (binding, local_matrix)
 }
 
 fn latch_native_targets(
@@ -119,99 +95,141 @@ fn latch_native_targets(
     data_root: Option<&Path>,
     tag: &str,
     mode: u8,
-) {
-    let Some(playback) = runtime.playback.get(tag) else {
-        return;
-    };
+) -> Vec<AnimationTimelineEvent> {
     let Some(definition) = runtime.definitions.get(tag) else {
-        return;
+        return Vec::new();
     };
-    let mut updates = BTreeMap::<String, AnimationLatchedUpdate>::new();
-    // EntityTarget stores one ordered state vector per usage. Walking active
-    // controls backwards finds the same last state selected by
-    // sub_10041E41C, independently for every property.
-    for control in playback.controls.iter().rev() {
-        let Some(action) = definition.actions.get(&control.action) else {
-            continue;
-        };
-        for (entity, target) in &action.targets {
-            let update = updates.entry(entity.clone()).or_default();
-            if update.translation.is_none() && !target.translation.is_empty() {
-                update.translation = Some(sample_float2(
-                    &target.translation,
-                    control.elapsed,
-                    [0.0, 0.0],
-                ));
+    let context = SpriteBindingContext {
+        definition,
+        skins: runtime.skin_sets.get(tag),
+        selected_skin: runtime.skins.get(tag).map(String::as_str),
+        regions: runtime.sprite_regions.get(tag),
+        root_present: runtime.root_present,
+        resources,
+        data_root,
+    };
+    let Some(playback) = runtime.playback.get_mut(tag) else {
+        return Vec::new();
+    };
+    if playback.target_groups.is_none() {
+        let mut groups = BTreeMap::new();
+        for control in &playback.controls {
+            if let Some(action) = definition.actions.get(&control.action) {
+                attach_animation_target_states(&mut groups, &control.action, action);
             }
-            if update.scale.is_none() && !target.scale.is_empty() {
-                update.scale = Some(sample_float2(&target.scale, control.elapsed, [1.0, 1.0]));
+        }
+        playback.target_groups = Some(groups);
+    }
+    let groups = playback
+        .target_groups
+        .as_mut()
+        .expect("entity target groups initialized");
+    let mut events = Vec::new();
+    for (entity, groups) in groups {
+        for group in groups {
+            let Some(state) = group.states.last_mut() else {
+                continue;
+            };
+            let Some(control) = playback
+                .controls
+                .iter()
+                .find(|control| control.action == state.action)
+            else {
+                continue;
+            };
+            let Some(action) = definition.actions.get(&state.action) else {
+                continue;
+            };
+            let previous = state.elapsed;
+            let delta = control.elapsed as f32 - previous;
+            // StateBase::update returns false without invoking its timeline
+            // when the absolute float delta is zero (10041D354). Each State
+            // retains its own time; Control vector swaps cannot select it.
+            if mode == 3 && delta.abs() <= 0.0 {
+                continue;
             }
-            if update.rotation.is_none() && !target.rotation.is_empty() {
-                update.rotation = Some(sample_float(&target.rotation, control.elapsed, 0.0));
-            }
-            if update.alpha.is_none() && !target.alpha.is_empty() {
-                update.alpha = Some(sample_float(&target.alpha, control.elapsed, 1.0));
-            }
-            if !update.sprite_claimed && !target.sprite.is_empty() {
-                // The last active State owns the entire usage even when its
-                // discrete keyframe index did not change. Falling through to
-                // an older control here would run the wrong ApplyHandler.
-                update.sprite_claimed = true;
-                let should_apply = mode != 3
-                    || discrete_state_index(&target.sprite, control.previous_elapsed)
-                        != discrete_state_index(&target.sprite, control.elapsed);
-                if should_apply {
-                    update.sprite = sample_discrete(&target.sprite, control.elapsed)
-                        .map(|sprite| (sprite, target.sprite_kind));
+            let time = previous + delta;
+            state.elapsed = time;
+            let time = f64::from(time);
+            if group.usage == AnimationUsage::SpineEvent {
+                let event = if mode == 3 {
+                    animation_event_after_state_change(action, f64::from(previous), time)
+                } else {
+                    animation_event_at(action, time)
+                };
+                if let Some(event) = event {
+                    events.push(event);
                 }
+                continue;
             }
-            if !update.z_order_claimed && !target.z_order.is_empty() {
-                update.z_order_claimed = true;
-                let should_apply = mode != 3
-                    || discrete_state_index(&target.z_order, control.previous_elapsed)
-                        != discrete_state_index(&target.z_order, control.elapsed);
-                if should_apply {
-                    update.z_order = sample_discrete(&target.z_order, control.elapsed);
+            let Some(track) = action.targets.get(entity) else {
+                continue;
+            };
+            let target = playback.latched_targets.entry(entity.clone()).or_default();
+            match group.usage {
+                AnimationUsage::Translation => {
+                    let value = sample_float2(&track.translation, time, [0.0, 0.0]);
+                    target.translation = value;
+                    target
+                        .local_matrix
+                        .get_or_insert_default()
+                        .set_translation(value[0], value[1]);
+                }
+                AnimationUsage::Rotation => {
+                    let value = sample_float(&track.rotation, time, 0.0);
+                    target.rotation = value;
+                    target
+                        .local_matrix
+                        .get_or_insert_default()
+                        .set_rotation(value);
+                }
+                AnimationUsage::Scale => {
+                    let value = sample_float2(&track.scale, time, [1.0, 1.0]);
+                    target.scale = value;
+                    target
+                        .local_matrix
+                        .get_or_insert_default()
+                        .set_scale(value[0], value[1]);
+                }
+                AnimationUsage::Alpha => target.alpha = sample_float(&track.alpha, time, 1.0),
+                AnimationUsage::Sprite => {
+                    if (mode != 3
+                        || discrete_state_index(&track.sprite, f64::from(previous))
+                            != discrete_state_index(&track.sprite, time))
+                        && let Some(value) = sample_discrete(&track.sprite, time)
+                    {
+                        let (binding, matrix) = resolve_native_sprite_binding(
+                            &context,
+                            entity,
+                            &value,
+                            track.sprite_kind,
+                        );
+                        target.sprite = value;
+                        target.sprite_applied = true;
+                        target.bound_sprite = binding;
+                        if let Some(matrix) = matrix {
+                            target.local_matrix = Some(matrix);
+                        }
+                    }
+                }
+                AnimationUsage::ZOrder => {
+                    if (mode != 3
+                        || discrete_state_index(&track.z_order, f64::from(previous))
+                            != discrete_state_index(&track.z_order, time))
+                        && let Some(value) = sample_discrete(&track.z_order, time)
+                    {
+                        target.z_order = value;
+                    }
+                }
+                AnimationUsage::SpineEvent => {
+                    unreachable!("event group handled before entity track lookup")
                 }
             }
         }
     }
-    for (entity, update) in updates {
-        let resolved_sprite = update.sprite.as_ref().and_then(|(sprite, kind)| {
-            resolve_native_sprite_binding(
-                runtime, resources, data_root, tag, &entity, sprite, *kind,
-            )
-        });
-        let Some(playback) = runtime.playback.get_mut(tag) else {
-            return;
-        };
-        let target = playback.latched_targets.entry(entity).or_default();
-        if let Some(value) = update.translation {
-            target.translation = value;
-        }
-        if let Some(value) = update.scale {
-            target.scale = value;
-        }
-        if let Some(value) = update.rotation {
-            target.rotation = value;
-        }
-        if let Some(value) = update.alpha {
-            target.alpha = value;
-        }
-        if let Some((value, _)) = update.sprite {
-            target.sprite = value;
-            target.sprite_applied = true;
-            target.bound_sprite = resolved_sprite;
-        }
-        if let Some(value) = update.z_order {
-            target.z_order = value;
-        }
-    }
+    events
 }
 
-/// `Animation::apply(mode)` visits each EntityTarget once. Every usage group
-/// selects the last attached state, then the animation copies every control's
-/// current time into its previous-time field (`sub_1004111A4`).
 pub(in crate::animation_wrapper::registration::playback) fn apply_native_targets(
     runtime: &mut AnimationRuntime,
     tag: &str,
@@ -237,14 +255,18 @@ pub(super) fn apply_native_targets_with_context(
     tag: &str,
     mode: u8,
 ) {
-    let event = native_apply_event(runtime, tag, mode);
-    latch_native_targets(runtime, resources, data_root, tag, mode);
-    if let Some(playback) = runtime.playback.get_mut(tag) {
+    let events = latch_native_targets(runtime, resources, data_root, tag, mode);
+    // The start path's mode 0 is EntityTarget::apply, not Animation::apply.
+    // Only the latter copies the entire control vector's previous times
+    // after visiting targets (100410A18/1004111A4).
+    if mode != 0
+        && let Some(playback) = runtime.playback.get_mut(tag)
+    {
         for control in &mut playback.controls {
             control.previous_elapsed = control.elapsed;
         }
     }
-    if let Some(event) = event {
+    for event in events {
         queue_animation_event(runtime, tag, event);
     }
 }

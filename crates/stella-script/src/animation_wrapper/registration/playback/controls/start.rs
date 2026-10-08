@@ -48,7 +48,8 @@ pub(super) fn install_start(
             if let Some(index) = playback.active_control_index(&action) {
                 // sub_100410A18 resets an existing named control in place.
                 // Its speed and installed callback survive, and its vector
-                // position (therefore target precedence) does not change.
+                // position (therefore update/callback order) does not change.
+                // Target State precedence changes on the later reattachment.
                 let control = &mut playback.controls[index];
                 control.elapsed = 0.0;
                 control.previous_elapsed = 0.0;
@@ -69,6 +70,32 @@ pub(super) fn install_start(
                     finished_pending_removal: false,
                 });
             }
+
+            // Control::setTime(0) forces the existing groups before
+            // EntityTarget::startControl reattaches states. Each target then
+            // receives a mode-0 application (100410A18/10040E798).
+            apply_targets(
+                &mut runtime,
+                resources.as_deref(),
+                data_root.as_deref().map(std::path::PathBuf::as_path),
+                &tag,
+                2,
+            );
+            let state = &mut *runtime;
+            if let Some(definition) = state.definitions.get(&tag)
+                && let Some(action_definition) = definition.actions.get(&action)
+                && let Some(playback) = state.playback.get_mut(&tag)
+            {
+                let groups = playback.target_groups.get_or_insert_default();
+                attach_animation_target_states(groups, &action, action_definition);
+            }
+            apply_targets(
+                &mut runtime,
+                resources.as_deref(),
+                data_root.as_deref().map(std::path::PathBuf::as_path),
+                &tag,
+                0,
+            );
 
             // sub_100012F18 starts the native control, performs the hidden
             // float32 0.00001-second update and a mode-4 forced application,

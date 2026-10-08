@@ -332,7 +332,9 @@ fn duplicate_texture_records_use_the_current_sheet_image_and_other_sheets_remain
     let mut resources = runtime.resource_runtime.lock().unwrap();
     resources.replace_sprite_sheet_value("A", sheet.clone());
     resources.sprite_sheets.insert("A".to_owned());
-    resources.cache_sprite_sheet_host_bindings("A", &data_root);
+    resources
+        .cache_sprite_sheet_host_bindings("A", &data_root)
+        .unwrap();
     let first = resources.sprite_sheet_texture_sources["A"].clone();
     let before = resources.sprite_catalog_snapshot(&data_root);
     assert_eq!(before.regions["FIRST"].texture_source, first[1]);
@@ -345,9 +347,7 @@ fn duplicate_texture_records_use_the_current_sheet_image_and_other_sheets_remain
         before.regions["SECOND"].image_owner.as_ref().unwrap(),
     ));
     let dimensions = resources.sprite_sheet_image_dimensions["A"];
-    let (captured, temporary) = resources
-        .capture_sprite("A", dimensions, &data_root)
-        .unwrap();
+    let (captured, temporary) = resources.capture_sprite("A", dimensions).unwrap();
     assert_eq!(
         captured, first[1],
         "capture changes the sheet's current Image for both AtlasSprites"
@@ -358,7 +358,9 @@ fn duplicate_texture_records_use_the_current_sheet_image_and_other_sheets_remain
         Some(first[1].clone())
     );
     resources.replace_sprite_sheet_value("B", sheet);
-    resources.cache_sprite_sheet_host_bindings("B", &data_root);
+    resources
+        .cache_sprite_sheet_host_bindings("B", &data_root)
+        .unwrap();
     let second = &resources.sprite_sheet_texture_sources["B"];
     let all = [&first[0], &first[1], &second[0], &second[1]];
     assert_eq!(

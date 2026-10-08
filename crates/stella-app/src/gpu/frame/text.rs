@@ -14,15 +14,8 @@ impl AssetCatalog {
             Some(TextFontBinding::Bitmap {
                 font,
                 texture_source,
-                decoded_image,
-                image_owner,
-            }) => {
-                self.retain_image_owner(texture_source, image_owner.as_ref());
-                if let Some(image) = decoded_image {
-                    self.retain_native_image(texture_source, image, image_owner.as_ref())?;
-                }
-                (font.clone(), texture_source.clone())
-            }
+                ..
+            }) => (font.clone(), texture_source.clone()),
             Some(TextFontBinding::System(binding)) => {
                 return self.append_gpu_system_text(command, binding, frame);
             }
@@ -40,16 +33,24 @@ impl AssetCatalog {
         let glyphs = command
             .text
             .chars()
-            .filter_map(|character| font.glyph(character as u32).copied())
-            .collect::<Vec<_>>();
-        let raw_vertices = command.projection_3d.is_some_and(|p| p.custom_model);
-        frame.current_raw_vertices = raw_vertices;
-        frame.current_vertex_depth = if raw_vertices { 0.0 } else { 0.001 };
+            .filter_map(|character| {
+                font.live_glyph(character as u32)
+                    .transpose()
+                    .map(|glyph| glyph.copied())
+            })
+            .collect::<std::result::Result<Vec<_>, _>>()?;
         let [anchor_x, anchor_y] = font.native_draw_anchor(
             &command.text,
             &command.horizontal_anchor,
             &command.vertical_anchor,
-        );
+        )?;
+        if glyphs.is_empty() {
+            return Ok(());
+        }
+        self.retain_bitmap_font_image(command)?;
+        let raw_vertices = command.projection_3d.is_some_and(|p| p.custom_model);
+        frame.current_raw_vertices = raw_vertices;
+        frame.current_vertex_depth = if raw_vertices { 0.0 } else { 0.001 };
         let anchor_x = f64::from(anchor_x);
         let anchor_y = f64::from(anchor_y);
         let texture = self.resolve_gpu_texture(&texture_source)?;

@@ -2,6 +2,8 @@
 
 use crate::*;
 
+mod bitmap_text;
+
 impl RenderBridge {
     pub(crate) fn projection_3d(&self) -> Option<TextProjection3D> {
         self.perspective_projection
@@ -78,7 +80,18 @@ impl RenderBridge {
         Ok(())
     }
 
-    pub(crate) fn push_text_command(&mut self, mut command: TextRenderCommand) {
+    pub(crate) fn push_text_command(&mut self, mut command: TextRenderCommand) -> LuaResult<()> {
+        if let Some(failure) = self.prepare_bitmap_text(&mut command) {
+            if failure.has_drawn_glyph {
+                self.queue_text_command(command);
+            }
+            return Err(failure.error);
+        }
+        self.queue_text_command(command);
+        Ok(())
+    }
+
+    fn queue_text_command(&mut self, mut command: TextRenderCommand) {
         command.projection_3d = self.projection_3d();
         if command.clip_rect.is_none() {
             command.clip_rect = self.state.clip_rect;

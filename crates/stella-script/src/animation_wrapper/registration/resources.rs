@@ -293,6 +293,9 @@ fn remove_animation_scene(
         // continue to address that retained object until the map is erased.
         let retained = playback.current_control().cloned();
         playback.controls.clear();
+        if let Some(groups) = playback.target_groups.as_mut() {
+            groups.clear();
+        }
         playback.latched_targets.clear();
         playback.detached_current = retained;
         if !playback.wrapper_control_present {

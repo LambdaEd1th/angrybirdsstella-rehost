@@ -1,10 +1,10 @@
 //! ResourceManager `clipText` line splitting (`sub_10004F630`).
 
-pub(crate) fn native_clip_text_lines(
+pub(crate) fn native_clip_text_lines<E>(
     text: &str,
     maximum_width: f32,
-    string_width: impl Fn(&str) -> i32,
-) -> (Vec<String>, f32) {
+    string_width: impl Fn(&str) -> Result<i32, E>,
+) -> Result<(Vec<String>, f32), E> {
     let characters = text.chars().collect::<Vec<_>>();
     let mut lines = Vec::new();
     let mut widest = 0_i32;
@@ -28,13 +28,13 @@ pub(crate) fn native_clip_text_lines(
             }
 
             let candidate = characters[start..candidate_end].iter().collect::<String>();
-            if string_width(&candidate) as f32 >= maximum_width {
+            if string_width(&candidate)? as f32 >= maximum_width {
                 if fitted_segments == 0 {
                     let mut length = 1_usize;
                     loop {
                         let forced_end = (start + length).min(characters.len());
                         let forced = characters[start..forced_end].iter().collect::<String>();
-                        if string_width(&forced) as f32 >= maximum_width {
+                        if string_width(&forced)? as f32 >= maximum_width {
                             // `0x10004F978..0x10004F9A8` tests lengths
                             // 1, 2, ... but stores the tested length minus
                             // one. The glyph which first reaches the limit
@@ -79,7 +79,7 @@ pub(crate) fn native_clip_text_lines(
         }
 
         let line = characters[start..line_end].iter().collect::<String>();
-        widest = widest.max(string_width(&line));
+        widest = widest.max(string_width(&line)?);
         lines.push(line);
         if scan < characters.len() && characters[scan] == '\n' {
             scan += 1;
@@ -88,7 +88,7 @@ pub(crate) fn native_clip_text_lines(
     }
 
     // `0x10004FB50` publishes the signed integer maximum through SCVTF S0.
-    (lines, widest as f32)
+    Ok((lines, widest as f32))
 }
 
 /// Purple's `sub_100585CDC` advances one byte after a failed UTF-8 decode and

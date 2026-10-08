@@ -128,10 +128,44 @@ fn test_ka3d_chunk(tag: &[u8; 4], payload: &[u8]) -> Vec<u8> {
     bytes
 }
 
+fn test_rgba_pvr(width: u32, height: u32, color: [u8; 4]) -> Vec<u8> {
+    let mut bytes = [
+        52,
+        height,
+        width,
+        0,
+        0x12,
+        width * height * 4,
+        32,
+        0xff,
+        0xff00,
+        0xff0000,
+        0xff000000,
+        u32::from_le_bytes(*b"PVR!"),
+        1,
+    ]
+    .into_iter()
+    .flat_map(u32::to_le_bytes)
+    .collect::<Vec<_>>();
+    bytes.extend_from_slice(&color.repeat((width * height) as usize));
+    bytes
+}
+
+const TEST_ATLAS_FILE: &str = "stella-fixture-atlas.pvr";
+
+fn write_test_atlas(directory: impl AsRef<Path>) {
+    // Native descriptors resolve embedded image names relative to themselves.
+    // Each caller supplies its private directory; no production routing shim
+    // or shared absolute metadata path is needed to construct valid input.
+    fs::write(
+        directory.as_ref().join(TEST_ATLAS_FILE),
+        test_rgba_pvr(64, 64, [255; 4]),
+    )
+    .unwrap();
+}
+
 fn test_sprite_sheet() -> Vec<u8> {
-    // Version one, an empty texture path, and no named region still construct
-    // a native SPRT sheet, which is ideal for lifecycle-only tests.
-    test_ka3d(b"SPRT", &[0, 1, 0, 0, 0, 0])
+    test_sprite_sheet_with_names(&[])
 }
 
 fn test_named_sprite_sheet(name: &str, width: u16, height: u16) -> Vec<u8> {
@@ -150,16 +184,7 @@ fn test_textured_sprite_sheet(name: &str, texture: &str, width: u16, height: u16
 }
 
 fn test_sprite_sheet_with_names(entries: &[(&str, u16, u16)]) -> Vec<u8> {
-    let mut payload = 1u16.to_be_bytes().to_vec();
-    payload.extend_from_slice(&0u16.to_be_bytes());
-    payload.extend_from_slice(&(entries.len() as u16).to_be_bytes());
-    for &(name, width, height) in entries {
-        payload.extend(test_ka3d_string(name));
-        for value in [0, 0, width, height, width / 2, height / 2] {
-            payload.extend_from_slice(&value.to_be_bytes());
-        }
-    }
-    test_ka3d(b"SPRT", &payload)
+    test_textured_sprite_sheet_with_names(TEST_ATLAS_FILE, entries)
 }
 
 fn test_textured_sprite_sheet_with_names(texture: &str, entries: &[(&str, u16, u16)]) -> Vec<u8> {
@@ -189,20 +214,31 @@ fn register_test_sprite_sheet_with_sizes(
 ) -> String {
     let unique = NEXT_TEST_SPRITE_SHEET_ID.fetch_add(1, Ordering::Relaxed);
     let file_name = format!("stella-test-sheet-{}-{unique}.dat", std::process::id());
-    let path = runtime.data_root().join(&file_name);
+    // Use the production constructor with private fixture input. The runtime
+    // data root can be a symlink to the read-only shipped bundle.
+    let fixture =
+        std::env::temp_dir().join(format!("stella-test-sheet-{}-{unique}", std::process::id()));
+    let resource_path = runtime.resource_runtime.lock().unwrap().path.clone();
+    let path = fixture.join(resource_join_path(&resource_path, &file_name).trim_start_matches('/'));
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        path.parent().unwrap().join("stella-test-texture.pvr"),
+        test_rgba_pvr(128, 128, [255; 4]),
+    )
+    .unwrap();
     fs::write(
         &path,
         test_textured_sprite_sheet_with_names("stella-test-texture.pvr", entries),
     )
     .unwrap();
-    let environment = game_environment(runtime.lua()).unwrap();
-    let resources = environment.get::<mlua::Table>("res").unwrap();
-    resources
-        .get::<Function>("createSpriteSheet")
-        .unwrap()
-        .call::<()>((file_name.as_str(), true))
-        .unwrap();
-    fs::remove_file(path).unwrap();
+    crate::resource_manager::create_sprite_sheet(
+        &runtime.resource_runtime,
+        &fixture,
+        &file_name,
+        true,
+    )
+    .unwrap();
+    fs::remove_dir_all(fixture).unwrap();
     file_name
 }
 
@@ -262,7 +298,7 @@ fn test_composite_set_with_part(composite: &str, sprite: &str) -> Vec<u8> {
 
 fn test_bitmap_font() -> Vec<u8> {
     let mut payload = 1u16.to_be_bytes().to_vec();
-    payload.extend(test_ka3d_string(""));
+    payload.extend(test_ka3d_string(TEST_ATLAS_FILE));
     payload.extend_from_slice(&0i16.to_be_bytes());
     payload.extend_from_slice(&0i16.to_be_bytes());
     payload.extend_from_slice(&0u16.to_be_bytes());
@@ -301,13 +337,21 @@ struct ShippedDataSandbox {
 
 impl ShippedDataSandbox {
     fn new(label: &str) -> Self {
+        static NEXT_SANDBOX: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!("stella-{label}-{unique}"));
+        // Some target clocks return the same timestamp to concurrent callers.
+        // Keep each sandbox private even when two tests use the same label.
+        let sequence = NEXT_SANDBOX.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "stella-{label}-{}-{unique}-{sequence}",
+            std::process::id()
+        ));
         let data_root = root.join("data");
-        fs::create_dir_all(root.join("appdata")).unwrap();
+        fs::create_dir(&root).unwrap();
+        fs::create_dir(root.join("appdata")).unwrap();
         let shipped = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../runtime/data")
             .canonicalize()
@@ -327,8 +371,11 @@ impl Drop for ShippedDataSandbox {
 }
 
 mod animation;
+mod animation_entity_matrix;
+mod animation_skin_lookup;
 mod audio_registration;
 mod bird_run;
+mod bird_states;
 mod body_bindings;
 mod broad_phase;
 mod collision_callbacks;
@@ -339,6 +386,7 @@ mod data_loaders;
 mod definitions;
 mod dirt;
 mod discrete_world;
+mod font_atlas_lifetime;
 mod gameflow;
 mod global_render_state;
 mod gravity_visuals;
@@ -351,11 +399,13 @@ mod particles;
 mod persistent_load;
 mod physics_queries;
 mod platform_services;
+mod poppy;
 mod position_constraints;
 mod prismatic_joints;
 mod pulley;
 mod render_bindings;
 mod render_submission;
+mod resource_images;
 mod resources;
 mod revolute_joints;
 mod rope_joints;

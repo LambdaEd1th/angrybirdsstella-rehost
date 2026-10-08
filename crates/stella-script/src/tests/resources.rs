@@ -305,19 +305,27 @@ fn locale_and_width_dispatchers_require_exact_strings_and_ignore_extras() {
 #[test]
 fn clip_text_uses_localized_font_width_break_set_and_forced_split_contract() {
     let (fixed_lines, fixed_widest) = native_clip_text_lines("one two-three\nfour", 7.0, |line| {
-        line.chars().count() as i32
-    });
+        Ok::<_, std::convert::Infallible>(line.chars().count() as i32)
+    })
+    .unwrap();
     assert_eq!(fixed_lines, ["one", "two-", "three", "four"]);
     assert_eq!(fixed_widest, 5.0);
-    let (forced_lines, forced_widest) =
-        native_clip_text_lines("abcdefgh", 3.0, |line| line.chars().count() as i32);
+    let (forced_lines, forced_widest) = native_clip_text_lines("abcdefgh", 3.0, |line| {
+        Ok::<_, std::convert::Infallible>(line.chars().count() as i32)
+    })
+    .unwrap();
     assert_eq!(forced_lines, ["ab", "cd", "ef", "gh"]);
     assert_eq!(forced_widest, 2.0);
-    let (newline_lines, newline_widest) =
-        native_clip_text_lines("a\n\nb\n", 7.0, |line| line.chars().count() as i32);
+    let (newline_lines, newline_widest) = native_clip_text_lines("a\n\nb\n", 7.0, |line| {
+        Ok::<_, std::convert::Infallible>(line.chars().count() as i32)
+    })
+    .unwrap();
     assert_eq!(newline_lines, ["a", "", "b"]);
     assert_eq!(newline_widest, 1.0);
-    let (_, rounded_widest) = native_clip_text_lines("x", f32::INFINITY, |_| 16_777_217_i32);
+    let (_, rounded_widest) = native_clip_text_lines("x", f32::INFINITY, |_| {
+        Ok::<_, std::convert::Infallible>(16_777_217_i32)
+    })
+    .unwrap();
     assert_eq!(rounded_widest.to_bits(), 16_777_216.0_f32.to_bits());
     assert_eq!(native_utf8_skipping_invalid(b"A\xffB\xc3(C"), "AB(C");
 
@@ -474,6 +482,11 @@ fn clip_text_dispatches_the_same_threshold_rule_through_bitmap_ifont() {
     fs::write(
         data_root.join("FONT.dat"),
         test_bitmap_font_with_glyph("font-atlas.pvr", 6),
+    )
+    .unwrap();
+    fs::write(
+        data_root.join("font-atlas.pvr"),
+        test_rgba_pvr(16, 8, [255; 4]),
     )
     .unwrap();
     fs::write(

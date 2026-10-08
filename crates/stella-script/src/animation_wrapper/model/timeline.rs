@@ -44,6 +44,22 @@ pub(crate) fn parse_animation_action(value: &serde_json::Value, action: &mut Ani
                         (f64::from(time as f32), parse_animation_timeline_event(&raw))
                     }));
             }
+            // Native loadClipJSON uses ordered map iteration, not its
+            // built-in ApplyHandler registration sequence (1004148B4).
+            if let Some(properties) = properties.as_object() {
+                let usages = action.native_usages.entry(name.clone()).or_default();
+                for (name, track) in properties {
+                    if let Some(usage) = AnimationUsage::from_name(name)
+                        && track
+                            .get("keyframes")
+                            .and_then(serde_json::Value::as_array)
+                            .is_some_and(|keys| !keys.is_empty())
+                        && !usages.contains(&usage)
+                    {
+                        usages.push(usage);
+                    }
+                }
+            }
         }
     }
     action

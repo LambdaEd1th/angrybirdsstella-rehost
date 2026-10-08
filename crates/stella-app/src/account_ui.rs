@@ -9,6 +9,9 @@ pub(crate) mod keyboard;
 mod layout;
 #[path = "account_ui/render.rs"]
 mod render;
+
+#[cfg(test)]
+pub(crate) use render::tests::native_account_window_color_fixture;
 #[path = "account_ui/state.rs"]
 mod state;
 #[path = "account_ui/strings.rs"]

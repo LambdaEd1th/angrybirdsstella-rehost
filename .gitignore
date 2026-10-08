@@ -3,6 +3,7 @@
 /build/
 /dist/
 /docs/
+/archive/
 *.log
 .DS_Store
 

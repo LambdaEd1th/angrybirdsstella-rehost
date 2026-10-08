@@ -121,6 +121,41 @@ impl SurfaceFormat {
         }
     }
 
+    /// Allocation counter arithmetic from `sub_1004DE110`, including signed
+    /// 32-bit multiplication/shift and minimum compressed texture extents.
+    /// Callers normalize source formats with `for_gl_upload` first.
+    pub const fn allocation_bytes(self, width: i32, height: i32) -> u32 {
+        const BITS: [i32; 34] = [
+            0, 24, 24, 32, 32, 32, 32, 16, 16, 32, 4, 8, 8, 16, 16, 16, 16, 16, 16, 16, 16, 8, 8,
+            8, 16, 16, 4, 8, 8, 2, 2, 4, 4, 4,
+        ];
+        let (width, height) = match self {
+            Self::Dxt1 | Self::Dxt3 | Self::Dxt5 => {
+                let blocks_x = (width.wrapping_add(3) as u32) >> 2;
+                let blocks_y = (height.wrapping_add(3) as u32) >> 2;
+                return blocks_x.wrapping_mul(blocks_y).wrapping_shl(match self {
+                    Self::Dxt1 => 3,
+                    _ => 4,
+                });
+            }
+            Self::RgbPvrtcGl2Bpp | Self::RgbaPvrtcGl2Bpp => (
+                if width < 16 { 16 } else { width },
+                if height < 8 { 8 } else { height },
+            ),
+            Self::RgbPvrtcGl4Bpp | Self::RgbaPvrtcGl4Bpp => (
+                if width < 8 { 8 } else { width },
+                if height < 8 { 8 } else { height },
+            ),
+            Self::Etc1Rgb4Bpp => {
+                let width = if width < 4 { 4 } else { width };
+                let height = if height < 4 { 4 } else { height };
+                return (width.wrapping_mul(height) >> 1) as u32;
+            }
+            _ => (width, height),
+        };
+        (width.wrapping_mul(height).wrapping_mul(BITS[self as usize]) >> 3) as u32
+    }
+
     /// Admit the normalized format through GLES2 helper `1005A11E4`.
     /// Reader support alone does not make a format usable as a native Image.
     pub const fn gl_texture_format(self, etc1_supported: bool) -> Result<Self, crate::AssetError> {
@@ -217,5 +252,138 @@ mod tests {
             SurfaceFormat::Etc1Rgb4Bpp.for_gl_upload(true),
             SurfaceFormat::Etc1Rgb4Bpp
         );
+    }
+
+    /// Golden results execute the unmodified ARM64 1004DE110 and its format
+    /// table from Purple (ba45c91d…), not a second copy of the Rust formula.
+    #[test]
+    fn allocation_bytes_match_unmodified_native_arm64_for_all_formats() {
+        const FORMATS: [SurfaceFormat; 34] = [
+            SurfaceFormat::Unknown,
+            SurfaceFormat::R8G8B8,
+            SurfaceFormat::B8G8R8,
+            SurfaceFormat::A8R8G8B8,
+            SurfaceFormat::X8R8G8B8,
+            SurfaceFormat::X8B8G8R8,
+            SurfaceFormat::A8B8G8R8,
+            SurfaceFormat::R5G6B5,
+            SurfaceFormat::R5G5B5,
+            SurfaceFormat::R6G6B6,
+            SurfaceFormat::P4,
+            SurfaceFormat::P8,
+            SurfaceFormat::L8,
+            SurfaceFormat::A8L8,
+            SurfaceFormat::A1R5G5B5,
+            SurfaceFormat::X4R4G4B4,
+            SurfaceFormat::A4R4G4B4,
+            SurfaceFormat::A4B4G4R4,
+            SurfaceFormat::R4G4B4A4,
+            SurfaceFormat::A1B5G5R5,
+            SurfaceFormat::R5G5B5A1,
+            SurfaceFormat::R3G3B2,
+            SurfaceFormat::R3G2B3,
+            SurfaceFormat::A8,
+            SurfaceFormat::A8R3G3B2,
+            SurfaceFormat::A8R3G2B3,
+            SurfaceFormat::Dxt1,
+            SurfaceFormat::Dxt3,
+            SurfaceFormat::Dxt5,
+            SurfaceFormat::RgbPvrtcGl2Bpp,
+            SurfaceFormat::RgbaPvrtcGl2Bpp,
+            SurfaceFormat::RgbPvrtcGl4Bpp,
+            SurfaceFormat::RgbaPvrtcGl4Bpp,
+            SurfaceFormat::Etc1Rgb4Bpp,
+        ];
+        const EXTENTS: [(i32, i32); 10] = [
+            (5, 7),
+            (1, 1),
+            (4, 2),
+            (8192, 8192),
+            (16384, 16384),
+            (2147483647, 7),
+            (-1, 9),
+            (0, 0),
+            (65536, 65536),
+            (32769, 65535),
+        ];
+        const NATIVE: [[u32; 10]; 34] = [
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [
+                105, 3, 24, 201326592, 4026531840, 4294967275, 4294967269, 0, 0, 98301,
+            ],
+            [
+                105, 3, 24, 201326592, 4026531840, 4294967275, 4294967269, 0, 0, 98301,
+            ],
+            [
+                140, 4, 32, 4026531840, 0, 4294967268, 4294967260, 0, 0, 131068,
+            ],
+            [
+                140, 4, 32, 4026531840, 0, 4294967268, 4294967260, 0, 0, 131068,
+            ],
+            [
+                140, 4, 32, 4026531840, 0, 4294967268, 4294967260, 0, 0, 131068,
+            ],
+            [
+                140, 4, 32, 4026531840, 0, 4294967268, 4294967260, 0, 0, 131068,
+            ],
+            [70, 2, 16, 134217728, 0, 4294967282, 4294967278, 0, 0, 65534],
+            [70, 2, 16, 134217728, 0, 4294967282, 4294967278, 0, 0, 65534],
+            [
+                140, 4, 32, 4026531840, 0, 4294967268, 4294967260, 0, 0, 131068,
+            ],
+            [
+                17, 0, 4, 33554432, 134217728, 4294967292, 4294967291, 0, 0, 16383,
+            ],
+            [
+                35, 1, 8, 67108864, 4026531840, 4294967289, 4294967287, 0, 0, 32767,
+            ],
+            [
+                35, 1, 8, 67108864, 4026531840, 4294967289, 4294967287, 0, 0, 32767,
+            ],
+            [70, 2, 16, 134217728, 0, 4294967282, 4294967278, 0, 0, 65534],
+            [70, 2, 16, 134217728, 0, 4294967282, 4294967278, 0, 0, 65534],
+            [70, 2, 16, 134217728, 0, 4294967282, 4294967278, 0, 0, 65534],
+            [70, 2, 16, 134217728, 0, 4294967282, 4294967278, 0, 0, 65534],
+            [70, 2, 16, 134217728, 0, 4294967282, 4294967278, 0, 0, 65534],
+            [70, 2, 16, 134217728, 0, 4294967282, 4294967278, 0, 0, 65534],
+            [70, 2, 16, 134217728, 0, 4294967282, 4294967278, 0, 0, 65534],
+            [70, 2, 16, 134217728, 0, 4294967282, 4294967278, 0, 0, 65534],
+            [
+                35, 1, 8, 67108864, 4026531840, 4294967289, 4294967287, 0, 0, 32767,
+            ],
+            [
+                35, 1, 8, 67108864, 4026531840, 4294967289, 4294967287, 0, 0, 32767,
+            ],
+            [
+                35, 1, 8, 67108864, 4026531840, 4294967289, 4294967287, 0, 0, 32767,
+            ],
+            [70, 2, 16, 134217728, 0, 4294967282, 4294967278, 0, 0, 65534],
+            [70, 2, 16, 134217728, 0, 4294967282, 4294967278, 0, 0, 65534],
+            [
+                32, 8, 8, 33554432, 134217728, 0, 0, 0, 2147483648, 1073872896,
+            ],
+            [64, 16, 16, 67108864, 268435456, 0, 0, 0, 0, 2147745792],
+            [64, 16, 16, 67108864, 268435456, 0, 0, 0, 0, 2147745792],
+            [32, 32, 32, 16777216, 67108864, 4294967294, 36, 32, 0, 8191],
+            [32, 32, 32, 16777216, 67108864, 4294967294, 36, 32, 0, 8191],
+            [
+                32, 32, 32, 33554432, 134217728, 4294967292, 36, 32, 0, 16383,
+            ],
+            [
+                32, 32, 32, 33554432, 134217728, 4294967292, 36, 32, 0, 16383,
+            ],
+            [
+                17, 8, 8, 33554432, 134217728, 1073741820, 18, 8, 0, 3221241855,
+            ],
+        ];
+        for (index, format) in FORMATS.into_iter().enumerate() {
+            for (case, (width, height)) in EXTENTS.into_iter().enumerate() {
+                assert_eq!(
+                    format.allocation_bytes(width, height),
+                    NATIVE[index][case],
+                    "{format:?}, {width}x{height}"
+                );
+            }
+        }
     }
 }

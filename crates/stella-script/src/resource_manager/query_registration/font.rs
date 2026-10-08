@@ -14,10 +14,7 @@ pub(crate) fn install(
             let mut resources = resource_runtime
                 .lock()
                 .expect("resource runtime lock poisoned");
-            if resources.bitmap_fonts.contains(&name) || resources.system_fonts.contains_key(&name)
-            {
-                resources.current_font = Some(name);
-            }
+            resources.select_native_font(&name);
             Ok(())
         })?,
     )
