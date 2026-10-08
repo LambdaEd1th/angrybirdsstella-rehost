@@ -271,14 +271,14 @@ jobs:
             # distribution format or delete previously published assets.
             gh release view "$RELEASE_TAG" --json assets > "$RUNNER_TEMP/release-assets.json"
             python - "$RUNNER_TEMP/release-assets.json" <<'PYASSETS'
-            import json
-            from pathlib import Path
-            import sys
-            allowed = {path.name for path in Path("dist").iterdir()}
-            existing = {asset["name"] for asset in json.loads(Path(sys.argv[1]).read_text())["assets"]}
-            if existing - allowed:
-                raise SystemExit("Existing release contains other assets; use a new version tag.")
-            PYASSETS
+          import json
+          from pathlib import Path
+          import sys
+          allowed = {path.name for path in Path("dist").iterdir()}
+          existing = {asset["name"] for asset in json.loads(Path(sys.argv[1]).read_text())["assets"]}
+          if existing - allowed:
+              raise SystemExit("Existing release contains other assets; use a new version tag.")
+          PYASSETS
             gh release upload "$RELEASE_TAG" dist/* --clobber
           else
             release_options=()
