@@ -1,0 +1,96 @@
+{
+  "provider": "Official IDA MCP Server",
+  "binary": "angry birds stella v1.1.6/Payload/Purple.app/Purple",
+  "binary_sha256": "ba45c91db09807fefa8207df0925b84250933c1c036c4846a8a71c0978749bbb",
+  "instance_id": "ad5d1f278855",
+  "date": "2026-10-09",
+  "field": "b2Body+0xAC angularDamping",
+  "float32_bits": "0x40000000",
+  "value": 2.0,
+  "result": [
+    {
+      "constructor": "0x100034740",
+      "angular_damping_override": [
+        {
+          "ea": "0x100034cf8",
+          "text": "TBZ             W22, #0, loc_100034D40"
+        },
+        {
+          "ea": "0x100034cfc",
+          "text": "LDR             X8, [X20,#0x88]"
+        },
+        {
+          "ea": "0x100034d00",
+          "text": "MOV             W9, #0x40000000"
+        },
+        {
+          "ea": "0x100034d04",
+          "text": "STR             W9, [X8,#0xAC]"
+        }
+      ]
+    },
+    {
+      "constructor": "0x100034fb0",
+      "angular_damping_override": [
+        {
+          "ea": "0x100035508",
+          "text": "CBZ             W19, loc_100035538"
+        },
+        {
+          "ea": "0x10003550c",
+          "text": "LDR             X8, [X20,#0x88]"
+        },
+        {
+          "ea": "0x100035510",
+          "text": "MOV             W9, #0x40000000"
+        },
+        {
+          "ea": "0x100035514",
+          "text": "STR             W9, [X8,#0xAC]"
+        }
+      ]
+    },
+    {
+      "constructor": "0x1000357a4",
+      "angular_damping_override": [
+        {
+          "ea": "0x100035d18",
+          "text": "CBZ             W23, loc_100035D28"
+        },
+        {
+          "ea": "0x100035d1c",
+          "text": "LDR             X8, [X19,#0x88]"
+        },
+        {
+          "ea": "0x100035d20",
+          "text": "MOV             W9, #0x40000000"
+        },
+        {
+          "ea": "0x100035d24",
+          "text": "STR             W9, [X8,#0xAC]"
+        }
+      ]
+    },
+    {
+      "constructor": "0x1000364e0",
+      "angular_damping_override": [
+        {
+          "ea": "0x100036a54",
+          "text": "CBZ             W23, loc_100036A64"
+        },
+        {
+          "ea": "0x100036a58",
+          "text": "LDR             X8, [X19,#0x88]"
+        },
+        {
+          "ea": "0x100036a5c",
+          "text": "MOV             W9, #0x40000000"
+        },
+        {
+          "ea": "0x100036a60",
+          "text": "STR             W9, [X8,#0xAC]"
+        }
+      ]
+    }
+  ]
+}

@@ -95,3 +95,9 @@ Chapter01_L18 window trace also enters `onSlingAiming` during a held mouse
 press. The short native UI-automation drag delivered both edges in one frame
 and is not counted as a successful visual flight validation. Normal save
 verification covers all 14 files with no changed hashes.
+
+The follow-up official IDA audit in `native-bird-rotation-and-drum-audit.md`
+recovers the controllable-object angular-damping overwrite from 1.0 to 2.0
+and repairs it with a failing-before/passing-after rotation regression. That
+separate discrepancy does not establish the drum or facial root cause; the
+compatibility exception and the limits described here remain explicit.

@@ -137,8 +137,52 @@ fn constructors_publish_only_the_native_objects_world_fields() {
         );
     }
     for name in ["box", "circle", "polygon", "line"] {
-        assert_eq!(bridge.scene[name].angular_damping, 1.0, "{name}");
+        let expected = if bridge.scene[name].controllable {
+            2.0
+        } else {
+            1.0
+        };
+        assert_eq!(bridge.scene[name].angular_damping, expected, "{name}");
     }
     assert_eq!(bridge.scene["none"].angular_damping, 0.0);
     assert_eq!(bridge.scene["none"].friction, 0.0);
+}
+
+#[test]
+fn controllable_bird_rotation_uses_the_native_constructor_damping_after_activation() {
+    let runtime = unlocked_test_runtime();
+    runtime
+        .execute_source(
+            r#"
+                createCircle("bird", "", 0, 0, 0.11, 4, 0, 0, true, true, 1)
+                createCircle("block", "", 20, 0, 0.11, 4, 0, 0, true, false, 1)
+                setWorldGravity(0, 0)
+                setActive("bird", true)
+                setAngularVelocity("bird", 3)
+                setAngularVelocity("block", 3)
+                updatePhysics = function() end
+                update = function() end
+            "#,
+        )
+        .unwrap();
+
+    let step = f32::from_bits(0x3D08_8889);
+    runtime.update(f64::from(step)).unwrap();
+    let bridge = runtime.render.lock().unwrap();
+    // Constructor 0x100035514 overwrites b2Body+0xAC with 0x40000000 for
+    // controllable circles. Solve at 0x10086CE84 then damps before rotating.
+    let bird_velocity = 3.0_f32 * (-step).mul_add(2.0_f32, 1.0_f32);
+    let block_velocity = 3.0_f32 * (-step).mul_add(1.0_f32, 1.0_f32);
+    for (name, expected_velocity) in [("bird", bird_velocity), ("block", block_velocity)] {
+        assert_eq!(
+            bridge.scene[name].angular_velocity,
+            f64::from(expected_velocity)
+        );
+        assert_eq!(
+            bridge.scene[name].angle,
+            f64::from(step * expected_velocity)
+        );
+    }
+    assert_ne!(bridge.scene["bird"].angle, bridge.scene["block"].angle);
+    assert!(!bridge.scene["bird"].bullet);
 }
