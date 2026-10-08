@@ -22,8 +22,8 @@ env:
   RUST_TOOLCHAIN: 1.98.1
   EMSCRIPTEN_VERSION: 6.0.1
   RUNTIME_DATA_RELEASE: runtime-data-v1.1.6
-  RUNTIME_DATA_ARCHIVE: angry-birds-stella-runtime-data-v1.1.6-beta3.tar.gz
-  RUNTIME_DATA_SHA256: 5192e225ccec77e604e76f9b8ce7b33fda067f67fefcff4239b22376e742e879
+  RUNTIME_DATA_ARCHIVE: angry-birds-stella-runtime-data-v1.1.6-beta5.tar.gz
+  RUNTIME_DATA_SHA256: 3bc46b97e2625925362de7ca91b32fa2467797c5d9975007ff307ab173a690a3
 
 jobs:
   build:
