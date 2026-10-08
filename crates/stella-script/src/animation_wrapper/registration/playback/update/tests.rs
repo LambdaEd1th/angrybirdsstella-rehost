@@ -105,7 +105,7 @@ fn unchanged_newer_discrete_state_blocks_an_older_state_change() {
         actions: BTreeMap::from([
             (
                 "lower".to_owned(),
-                AnimationAction {
+                AnimationAction::from(AnimationClip {
                     targets: BTreeMap::from([(
                         "SLOT".to_owned(),
                         direct_target(vec![
@@ -113,18 +113,16 @@ fn unchanged_newer_discrete_state_blocks_an_older_state_change() {
                             (0.5, "LOWER_1".to_owned()),
                         ]),
                     )]),
-                    ..AnimationAction::default()
-                },
+                }),
             ),
             (
                 "upper".to_owned(),
-                AnimationAction {
+                AnimationAction::from(AnimationClip {
                     targets: BTreeMap::from([(
                         "SLOT".to_owned(),
                         direct_target(vec![(0.0, "UPPER".to_owned())]),
                     )]),
-                    ..AnimationAction::default()
-                },
+                }),
             ),
         ]),
         slots: vec!["SLOT".to_owned()],
@@ -187,20 +185,18 @@ fn unchanged_newer_z_order_state_blocks_an_older_state_change() {
         actions: BTreeMap::from([
             (
                 "lower".to_owned(),
-                AnimationAction {
+                AnimationAction::from(AnimationClip {
                     targets: BTreeMap::from([(
                         "SLOT".to_owned(),
                         z_target(vec![(0.0, 10), (0.5, 20)]),
                     )]),
-                    ..AnimationAction::default()
-                },
+                }),
             ),
             (
                 "upper".to_owned(),
-                AnimationAction {
+                AnimationAction::from(AnimationClip {
                     targets: BTreeMap::from([("SLOT".to_owned(), z_target(vec![(0.0, 30)]))]),
-                    ..AnimationAction::default()
-                },
+                }),
             ),
         ]),
         slots: vec!["SLOT".to_owned()],
@@ -334,29 +330,34 @@ fn native_repeat_discards_large_delta_overshoot_before_next_cycle() {
         )
         .unwrap();
 
-    let action = AnimationAction {
-        event_track: vec![
-            (
-                0.0,
-                Some(AnimationTimelineEvent {
-                    name: "zero".to_owned(),
-                    integer: 0,
-                    number: 0.0,
-                    text: String::new(),
-                }),
-            ),
-            (
-                0.5,
-                Some(AnimationTimelineEvent {
-                    name: "middle".to_owned(),
-                    integer: 0,
-                    number: 0.0,
-                    text: String::new(),
-                }),
-            ),
-        ],
-        ..AnimationAction::default()
-    };
+    let action = AnimationAction::from(AnimationClip {
+        targets: BTreeMap::from([(
+            String::new(),
+            AnimationTarget {
+                event_track: vec![
+                    (
+                        0.0,
+                        Some(AnimationTimelineEvent {
+                            name: "zero".to_owned(),
+                            integer: 0,
+                            number: 0.0,
+                            text: String::new(),
+                        }),
+                    ),
+                    (
+                        0.5,
+                        Some(AnimationTimelineEvent {
+                            name: "middle".to_owned(),
+                            integer: 0,
+                            number: 0.0,
+                            text: String::new(),
+                        }),
+                    ),
+                ],
+                ..AnimationTarget::default()
+            },
+        )]),
+    });
     let mut runtime = AnimationRuntime::default();
     runtime.definitions.insert(
         "scene".to_owned(),
@@ -471,29 +472,34 @@ fn callback_queued_seek_event_waits_for_the_next_native_update() {
         )
         .unwrap();
 
-    let action = AnimationAction {
-        event_track: vec![
-            (
-                0.0,
-                Some(AnimationTimelineEvent {
-                    name: "zero".to_owned(),
-                    integer: 0,
-                    number: 0.0,
-                    text: String::new(),
-                }),
-            ),
-            (
-                0.5,
-                Some(AnimationTimelineEvent {
-                    name: "middle".to_owned(),
-                    integer: 0,
-                    number: 0.0,
-                    text: String::new(),
-                }),
-            ),
-        ],
-        ..AnimationAction::default()
-    };
+    let action = AnimationAction::from(AnimationClip {
+        targets: BTreeMap::from([(
+            String::new(),
+            AnimationTarget {
+                event_track: vec![
+                    (
+                        0.0,
+                        Some(AnimationTimelineEvent {
+                            name: "zero".to_owned(),
+                            integer: 0,
+                            number: 0.0,
+                            text: String::new(),
+                        }),
+                    ),
+                    (
+                        0.5,
+                        Some(AnimationTimelineEvent {
+                            name: "middle".to_owned(),
+                            integer: 0,
+                            number: 0.0,
+                            text: String::new(),
+                        }),
+                    ),
+                ],
+                ..AnimationTarget::default()
+            },
+        )]),
+    });
     let mut runtime = AnimationRuntime::default();
     runtime.actions.insert(
         "scene".to_owned(),

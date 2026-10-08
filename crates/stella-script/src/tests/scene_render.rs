@@ -67,8 +67,8 @@ fn flash_animation_draws_same_named_animation_with_native_scene_transform() {
     {
         let mut definition = AnimationDefinition::default();
         definition.slots.push("SLOT_BODY".to_owned());
-        let mut action = AnimationAction::default();
-        action
+        let mut action = AnimationAction::from(AnimationClip::default());
+        action.clips[0]
             .targets
             .entry("SLOT_BODY".to_owned())
             .or_default()
@@ -125,8 +125,8 @@ fn native_fixed_step_interpolation_is_action_independent_for_flash_birds() {
     {
         let mut definition = AnimationDefinition::default();
         definition.slots.push("SLOT_BODY".to_owned());
-        let mut action = AnimationAction::default();
-        action
+        let mut action = AnimationAction::from(AnimationClip::default());
+        action.clips[0]
             .targets
             .entry("SLOT_BODY".to_owned())
             .or_default()
@@ -203,8 +203,8 @@ fn flash_birds_preserve_native_angle_across_actions_flip_speed_and_slow_motion()
         let mut definition = AnimationDefinition::default();
         definition.slots.push("SLOT_BODY".to_owned());
         for name in actions {
-            let mut action = AnimationAction::default();
-            action
+            let mut action = AnimationAction::from(AnimationClip::default());
+            action.clips[0]
                 .targets
                 .entry("SLOT_BODY".to_owned())
                 .or_default()
@@ -330,8 +330,8 @@ fn released_poppy_power_keeps_the_lua_pinned_pose_at_normal_time() {
     {
         let mut definition = AnimationDefinition::default();
         definition.slots.push("SLOT_BODY".to_owned());
-        let mut action = AnimationAction::default();
-        action
+        let mut action = AnimationAction::from(AnimationClip::default());
+        action.clips[0]
             .targets
             .entry("SLOT_BODY".to_owned())
             .or_default()
@@ -382,8 +382,8 @@ fn ordinary_willow_action_keeps_its_solved_physics_pose_and_authored_angle() {
     {
         let mut definition = AnimationDefinition::default();
         definition.slots.push("SLOT_BODY".to_owned());
-        let mut action = AnimationAction::default();
-        action
+        let mut action = AnimationAction::from(AnimationClip::default());
+        action.clips[0]
             .targets
             .entry("SLOT_BODY".to_owned())
             .or_default()
@@ -448,8 +448,8 @@ fn scripted_stella_ability_keeps_its_exact_per_frame_lua_pose() {
     {
         let mut definition = AnimationDefinition::default();
         definition.slots.push("SLOT_BODY".to_owned());
-        let mut action = AnimationAction::default();
-        action
+        let mut action = AnimationAction::from(AnimationClip::default());
+        action.clips[0]
             .targets
             .entry("SLOT_BODY".to_owned())
             .or_default()

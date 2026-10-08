@@ -373,6 +373,7 @@ impl Drop for ShippedDataSandbox {
 mod animation;
 mod animation_entity_matrix;
 mod animation_skin_lookup;
+mod animation_timeline_identity;
 mod audio_registration;
 mod bird_run;
 mod bird_states;

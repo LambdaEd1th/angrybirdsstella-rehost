@@ -275,14 +275,20 @@ pub(crate) struct AnimationSkinTransform {
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct AnimationAction {
+    /// Control +64 owns an ordered Clip vector (10040E5E4). Timeline identity
+    /// includes the clip; merging equal target/usage names loses native States.
+    pub(crate) clips: Vec<AnimationClip>,
+}
+
+impl From<AnimationClip> for AnimationAction {
+    fn from(clip: AnimationClip) -> Self {
+        Self { clips: vec![clip] }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct AnimationClip {
     pub(crate) targets: BTreeMap<String, AnimationTarget>,
-    /// The native JSON/clip insertion order of usage groups for each target.
-    /// It is distinct from both ApplyHandler registration and control order.
-    pub(crate) native_usages: BTreeMap<String, Vec<AnimationUsage>>,
-    /// The single shipped `spineEvent` discrete track, including empty reset
-    /// keys. Native change detection compares keyframe indices, not only the
-    /// parsed non-empty event values.
-    pub(crate) event_track: Vec<(f64, Option<AnimationTimelineEvent>)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -302,6 +308,9 @@ pub(crate) struct AnimationTarget {
     pub(crate) sprite: Vec<(f64, String)>,
     pub(crate) sprite_kind: AnimationSpriteTrackKind,
     pub(crate) z_order: Vec<(f64, i64)>,
+    /// Each target/clip owns its own discrete event Timeline, including empty
+    /// reset keys. States compare that Timeline's key indices (10040E7B0).
+    pub(crate) event_track: Vec<(f64, Option<AnimationTimelineEvent>)>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

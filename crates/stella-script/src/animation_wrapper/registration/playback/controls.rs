@@ -98,8 +98,14 @@ mod tests {
             "scene".to_owned(),
             AnimationDefinition {
                 actions: BTreeMap::from([
-                    ("static".to_owned(), AnimationAction::default()),
-                    ("moving".to_owned(), AnimationAction::default()),
+                    (
+                        "static".to_owned(),
+                        AnimationAction::from(AnimationClip::default()),
+                    ),
+                    (
+                        "moving".to_owned(),
+                        AnimationAction::from(AnimationClip::default()),
+                    ),
                 ]),
                 ..AnimationDefinition::default()
             },
@@ -138,21 +144,22 @@ mod tests {
     fn native_active_controls_preserve_order_speed_and_per_property_fallback() {
         let lua = Lua::new();
         let animation_native = lua.create_table().unwrap();
-        let mut base = AnimationAction::default();
-        base.targets
+        let mut base = AnimationAction::from(AnimationClip::default());
+        base.clips[0]
+            .targets
             .entry("root".to_owned())
             .or_default()
             .translation
             .push((0.0, [10.0, 20.0]));
-        let mut overlay = AnimationAction::default();
-        overlay
+        let mut overlay = AnimationAction::from(AnimationClip::default());
+        overlay.clips[0]
             .targets
             .entry("root".to_owned())
             .or_default()
             .rotation
             .push((0.0, 0.5));
-        let mut newest = AnimationAction::default();
-        newest
+        let mut newest = AnimationAction::from(AnimationClip::default());
+        newest.clips[0]
             .targets
             .entry("root".to_owned())
             .or_default()
@@ -222,7 +229,12 @@ mod tests {
         let animation_native = lua.create_table().unwrap();
         let actions = ["base", "overlay", "newest"]
             .into_iter()
-            .map(|name| (name.to_owned(), AnimationAction::default()))
+            .map(|name| {
+                (
+                    name.to_owned(),
+                    AnimationAction::from(AnimationClip::default()),
+                )
+            })
             .collect::<BTreeMap<_, _>>();
         let mut runtime = AnimationRuntime::default();
         runtime.actions.insert(
@@ -260,13 +272,13 @@ mod tests {
     fn removing_the_last_property_state_keeps_the_component_latched_value() {
         let lua = Lua::new();
         let animation_native = lua.create_table().unwrap();
-        let mut action = AnimationAction::default();
-        action
+        let mut action = AnimationAction::from(AnimationClip::default());
+        action.clips[0]
             .targets
             .entry("root".to_owned())
             .or_default()
             .translation = vec![(0.0, [0.0, 10.0]), (1.0, [100.0, 30.0])];
-        action
+        action.clips[0]
             .targets
             .entry("SLOT_BODY".to_owned())
             .or_default()
@@ -355,7 +367,10 @@ mod tests {
         runtime.definitions.insert(
             "scene".to_owned(),
             AnimationDefinition {
-                actions: BTreeMap::from([("action".to_owned(), AnimationAction::default())]),
+                actions: BTreeMap::from([(
+                    "action".to_owned(),
+                    AnimationAction::from(AnimationClip::default()),
+                )]),
                 ..AnimationDefinition::default()
             },
         );

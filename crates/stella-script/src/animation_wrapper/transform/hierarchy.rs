@@ -42,10 +42,12 @@ pub(crate) fn animation_definition_contains_entity(
         || definition.parents.contains_key(entity)
         || definition.parents.values().any(|parent| parent == entity)
         || definition.slots.iter().any(|slot| slot == entity)
-        || definition
-            .actions
-            .values()
-            .any(|action| action.targets.contains_key(entity))
+        || definition.actions.values().any(|action| {
+            action
+                .clips
+                .iter()
+                .any(|clip| clip.targets.contains_key(entity))
+        })
 }
 
 pub(crate) fn animation_local_transform(
@@ -121,15 +123,15 @@ pub(crate) fn animation_target_sample<'a>(
     has_track: impl Fn(&AnimationTarget) -> bool,
 ) -> Option<(&'a AnimationTarget, f64)> {
     for control in playback.controls.iter().rev() {
-        let Some(target) = definition
-            .actions
-            .get(&control.action)
-            .and_then(|action| action.targets.get(entity))
-        else {
+        let Some(action) = definition.actions.get(&control.action) else {
             continue;
         };
-        if has_track(target) {
-            return Some((target, control.elapsed));
+        for clip in action.clips.iter().rev() {
+            if let Some(target) = clip.targets.get(entity)
+                && has_track(target)
+            {
+                return Some((target, control.elapsed));
+            }
         }
     }
     None

@@ -325,7 +325,7 @@ fn animation_resource_snapshot(
 ) -> AnimationResourceSnapshot {
     let mut names = BTreeSet::new();
     for action in definition.actions.values() {
-        for target in action.targets.values() {
+        for target in action.clips.iter().flat_map(|clip| clip.targets.values()) {
             if target.sprite_kind == AnimationSpriteTrackKind::DirectSprite {
                 for (_, sprite) in &target.sprite {
                     if !sprite.is_empty() {

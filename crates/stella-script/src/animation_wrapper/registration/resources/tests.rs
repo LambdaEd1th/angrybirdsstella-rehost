@@ -10,7 +10,7 @@ fn host_with_scene() -> StellaLua {
         definition: AnimationDefinition {
             actions: BTreeMap::from([(
                 "idle".to_owned(),
-                AnimationAction {
+                AnimationAction::from(AnimationClip {
                     targets: BTreeMap::from([(
                         "root".to_owned(),
                         AnimationTarget {
@@ -18,8 +18,7 @@ fn host_with_scene() -> StellaLua {
                             ..AnimationTarget::default()
                         },
                     )]),
-                    ..AnimationAction::default()
-                },
+                }),
             )]),
             ..AnimationDefinition::default()
         },

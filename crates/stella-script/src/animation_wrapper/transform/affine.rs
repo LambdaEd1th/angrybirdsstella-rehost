@@ -370,7 +370,7 @@ mod tests {
 
     #[test]
     fn mirrored_parent_correction_reverses_non_slot_rotation_but_skips_slots() {
-        let action = AnimationAction {
+        let action = AnimationAction::from(AnimationClip {
             targets: BTreeMap::from([
                 (
                     "MIRROR".to_owned(),
@@ -396,8 +396,7 @@ mod tests {
                     },
                 ),
             ]),
-            ..AnimationAction::default()
-        };
+        });
         let definition = AnimationDefinition {
             actions: BTreeMap::from([("idle".to_owned(), action)]),
             entities: BTreeSet::from([

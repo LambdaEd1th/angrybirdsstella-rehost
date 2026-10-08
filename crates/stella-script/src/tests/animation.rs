@@ -32,8 +32,11 @@ fn animation_skin_rotation_uses_native_inverse_attachment_basis() {
         slots: vec!["SLOT_TEST".to_owned()],
         ..AnimationDefinition::default()
     };
-    let mut action = AnimationAction::default();
-    let slot = action.targets.entry("SLOT_TEST".to_owned()).or_default();
+    let mut action = AnimationAction::from(AnimationClip::default());
+    let slot = action.clips[0]
+        .targets
+        .entry("SLOT_TEST".to_owned())
+        .or_default();
     slot.sprite.push((0.0, "TEST_SPRITE".to_owned()));
     definition.actions.insert("idle".to_owned(), action);
     definition.skins.insert(
@@ -94,8 +97,8 @@ fn animation_skin_resolves_namespaced_track_alias_before_basename() {
         skins: parse_animation_skins(&document),
         ..AnimationDefinition::default()
     };
-    let mut action = AnimationAction::default();
-    action
+    let mut action = AnimationAction::from(AnimationClip::default());
+    action.clips[0]
         .targets
         .entry("SLOT_BORDER_DOWN".to_owned())
         .or_default()
@@ -626,14 +629,14 @@ fn animation_skin_inherits_default_and_hides_unselected_attachments() {
         slots: vec!["SLOT_EYES".to_owned(), "SLOT_ATTACHMENT".to_owned()],
         ..AnimationDefinition::default()
     };
-    let mut action = AnimationAction::default();
-    action
+    let mut action = AnimationAction::from(AnimationClip::default());
+    action.clips[0]
         .targets
         .entry("SLOT_EYES".to_owned())
         .or_default()
         .sprite
         .push((0.0, "EYES_ALIAS".to_owned()));
-    action
+    action.clips[0]
         .targets
         .entry("SLOT_ATTACHMENT".to_owned())
         .or_default()
@@ -687,8 +690,8 @@ fn custom_animation_sprite_component_preserves_case_for_native_lookup() {
         slots: vec!["SLOT_DIRECT".to_owned()],
         ..AnimationDefinition::default()
     };
-    let mut action = AnimationAction::default();
-    action
+    let mut action = AnimationAction::from(AnimationClip::default());
+    action.clips[0]
         .targets
         .entry("SLOT_DIRECT".to_owned())
         .or_default()
@@ -710,8 +713,8 @@ fn selected_skin_preserves_mixed_case_editor_guide_attachment() {
         slots: vec!["SLOT_Poppy_idle".to_owned()],
         ..AnimationDefinition::default()
     };
-    let mut action = AnimationAction::default();
-    action
+    let mut action = AnimationAction::from(AnimationClip::default());
+    action.clips[0]
         .targets
         .entry("SLOT_Poppy_idle".to_owned())
         .or_default()
@@ -752,13 +755,19 @@ fn animation_z_order_draws_opaque_background_before_foreground_slots() {
         slots: vec!["BACKGROUND".to_owned(), "FOREGROUND".to_owned()],
         ..AnimationDefinition::default()
     };
-    let mut action = AnimationAction::default();
-    let background = action.targets.entry("BACKGROUND".to_owned()).or_default();
+    let mut action = AnimationAction::from(AnimationClip::default());
+    let background = action.clips[0]
+        .targets
+        .entry("BACKGROUND".to_owned())
+        .or_default();
     background
         .sprite
         .push((0.0, "OPAQUE_BACKGROUND".to_owned()));
     background.z_order.push((0.0, 14));
-    let foreground = action.targets.entry("FOREGROUND".to_owned()).or_default();
+    let foreground = action.clips[0]
+        .targets
+        .entry("FOREGROUND".to_owned())
+        .or_default();
     foreground
         .sprite
         .push((0.0, "VISIBLE_FOREGROUND".to_owned()));
@@ -788,7 +797,7 @@ fn animation_sprite_components_append_native_centering_after_atlas_pivot_vertice
         slots: vec!["SLOT_PANEL".to_owned()],
         actions: BTreeMap::from([(
             "idle".to_owned(),
-            AnimationAction {
+            AnimationAction::from(AnimationClip {
                 targets: BTreeMap::from([(
                     "SLOT_PANEL".to_owned(),
                     AnimationTarget {
@@ -796,8 +805,7 @@ fn animation_sprite_components_append_native_centering_after_atlas_pivot_vertice
                         ..AnimationTarget::default()
                     },
                 )]),
-                ..AnimationAction::default()
-            },
+            }),
         )]),
         ..AnimationDefinition::default()
     };
@@ -859,14 +867,17 @@ fn animation_render_preserves_full_parent_child_affine_matrix() {
         slots: vec!["SLOT_TEST".to_owned()],
         ..AnimationDefinition::default()
     };
-    let mut action = AnimationAction::default();
-    action
+    let mut action = AnimationAction::from(AnimationClip::default());
+    action.clips[0]
         .targets
         .entry("root".to_owned())
         .or_default()
         .scale
         .push((0.0, [2.0, 3.0]));
-    let slot = action.targets.entry("SLOT_TEST".to_owned()).or_default();
+    let slot = action.clips[0]
+        .targets
+        .entry("SLOT_TEST".to_owned())
+        .or_default();
     slot.rotation.push((0.0, std::f64::consts::FRAC_PI_4));
     slot.sprite.push((0.0, "TEST_SPRITE".to_owned()));
     definition.actions.insert("idle".to_owned(), action);
@@ -912,14 +923,20 @@ fn animation_entity_queries_match_scene_relative_native_matrices_and_bounds() {
         slots: vec!["SLOT_TEST".to_owned()],
         ..AnimationDefinition::default()
     };
-    let mut action = AnimationAction::default();
-    let root = action.targets.entry("root".to_owned()).or_default();
+    let mut action = AnimationAction::from(AnimationClip::default());
+    let root = action.clips[0]
+        .targets
+        .entry("root".to_owned())
+        .or_default();
     root.translation.push((0.0, [10.0, 20.0]));
     root.scale.push((0.0, [2.0, 3.0]));
-    let joint = action.targets.entry("JOINT".to_owned()).or_default();
+    let joint = action.clips[0]
+        .targets
+        .entry("JOINT".to_owned())
+        .or_default();
     joint.translation.push((0.0, [5.0, 7.0]));
     joint.scale.push((0.0, [0.5, 2.0]));
-    action
+    action.clips[0]
         .targets
         .entry("SLOT_TEST".to_owned())
         .or_default()
@@ -1009,11 +1026,14 @@ fn animation_world_bounds_include_selected_skin_attachment_transform() {
         slots: vec!["SLOT_TEST".to_owned()],
         ..AnimationDefinition::default()
     };
-    let mut action = AnimationAction::default();
-    let root = action.targets.entry("root".to_owned()).or_default();
+    let mut action = AnimationAction::from(AnimationClip::default());
+    let root = action.clips[0]
+        .targets
+        .entry("root".to_owned())
+        .or_default();
     root.translation.push((0.0, [10.0, 20.0]));
     root.scale.push((0.0, [1.0, 6.0]));
-    action
+    action.clips[0]
         .targets
         .entry("SLOT_TEST".to_owned())
         .or_default()

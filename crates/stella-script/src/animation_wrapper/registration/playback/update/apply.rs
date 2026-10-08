@@ -140,6 +140,13 @@ fn latch_native_targets(
             let Some(action) = definition.actions.get(&state.action) else {
                 continue;
             };
+            let Some(track) = action
+                .clips
+                .get(state.clip_index)
+                .and_then(|clip| clip.targets.get(entity))
+            else {
+                continue;
+            };
             let previous = state.elapsed;
             let delta = control.elapsed as f32 - previous;
             // StateBase::update returns false without invoking its timeline
@@ -153,18 +160,15 @@ fn latch_native_targets(
             let time = f64::from(time);
             if group.usage == AnimationUsage::SpineEvent {
                 let event = if mode == 3 {
-                    animation_event_after_state_change(action, f64::from(previous), time)
+                    animation_event_after_state_change(track, f64::from(previous), time)
                 } else {
-                    animation_event_at(action, time)
+                    animation_event_at(track, time)
                 };
                 if let Some(event) = event {
                     events.push(event);
                 }
                 continue;
             }
-            let Some(track) = action.targets.get(entity) else {
-                continue;
-            };
             let target = playback.latched_targets.entry(entity.clone()).or_default();
             match group.usage {
                 AnimationUsage::Translation => {
