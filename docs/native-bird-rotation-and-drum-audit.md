@@ -66,8 +66,11 @@ silently removed while the fixed player reproduction still requires it.
 The verified damping discrepancy is not established as the cause of either
 reported symptom. Sling launch resets angular velocity to zero. Poppy's
 existing checks and saved images already showed distinct sling, pull and
-flight faces before this repair. No new expression-freeze root cause was
-identified. These observations must not be reported as a newly proved facial
+flight faces before this repair. A subsequent audit identified the separate
+top-bar purchase mapping replacement, documented in
+`native-purchased-poppy-animation.md`. The player's corrected original-game
+comparison confirms its retained idle face is native behavior. These
+observations must not be reported as a newly proved facial
 repair, complete drum equivalence, or complete original-game parity.
 
 ## Validation
@@ -94,7 +97,10 @@ require the level to remain incomplete. The drum case observes cover-only
 contacts with no post-launch input, unsolicited ability or collision state.
 The Poppy images show different pull and flight faces; they are local runtime
 regression evidence, not a comparison against original native rendering.
-All 14 normal-save file hashes remain unchanged. Debug, diagnostic and release
+All 14 normal-save file hashes remained unchanged during those four headless
+scenarios. The later inconclusive window experiment and new purchase audit
+have separate save baselines, as documented in `native-purchased-poppy-animation.md`.
+Debug, diagnostic and release
 app builds succeed; no build or evidence is uploaded or published.
 
 Two initial verification observers incorrectly read the cleared

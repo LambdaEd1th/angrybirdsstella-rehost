@@ -12,7 +12,7 @@ fn advance(runtime: &StellaLua, frames: usize) {
     }
 }
 
-fn assert_face(runtime: &StellaLua, bird: &str, sprite: &str) {
+pub(super) fn assert_face(runtime: &StellaLua, bird: &str, sprite: &str) {
     runtime.draw().unwrap();
     let commands = runtime.take_render_commands();
     let animation = runtime._animation_runtime.lock().unwrap();

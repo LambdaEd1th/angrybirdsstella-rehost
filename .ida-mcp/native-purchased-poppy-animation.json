@@ -1,0 +1,230 @@
+{
+  "provider": "Official IDA MCP Server",
+  "instance_id": "ad5d1f278855",
+  "date": "2026-10-09",
+  "binary": "angry birds stella v1.1.6/Payload/Purple.app/Purple",
+  "binary_sha256": "ba45c91db09807fefa8207df0925b84250933c1c036c4846a8a71c0978749bbb",
+  "resource_verification": {
+    "method": "Original encrypted resource read and decoded within official IDA execute_python; native AES/7z pipeline verified at 0x1000512D8 and 0x100051810.",
+    "resource": "angry birds stella v1.1.6/Payload/Purple.app/data/config/telepod_configuration.dat",
+    "encrypted_sha256": "f0c9840e774c37a8e5e8ca1dee4b0ea9fd1541bb9f223b29b3106531f27172d3",
+    "decrypted_archive_sha256": "2626d06f6ad55297da243c431093ee00df213d98095c8fba2e9ee3ccb9db4e11",
+    "plaintext_sha256": "2b6afc6308d6892173e536491d059fd9edd90b6624fe330d3b50f405905c58ee",
+    "plaintext_bytes": 55621,
+    "version": 35,
+    "matches_extracted_bytes": true,
+    "poppy": {
+      "baseBird": "Poppy",
+      "preSpawnEffect": "",
+      "spawnEffect": "",
+      "levels": {
+        "1": {
+          "requiredSpriteSheets": [],
+          "animation": {
+            "file": "",
+            "sprites": {
+              "idle": "@Poppy_Idle",
+              "blink": "@Poppy_idle_02",
+              "slide": "@Poppy_Sliding",
+              "flyUp": "@Poppy_Going_Up",
+              "flyLevel": "@Poppy_Highest_Point",
+              "flyDown": "@Poppy_Coming_down",
+              "flyBackwards": "@Poppy_Fly_Back",
+              "flyDownBackwards": "@Poppy_Landing",
+              "sideCollision": "@Poppy_Side_Collision",
+              "bottomCollision": "@Poppy_Impact",
+              "topCollision": "@Poppy_Hit",
+              "idleAnimation": [
+                "@Poppy_Jump",
+                "@Poppy_Jump",
+                "@Poppy_Idle_01"
+              ],
+              "idleSounds": {
+                "@Poppy_Jump": "@IngamePoppyJump",
+                "@Poppy_Idle_01": "character_poppy_idle_drum"
+              },
+              "leave": "@Poppy_Jump_Off",
+              "celebration": "@Poppy_Celebration"
+            },
+            "skin": "Normal",
+            "customStates": {}
+          },
+          "scrapbookSprite": "SCRAPBOOK_POPPY01"
+        }
+      }
+    }
+  },
+  "native_loading_functions": [
+    {
+      "ea": "0x1000512d8",
+      "name": "sub_1000512D8",
+      "pseudocode": "void __usercall sub_1000512D8(__int64 a1@<X0>, __int64 a2@<X1>, int a3@<W2>, int a4@<W3>, int a5@<W4>, _QWORD *a6@<X8>)\n{\n  _OWORD *v9; // x0\n  void *v10; // x0\n  __int64 v11; // x0\n  int v12; // w0\n  char *v13; // x1\n  int v14; // w8\n  __int64 *v15; // x0\n  char *v16; // x21\n  char *v17; // x22\n  signed __int64 v18; // x20\n  __int64 v19; // x0\n  char *v20; // x8\n  unsigned __int64 v21; // x10\n  __int64 v22; // x11\n  char *v23; // x9\n  __int128 v24; // q1\n  __int64 v25; // x13\n  char v26; // t1\n  unsigned int *v27; // x8\n  int v28; // w10\n  char v29[8]; // [xsp+8h] [xbp-128h] BYREF\n  __int64 v30; // [xsp+10h] [xbp-120h] BYREF\n  _QWORD v31[9]; // [xsp+18h] [xbp-118h] BYREF\n  __int64 v32; // [xsp+60h] [xbp-D0h] BYREF\n  __int64 v33; // [xsp+68h] [xbp-C8h] BYREF\n  void *v34[3]; // [xsp+70h] [xbp-C0h] BYREF\n  void *v35[3]; // [xsp+88h] [xbp-A8h] BYREF\n  _BYTE v36[48]; // [xsp+A0h] [xbp-90h] BYREF\n  char *v37; // [xsp+D0h] [xbp-60h] BYREF\n  char *v38; // [xsp+D8h] [xbp-58h]\n  __int64 v39; // [xsp+E0h] [xbp-50h]\n  char v40; // [xsp+EFh] [xbp-41h]\n  char v41[16]; // [xsp+F0h] [xbp-40h] BYREF\n\n  v38 = 0;\n  v39 = 0;\n  v37 = 0;\n  if ( a3 )\n  {\n    sub_1005045BC(a1: v36, a2);\n    sub_1004FC634(a1: v35, a2: v36);\n    if ( a4 )\n    {\n      v9 = (_OWORD *)operator new(a1: 0x20u);\n      v9[1] = xmmword_1009AEF40;\n      v34[0] = v9;\n      v34[2] = v9 + 2;\n      *v9 = xmmword_1009AEF30;\n      v34[1] = v9 + 2;\n      sub_100557E5C(a1: &v33, a2: (__int64)v34, a3: 0, a4: 0);\n      sub_100557F40(a1: &v33, a2: (__int64 *)v35, a3: (int)&v37);\n      sub_100557ED8(a1: &v33);\n      v10 = v34[0];\n      if ( v34[0] )\n        operator delete(a1: v34[0]);\n    }\n    else\n    {\n      v15 = sub_1000E3A14();\n      sub_100557E5C(a1: &v32, a2: (__int64)v15, a3: 0, a4: 0);\n      sub_100557F40(a1: &v32, a2: (__int64 *)v35, a3: (int)&v37);\n      v10 = (void *)sub_100557ED8(a1: &v32);\n    }\n    if ( a5 )\n      sub_100061C10(a1: (__int64)v10, a2: (const void **)&v37, a3: (void **)&v37);\n    if ( v35[0] )\n      operator delete(a1: v35[0]);\n    sub_1005045C0(a1: v36);\n  }\n  else\n  {\n    sub_100401988(a1: &v30, a2: *(_QWORD *)(a1 + 216), a3: a2);\n    sub_100505BE4(a1: v31, a2: &v30, a3: 0);\n    v11 = v30 - 24;\n    if ( (_UNKNOWN *)(v30 - 24) != &std::string::_Rep::_S_empty_rep_storage )\n    {\n      v27 = (unsigned int *)(v30 - 8);\n      do\n        v28 = __ldaxr(v27);\n      while ( __stlxr(v28 - 1, v27) );\n      if ( v28 <= 0 )\n        std::string::_Rep::_M_destroy(a1: v11, a2: v41);\n    }\n    v12 = (*(__int64 (__fastcall **)(_QWORD *))(v31[0] + 40LL))(a1: v31);\n    v40 = 0;\n    v13 = v37;\n    if ( v12 >= (unsigned __int64)(v38 - v37) )\n    {\n      std::vector<unsigned char>::_M_fill_insert(a1: (int)&v37, a2: (int)v38, __len: v12 - (v38 - v37));\n      v13 = v37;\n      v14 = (int)v38;\n    }\n    else\n    {\n      v14 = (_DWORD)v37 + v12;\n      v38 = &v37[v12];\n    }\n    (*(void (__fastcall **)(_QWORD *, char *, _QWORD))(v31[0] + 16LL))(\n      a1: v31,\n      a2: v13,\n      a3: (unsigned int)(v14 - (_DWORD)v13));\n    sub_100505BE8(a1: v31);\n  }\n  v17 = v37;\n  v16 = v38;\n  if ( v37 == v38 )\n  {\n    v20 = (char *)&std::string::_Rep::_S_empty_rep_storage + 24;\n  }\n  else\n  {\n    v18 = v38 - v37;\n    v19 = std::string::_Rep::_S_create(a1: v38 - v37, a2: 0, a3: v29);\n    v20 = (char *)(v19 + 24);\n    v21 = v18 & 0xFFFFFFFFFFFFFFE0LL;\n    if ( (v18 & 0xFFFFFFFFFFFFFFE0LL) != 0 )\n    {\n      v22 = 0;\n      v23 = &v20[v21];\n      if ( v20 > v16 - 1 || v17 > &v16[v19 + 20 + 3LL - (_QWORD)v17] )\n      {\n        do\n        {\n          v24 = *(_OWORD *)&v17[v22 + 16];\n          v25 = v19 + v22;\n          *(_OWORD *)(v25 + 24) = *(_OWORD *)&v17[v22];\n          *(_OWORD *)(v25 + 40) = v24;\n          v22 += 32;\n        }\n        while ( v21 != v22 );\n        v17 += v21;\n      }\n      else\n      {\n        v23 = (char *)(v19 + 24);\n        v21 = 0;\n      }\n    }\n    else\n    {\n      v21 = 0;\n      v23 = (char *)(v19 + 24);\n    }\n    if ( v18 != v21 )\n    {\n      do\n      {\n        v26 = *v17++;\n        *v23++ = v26;\n      }\n      while ( v16 != v17 );\n    }\n    *(_DWORD *)(v19 + 16) = 0;\n    *(_QWORD *)v19 = v18;\n    v20[v18] = std::string::_Rep::_S_terminal;\n  }\n  *a6 = v20;\n  if ( v37 )\n    operator delete(a1: v37);\n}",
+      "callees": [
+        {
+          "ea": "0x1005045bc",
+          "name": "sub_1005045BC"
+        },
+        {
+          "ea": "0x1004fc634",
+          "name": "sub_1004FC634"
+        },
+        {
+          "ea": "0x1008a8aec",
+          "name": "__Znwm"
+        },
+        {
+          "ea": "0x100557e5c",
+          "name": "sub_100557E5C"
+        },
+        {
+          "ea": "0x100557f40",
+          "name": "sub_100557F40"
+        },
+        {
+          "ea": "0x100557ed8",
+          "name": "sub_100557ED8"
+        },
+        {
+          "ea": "0x1008a8ac8",
+          "name": "__ZdlPv"
+        },
+        {
+          "ea": "0x100401988",
+          "name": "sub_100401988"
+        },
+        {
+          "ea": "0x100505be4",
+          "name": "sub_100505BE4"
+        },
+        {
+          "ea": "0x1000e3a14",
+          "name": "sub_1000E3A14"
+        },
+        {
+          "ea": "0x100061c10",
+          "name": "sub_100061C10"
+        },
+        {
+          "ea": "0x1005045c0",
+          "name": "sub_1005045C0"
+        },
+        {
+          "ea": "0x1008a2150",
+          "name": "j___ZNSt6vectorIhSaIhEE14_M_fill_insertEN9__gnu_cxx17__normal_iteratorIPhS1_EEmRKh"
+        },
+        {
+          "ea": "0x100505be8",
+          "name": "sub_100505BE8"
+        },
+        {
+          "ea": "0x1008a8810",
+          "name": "__ZNSs4_Rep9_S_createEmmRKSaIcE"
+        },
+        {
+          "ea": "0x1008a8804",
+          "name": "__ZNSs4_Rep10_M_destroyERKSaIcE"
+        }
+      ]
+    },
+    {
+      "ea": "0x100051810",
+      "name": "sub_100051810",
+      "pseudocode": "__int64 __fastcall sub_100051810(__int64 a1, __int64 a2)\n{\n  int v4; // w23\n  __int64 v5; // x0\n  _BOOL4 v6; // w22\n  _BOOL4 v7; // w21\n  _BOOL4 v8; // w24\n  int v9; // w23\n  __int64 v10; // x0\n  __int64 v11; // x0\n  __int64 v12; // x0\n  unsigned int *v14; // x8\n  int v15; // w10\n  unsigned int *v16; // x8\n  int v17; // w10\n  unsigned int *v18; // x8\n  int v19; // w10\n  _BYTE v20[40]; // [xsp+8h] [xbp-98h] BYREF\n  __int64 v21; // [xsp+30h] [xbp-70h] BYREF\n  __int64 v22; // [xsp+38h] [xbp-68h] BYREF\n  _BYTE v23[8]; // [xsp+40h] [xbp-60h] BYREF\n  __int64 v24; // [xsp+48h] [xbp-58h] BYREF\n  _BYTE v25[16]; // [xsp+60h] [xbp-40h] BYREF\n\n  v4 = sub_100528C74(a1: a2);\n  v5 = sub_1005285CC(a1: a2, a2: 1);\n  std::string::string(a1: &v24, a2: v5, a3: v23);\n  v6 = sub_1005281BC(a1: a2, a2: 2);\n  if ( v4 < 3 )\n  {\n    v8 = false;\n    v7 = false;\n    v9 = 0;\n  }\n  else\n  {\n    v7 = sub_1005281BC(a1: a2, a2: 3);\n    if ( v4 < 4 )\n    {\n      v8 = false;\n      v9 = 0;\n    }\n    else\n    {\n      v8 = sub_1005281BC(a1: a2, a2: 4);\n      v9 = v4 >= 5 && sub_1005281BC(a1: a2, a2: 5);\n    }\n  }\n  std::string::string(this: (std::string *)&v21, a2: (const std::string *)&v24);\n  sub_1000512D8(a1, a2: (__int64)&v21, a3: v6, a4: v9, a5: v8, a6: &v22);\n  v10 = v21 - 24;\n  if ( (_QWORD *)(v21 - 24) != std::string::_Rep::_S_empty_rep_storage )\n  {\n    v14 = (unsigned int *)(v21 - 8);\n    do\n      v15 = __ldaxr(v14);\n    while ( __stlxr(v15 - 1, v14) != 0 );\n    if ( v15 <= 0 )\n      std::string::_Rep::_M_destroy(a1: v10, a2: v25);\n  }\n  if ( *(_QWORD *)(v22 - 24) != 0 )\n  {\n    sub_100529C84(a1: (__int64)v20, a2: *(_QWORD *)(a1 + 24));\n    if ( v7 )\n      sub_1000E32C0(a1: &v22, a2: v20);\n    else\n      sub_10052AE8C(a1: v20, a2: &v22);\n    sub_100528834(a1: *(_QWORD *)(a2 + 24), a2: (__int64)v20);\n    sub_100529DEC(a1: v20);\n  }\n  else\n  {\n    sub_10052881C(a1: a2);\n  }\n  v11 = v22 - 24;\n  if ( (_QWORD *)(v22 - 24) != std::string::_Rep::_S_empty_rep_storage )\n  {\n    v16 = (unsigned int *)(v22 - 8);\n    do\n      v17 = __ldaxr(v16);\n    while ( __stlxr(v17 - 1, v16) != 0 );\n    if ( v17 <= 0 )\n      std::string::_Rep::_M_destroy(a1: v11, a2: v25);\n  }\n  v12 = v24 - 24;\n  if ( (_QWORD *)(v24 - 24) != std::string::_Rep::_S_empty_rep_storage )\n  {\n    v18 = (unsigned int *)(v24 - 8);\n    do\n      v19 = __ldaxr(v18);\n    while ( __stlxr(v19 - 1, v18) != 0 );\n    if ( v19 <= 0 )\n      std::string::_Rep::_M_destroy(a1: v12, a2: v25);\n  }\n  return 1;\n}",
+      "callees": [
+        {
+          "ea": "0x100528c74",
+          "name": "sub_100528C74"
+        },
+        {
+          "ea": "0x1005285cc",
+          "name": "sub_1005285CC"
+        },
+        {
+          "ea": "0x1008a88a0",
+          "name": "__ZNSsC1EPKcRKSaIcE"
+        },
+        {
+          "ea": "0x1005281bc",
+          "name": "sub_1005281BC"
+        },
+        {
+          "ea": "0x1008a88b8",
+          "name": "__ZNSsC1ERKSs"
+        },
+        {
+          "ea": "0x1000512d8",
+          "name": "sub_1000512D8"
+        },
+        {
+          "ea": "0x100529c84",
+          "name": "sub_100529C84"
+        },
+        {
+          "ea": "0x1000e32c0",
+          "name": "sub_1000E32C0"
+        },
+        {
+          "ea": "0x10052881c",
+          "name": "sub_10052881C"
+        },
+        {
+          "ea": "0x10052ae8c",
+          "name": "sub_10052AE8C"
+        },
+        {
+          "ea": "0x100528834",
+          "name": "sub_100528834"
+        },
+        {
+          "ea": "0x100529dec",
+          "name": "sub_100529DEC"
+        },
+        {
+          "ea": "0x1008a8804",
+          "name": "__ZNSs4_Rep10_M_destroyERKSaIcE"
+        }
+      ]
+    }
+  ],
+  "reused_recovered_scripts": [
+    {
+      "path": "runtime/readable-data/scripts/characters.lua",
+      "sha256": "28bea677385651611b60f6c27ea2d4f1bb73381a905ed9254555aa8730b0cadc"
+    },
+    {
+      "path": "runtime/readable-data/scripts/menus/ExtraBirdBar.lua",
+      "sha256": "c5a6c6c70b22f84e8f1942047952d573cc937daabf2b77de02e9de288782e29a"
+    },
+    {
+      "path": "runtime/readable-data/scripts/telepods/telepods.lua",
+      "sha256": "e0670e5593cfc17d6e03713c5cd5d022edfdb92dcafdabce3c6c7901f7f78365"
+    },
+    {
+      "path": "runtime/readable-data/scripts/BlockComponents/BirdAnimation.lua",
+      "sha256": "dc82b4f7573bff55c253043b07d05d9456d98521be36117cf13bd9ebabedc163"
+    },
+    {
+      "path": "runtime/readable-data/scripts/AnimationPriorityStateMachine.lua",
+      "sha256": "991940724ed0fe45d2e5295663e342e4ee96e21055b4fcd9cf9197b3c0c4dd68"
+    },
+    {
+      "path": "runtime/readable-data/scripts/definitions/blocks_birds.lua",
+      "sha256": "478cff40b3eeebb6d1db1356b242094a0298164227209081f6a4576057df4a92"
+    }
+  ],
+  "call_path": [
+    "ExtraBirdBar.useExtraBird: Coins.tryConsume, purchase callbacks and Telepods.giveBird",
+    "Telepods.giveBird: createNewBirdToSlingshot, isExtraBird=true, setAnimationSprites(level.animation.sprites), setSkin, custom states, completion event",
+    "BirdAnimation.setAnimationSprites: wholesale self.animation = argument; no merge",
+    "BirdAnimation.onSlingAiming.enter: setAnimation(self.animation.aimSling,false)",
+    "BirdAnimation.inFlight.enter: setAnimation(self.animation.flying), pause; update explicitly seeks by velocity angle",
+    "AnimationPriorityStateMachine.setAnimation: nil returns true without changing the active action"
+  ],
+  "interpretation": {
+    "shipped_purchased_poppy": "Version 35 omits aimSling and flying; the purchase path retains Poppy_Idle during these phases.",
+    "ordinary_queue_poppy": "The base bird mapping contains aimSling and flying; merely selecting a costume changes skin, not this mapping.",
+    "user_original_comparison": "Final corrected user observation: original purchased Poppy also does not change expressions during sling pull and flight.",
+    "remote_configuration": "No live original remote configuration was recovered. No migration, fallback or inferred remote fields are installed.",
+    "scope": "Static call/resource evidence plus rehost regression and user original observation; not a complete native-render equivalence claim."
+  }
+}
