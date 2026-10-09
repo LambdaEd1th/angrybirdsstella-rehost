@@ -2607,7 +2607,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "stella-app"
-version = "0.1.0-beta5"
+version = "0.1.0-beta5.1"
 dependencies = [
  "anyhow",
  "arboard",
@@ -2628,7 +2628,7 @@ dependencies = [
 
 [[package]]
 name = "stella-assets"
-version = "0.1.0-beta5"
+version = "0.1.0-beta5.1"
 dependencies = [
  "aes",
  "cbc",
@@ -2642,14 +2642,14 @@ dependencies = [
 
 [[package]]
 name = "stella-core"
-version = "0.1.0-beta5"
+version = "0.1.0-beta5.1"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "stella-script"
-version = "0.1.0-beta5"
+version = "0.1.0-beta5.1"
 dependencies = [
  "aes",
  "base64",
@@ -2680,7 +2680,7 @@ dependencies = [
 
 [[package]]
 name = "stella-tool"
-version = "0.1.0-beta5"
+version = "0.1.0-beta5.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -2692,7 +2692,7 @@ dependencies = [
 
 [[package]]
 name = "stella-web"
-version = "0.1.0-beta5"
+version = "0.1.0-beta5.1"
 dependencies = [
  "anyhow",
  "bytemuck",
