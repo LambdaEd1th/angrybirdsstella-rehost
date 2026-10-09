@@ -25,3 +25,33 @@ fn window_target_view(texture: &wgpu::Texture) -> wgpu::TextureView {
         ..Default::default()
     })
 }
+
+fn configure_window_surface(
+    surface: &wgpu::Surface<'_>,
+    device: &wgpu::Device,
+    config: &wgpu::SurfaceConfiguration,
+) -> anyhow::Result<()> {
+    surface.configure(device, config);
+
+    #[cfg(target_os = "macos")]
+    if config.color_space == wgpu::SurfaceColorSpace::Srgb {
+        use anyhow::Context;
+        use objc2_core_graphics::{CGColorSpace, kCGColorSpaceSRGB};
+
+        // wgpu-hal 30.0.1 sets the sRGB Metal layer's colorspace to nil,
+        // disabling Core Animation color matching on wide-gamut displays.
+        // Apply the declaration from upstream wgpu PR #10286 after every
+        // configuration, including resize and lost-surface recovery.
+        // SAFETY: The HAL guard keeps the live surface borrowed. The layer
+        // mutex protects its retained handle; only presentation metadata is
+        // changed. No surface, drawable or GPU resource is destroyed.
+        if let Some(metal) = unsafe { surface.as_hal::<wgpu::hal::api::Metal>() } {
+            // SAFETY: CoreGraphics exports an immutable, process-lifetime name.
+            let name = unsafe { kCGColorSpaceSRGB };
+            let colorspace = CGColorSpace::with_name(Some(name))
+                .context("create macOS sRGB window color space")?;
+            metal.render_layer().lock().setColorspace(Some(&colorspace));
+        }
+    }
+    Ok(())
+}

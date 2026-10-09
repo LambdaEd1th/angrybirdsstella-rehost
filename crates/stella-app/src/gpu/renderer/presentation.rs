@@ -14,7 +14,7 @@ impl GpuRenderer {
             config.width = width;
             config.height = height;
             if self.surface_recovery.is_none() {
-                surface.configure(&self.device, config);
+                super::configure_window_surface(surface, &self.device, config)?;
             }
         }
         self.device_state.check()

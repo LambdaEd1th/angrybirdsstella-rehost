@@ -2614,6 +2614,7 @@ dependencies = [
  "bytemuck",
  "clap",
  "image",
+ "objc2-core-graphics",
  "pollster",
  "rodio",
  "skrifa",

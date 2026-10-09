@@ -35,7 +35,7 @@ pub(super) fn create(
     configure_color_format(&mut config, &capabilities.formats)?;
     config.present_mode = wgpu::PresentMode::AutoVsync;
     config.desired_maximum_frame_latency = 2;
-    surface.configure(device, &config);
+    super::super::configure_window_surface(surface, device, &config)?;
     Ok(create_blit_presentation(device, game_view, config))
 }
 
@@ -49,6 +49,9 @@ pub(super) fn configure_color_format(
         .find(|format| !format.is_srgb())
         .or_else(|| formats.first().copied())
         .ok_or_else(|| anyhow!("wgpu surface exposes no formats"))?;
+    // Game and host UI channels are already encoded. Keep the UNORM view
+    // while declaring sRGB to the platform compositor independently.
+    config.color_space = wgpu::SurfaceColorSpace::Srgb;
     let view_format = super::super::window_target_format(config.format);
     config.view_formats.clear();
     if view_format != config.format {

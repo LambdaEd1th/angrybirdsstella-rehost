@@ -20,3 +20,9 @@ tiny-skia.workspace = true
 unicode-segmentation.workspace = true
 wgpu.workspace = true
 winit.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-core-graphics = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "CGColorSpace",
+] }

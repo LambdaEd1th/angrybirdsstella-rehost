@@ -69,7 +69,7 @@ impl GpuRenderer {
                     .ok_or_else(|| anyhow!("window renderer has no surface configuration"))?;
                 config.width = width;
                 config.height = height;
-                surface.configure(&self.device, config);
+                super::configure_window_surface(surface, &self.device, config)?;
             }
             SurfaceRecovery::Recreate => {
                 let window = self

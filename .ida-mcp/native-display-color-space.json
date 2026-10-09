@@ -1,0 +1,214 @@
+{
+  "provider": "Official IDA MCP Server",
+  "instance_id": "ad5d1f278855",
+  "date": "2026-10-09",
+  "binary": "angry birds stella v1.1.6/Payload/Purple.app/Purple",
+  "binary_sha256": "ba45c91db09807fefa8207df0925b84250933c1c036c4846a8a71c0978749bbb",
+  "native_drawable_function": {
+    "function": "0x100408228",
+    "name": "-[MyEAGLView initWithFrame:withBits:withUseDepth:andRenderers:]",
+    "pseudocode": "MyEAGLView *__cdecl -[MyEAGLView initWithFrame:withBits:withUseDepth:andRenderers:](\n        MyEAGLView *self,\n        SEL a2,\n        CGRect a3,\n        int a4,\n        bool a5,\n        vector<gr::Context::PlatformType, std::allocator<gr::Context::PlatformType> > *a6)\n{\n  MyEAGLView *v9; // x0\n  MyEAGLView *v10; // x19\n  id v11; // x21\n  NSNumber *v12; // x2\n  NSString *const *v13; // x9\n  FingerPoint *M_start; // x8\n  unsigned __int64 v15; // x23\n  float v16; // w8\n  EAGLContext *context; // x0\n  _QWORD *exception; // x19\n  _BYTE v20[8]; // [xsp+28h] [xbp-168h] BYREF\n  _BYTE v21[8]; // [xsp+30h] [xbp-160h] BYREF\n  _BYTE v22[256]; // [xsp+38h] [xbp-158h] BYREF\n  objc_super v23; // [xsp+138h] [xbp-58h] BYREF\n\n  v23.receiver = self;\n  v23.super_class = (Class)&OBJC_CLASS___MyEAGLView;\n  v9 = -[MyEAGLView initWithFrame:](\n         a1: &v23,\n         a2: \"initWithFrame:\",\n         a3.origin.x,\n         a3.origin.y,\n         a3.size.width,\n         a3.size.height);\n  v10 = v9;\n  if ( !v9 )\n    return 0;\n  -[MyEAGLView setMultipleTouchEnabled:](v9, \"setMultipleTouchEnabled:\", 1);\n  v10->m_useDepth = a5;\n  v11 = -[MyEAGLView layer](v10, \"layer\");\n  objc_msgSend(v11, \"setOpaque:\", 1);\n  v12 = +[NSNumber numberWithBool:](&OBJC_CLASS___NSNumber, \"numberWithBool:\", 0);\n  if ( a4 == 32 )\n    v13 = &kEAGLColorFormatRGBA8;\n  else\n    v13 = &kEAGLColorFormatRGB565;\n  objc_msgSend(\n    v11,\n    \"setDrawableProperties:\",\n    +[NSDictionary dictionaryWithObjectsAndKeys:](\n      &OBJC_CLASS___NSDictionary,\n      \"dictionaryWithObjectsAndKeys:\",\n      v12,\n      kEAGLDrawablePropertyRetainedBacking,\n      *v13,\n      kEAGLDrawablePropertyColorFormat,\n      0));\n  M_start = a6->_M_impl._M_start;\n  if ( a6->_M_impl._M_finish == a6->_M_impl._M_start )\n    goto LABEL_16;\n  v15 = 0;\n  while ( 1 )\n  {\n    v16 = M_start->var0.var0[v15];\n    if ( v16 == 0.0 )\n    {\n      context = -[EAGLContext initWithAPI:](+[EAGLContext alloc](&OBJC_CLASS___EAGLContext, \"alloc\"), \"initWithAPI:\", 1);\nLABEL_12:\n      v10->context = context;\n      goto LABEL_14;\n    }\n    if ( LODWORD(v16) == 1 )\n    {\n      context = -[EAGLContext initWithAPI:](+[EAGLContext alloc](&OBJC_CLASS___EAGLContext, \"alloc\"), \"initWithAPI:\", 2);\n      goto LABEL_12;\n    }\n    context = v10->context;\nLABEL_14:\n    if ( context )\n      break;\n    ++v15;\n    M_start = a6->_M_impl._M_start;\n    if ( v15 >= ((char *)a6->_M_impl._M_finish - (char *)a6->_M_impl._M_start) >> 2 )\n      goto LABEL_16;\n  }\n  v10->m_selectedRenderer = LODWORD(a6->_M_impl._M_start->var0.var0[v15]);\nLABEL_16:\n  if ( !v10->context )\n  {\n    exception = __cxa_allocate_exception(thrown_size: 0x110u);\n    std::string::string(a1: v21, a2: \"No renderer was chosen\", a3: v20);\n    sub_10057EE48(a1: v22, a2: v21);\n    sub_100586D2C(a1: exception, a2: v22);\n    *exception = &off_100C06A20;\n    __cxa_throw(\n      a1: exception,\n      lptinfo: (struct type_info *)&off_100C069F0,\n      a3: (void (__fastcall *)(void *))sub_100408CAC);\n  }\n  if ( !+[EAGLContext setCurrentContext:](&OBJC_CLASS___EAGLContext, \"setCurrentContext:\") )\n  {\n    -[MyEAGLView release](v10, \"release\");\n    return 0;\n  }\n  return v10;\n}",
+    "instructions": [
+      {
+        "ea": "0x1004082b0",
+        "text": "BL              _objc_msgSend; -[MyEAGLView layer] ..."
+      },
+      {
+        "ea": "0x1004082b4",
+        "text": "MOV             X21, X0"
+      },
+      {
+        "ea": "0x1004082b8",
+        "text": "ADRP            X8, #selRef_setOpaque_@PAGE"
+      },
+      {
+        "ea": "0x1004082bc",
+        "text": "NOP"
+      },
+      {
+        "ea": "0x1004082c0",
+        "text": "LDR             X1, [X8,#selRef_setOpaque_@PAGEOFF]; \"setOpaque:\" ..."
+      },
+      {
+        "ea": "0x1004082c4",
+        "text": "MOV             W2, #1"
+      },
+      {
+        "ea": "0x1004082c8",
+        "text": "BL              _objc_msgSend"
+      },
+      {
+        "ea": "0x1004082cc",
+        "text": "ADRP            X8, #classRef_NSDictionary@PAGE"
+      },
+      {
+        "ea": "0x1004082d0",
+        "text": "LDR             X23, [X8,#classRef_NSDictionary@PAGEOFF]; _OBJC_CLASS_$_NSDictionary"
+      },
+      {
+        "ea": "0x1004082d4",
+        "text": "NOP"
+      },
+      {
+        "ea": "0x1004082d8",
+        "text": "LDR             X0, [X8,#classRef_NSNumber@PAGEOFF]; _OBJC_CLASS_$_NSNumber ; id"
+      },
+      {
+        "ea": "0x1004082dc",
+        "text": "ADRP            X8, #selRef_numberWithBool_@PAGE"
+      },
+      {
+        "ea": "0x1004082e0",
+        "text": "NOP"
+      },
+      {
+        "ea": "0x1004082e4",
+        "text": "LDR             X1, [X8,#selRef_numberWithBool_@PAGEOFF]; \"numberWithBool:\" ..."
+      },
+      {
+        "ea": "0x1004082e8",
+        "text": "MOV             W2, #0"
+      },
+      {
+        "ea": "0x1004082ec",
+        "text": "BL              _objc_msgSend; +[NSNumber numberWithBool:] ..."
+      },
+      {
+        "ea": "0x1004082f0",
+        "text": "MOV             X2, X0"
+      },
+      {
+        "ea": "0x1004082f4",
+        "text": "ADRP            X8, #_kEAGLDrawablePropertyRetainedBacking_ptr@PAGE"
+      },
+      {
+        "ea": "0x1004082f8",
+        "text": "LDR             X8, [X8,#_kEAGLDrawablePropertyRetainedBacking_ptr@PAGEOFF]; _kEAGLDrawablePropertyRetainedBacking"
+      },
+      {
+        "ea": "0x1004082fc",
+        "text": "LDR             X8, [X8]"
+      },
+      {
+        "ea": "0x100408300",
+        "text": "CMP             W22, #0x20 ; ' '"
+      },
+      {
+        "ea": "0x100408304",
+        "text": "B.NE            loc_100408314"
+      },
+      {
+        "ea": "0x100408308",
+        "text": "ADRP            X9, #_kEAGLColorFormatRGBA8_ptr@PAGE"
+      },
+      {
+        "ea": "0x10040830c",
+        "text": "LDR             X9, [X9,#_kEAGLColorFormatRGBA8_ptr@PAGEOFF]; _kEAGLColorFormatRGBA8"
+      },
+      {
+        "ea": "0x100408310",
+        "text": "B               loc_10040831C"
+      },
+      {
+        "ea": "0x100408314",
+        "text": "ADRP            X9, #_kEAGLColorFormatRGB565_ptr@PAGE"
+      },
+      {
+        "ea": "0x100408318",
+        "text": "LDR             X9, [X9,#_kEAGLColorFormatRGB565_ptr@PAGEOFF]; _kEAGLColorFormatRGB565"
+      },
+      {
+        "ea": "0x10040831c",
+        "text": "LDR             X9, [X9]"
+      },
+      {
+        "ea": "0x100408320",
+        "text": "ADRP            X10, #_kEAGLDrawablePropertyColorFormat_ptr@PAGE"
+      },
+      {
+        "ea": "0x100408324",
+        "text": "LDR             X10, [X10,#_kEAGLDrawablePropertyColorFormat_ptr@PAGEOFF]; _kEAGLDrawablePropertyColorFormat"
+      },
+      {
+        "ea": "0x100408328",
+        "text": "LDR             X10, [X10]"
+      },
+      {
+        "ea": "0x10040832c",
+        "text": "ADRP            X11, #selRef_dictionaryWithObjectsAndKeys_@PAGE"
+      },
+      {
+        "ea": "0x100408330",
+        "text": "NOP"
+      },
+      {
+        "ea": "0x100408334",
+        "text": "LDR             X1, [X11,#selRef_dictionaryWithObjectsAndKeys_@PAGEOFF]; \"dictionaryWithObjectsAndKeys:\" ..."
+      },
+      {
+        "ea": "0x100408338",
+        "text": "STP             X10, XZR, [SP,#0x190+var_180]"
+      },
+      {
+        "ea": "0x10040833c",
+        "text": "STP             X8, X9, [SP,#0x190+var_190]"
+      },
+      {
+        "ea": "0x100408340",
+        "text": "MOV             X0, X23; id"
+      },
+      {
+        "ea": "0x100408344",
+        "text": "BL              _objc_msgSend; +[NSDictionary dictionaryWithObjectsAndKeys:] ..."
+      },
+      {
+        "ea": "0x100408348",
+        "text": "MOV             X2, X0"
+      },
+      {
+        "ea": "0x10040834c",
+        "text": "ADRP            X8, #selRef_setDrawableProperties_@PAGE"
+      },
+      {
+        "ea": "0x100408350",
+        "text": "NOP"
+      },
+      {
+        "ea": "0x100408354",
+        "text": "LDR             X1, [X8,#selRef_setDrawableProperties_@PAGEOFF]; \"setDrawableProperties:\" ..."
+      },
+      {
+        "ea": "0x100408358",
+        "text": "MOV             X0, X21; id"
+      },
+      {
+        "ea": "0x10040835c",
+        "text": "BL              _objc_msgSend"
+      },
+      {
+        "ea": "0x100408360",
+        "text": "LDP             X8, X9, [X20]"
+      },
+      {
+        "ea": "0x100408364",
+        "text": "CMP             X9, X8"
+      },
+      {
+        "ea": "0x100408368",
+        "text": "B.EQ            loc_100408424"
+      },
+      {
+        "ea": "0x10040836c",
+        "text": "MOV             X23, #0"
+      },
+      {
+        "ea": "0x100408370",
+        "text": "ADRP            X9, #_OBJC_IVAR_$_MyEAGLView.context@PAGE; EAGLContext *context;"
+      }
+    ]
+  },
+  "interpretation": {
+    "supported": "The constructor selects ordinary RGBA8 for 32-bit drawables, RGB565 otherwise, opaque presentation and non-retained backing. No sRGB renderbuffer or gamma conversion branch exists in this constructor. Preserve game-channel arithmetic while correcting the host presentation metadata.",
+    "not_established": "This static constructor evidence does not recover UIKit display color management, original-device ICC profiles or exact original screenshots. The macOS fix is supported separately by current dependency source, upstream correction and local compositor measurement."
+  }
+}
